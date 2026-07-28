@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: metap
+      POSTGRES_PASSWORD: metap
+      POSTGRES_DB: metap
+    ports:
+      - "5433:5432"
+    volumes:
+      - metap-postgres:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: metap
+      RABBITMQ_DEFAULT_PASS: metap
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+volumes:
+  metap-postgres:
