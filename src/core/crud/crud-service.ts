@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { z } from "zod";
 import type { Database } from "../../infra/db/client";
 import { records } from "../../infra/db/schema";
@@ -110,6 +110,89 @@ export class CrudService {
     }
 
     await this.workflow.emitCreated(entity, record.id, data);
+
+    return { ok: true, data: record };
+  }
+
+  async update(
+    entityName: string,
+    id: string,
+    expectedVersion: number,
+    rawData: Record<string, unknown>,
+    context: RequestContext,
+  ): Promise<ServiceResult<RecordDto>> {
+    const entity = this.metadata.getEntity(entityName);
+
+    if (!entity) {
+      return { ok: false, status: 404, error: "entity_not_found" };
+    }
+
+    const decision = this.permissions.canUpdateEntity(context, entity.name);
+
+    if (!decision.allowed) {
+      return { ok: false, status: 403, error: decision.reason ?? "forbidden" };
+    }
+
+    const existingRows = await this.db.client
+      .select()
+      .from(records)
+      .where(
+        and(
+          eq(records.id, id),
+          eq(records.tenantId, context.tenantId),
+          eq(records.entity, entity.name),
+          eq(records.deleted, false),
+        ),
+      );
+
+    const existing = existingRows[0];
+
+    if (!existing) {
+      return { ok: false, status: 404, error: "record_not_found" };
+    }
+
+    const existingData = existing.data as Record<string, unknown>;
+    const mergedData: Record<string, unknown> = { ...existingData, ...rawData };
+
+    if (entity.workflow) {
+      mergedData[entity.workflow.stateField] = existingData[entity.workflow.stateField];
+    }
+
+    const parsed = entity.schema.safeParse(mergedData);
+
+    if (!parsed.success) {
+      return { ok: false, status: 400, error: "validation_failed" };
+    }
+
+    const data = parsed.data;
+    const code = typeof data.code === "string" ? data.code : null;
+
+    const updatedRows = await this.db.client
+      .update(records)
+      .set({
+        data,
+        code,
+        version: sql`${records.version} + 1`,
+        updatedAt: new Date(),
+        updatedBy: context.userId,
+      })
+      .where(
+        and(
+          eq(records.id, id),
+          eq(records.tenantId, context.tenantId),
+          eq(records.version, expectedVersion),
+          eq(records.deleted, false),
+        ),
+      )
+      .returning();
+
+    const record = updatedRows[0];
+
+    if (!record) {
+      return { ok: false, status: 409, error: "version_conflict" };
+    }
+
+    await this.workflow.emitUpdated(entity, record.id, data);
 
     return { ok: true, data: record };
   }
