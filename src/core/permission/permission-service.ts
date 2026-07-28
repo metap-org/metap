@@ -19,6 +19,10 @@ export class PermissionService {
     return { allowed: true };
   }
 
+  canUpdateEntity(_context: RequestContext, _entity: string): PermissionDecision {
+    return { allowed: true };
+  }
+
   scopedTenant(context: Partial<RequestContext>) {
     return context.tenantId ?? "00000000-0000-0000-0000-000000000001";
   }
