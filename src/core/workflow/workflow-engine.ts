@@ -24,4 +24,16 @@ export class WorkflowEngine {
       },
     });
   }
+
+  async emitUpdated(entity: EntityDefinition, recordId: string, data: Record<string, unknown>) {
+    await this.outbox.enqueue({
+      topic: `${entity.name}.record.updated`,
+      aggregateType: entity.name,
+      aggregateId: recordId,
+      payload: {
+        recordId,
+        data,
+      },
+    });
+  }
 }
