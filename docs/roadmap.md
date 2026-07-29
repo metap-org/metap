@@ -167,6 +167,18 @@ Goals:
 - load tests for list/query/export.
 - backup/restore drill.
 
+## Phase 9: Multi-Service Evolution
+
+Unlike Phases 1-8, this phase is trigger-based, not sequential — it starts when its trigger condition happens, not when Phase 8 finishes. See `docs/architecture.md`'s "Target Architecture: Multi-Service Evolution" section for the full reasoning.
+
+Triggers and the transition each one unlocks:
+
+- **A second phân hệ (CRM, sales, inventory, accounting, ...) actually needs to be built as its own deployable unit** → split the repo into a pnpm workspace: `packages/core` (today's `src/core` + shared `src/infra`) and one `apps/<phân-hệ>` per service, each a thin Fastify app importing `packages/core`.
+- **A single frontend screen needs to aggregate data from ≥2 services** → build a GraphQL gateway as a BFF in front of the REST services.
+- **The repo/package split above has actually happened** → evaluate gRPC for service-to-service calls where REST's overhead matters.
+
+Until a trigger fires, its transition is not built. The one thing to do now, ahead of any trigger: keep every new entity module's name domain-namespaced (`<phân-hệ>.<entity>`, e.g. `crm.customers`) and never let `QueryPlanner`/`CrudService` join across different entities' data in SQL — both are already true today and cost nothing to keep true.
+
 ## Success Criteria
 
 Metap is successful if a developer can:

@@ -144,3 +144,17 @@ Avoid:
 - Metadata and permission snapshot cache.
 - Indexes declared close to metadata.
 - Reporting workload separated from OLTP workload when needed.
+
+## Target Architecture: Multi-Service Evolution
+
+Metap is the backbone of a low-code platform, not a single-purpose ERP app. `src/core` (metadata, permission, query planner, workflow, outbox) is the reusable core platform. Each ERP subsystem — CRM, sales, inventory, accounting, and so on — is expected to eventually become its own independently deployable service built on that same core, not a copy of it.
+
+This section is documentation-only: it records the target shape and the triggers for moving toward it. None of it is built yet, and none of it should be built ahead of its trigger.
+
+**Anchor already in place:** `EntityDefinition.name` is already dot-namespaced by domain (`crm.customers`). The prefix before the dot is, in effect, the future service name. No code change is needed for this — just discipline: every new entity module goes under a domain-namespaced name so the future service boundary is legible in the data before any physical split happens.
+
+**Repo/package layout.** Now: stays exactly as it is, one package. Target, once a second phân hệ is actually being built: a pnpm workspace with `packages/core` (today's `src/core` plus shared `src/infra`) and `apps/<phân-hệ>` (one thin Fastify app per service, each importing `packages/core` and registering only its own entity modules). Trigger: the first time a second, genuinely separate phân hệ needs to exist as its own deployable unit — not before.
+
+**Data strategy.** Now, and for the foreseeable future: one shared PostgreSQL instance. Design constraint that keeps a later split cheap without being premature now: no code may join across different entities' data directly in SQL — `QueryPlanner` already only ever scopes a query by a single `entity` + `tenantId`, so this costs nothing to state, only to keep enforcing. If a future phân hệ needs another phân hệ's data, it goes through that phân hệ's service-level API — today that's an in-process call into the shared `CrudService`, but it should be treated as a remote call architecturally, so the eventual move to an actual remote call is a non-event. Splitting a phân hệ's data out to its own database later then becomes a matter of moving rows and a connection string, not rewriting query logic.
+
+**Protocol strategy.** Now: REST, as already built (JWT auth, structured errors, CRUD with optimistic locking, metadata-constrained filter/sort). Future, triggered by having ≥2 services whose data a single frontend screen needs to aggregate: a GraphQL gateway acting as a BFF (backend-for-frontend) in front of the REST services, composing their responses for the frontend. Future, triggered by the repo/package split above actually having happened: gRPC as an option for service-to-service calls where REST's overhead matters. Neither is built or evaluated further until its trigger is real.
