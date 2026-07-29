@@ -14,6 +14,11 @@ const RecordBodySchema = z.object({
   data: z.record(z.unknown()),
 });
 
+const UpdateBodySchema = z.object({
+  version: z.number().int().positive(),
+  data: z.record(z.unknown()),
+});
+
 export function registerRecordRoutes(app: FastifyInstance, container: AppContainer) {
   app.get<{ Params: { entity: string }; Querystring: z.infer<typeof ListQuerySchema> }>(
     "/api/:entity",
@@ -50,6 +55,34 @@ export function registerRecordRoutes(app: FastifyInstance, container: AppContain
       }
 
       return reply.code(201).send({ data: result.data });
+    },
+  );
+
+  app.patch<{
+    Params: { entity: string; id: string };
+    Body: z.infer<typeof UpdateBodySchema>;
+  }>(
+    "/api/:entity/:id",
+    {
+      schema: {
+        body: zodToJsonSchema(UpdateBodySchema),
+      },
+    },
+    async (request, reply) => {
+      const body = UpdateBodySchema.parse(request.body);
+      const result = await container.crud.update(
+        request.params.entity,
+        request.params.id,
+        body.version,
+        body.data,
+        request.context,
+      );
+
+      if (!result.ok) {
+        return sendServiceError(request, reply, result);
+      }
+
+      return { data: result.data };
     },
   );
 }

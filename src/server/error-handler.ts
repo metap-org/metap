@@ -70,6 +70,8 @@ const SERVICE_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to perform this action.",
   validation_failed: "Request validation failed.",
   insert_failed: "Failed to create the record.",
+  record_not_found: "Record not found.",
+  version_conflict: "The record was modified by someone else. Reload and try again.",
 };
 
 export function sendServiceError(
