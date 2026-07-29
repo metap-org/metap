@@ -48,6 +48,12 @@ export type EntityWorkflow = {
   transitions: readonly WorkflowTransition[];
 };
 
+export type EntityPermissions = {
+  read?: readonly string[];
+  create?: readonly string[];
+  update?: readonly string[];
+};
+
 export type EntityDefinition<TInput extends z.ZodTypeAny = z.ZodTypeAny> = {
   name: string;
   label: string;
@@ -56,4 +62,5 @@ export type EntityDefinition<TInput extends z.ZodTypeAny = z.ZodTypeAny> = {
   fields: readonly EntityField[];
   listViews: readonly EntityListView[];
   workflow?: EntityWorkflow;
+  permissions?: EntityPermissions;
 };

@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Metap is a metadata-driven ERP/platform core. The core idea: entity behavior (fields, list views, validation, workflow) is declared once as metadata, and CRUD/list/workflow behavior is generated from it — but each concern (metadata, permission, query planning, workflow, outbox) is an explicit service with a fixed boundary, not a grab-bag helper.
 
+After completing the feature, do not commit any changes. Keep the diff intact so I can review it first.
+
 Stack: Fastify + Zod + Drizzle ORM + PostgreSQL + RabbitMQ (outbox pattern for reliable event publishing). Read `docs/why.md` for the reasoning behind each choice and `docs/architecture.md` for the target layering — both are short and worth reading in full before making structural changes. `docs/roadmap.md` tracks phased goals; the repo is currently at "Phase 0: Skeleton" — most services (permission, query planner, workflow) are intentionally minimal scaffolds with the boundary fixed but the real logic not yet implemented (e.g. `PermissionService` currently allows everything).
 
 ## Commands

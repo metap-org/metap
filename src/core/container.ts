@@ -19,7 +19,7 @@ export function createContainer(config: AppConfig) {
   const metadata = new MetadataRegistry();
   metadata.register(customerEntity);
 
-  const permissions = new PermissionService();
+  const permissions = new PermissionService(metadata);
   const queryPlanner = new QueryPlanner(metadata, permissions);
   const outbox = new OutboxService(db, rabbit);
   const workflow = new WorkflowEngine(outbox);
