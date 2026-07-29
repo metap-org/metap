@@ -3,10 +3,10 @@ import type { FastifyInstance } from "fastify";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { AppContainer } from "../../core/container";
 import { sendServiceError } from "../error-handler";
+import type { ListInput } from "../../core/query/query-planner";
 
 const ListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(30),
-  cursor: z.string().optional(),
   sort: z.string().optional(),
 });
 
@@ -22,16 +22,29 @@ const UpdateBodySchema = z.object({
 const UpdateParamsSchema = z.object({ entity: z.string(), id: z.string().uuid() });
 
 export function registerRecordRoutes(app: FastifyInstance, container: AppContainer) {
-  app.get<{ Params: { entity: string }; Querystring: z.infer<typeof ListQuerySchema> }>(
+  app.get<{ Params: { entity: string }; Querystring: Record<string, unknown> }>(
     "/api/:entity",
-    {
-      schema: {
-        querystring: zodToJsonSchema(ListQuerySchema),
-      },
-    },
     async (request, reply) => {
       const query = ListQuerySchema.parse(request.query);
-      const result = await container.crud.list(request.params.entity, query, request.context);
+      const filters: Record<string, string> = {};
+
+      for (const [key, value] of Object.entries(request.query)) {
+        if (key === "limit" || key === "sort") {
+          continue;
+        }
+
+        if (typeof value === "string") {
+          filters[key] = value;
+        }
+      }
+
+      const listInput: ListInput = { limit: query.limit, filters };
+
+      if (query.sort !== undefined) {
+        listInput.sort = query.sort;
+      }
+
+      const result = await container.crud.list(request.params.entity, listInput, request.context);
 
       if (!result.ok) {
         return sendServiceError(request, reply, result);
