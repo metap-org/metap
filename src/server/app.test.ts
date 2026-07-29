@@ -129,8 +129,9 @@ describe("buildApp (record creation, live DB)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("persists the posted data payload intact (regression: AJV must not strip the free-form `data` object)", async () => {
+  it("persists the posted data payload intact (regression: AJV must not strip the free-form `data` object)", async (ctx) => {
     if (!dbAvailable) {
+      ctx.skip();
       return;
     }
 
@@ -160,6 +161,60 @@ describe("buildApp (record creation, live DB)", () => {
 
       recordId = body.data.id;
       expect(body.data.data).toMatchObject({ code: "C001", name: "Acme" });
+    } finally {
+      if (recordId) {
+        await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [recordId]);
+        await pgClient.query("DELETE FROM records WHERE id = $1", [recordId]);
+      }
+    }
+  });
+
+  it("persists the patched data payload intact (regression: AJV must not strip the free-form `data` object)", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const tenantId = "00000000-0000-0000-0000-000000000010";
+    const userId = "00000000-0000-0000-0000-000000000011";
+    const token = jwt.sign({ tenantId, roles: ["admin"] }, privateKey, {
+      algorithm: "RS256",
+      subject: userId,
+      expiresIn: "1h",
+    });
+
+    let recordId: string | undefined;
+
+    try {
+      const createResponse = await app.inject({
+        method: "POST",
+        url: "/api/crm.customers",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { data: { code: "C002", name: "Acme" } },
+      });
+
+      expect(createResponse.statusCode).toBe(201);
+
+      const createBody = createResponse.json<{
+        data: { id: string; version: number; data: { code?: string; name?: string } };
+      }>();
+
+      recordId = createBody.data.id;
+
+      const patchResponse = await app.inject({
+        method: "PATCH",
+        url: `/api/crm.customers/${recordId}`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { version: createBody.data.version, data: { name: "Acme Corp" } },
+      });
+
+      expect(patchResponse.statusCode).toBe(200);
+
+      const patchBody = patchResponse.json<{
+        data: { id: string; data: { code?: string; name?: string } };
+      }>();
+
+      expect(patchBody.data.data).toMatchObject({ code: "C002", name: "Acme Corp" });
     } finally {
       if (recordId) {
         await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [recordId]);

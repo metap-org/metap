@@ -68,8 +68,11 @@ describe("CrudService.update (live DB)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("updates a record when the version matches", async () => {
-    if (!dbAvailable) return;
+  it("updates a record when the version matches", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
 
     const created = await container.crud.create(
       "crm.customers",
@@ -100,8 +103,11 @@ describe("CrudService.update (live DB)", () => {
     }
   });
 
-  it("rejects an update with a stale version", async () => {
-    if (!dbAvailable) return;
+  it("rejects an update with a stale version", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
 
     const created = await container.crud.create(
       "crm.customers",
@@ -134,14 +140,23 @@ describe("CrudService.update (live DB)", () => {
         expect(stale.status).toBe(409);
         expect(stale.error).toBe("version_conflict");
       }
+
+      const row = await pgClient.query<{ data: { name?: string } }>(
+        "SELECT data FROM records WHERE id = $1",
+        [created.data.id],
+      );
+      expect(row.rows[0]?.data.name).toBe("Beta One");
     } finally {
       await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [created.data.id]);
       await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
     }
   });
 
-  it("ignores a client-supplied change to the workflow state field", async () => {
-    if (!dbAvailable) return;
+  it("ignores a client-supplied change to the workflow state field", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
 
     const created = await container.crud.create(
       "crm.customers",
@@ -163,6 +178,45 @@ describe("CrudService.update (live DB)", () => {
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect((result.data.data as { status?: string }).status).toBe("draft");
+      }
+    } finally {
+      await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [created.data.id]);
+      await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
+    }
+  });
+
+  it("does not allow updating a record scoped to a different tenant", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "U004", name: "Delta" },
+      context,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    try {
+      const otherTenantContext: RequestContext = {
+        ...context,
+        tenantId: "00000000-0000-0000-0000-000000000099",
+      };
+
+      const result = await container.crud.update(
+        "crm.customers",
+        created.data.id,
+        created.data.version,
+        { name: "Delta Hijacked" },
+        otherTenantContext,
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.status).toBe(404);
+        expect(result.error).toBe("record_not_found");
       }
     } finally {
       await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [created.data.id]);

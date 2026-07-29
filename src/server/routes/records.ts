@@ -19,6 +19,8 @@ const UpdateBodySchema = z.object({
   data: z.record(z.unknown()),
 });
 
+const UpdateParamsSchema = z.object({ entity: z.string(), id: z.string().uuid() });
+
 export function registerRecordRoutes(app: FastifyInstance, container: AppContainer) {
   app.get<{ Params: { entity: string }; Querystring: z.infer<typeof ListQuerySchema> }>(
     "/api/:entity",
@@ -65,14 +67,16 @@ export function registerRecordRoutes(app: FastifyInstance, container: AppContain
     "/api/:entity/:id",
     {
       schema: {
+        params: zodToJsonSchema(UpdateParamsSchema),
         body: zodToJsonSchema(UpdateBodySchema),
       },
     },
     async (request, reply) => {
+      const params = UpdateParamsSchema.parse(request.params);
       const body = UpdateBodySchema.parse(request.body);
       const result = await container.crud.update(
-        request.params.entity,
-        request.params.id,
+        params.entity,
+        params.id,
         body.version,
         body.data,
         request.context,

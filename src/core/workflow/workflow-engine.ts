@@ -25,7 +25,12 @@ export class WorkflowEngine {
     });
   }
 
-  async emitUpdated(entity: EntityDefinition, recordId: string, data: Record<string, unknown>) {
+  async emitUpdated(
+    entity: EntityDefinition,
+    recordId: string,
+    data: Record<string, unknown>,
+    version: number,
+  ) {
     await this.outbox.enqueue({
       topic: `${entity.name}.record.updated`,
       aggregateType: entity.name,
@@ -33,6 +38,7 @@ export class WorkflowEngine {
       payload: {
         recordId,
         data,
+        version,
       },
     });
   }

@@ -155,6 +155,9 @@ export class CrudService {
     const mergedData: Record<string, unknown> = { ...existingData, ...rawData };
 
     if (entity.workflow) {
+      // The state field can never change through this path, so the top-level `status`
+      // column (mirrored from data[stateField] only by `create`) can't go out of sync
+      // here and is intentionally never recomputed.
       mergedData[entity.workflow.stateField] = existingData[entity.workflow.stateField];
     }
 
@@ -180,6 +183,7 @@ export class CrudService {
         and(
           eq(records.id, id),
           eq(records.tenantId, context.tenantId),
+          eq(records.entity, entity.name),
           eq(records.version, expectedVersion),
           eq(records.deleted, false),
         ),
@@ -192,7 +196,7 @@ export class CrudService {
       return { ok: false, status: 409, error: "version_conflict" };
     }
 
-    await this.workflow.emitUpdated(entity, record.id, data);
+    await this.workflow.emitUpdated(entity, record.id, data, record.version);
 
     return { ok: true, data: record };
   }
