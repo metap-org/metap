@@ -10,6 +10,8 @@ const ListQuerySchema = z.object({
   sort: z.string().optional(),
 });
 
+const reservedKeys = new Set(Object.keys(ListQuerySchema.shape));
+
 const RecordBodySchema = z.object({
   data: z.record(z.unknown()),
 });
@@ -29,7 +31,7 @@ export function registerRecordRoutes(app: FastifyInstance, container: AppContain
       const filters: Record<string, string> = {};
 
       for (const [key, value] of Object.entries(request.query)) {
-        if (key === "limit" || key === "sort") {
+        if (reservedKeys.has(key)) {
           continue;
         }
 

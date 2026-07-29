@@ -188,4 +188,22 @@ describe("QueryPlanner (via CrudService.list, live DB)", () => {
       expect(ids).toEqual([...createdIds].reverse());
     }
   });
+
+  it("treats a hostile filter value as data, not SQL", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const result = await container.crud.list(
+      "crm.customers",
+      { limit: 30, filters: { status: "active' OR '1'='1" } },
+      context,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.length).toBe(0);
+    }
+  });
 });

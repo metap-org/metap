@@ -32,6 +32,16 @@ function parseSort(
   return sortableFields.has(field) ? { field, descending } : undefined;
 }
 
+function fieldExpression(fieldName: string) {
+  if (fieldName === "createdAt") {
+    return records.createdAt;
+  }
+  if (fieldName === "updatedAt") {
+    return records.updatedAt;
+  }
+  return sql`jsonb_extract_path_text(${records.data}, ${fieldName})`;
+}
+
 export class QueryPlanner {
   constructor(
     private readonly metadata: MetadataRegistry,
@@ -67,14 +77,15 @@ export class QueryPlanner {
         continue;
       }
 
-      const fieldExpr = sql`jsonb_extract_path_text(${records.data}, ${field})`;
+      const fieldExpr = fieldExpression(field);
       const fieldDef = fieldsByName.get(field);
 
-      conditions.push(
-        fieldDef?.searchable
-          ? sql`${fieldExpr} ILIKE ${`%${value}%`}`
-          : sql`${fieldExpr} = ${value}`,
-      );
+      if (fieldDef?.searchable) {
+        const escapedValue = value.replace(/[\\%_]/g, "\\$&");
+        conditions.push(sql`${fieldExpr} ILIKE ${`%${escapedValue}%`}`);
+      } else {
+        conditions.push(sql`${fieldExpr} = ${value}`);
+      }
     }
 
     const sortableFields = new Set<string>([
@@ -86,17 +97,12 @@ export class QueryPlanner {
     const resolvedSort = parseSort(input.sort, sortableFields) ??
       parseSort(listView?.defaultSort, sortableFields) ?? { field: "createdAt", descending: true };
 
-    const sortExpr =
-      resolvedSort.field === "createdAt"
-        ? records.createdAt
-        : resolvedSort.field === "updatedAt"
-          ? records.updatedAt
-          : sql`jsonb_extract_path_text(${records.data}, ${resolvedSort.field})`;
+    const sortExpr = fieldExpression(resolvedSort.field);
 
     return {
       where: and(...conditions),
       limit,
-      orderBy: [resolvedSort.descending ? desc(sortExpr) : asc(sortExpr)],
+      orderBy: [resolvedSort.descending ? desc(sortExpr) : asc(sortExpr), asc(records.id)],
     };
   }
 }
