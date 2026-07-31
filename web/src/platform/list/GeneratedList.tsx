@@ -77,8 +77,12 @@ export function GeneratedList({ entityName }: { entityName: string }) {
     return <ApiErrorMessage error={entityError} />;
   }
 
-  if (!entity || !listView) {
+  if (!entity) {
     return <div>Entity not found.</div>;
+  }
+
+  if (!listView) {
+    return <div>{entity.label} has no list view configured.</div>;
   }
 
   function toggleSort(field: EntityField) {
