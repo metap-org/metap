@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-import type { Database } from "../../infra/db/client";
+import type { DbExecutor, Database } from "../../infra/db/client";
 import { outboxEvents } from "../../infra/db/schema";
 import type { RabbitPublisher } from "../../infra/messaging/rabbitmq";
 
@@ -16,8 +16,8 @@ export class OutboxService {
     private readonly rabbit: RabbitPublisher,
   ) {}
 
-  async enqueue(event: OutboxEvent) {
-    await this.db.client.insert(outboxEvents).values(event);
+  async enqueue(executor: DbExecutor, event: OutboxEvent) {
+    await executor.insert(outboxEvents).values(event);
   }
 
   async publishPending(limit = 100) {

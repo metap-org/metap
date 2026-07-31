@@ -18,3 +18,4 @@ export function createDatabase(databaseUrl: string) {
 }
 
 export type Database = ReturnType<typeof createDatabase>;
+export type DbExecutor = Parameters<Parameters<Database["client"]["transaction"]>[0]>[0];

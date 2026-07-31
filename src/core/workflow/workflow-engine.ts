@@ -1,3 +1,4 @@
+import type { DbExecutor } from "../../infra/db/client";
 import type { EntityDefinition } from "../metadata/entity";
 import type { OutboxService } from "../outbox/outbox-service";
 
@@ -13,8 +14,13 @@ export class WorkflowEngine {
     return typeof explicitStatus === "string" ? explicitStatus : entity.workflow.initialState;
   }
 
-  async emitCreated(entity: EntityDefinition, recordId: string, data: Record<string, unknown>) {
-    await this.outbox.enqueue({
+  async emitCreated(
+    executor: DbExecutor,
+    entity: EntityDefinition,
+    recordId: string,
+    data: Record<string, unknown>,
+  ) {
+    await this.outbox.enqueue(executor, {
       topic: `${entity.name}.record.created`,
       aggregateType: entity.name,
       aggregateId: recordId,
@@ -26,12 +32,13 @@ export class WorkflowEngine {
   }
 
   async emitUpdated(
+    executor: DbExecutor,
     entity: EntityDefinition,
     recordId: string,
     data: Record<string, unknown>,
     version: number,
   ) {
-    await this.outbox.enqueue({
+    await this.outbox.enqueue(executor, {
       topic: `${entity.name}.record.updated`,
       aggregateType: entity.name,
       aggregateId: recordId,

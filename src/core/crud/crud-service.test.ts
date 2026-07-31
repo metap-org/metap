@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AppContainer } from "../container";
 import { createContainer } from "../container";
 import type { RequestContext } from "../permission/permission-service";
@@ -221,6 +221,44 @@ describe("CrudService.update (live DB)", () => {
     } finally {
       await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [created.data.id]);
       await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
+    }
+  });
+
+  it("rolls back the record insert when the outbox write fails", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const enqueueSpy = vi
+      .spyOn(container.outbox, "enqueue")
+      .mockImplementationOnce(async () => {
+        throw new Error("simulated outbox failure");
+      });
+
+    try {
+      await expect(
+        container.crud.create(
+          "crm.customers",
+          { code: "U005", name: "Rollback Test" },
+          context,
+        ),
+      ).rejects.toThrow("simulated outbox failure");
+
+      const row = await pgClient.query("SELECT id FROM records WHERE code = $1", ["U005"]);
+      expect(row.rows).toHaveLength(0);
+    } finally {
+      enqueueSpy.mockRestore();
+      const leftover = await pgClient.query<{ id: string }>(
+        "SELECT id FROM records WHERE code = $1",
+        ["U005"],
+      );
+      for (const leftoverRow of leftover.rows) {
+        await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [
+          leftoverRow.id,
+        ]);
+      }
+      await pgClient.query("DELETE FROM records WHERE code = $1", ["U005"]);
     }
   });
 });

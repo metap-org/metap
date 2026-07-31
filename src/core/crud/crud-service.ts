@@ -90,28 +90,36 @@ export class CrudService {
     const data = parsed.data;
     const status = this.workflow.getInitialStatus(entity, data);
 
-    const inserted = await this.db.client
-      .insert(records)
-      .values({
-        tenantId: context.tenantId,
-        entity: entity.name,
-        code: typeof data.code === "string" ? data.code : null,
-        status,
-        data,
-        createdBy: context.userId,
-        updatedBy: context.userId,
-      })
-      .returning();
+    const outcome = await this.db.client.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(records)
+        .values({
+          tenantId: context.tenantId,
+          entity: entity.name,
+          code: typeof data.code === "string" ? data.code : null,
+          status,
+          data,
+          createdBy: context.userId,
+          updatedBy: context.userId,
+        })
+        .returning();
 
-    const record = inserted[0];
+      const record = inserted[0];
 
-    if (!record) {
+      if (!record) {
+        return { ok: false as const };
+      }
+
+      await this.workflow.emitCreated(tx, entity, record.id, data);
+
+      return { ok: true as const, record };
+    });
+
+    if (!outcome.ok) {
       return { ok: false, status: 500, error: "insert_failed" };
     }
 
-    await this.workflow.emitCreated(entity, record.id, data);
-
-    return { ok: true, data: record };
+    return { ok: true, data: outcome.record };
   }
 
   async update(
@@ -170,35 +178,43 @@ export class CrudService {
     const data = parsed.data;
     const code = typeof data.code === "string" ? data.code : null;
 
-    const updatedRows = await this.db.client
-      .update(records)
-      .set({
-        data,
-        code,
-        version: sql`${records.version} + 1`,
-        updatedAt: new Date(),
-        updatedBy: context.userId,
-      })
-      .where(
-        and(
-          eq(records.id, id),
-          eq(records.tenantId, context.tenantId),
-          eq(records.entity, entity.name),
-          eq(records.version, expectedVersion),
-          eq(records.deleted, false),
-        ),
-      )
-      .returning();
+    const outcome = await this.db.client.transaction(async (tx) => {
+      const updatedRows = await tx
+        .update(records)
+        .set({
+          data,
+          code,
+          version: sql`${records.version} + 1`,
+          updatedAt: new Date(),
+          updatedBy: context.userId,
+        })
+        .where(
+          and(
+            eq(records.id, id),
+            eq(records.tenantId, context.tenantId),
+            eq(records.entity, entity.name),
+            eq(records.version, expectedVersion),
+            eq(records.deleted, false),
+          ),
+        )
+        .returning();
 
-    const record = updatedRows[0];
+      const record = updatedRows[0];
 
-    if (!record) {
+      if (!record) {
+        return { ok: false as const };
+      }
+
+      await this.workflow.emitUpdated(tx, entity, record.id, data, record.version);
+
+      return { ok: true as const, record };
+    });
+
+    if (!outcome.ok) {
       return { ok: false, status: 409, error: "version_conflict" };
     }
 
-    await this.workflow.emitUpdated(entity, record.id, data, record.version);
-
-    return { ok: true, data: record };
+    return { ok: true, data: outcome.record };
   }
 
   async flushOutbox() {
