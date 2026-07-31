@@ -17,7 +17,7 @@ export function EntitiesPage() {
       <List>
         {data?.map((entity) => (
           <List.Item key={entity.name}>
-            <Anchor component={Link} to="/customers">
+            <Anchor component={Link} to={`/records/${entity.name}`}>
               {entity.label} ({entity.name})
             </Anchor>
           </List.Item>
