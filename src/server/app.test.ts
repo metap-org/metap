@@ -69,6 +69,78 @@ describe("buildApp", () => {
   });
 });
 
+describe("GET /metadata/entities/:entity", () => {
+  let app: FastifyInstance;
+  let tmpDir: string;
+  let token: string;
+
+  beforeAll(async () => {
+    const { publicKey, privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+
+    tmpDir = mkdtempSync(path.join(tmpdir(), "metap-metadata-entity-test-"));
+    const publicKeyPath = path.join(tmpDir, "public.pem");
+    writeFileSync(publicKeyPath, publicKey);
+
+    const config: AppConfig = {
+      nodeEnv: "test",
+      host: "0.0.0.0",
+      port: 3000,
+      databaseUrl: "postgres://x:x@localhost:1/x",
+      rabbitmqUrl: "amqp://x:x@localhost:1",
+      corsOrigins: [],
+      authJwtPublicKeyPath: publicKeyPath,
+    };
+
+    app = await buildApp(config);
+    token = jwt.sign(
+      { tenantId: "00000000-0000-0000-0000-000000000001", roles: ["admin"] },
+      privateKey,
+      { algorithm: "RS256", subject: "00000000-0000-0000-0000-000000000002", expiresIn: "1h" },
+    );
+  });
+
+  afterAll(async () => {
+    await app.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns projected metadata without leaking the internal Zod schema", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/metadata/entities/crm.customers",
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<{ data: Record<string, unknown> }>();
+    expect(body.data.name).toBe("crm.customers");
+    expect(body.data).not.toHaveProperty("schema");
+    expect(body.data).not.toHaveProperty("tableName");
+    expect(body.data).not.toHaveProperty("permissions");
+  });
+
+  it("returns a structured 404 for an unknown entity", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/metadata/entities/does.not.exist",
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(404);
+    const body = response.json<{
+      error: { code: string; message: string; requestId: string; traceId: string };
+    }>();
+    expect(body.error.code).toBe("entity_not_found");
+    expect(body.error.message).toBe("Entity not found.");
+    expect(typeof body.error.requestId).toBe("string");
+    expect(typeof body.error.traceId).toBe("string");
+  });
+});
+
 // This suite exercises a real HTTP POST -> CrudService.create -> Postgres insert
 // round trip, so (unlike the suite above) it needs a live database and is
 // skipped without one. It's a regression test for a bug where Fastify's AJV

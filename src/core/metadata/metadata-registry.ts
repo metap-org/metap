@@ -15,13 +15,22 @@ export class MetadataRegistry {
     return this.entities.get(name);
   }
 
+  getEntityMetadata(name: string) {
+    const entity = this.entities.get(name);
+    return entity ? this.toMetadata(entity) : undefined;
+  }
+
   listEntities() {
-    return [...this.entities.values()].map((entity) => ({
+    return [...this.entities.values()].map((entity) => this.toMetadata(entity));
+  }
+
+  private toMetadata(entity: EntityDefinition) {
+    return {
       name: entity.name,
       label: entity.label,
       fields: entity.fields,
       listViews: entity.listViews,
       workflow: entity.workflow,
-    }));
+    };
   }
 }
