@@ -1,6 +1,23 @@
 # Roadmap
 
+## Current Status (updated 2026-07-31)
+
+| Phase | Status |
+|---|---|
+| 0. Skeleton | Done |
+| 1. Production-shaped Platform Kernel | Done |
+| 2. Metadata Compiler | Not started |
+| 3. Permission Engine | Not started |
+| 4. Query Planner V1 | Not started |
+| 5. Workflow Engine V1 | Done |
+| 6. Frontend Core | Partial |
+| 7. Module Migration Strategy | Not started |
+| 8. Hardening | Not started |
+| 9. Multi-Service Evolution | Trigger-based (no trigger fired yet) |
+
 ## Phase 0: Skeleton
+
+**Status: Done.**
 
 Current scaffold:
 
@@ -17,6 +34,8 @@ Current scaffold:
 - sample `crm.customers` entity
 
 ## Phase 1: Production-shaped Platform Kernel
+
+**Status: Done.** Auth middleware, `RequestContext` (`tenantId`/`userId`/`roles`/`functionId`), structured error responses with request/trace id, tenant scope enforcement, the outbox publisher worker, and CRUD/query service tests are all in place. `defaultContext()` has been fully replaced by real JWT-derived context — no code in `src/` still references it. One deliberate deviation: no separate `TransactionManager`/`BaseRepository` classes were built — DB transactions are handled inline via Drizzle's `db.client.transaction()`, which has been sufficient so far (YAGNI over premature abstraction).
 
 Goals:
 
@@ -41,6 +60,8 @@ Deliverables:
 
 ## Phase 2: Metadata Compiler
 
+**Status: Not started.** `GET /metadata/entities` and `/metadata/entities/:entity` now return a hand-written safe projection (`MetadataRegistry.toMetadata`) instead of leaking the raw `EntityDefinition` (Zod `schema`, transition `guard` functions) — but that's a manual patch, not a real compiler. No `MetadataCompiler`, startup validation, OpenAPI generation, or metadata version/hash yet.
+
 Goals:
 
 - Validate entity definitions at startup.
@@ -62,6 +83,8 @@ Deliverables:
 
 ## Phase 3: Permission Engine
 
+**Status: Not started.** `PermissionService` still only does the Phase 0 scaffold's entity-level RBAC (per-action role allow-lists, `admin` bypasses everything). No field-level or record-level permission, ABAC, policy simulator, or permission snapshot cache.
+
 Goals:
 
 - Implement RBAC + ABAC.
@@ -80,6 +103,8 @@ Deliverables:
 - policy tests
 
 ## Phase 4: Query Planner V1
+
+**Status: Not started.** `QueryPlanner` still only enforces the Phase 0 baseline invariants (tenant scope, metadata-constrained filter/sort fields, a max limit). No keyset pagination, full-text search strategy, generated-column/index strategy, or report query boundary.
 
 Goals:
 
@@ -100,6 +125,8 @@ Deliverables:
 
 ## Phase 5: Workflow Engine V1
 
+**Status: Done.** Atomic transition, optimistic locking, guard conditions (TypeScript predicates on `WorkflowTransition`), an append-only `workflow_events` audit log, and outbox side effects are implemented via `WorkflowEngine` + `CrudService.transition`, exposed at `POST /api/:entity/:id/transitions/:action`. See `docs/superpowers/specs/2026-07-31-workflow-engine-v1-design.md`. One scoped-down deliverable: "Notification integration" shipped as a stub outbox topic (`<entity>.workflow.transitioned`) only — no notification consumer exists yet, since there's no notification service to build one against.
+
 Goals:
 
 - Atomic transition.
@@ -117,6 +144,8 @@ Deliverables:
 - workflow tests
 
 ## Phase 6: Frontend Core
+
+**Status: Partial.** React + TypeScript app shell, TanStack Query API client (`web/src/platform/api`), the metadata client, and `GeneratedList` are done. `GeneratedForm`, `WorkflowActionBar`, a dedicated `FieldRenderer`, permission-aware UI state, and table virtualization are not yet built.
 
 Goals:
 
@@ -139,6 +168,8 @@ Deliverables:
 
 ## Phase 7: Module Migration Strategy
 
+**Status: Not started.**
+
 Goals:
 
 - Port one simple master-data module.
@@ -154,6 +185,8 @@ Suggested order:
 4. Accounting journal/report.
 
 ## Phase 8: Hardening
+
+**Status: Not started.**
 
 Goals:
 

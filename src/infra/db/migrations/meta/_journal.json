@@ -8,6 +8,13 @@
       "when": 1785166299984,
       "tag": "0000_green_jean_grey",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785509582427,
+      "tag": "0001_panoramic_firestar",
+      "breakpoints": true
     }
   ]
 }

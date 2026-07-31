@@ -61,4 +61,27 @@ export const outboxEvents = pgTable(
   }),
 );
 
+export const workflowEvents = pgTable(
+  "workflow_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id").notNull(),
+    entity: varchar("entity", { length: 120 }).notNull(),
+    recordId: uuid("record_id").notNull(),
+    action: varchar("action", { length: 80 }).notNull(),
+    fromState: varchar("from_state", { length: 80 }).notNull(),
+    toState: varchar("to_state", { length: 80 }).notNull(),
+    actor: uuid("actor"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tenantEntityRecordIdx: index("workflow_events_tenant_entity_record_idx").on(
+      table.tenantId,
+      table.entity,
+      table.recordId,
+      table.createdAt,
+    ),
+  }),
+);
+
 export const recordRelations = relations(records, () => ({}));

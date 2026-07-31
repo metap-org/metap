@@ -23,6 +23,16 @@ const UpdateBodySchema = z.object({
 
 const UpdateParamsSchema = z.object({ entity: z.string(), id: z.string().uuid() });
 
+const TransitionBodySchema = z.object({
+  version: z.number().int().positive(),
+});
+
+const TransitionParamsSchema = z.object({
+  entity: z.string(),
+  id: z.string().uuid(),
+  action: z.string(),
+});
+
 export function registerRecordRoutes(app: FastifyInstance, container: AppContainer) {
   app.get<{ Params: { entity: string }; Querystring: Record<string, unknown> }>(
     "/api/:entity",
@@ -94,6 +104,36 @@ export function registerRecordRoutes(app: FastifyInstance, container: AppContain
         params.id,
         body.version,
         body.data,
+        request.context,
+      );
+
+      if (!result.ok) {
+        return sendServiceError(request, reply, result);
+      }
+
+      return { data: result.data };
+    },
+  );
+
+  app.post<{
+    Params: { entity: string; id: string; action: string };
+    Body: z.infer<typeof TransitionBodySchema>;
+  }>(
+    "/api/:entity/:id/transitions/:action",
+    {
+      schema: {
+        params: zodToJsonSchema(TransitionParamsSchema),
+        body: zodToJsonSchema(TransitionBodySchema),
+      },
+    },
+    async (request, reply) => {
+      const params = TransitionParamsSchema.parse(request.params);
+      const body = TransitionBodySchema.parse(request.body);
+      const result = await container.crud.transition(
+        params.entity,
+        params.id,
+        params.action,
+        body.version,
         request.context,
       );
 

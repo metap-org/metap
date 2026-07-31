@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { RequestContext } from "../permission/permission-service";
 
 export type FieldKind =
   | "id"
@@ -39,6 +40,7 @@ export type WorkflowTransition = {
   from: string;
   to: string;
   label: string;
+  guard?: (data: Record<string, unknown>, context: RequestContext) => true | string;
 };
 
 export type EntityWorkflow = {

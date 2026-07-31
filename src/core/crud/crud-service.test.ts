@@ -262,3 +262,223 @@ describe("CrudService.update (live DB)", () => {
     }
   });
 });
+
+describe("CrudService.transition (live DB)", () => {
+  let container: AppContainer;
+  let tmpDir: string;
+  let pgClient: Client;
+  let dbAvailable = true;
+
+  const context: RequestContext = {
+    tenantId: "00000000-0000-0000-0000-000000000030",
+    userId: "00000000-0000-0000-0000-000000000031",
+    roles: ["admin"],
+  };
+
+  beforeAll(async () => {
+    const { publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+
+    tmpDir = mkdtempSync(path.join(tmpdir(), "metap-crud-transition-test-"));
+    const publicKeyPath = path.join(tmpDir, "public.pem");
+    writeFileSync(publicKeyPath, publicKey);
+
+    const config: AppConfig = {
+      nodeEnv: "test",
+      host: "0.0.0.0",
+      port: 3000,
+      databaseUrl,
+      rabbitmqUrl,
+      corsOrigins: [],
+      authJwtPublicKeyPath: publicKeyPath,
+    };
+
+    container = createContainer(config);
+
+    pgClient = new Client({ connectionString: databaseUrl });
+    try {
+      await pgClient.connect();
+    } catch (error) {
+      dbAvailable = false;
+      console.warn(
+        `Skipping CrudService.transition live-DB tests: could not connect to ${databaseUrl}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  });
+
+  afterAll(async () => {
+    if (dbAvailable) {
+      await pgClient.end();
+    }
+    await container.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function cleanup(recordId: string) {
+    await pgClient.query("DELETE FROM workflow_events WHERE record_id = $1", [recordId]);
+    await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [recordId]);
+    await pgClient.query("DELETE FROM records WHERE id = $1", [recordId]);
+  }
+
+  it("executes a valid transition: updates state/status/version, logs the event, emits the outbox event", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "T001", name: "Acme", email: "acme@example.com" },
+      context,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    try {
+      const result = await container.crud.transition(
+        "crm.customers",
+        created.data.id,
+        "activate",
+        created.data.version,
+        context,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.version).toBe(created.data.version + 1);
+        expect(result.data.status).toBe("active");
+        expect((result.data.data as { status?: string }).status).toBe("active");
+      }
+
+      const events = await pgClient.query<{ action: string; from_state: string; to_state: string }>(
+        "SELECT action, from_state, to_state FROM workflow_events WHERE record_id = $1",
+        [created.data.id],
+      );
+      expect(events.rows).toEqual([
+        { action: "activate", from_state: "draft", to_state: "active" },
+      ]);
+
+      const outboxRows = await pgClient.query<{ topic: string }>(
+        "SELECT topic FROM outbox_events WHERE aggregate_id = $1 AND topic = $2",
+        [created.data.id, "crm.customers.workflow.transitioned"],
+      );
+      expect(outboxRows.rows).toHaveLength(1);
+    } finally {
+      await cleanup(created.data.id);
+    }
+  });
+
+  it("rejects a transition that is not valid from the current state", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "T002", name: "Beta", email: "beta@example.com" },
+      context,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    try {
+      const result = await container.crud.transition(
+        "crm.customers",
+        created.data.id,
+        "block",
+        created.data.version,
+        context,
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.status).toBe(409);
+        expect(result.error).toBe("invalid_transition");
+      }
+    } finally {
+      await cleanup(created.data.id);
+    }
+  });
+
+  it("rejects a transition blocked by a guard and surfaces the guard's reason", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "T003", name: "Gamma" },
+      context,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    try {
+      const result = await container.crud.transition(
+        "crm.customers",
+        created.data.id,
+        "activate",
+        created.data.version,
+        context,
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.status).toBe(422);
+        expect(result.error).toBe("guard_failed");
+        expect(result.message).toBe("Email is required to activate a customer.");
+      }
+    } finally {
+      await cleanup(created.data.id);
+    }
+  });
+
+  it("rejects a transition with a stale version", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "T004", name: "Delta", email: "delta@example.com" },
+      context,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    try {
+      const bumped = await container.crud.update(
+        "crm.customers",
+        created.data.id,
+        created.data.version,
+        { name: "Delta Updated" },
+        context,
+      );
+      expect(bumped.ok).toBe(true);
+
+      const stale = await container.crud.transition(
+        "crm.customers",
+        created.data.id,
+        "activate",
+        created.data.version,
+        context,
+      );
+
+      expect(stale.ok).toBe(false);
+      if (!stale.ok) {
+        expect(stale.status).toBe(409);
+        expect(stale.error).toBe("version_conflict");
+      }
+    } finally {
+      await cleanup(created.data.id);
+    }
+  });
+});

@@ -58,7 +58,16 @@ export const customerEntity: EntityDefinition<typeof CustomerSchema> = {
     initialState: "draft",
     terminalStates: ["blocked"],
     transitions: [
-      { action: "activate", from: "draft", to: "active", label: "Activate" },
+      {
+        action: "activate",
+        from: "draft",
+        to: "active",
+        label: "Activate",
+        guard: (data) =>
+          typeof data.email === "string" && data.email.length > 0
+            ? true
+            : "Email is required to activate a customer.",
+      },
       { action: "block", from: "active", to: "blocked", label: "Block" },
     ],
   },

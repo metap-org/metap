@@ -72,6 +72,9 @@ const SERVICE_ERROR_MESSAGES: Record<string, string> = {
   insert_failed: "Failed to create the record.",
   record_not_found: "Record not found.",
   version_conflict: "The record was modified by someone else. Reload and try again.",
+  no_workflow: "This entity has no workflow.",
+  invalid_transition: "This transition is not valid from the record's current state.",
+  guard_failed: "This transition is not allowed.",
 };
 
 export function sendServiceError(
@@ -79,6 +82,6 @@ export function sendServiceError(
   reply: FastifyReply,
   result: Extract<ServiceResult<unknown>, { ok: false }>,
 ) {
-  const message = SERVICE_ERROR_MESSAGES[result.error] ?? result.error;
+  const message = result.message ?? SERVICE_ERROR_MESSAGES[result.error] ?? result.error;
   return reply.code(result.status).send(errorBody(request, result.error, message));
 }

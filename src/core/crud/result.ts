@@ -8,4 +8,5 @@ export type ServiceResult<T> =
       ok: false;
       status: number;
       error: string;
+      message?: string;
     };
