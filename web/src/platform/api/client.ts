@@ -1,0 +1,47 @@
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+type ErrorBody = {
+  error: {
+    code: string;
+    message: string;
+    requestId: string;
+    traceId: string;
+  };
+};
+
+export async function apiFetch<T>(
+  path: string,
+  token: string | null,
+  init?: RequestInit,
+): Promise<T> {
+  const response = await fetch(path, {
+    ...init,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...init?.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as ErrorBody | null;
+
+    if (body?.error) {
+      throw new ApiError(response.status, body.error.code, body.error.message);
+    }
+
+    throw new ApiError(response.status, "unknown_error", response.statusText);
+  }
+
+  return (await response.json()) as T;
+}

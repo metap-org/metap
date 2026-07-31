@@ -71,3 +71,9 @@ From `docs/architecture.md`, still true of the current code and worth enforcing 
 - Frontend/client query input must not map directly to SQL operators — it goes through `QueryPlanner`, constrained by entity metadata.
 - Workflow side effects are emitted through the outbox, never published to RabbitMQ directly from a service.
 - Every business route assumes tenant scope and (eventually) auth; don't build features that assume a single-tenant world even though `defaultContext()` hardcodes one today.
+
+## Frontend (scaffold)
+
+`web/` is a separate Vite + React + TypeScript package (own `package.json`, not a pnpm workspace member) — install and run it independently: `cd web && pnpm install && pnpm dev` (serves on `http://localhost:5173`, proxying `/api`, `/metadata`, `/health` to the backend on port 3000). It's a temporary dev harness, not a real app: `web/src/platform/` holds the reusable pieces (api-client, metadata-client, auth context) a future downstream project would import; `web/src/demo/` holds throwaway demo pages that exercise them.
+
+There's no real login yet — the backend is verify-only. Run `pnpm mint-token` (repo root, requires `pnpm auth:dev-keys` to have been run once) to mint a JWT, then paste it into the `/dev-login` screen the frontend redirects to when there's no token. The token lives only in memory (React state) and is lost on refresh — that's deliberate, not a bug.
