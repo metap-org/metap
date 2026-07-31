@@ -18,9 +18,12 @@ type SortState = { field: string; descending: boolean } | null;
 
 export function GeneratedList({ entityName }: { entityName: string }) {
   const { data: entity, isLoading: entityLoading, error: entityError } = useEntity(entityName);
+  // Text filters are debounced (wait for the user to stop typing before refetching).
   const [filterInputs, setFilterInputs] = useState<Record<string, string>>({});
+  // Enum filters come from a Select, not free text, so they refetch immediately on change.
+  const [enumFilters, setEnumFilters] = useState<Record<string, string>>({});
   const [sort, setSort] = useState<SortState>(null);
-  const [debouncedFilters] = useDebouncedValue(filterInputs, 400);
+  const [debouncedTextFilters] = useDebouncedValue(filterInputs, 400);
 
   const listView = entity?.listViews[0];
   const fieldsByName = useMemo(
@@ -30,13 +33,18 @@ export function GeneratedList({ entityName }: { entityName: string }) {
 
   const activeFilters = useMemo(() => {
     const result: Record<string, string> = {};
-    for (const [key, value] of Object.entries(debouncedFilters)) {
+    for (const [key, value] of Object.entries(debouncedTextFilters)) {
+      if (value.trim().length > 0) {
+        result[key] = value.trim();
+      }
+    }
+    for (const [key, value] of Object.entries(enumFilters)) {
       if (value.trim().length > 0) {
         result[key] = value.trim();
       }
     }
     return result;
-  }, [debouncedFilters]);
+  }, [debouncedTextFilters, enumFilters]);
 
   const queryParams = useMemo(() => {
     const params = new URLSearchParams();
@@ -58,6 +66,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
     ["records", entityName, sort, activeFilters],
     `/api/${entityName}?${queryParams}`,
     (response) => response.data,
+    Boolean(entity && listView),
   );
 
   if (entityLoading) {
@@ -134,9 +143,9 @@ export function GeneratedList({ entityName }: { entityName: string }) {
                       placeholder="Any"
                       clearable
                       data={(field.enumValues ?? []).map((value) => ({ value, label: value }))}
-                      value={filterInputs[fieldName] ?? null}
+                      value={enumFilters[fieldName] || null}
                       onChange={(value) =>
-                        setFilterInputs((prev) => ({ ...prev, [fieldName]: value ?? "" }))
+                        setEnumFilters((prev) => ({ ...prev, [fieldName]: value ?? "" }))
                       }
                     />
                   </Table.Th>

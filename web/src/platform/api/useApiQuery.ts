@@ -7,6 +7,7 @@ export function useApiQuery<TFetched, TSelected = TFetched>(
   queryKey: QueryKey,
   path: string,
   select?: (data: TFetched) => TSelected,
+  enabled: boolean = true,
 ) {
   const { token } = useAuth();
 
@@ -14,6 +15,6 @@ export function useApiQuery<TFetched, TSelected = TFetched>(
     queryKey,
     queryFn: () => apiFetch<TFetched>(path, token),
     select,
-    enabled: token !== null,
+    enabled: token !== null && enabled,
   });
 }
