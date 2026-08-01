@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { AppContainer } from "../../core/container";
 import { sendServiceError } from "../error-handler";
 import type { ListInput } from "../../core/query/query-planner";
@@ -13,12 +12,12 @@ const ListQuerySchema = z.object({
 const reservedKeys = new Set(Object.keys(ListQuerySchema.shape));
 
 const RecordBodySchema = z.object({
-  data: z.record(z.unknown()),
+  data: z.record(z.string(), z.unknown()),
 });
 
 const UpdateBodySchema = z.object({
   version: z.number().int().positive(),
-  data: z.record(z.unknown()),
+  data: z.record(z.string(), z.unknown()),
 });
 
 const UpdateParamsSchema = z.object({ entity: z.string(), id: z.string().uuid() });
@@ -70,7 +69,7 @@ export function registerRecordRoutes(app: FastifyInstance, container: AppContain
     "/api/:entity",
     {
       schema: {
-        body: zodToJsonSchema(RecordBodySchema),
+        body: z.toJSONSchema(RecordBodySchema, { target: "draft-7" }),
       },
     },
     async (request, reply) => {
@@ -92,8 +91,8 @@ export function registerRecordRoutes(app: FastifyInstance, container: AppContain
     "/api/:entity/:id",
     {
       schema: {
-        params: zodToJsonSchema(UpdateParamsSchema),
-        body: zodToJsonSchema(UpdateBodySchema),
+        params: z.toJSONSchema(UpdateParamsSchema, { target: "draft-7" }),
+        body: z.toJSONSchema(UpdateBodySchema, { target: "draft-7" }),
       },
     },
     async (request, reply) => {
@@ -122,8 +121,8 @@ export function registerRecordRoutes(app: FastifyInstance, container: AppContain
     "/api/:entity/:id/transitions/:action",
     {
       schema: {
-        params: zodToJsonSchema(TransitionParamsSchema),
-        body: zodToJsonSchema(TransitionBodySchema),
+        params: z.toJSONSchema(TransitionParamsSchema, { target: "draft-7" }),
+        body: z.toJSONSchema(TransitionBodySchema, { target: "draft-7" }),
       },
     },
     async (request, reply) => {
