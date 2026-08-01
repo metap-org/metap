@@ -43,6 +43,7 @@ export async function buildApp(config: AppConfig) {
   const container = createContainer(config);
   registerEntities(container.metadata);
   await container.metadataDrift.check(container.metadata.listEntities(), app.log);
+  await container.indexReconciler.reconcile(container.metadata.listEntities(), app.log);
 
   registerHealthRoutes(app, container);
 

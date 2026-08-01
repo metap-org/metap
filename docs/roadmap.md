@@ -8,7 +8,7 @@
 | 1. Production-shaped Platform Kernel | Done |
 | 2. Metadata Compiler | Done |
 | 3. Permission Engine | Done |
-| 4. Query Planner V1 | Not started |
+| 4. Query Planner V1 | Done |
 | 5. Workflow Engine V1 | Done |
 | 6. Frontend Core | Partial |
 | 7. Module Migration Strategy | Not started |
@@ -123,15 +123,25 @@ making role assignment itself dynamic:
 Known deviations/gaps, deliberately deferred rather than silently dropped:
 - Record-level read enforcement only runs through `list()` — there's no
   single-record `GET /api/:entity/:id` endpoint yet for it to cover.
-- Two confirmed bugs found during manual E2E verification, intentionally left
-  unfixed pending their own bugfix plan: (1) `recordPolicyWhereClause` has no
-  admin bypass, so a non-admin-only record-level read policy incorrectly
-  empties an admin's `list()` results; (2) `filterReadableFields` only masks
-  the `data` JSONB blob, not the top-level `code`/`status` columns that
-  mirror fields inside it, so field-level masking on `status`/`code` is
-  incomplete. (Fixed: a third, minor issue where `POST /admin/policies`
-  didn't validate that `field`+`action` combinations were coherent — now
-  rejected with 400 via a schema refinement.)
+
+Bugfixed since (2026-08-01), both found during Phase 3's manual E2E
+verification and confirmed with regression tests in
+`src/core/crud/crud-service.test.ts`:
+- `recordPolicyWhereClause` (`src/core/query/condition-to-sql.ts`) had no
+  admin bypass, so a non-admin-scoped record-level read policy incorrectly
+  emptied an admin's `list()` results. Fixed by bypassing policy evaluation
+  entirely when `context.roles` includes `admin`, matching every other
+  permission-decision entry point (`PermissionSnapshot.filterReadableFields`/
+  `assertWritableFields`/`canUpdateRecordCondition`).
+- `filterReadableFields` only masked the `data` JSONB blob, not the
+  top-level `code`/`status` columns on `records` that mirror fields inside
+  it (`src/infra/db/schema.ts`), so field-level masking of `code`/`status`
+  was incomplete. Fixed with a new `CrudService.maskRecordForRead` helper
+  that also nulls out `code`/`status` when the mirrored field
+  (`code`, or `entity.workflow.stateField` for `status`) was masked out of
+  `data`. (A third, minor issue was fixed earlier in the same diff:
+  `POST /admin/policies` didn't validate that `field`+`action` combinations
+  were coherent — now rejected with 400 via a schema refinement.)
 
 Goals:
 
@@ -152,24 +162,55 @@ Deliverables:
 
 ## Phase 4: Query Planner V1
 
-**Status: Not started.** `QueryPlanner` still only enforces the Phase 0 baseline invariants (tenant scope, metadata-constrained filter/sort fields, a max limit), plus one addition that landed as part of Phase 3 rather than this phase: `planList` now ANDs in a record-level policy `WHERE` clause (`condition-to-sql.ts`) when read policies apply. No keyset pagination, full-text search strategy, generated-column/index strategy, or report query boundary.
+**Status: Done**, shipped as 3 sub-projects (specs under
+`docs/superpowers/specs/2026-08-0{1,2,2}-*-design.md`, plans under
+`docs/superpowers/plans/` with matching names), in this order:
 
-Goals:
+1. **Hot field index strategy** — `EntityField.indexed`/`unique` (previously
+   declared but unread) now drive `IndexReconciler`
+   (`src/core/metadata/index-reconciler.ts`): per-entity partial expression
+   indexes on `records`, reconciled automatically at boot (`CREATE INDEX
+   CONCURRENTLY IF NOT EXISTS`, best-effort, never blocks startup) and via a
+   manual `pnpm index:reconcile` script. Caught and fixed a real bug during
+   implementation: the indexed expression has to be
+   `jsonb_extract_path_text(data, field)`, byte-for-byte matching
+   `QueryPlanner`'s own filter/sort expression — an index built on the
+   semantically-equivalent `data->>field` form is silently never selected by
+   Postgres's planner.
+2. **Full-text search strategy** — new opt-in `EntityField.searchMode: "fts"`
+   (default `"substring"`, i.e. today's ILIKE behavior unchanged) matched via
+   `to_tsvector('simple', ...) @@ plainto_tsquery('simple', ...)`, backed by a
+   GIN index (`IndexReconciler`'s third index kind, same expression-matching
+   discipline as above).
+3. **Keyset pagination** — opaque base64 cursor (`src/core/query/cursor.ts`)
+   validated against the *resolved* sort (post-fallback); `QueryPlanner`
+   builds the keyset `WHERE` condition as an explicit two-clause OR (not a
+   single row-value comparison) because the existing `orderBy` tiebreaker
+   (`id ASC`) doesn't flip with the primary field's direction.
+   `CrudService.list` executes with a `limit + 1` lookahead to produce
+   `page.nextCursor: string | null`; a cursor for the wrong sort, or a
+   malformed one, is a clean `400 invalid_cursor`, never a 500.
 
-- Support metadata-defined filters.
-- Support safe sort fields.
-- Add keyset pagination.
-- Add full-text search strategy.
-- Add generated column/index strategy for hot JSONB fields.
-- Add report query boundary.
+**Report query boundary — deferred, trigger-based** (not built), matching
+Phase 9's style rather than this phase's other three items: there is no
+concrete gap driving it yet — no reporting/analytics UI or consumer exists,
+and the system has exactly one entity (`crm.customers`). Building a
+`ReportService`/report-specific query path now would be infrastructure for a
+workload that doesn't exist, contradicting this project's own trigger-based
+evolution philosophy (see Phase 9, and `docs/architecture.md`'s Data Model
+Strategy: "none of it should be built ahead of its trigger"). Trigger: a
+concrete export/aggregation need shows up (a real UI or consumer asks for
+it), or an OLTP-path query is measurably slowed by report-shaped access
+patterns.
 
-Deliverables:
+Original goals, for reference:
 
-- `ListViewDefinition`
-- `FilterDefinition`
-- `CursorPagination`
-- `QueryExplain`
-- index validation docs
+- Support metadata-defined filters. (Phase 1/pre-existing.)
+- Support safe sort fields. (Phase 1/pre-existing.)
+- Add keyset pagination. (Done, sub-project 3 above.)
+- Add full-text search strategy. (Done, sub-project 2 above.)
+- Add generated column/index strategy for hot JSONB fields. (Done, sub-project 1 above.)
+- Add report query boundary. (Deferred, see above.)
 
 ## Phase 5: Workflow Engine V1
 

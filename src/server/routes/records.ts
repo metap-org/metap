@@ -7,6 +7,7 @@ import type { ListInput } from "../../core/query/query-planner";
 const ListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(30),
   sort: z.string().optional(),
+  cursor: z.string().optional(),
 });
 
 const reservedKeys = new Set(Object.keys(ListQuerySchema.shape));
@@ -53,6 +54,10 @@ export function registerRecordRoutes(app: FastifyInstance, container: AppContain
 
       if (query.sort !== undefined) {
         listInput.sort = query.sort;
+      }
+
+      if (query.cursor !== undefined) {
+        listInput.cursor = query.cursor;
       }
 
       const result = await container.crud.list(request.params.entity, listInput, request.context);

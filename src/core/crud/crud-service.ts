@@ -2,10 +2,13 @@ import { and, eq, sql } from "drizzle-orm";
 import type { z } from "zod";
 import type { Database } from "../../infra/db/client";
 import { records } from "../../infra/db/schema";
+import type { EntityDefinition } from "../metadata/entity";
 import type { MetadataRegistry } from "../metadata/metadata-registry";
 import type { OutboxService } from "../outbox/outbox-service";
+import type { PermissionSnapshot } from "../permission/permission-snapshot";
 import type { PermissionService, RequestContext } from "../permission/permission-service";
-import type { ListInput, QueryPlanner } from "../query/query-planner";
+import { encodeCursor } from "../query/cursor";
+import { InvalidCursorError, type ListInput, type QueryPlanner } from "../query/query-planner";
 import type { WorkflowEngine } from "../workflow/workflow-engine";
 import type { ServiceResult } from "./result";
 
@@ -30,6 +33,44 @@ export class CrudService {
     private readonly outbox: OutboxService,
   ) {}
 
+  // `records.code`/`records.status` are physical columns that mirror
+  // `data.code`/`data[entity.workflow.stateField]` (see schema.ts) purely for
+  // indexing — filterReadableFields only masks the `data` blob, so callers
+  // must mask these mirrored top-level columns the same way or a denied
+  // field's value still leaks through them.
+  private maskRecordForRead<T extends { code: string | null; status: string | null; data: unknown }>(
+    entity: EntityDefinition,
+    context: RequestContext,
+    snapshot: PermissionSnapshot,
+    row: T,
+  ): T {
+    const filteredData = snapshot.filterReadableFields(context, row.data as Record<string, unknown>);
+    const stateField = entity.workflow?.stateField;
+
+    return {
+      ...row,
+      code: "code" in filteredData ? row.code : null,
+      status: stateField && !(stateField in filteredData) ? null : row.status,
+      data: filteredData,
+    };
+  }
+
+  private sortFieldValue(row: RecordDto, field: string): string {
+    if (field === "createdAt" || field === "updatedAt") {
+      return row[field].toISOString();
+    }
+
+    const value = (row.data as Record<string, unknown>)[field];
+
+    if (typeof value === "string") {
+      return value;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    return value === null || value === undefined ? "" : JSON.stringify(value);
+  }
+
   async list(
     entityName: string,
     input: ListInput,
@@ -50,24 +91,46 @@ export class CrudService {
     const snapshot = await this.permissions.loadSnapshot(context.tenantId, entity.name);
     const recordPolicies = snapshot.getRecordPolicies("read");
 
-    const plan = this.queryPlanner.planList(entity.name, input, context, recordPolicies);
+    let plan;
+    try {
+      plan = this.queryPlanner.planList(entity.name, input, context, recordPolicies);
+    } catch (error) {
+      if (error instanceof InvalidCursorError) {
+        return { ok: false, status: 400, error: "invalid_cursor", message: error.message };
+      }
+      throw error;
+    }
+
     const rows = await this.db.client
       .select()
       .from(records)
       .where(plan.where)
       .orderBy(...plan.orderBy)
-      .limit(plan.limit);
+      .limit(plan.limit + 1);
 
-    const data = rows.map((row) => ({
-      ...row,
-      data: snapshot.filterReadableFields(context, row.data as Record<string, unknown>),
-    }));
+    const hasMore = rows.length > plan.limit;
+    const pageRows = hasMore ? rows.slice(0, plan.limit) : rows;
+
+    const data = pageRows.map((row) => this.maskRecordForRead(entity, context, snapshot, row));
+
+    let nextCursor: string | null = null;
+    const lastRow = pageRows[pageRows.length - 1];
+
+    if (hasMore && lastRow) {
+      nextCursor = encodeCursor({
+        field: plan.resolvedSort.field,
+        value: this.sortFieldValue(lastRow, plan.resolvedSort.field),
+        id: lastRow.id,
+        dir: plan.resolvedSort.descending ? "desc" : "asc",
+      });
+    }
 
     return {
       ok: true,
       data,
       page: {
         limit: plan.limit,
+        nextCursor,
       },
     };
   }
@@ -136,10 +199,7 @@ export class CrudService {
 
     return {
       ok: true,
-      data: {
-        ...outcome.record,
-        data: snapshot.filterReadableFields(context, outcome.record.data as Record<string, unknown>),
-      },
+      data: this.maskRecordForRead(entity, context, snapshot, outcome.record),
     };
   }
 
@@ -250,10 +310,7 @@ export class CrudService {
 
     return {
       ok: true,
-      data: {
-        ...outcome.record,
-        data: snapshot.filterReadableFields(context, outcome.record.data as Record<string, unknown>),
-      },
+      data: this.maskRecordForRead(entity, context, snapshot, outcome.record),
     };
   }
 
@@ -385,10 +442,7 @@ export class CrudService {
 
     return {
       ok: true,
-      data: {
-        ...outcome.record,
-        data: snapshot.filterReadableFields(context, outcome.record.data as Record<string, unknown>),
-      },
+      data: this.maskRecordForRead(entity, context, snapshot, outcome.record),
     };
   }
 

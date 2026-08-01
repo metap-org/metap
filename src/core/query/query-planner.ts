@@ -4,18 +4,23 @@ import { records } from "../../infra/db/schema";
 import type { MetadataRegistry } from "../metadata/metadata-registry";
 import type { PermissionService, PolicyRow, RequestContext } from "../permission/permission-service";
 import { recordPolicyWhereClause } from "./condition-to-sql";
+import { decodeCursor } from "./cursor";
 
 export type ListInput = {
   limit: number;
   sort?: string;
   filters?: Record<string, string>;
+  cursor?: string;
 };
 
 export type PlannedListQuery = {
   where: SQL | undefined;
   limit: number;
   orderBy: SQL[];
+  resolvedSort: ResolvedSort;
 };
+
+export class InvalidCursorError extends Error {}
 
 type ResolvedSort = { field: string; descending: boolean };
 
@@ -87,7 +92,11 @@ export class QueryPlanner {
       const fieldExpr = fieldExpression(field);
       const fieldDef = fieldsByName.get(field);
 
-      if (fieldDef?.searchable) {
+      if (fieldDef?.searchable && fieldDef.searchMode === "fts") {
+        conditions.push(
+          sql`to_tsvector('simple', ${fieldExpr}) @@ plainto_tsquery('simple', ${value})`,
+        );
+      } else if (fieldDef?.searchable) {
         const escapedValue = value.replace(/[\\%_]/g, "\\$&");
         conditions.push(sql`${fieldExpr} ILIKE ${`%${escapedValue}%`}`);
       } else {
@@ -106,10 +115,30 @@ export class QueryPlanner {
 
     const sortExpr = fieldExpression(resolvedSort.field);
 
+    if (input.cursor !== undefined) {
+      const cursor = decodeCursor(input.cursor);
+
+      if (
+        !cursor ||
+        cursor.field !== resolvedSort.field ||
+        cursor.dir !== (resolvedSort.descending ? "desc" : "asc")
+      ) {
+        throw new InvalidCursorError("Cursor does not match the current sort");
+      }
+
+      const tiebreak = sql`(${sortExpr} = ${cursor.value} AND ${records.id} > ${cursor.id})`;
+      const cursorCondition = resolvedSort.descending
+        ? sql`((${sortExpr} < ${cursor.value}) OR ${tiebreak})`
+        : sql`((${sortExpr} > ${cursor.value}) OR ${tiebreak})`;
+
+      conditions.push(cursorCondition);
+    }
+
     return {
       where: and(...conditions),
       limit,
       orderBy: [resolvedSort.descending ? desc(sortExpr) : asc(sortExpr), asc(records.id)],
+      resolvedSort,
     };
   }
 }

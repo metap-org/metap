@@ -677,4 +677,101 @@ describe("CrudService field/record enforcement (live DB)", () => {
       await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
     }
   });
+
+  it("does not empty an admin's list() results because of a non-admin-scoped record-level read policy", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "E004", name: "Admin Visible Co" },
+      adminContext,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const policy = await container.permissions.createPolicy(
+      tenantId,
+      "crm.customers",
+      "read",
+      ["editor"],
+      { attribute: "createdBy", op: "eq", value: { fromContext: "userId" } },
+      undefined,
+      undefined,
+      "record",
+    );
+
+    try {
+      const result = await container.crud.list("crm.customers", { limit: 20 }, adminContext);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.some((record) => record.id === created.data.id)).toBe(true);
+      }
+    } finally {
+      if (policy) {
+        await container.permissions.deletePolicy(tenantId, policy.id);
+      }
+      await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [created.data.id]);
+      await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
+    }
+  });
+
+  it("masks the top-level code/status columns that mirror a field the caller cannot read", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const codePolicy = await container.permissions.createPolicy(
+      tenantId,
+      "crm.customers",
+      "read",
+      ["admin"],
+      undefined,
+      undefined,
+      "code",
+    );
+    const statusPolicy = await container.permissions.createPolicy(
+      tenantId,
+      "crm.customers",
+      "read",
+      ["admin"],
+      undefined,
+      undefined,
+      "status",
+    );
+
+    let recordId: string | undefined;
+
+    try {
+      const created = await container.crud.create(
+        "crm.customers",
+        { code: "E005", name: "Masked Mirror Co" },
+        viewerContext,
+      );
+
+      expect(created.ok).toBe(true);
+      if (created.ok) {
+        recordId = created.data.id;
+        expect((created.data.data as { code?: string }).code).toBeUndefined();
+        expect((created.data.data as { status?: string }).status).toBeUndefined();
+        expect(created.data.code).toBeNull();
+        expect(created.data.status).toBeNull();
+      }
+    } finally {
+      if (codePolicy) {
+        await container.permissions.deletePolicy(tenantId, codePolicy.id);
+      }
+      if (statusPolicy) {
+        await container.permissions.deletePolicy(tenantId, statusPolicy.id);
+      }
+      if (recordId) {
+        await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [recordId]);
+        await pgClient.query("DELETE FROM records WHERE id = $1", [recordId]);
+      }
+    }
+  });
 });

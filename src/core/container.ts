@@ -5,6 +5,7 @@ import { createDatabase } from "../infra/db/client";
 import { createRabbitPublisher } from "../infra/messaging/rabbitmq";
 import { CrudService } from "./crud/crud-service";
 import { HealthService } from "./health/health-service";
+import { IndexReconciler } from "./metadata/index-reconciler";
 import { MetadataDriftService } from "./metadata/metadata-drift";
 import { MetadataRegistry } from "./metadata/metadata-registry";
 import { OutboxService } from "./outbox/outbox-service";
@@ -30,6 +31,7 @@ export function createContainer(config: AppConfig) {
   const crud = new CrudService(db, metadata, queryPlanner, permissions, workflow, outbox);
   const health = new HealthService(db);
   const metadataDrift = new MetadataDriftService(db);
+  const indexReconciler = new IndexReconciler(db);
 
   return {
     db,
@@ -44,6 +46,7 @@ export function createContainer(config: AppConfig) {
     crud,
     health,
     metadataDrift,
+    indexReconciler,
     async close() {
       await rabbit.close();
       await db.close();

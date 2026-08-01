@@ -72,7 +72,11 @@ export function recordPolicyWhereClause(
   rows: PolicyRow[],
   context: RequestContext,
 ): SQL | undefined {
-  if (rows.length === 0) {
+  // Every other permission-decision entry point in this codebase bypasses
+  // policy evaluation for admin (see PermissionSnapshot's filterReadableFields/
+  // assertWritableFields/canUpdateRecordCondition) — this is the one that builds
+  // record-level read policies into SQL, so it needs the same bypass.
+  if (rows.length === 0 || context.roles?.includes("admin")) {
     return undefined;
   }
 
