@@ -3,9 +3,9 @@ import { createJwtVerifier } from "./auth/jwt-verifier";
 import { RoleAssignmentService } from "./auth/role-assignment-service";
 import { createDatabase } from "../infra/db/client";
 import { createRabbitPublisher } from "../infra/messaging/rabbitmq";
-import { customerEntity } from "../modules/crm/customer.entity";
 import { CrudService } from "./crud/crud-service";
 import { HealthService } from "./health/health-service";
+import { MetadataDriftService } from "./metadata/metadata-drift";
 import { MetadataRegistry } from "./metadata/metadata-registry";
 import { OutboxService } from "./outbox/outbox-service";
 import { PermissionService } from "./permission/permission-service";
@@ -18,8 +18,10 @@ export function createContainer(config: AppConfig) {
   const roleAssignments = new RoleAssignmentService(db);
   const rabbit = createRabbitPublisher(config.rabbitmqUrl);
 
+  // Entity registration is an application-layer concern, not core's — call
+  // registerEntities(container.metadata, ...) after createContainer() returns.
+  // See src/modules/registry.ts.
   const metadata = new MetadataRegistry();
-  metadata.register(customerEntity);
 
   const permissions = new PermissionService(db);
   const queryPlanner = new QueryPlanner(metadata, permissions);
@@ -27,6 +29,7 @@ export function createContainer(config: AppConfig) {
   const workflow = new WorkflowEngine(outbox);
   const crud = new CrudService(db, metadata, queryPlanner, permissions, workflow, outbox);
   const health = new HealthService(db);
+  const metadataDrift = new MetadataDriftService(db);
 
   return {
     db,
@@ -40,6 +43,7 @@ export function createContainer(config: AppConfig) {
     workflow,
     crud,
     health,
+    metadataDrift,
     async close() {
       await rabbit.close();
       await db.close();

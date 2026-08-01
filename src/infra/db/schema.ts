@@ -128,4 +128,10 @@ export const policies = pgTable(
   }),
 );
 
+export const metadataVersions = pgTable("metadata_versions", {
+  entityName: varchar("entity_name", { length: 120 }).primaryKey(),
+  hash: varchar("hash", { length: 64 }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const recordRelations = relations(records, () => ({}));

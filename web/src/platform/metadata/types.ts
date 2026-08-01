@@ -23,4 +23,5 @@ export type EntitySummary = {
   fields: readonly EntityField[];
   listViews: readonly EntityListView[];
   workflow?: unknown;
+  version?: string;
 };

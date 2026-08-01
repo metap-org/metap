@@ -1,4 +1,14 @@
-import type { EntityDefinition } from "./entity";
+import type { EntityDefinition, EntityField, EntityListView, EntityWorkflow } from "./entity";
+import { MetadataCompiler, MetadataValidationError } from "./metadata-compiler";
+
+export type EntitySummary = {
+  name: string;
+  label: string;
+  fields: readonly EntityField[];
+  listViews: readonly EntityListView[];
+  workflow?: EntityWorkflow | undefined;
+  version: string;
+};
 
 export class MetadataRegistry {
   private readonly entities = new Map<string, EntityDefinition>();
@@ -8,6 +18,7 @@ export class MetadataRegistry {
       throw new Error(`Entity already registered: ${entity.name}`);
     }
 
+    MetadataCompiler.validate(entity);
     this.entities.set(entity.name, entity);
   }
 
@@ -15,22 +26,37 @@ export class MetadataRegistry {
     return this.entities.get(name);
   }
 
+  validateReferences(): void {
+    for (const entity of this.entities.values()) {
+      const issues: string[] = [];
+      for (const field of entity.fields) {
+        if (field.kind === "reference" && field.refEntity && !this.entities.has(field.refEntity)) {
+          issues.push(`field "${field.name}" references unknown entity "${field.refEntity}"`);
+        }
+      }
+      if (issues.length > 0) {
+        throw new MetadataValidationError(entity.name, issues);
+      }
+    }
+  }
+
   getEntityMetadata(name: string) {
     const entity = this.entities.get(name);
     return entity ? this.toMetadata(entity) : undefined;
   }
 
-  listEntities() {
+  listEntities(): EntitySummary[] {
     return [...this.entities.values()].map((entity) => this.toMetadata(entity));
   }
 
-  private toMetadata(entity: EntityDefinition) {
+  private toMetadata(entity: EntityDefinition): EntitySummary {
     return {
       name: entity.name,
       label: entity.label,
       fields: entity.fields,
       listViews: entity.listViews,
       workflow: entity.workflow,
+      version: MetadataCompiler.hash(entity),
     };
   }
 }

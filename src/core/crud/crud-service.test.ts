@@ -6,6 +6,7 @@ import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AppContainer } from "../container";
 import { createContainer } from "../container";
+import { registerEntities } from "../../modules/registry";
 import type { RequestContext } from "../permission/permission-service";
 import type { AppConfig } from "../../server/config";
 
@@ -46,6 +47,7 @@ describe("CrudService.update (live DB)", () => {
     };
 
     container = createContainer(config);
+    registerEntities(container.metadata);
 
     pgClient = new Client({ connectionString: databaseUrl });
     try {
@@ -297,6 +299,7 @@ describe("CrudService.transition (live DB)", () => {
     };
 
     container = createContainer(config);
+    registerEntities(container.metadata);
 
     pgClient = new Client({ connectionString: databaseUrl });
     try {
@@ -528,6 +531,7 @@ describe("CrudService field/record enforcement (live DB)", () => {
     };
 
     container = createContainer(config);
+    registerEntities(container.metadata);
 
     pgClient = new Client({ connectionString: databaseUrl });
     try {

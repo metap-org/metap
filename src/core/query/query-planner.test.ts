@@ -6,6 +6,7 @@ import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AppContainer } from "../container";
 import { createContainer } from "../container";
+import { registerEntities } from "../../modules/registry";
 import type { RequestContext } from "../permission/permission-service";
 import type { AppConfig } from "../../server/config";
 
@@ -47,6 +48,7 @@ describe("QueryPlanner (via CrudService.list, live DB)", () => {
     };
 
     container = createContainer(config);
+    registerEntities(container.metadata);
 
     pgClient = new Client({ connectionString: databaseUrl });
     try {

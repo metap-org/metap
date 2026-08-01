@@ -26,14 +26,26 @@ const PolicyConditionSchema: z.ZodType<PolicyCondition> = z.lazy(() =>
   ]),
 );
 
-const CreatePolicyBodySchema = z.object({
-  entity: z.string().min(1),
-  action: z.enum(["read", "create", "update", "write"]),
-  roles: z.array(z.string()).optional(),
-  condition: PolicyConditionSchema.optional(),
-  field: z.string().optional(),
-  subject: z.enum(["context", "record"]).optional(),
-});
+const CreatePolicyBodySchema = z
+  .object({
+    entity: z.string().min(1),
+    action: z.enum(["read", "create", "update", "write"]),
+    roles: z.array(z.string()).optional(),
+    condition: PolicyConditionSchema.optional(),
+    field: z.string().optional(),
+    subject: z.enum(["context", "record"]).optional(),
+  })
+  .refine(
+    (body) =>
+      body.field
+        ? body.action === "read" || body.action === "write"
+        : body.action === "read" || body.action === "create" || body.action === "update",
+    {
+      message:
+        'A field-scoped policy requires action "read" or "write"; an entity-scoped policy (no field) requires action "read", "create", or "update".',
+      path: ["action"],
+    },
+  );
 
 const PolicyIdParamsSchema = z.object({ id: z.string().uuid() });
 const ListPoliciesQuerySchema = z.object({ entity: z.string().optional() });

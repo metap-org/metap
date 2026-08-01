@@ -310,6 +310,22 @@ describe("admin routes (live DB)", () => {
     });
   });
 
+  it("rejects a field-scoped policy with an incoherent action", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/admin/policies",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { entity: "crm.customers", action: "create", field: "phone" },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
   it("simulates a decision for a hypothetical caller via /admin/policies/explain", async (ctx) => {
     if (!dbAvailable) {
       ctx.skip();

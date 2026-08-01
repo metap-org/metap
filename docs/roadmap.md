@@ -1,19 +1,21 @@
 # Roadmap
 
-## Current Status (updated 2026-07-31)
+## Current Status (updated 2026-08-01)
 
 | Phase | Status |
 |---|---|
 | 0. Skeleton | Done |
 | 1. Production-shaped Platform Kernel | Done |
-| 2. Metadata Compiler | Not started |
-| 3. Permission Engine | Not started |
+| 2. Metadata Compiler | Done |
+| 3. Permission Engine | Done |
 | 4. Query Planner V1 | Not started |
 | 5. Workflow Engine V1 | Done |
 | 6. Frontend Core | Partial |
 | 7. Module Migration Strategy | Not started |
 | 8. Hardening | Not started |
 | 9. Multi-Service Evolution | Trigger-based (no trigger fired yet) |
+| 10. Monorepo, npm publish | Not started |
+| 11. Low-code Platform Backbone Architecture | Not started |
 
 ## Phase 0: Skeleton
 
@@ -60,7 +62,15 @@ Deliverables:
 
 ## Phase 2: Metadata Compiler
 
-**Status: Not started.** `GET /metadata/entities` and `/metadata/entities/:entity` now return a hand-written safe projection (`MetadataRegistry.toMetadata`) instead of leaking the raw `EntityDefinition` (Zod `schema`, transition `guard` functions) — but that's a manual patch, not a real compiler. No `MetadataCompiler`, startup validation, OpenAPI generation, or metadata version/hash yet.
+**Status: Done** (spec/plan under `docs/superpowers/{specs,plans}/2026-08-01-metadata-compiler*`).
+
+- `MetadataCompiler.validate` — startup validation per entity: duplicate field names, dangling listView field/filter/defaultSort references, enum fields with no `enumValues`, malformed workflow shape, duplicate transitions. Runs inside `MetadataRegistry.register()`, so a bad entity module fails at boot, not at first request.
+- `MetadataRegistry.validateReferences()` — cross-entity check that every `reference`-kind field's `refEntity` names a registered entity; runs once after all entities are registered (deferred out of `container.ts` — see the entity-registration note below).
+- `MetadataCompiler.hash` — deterministic SHA-256 over a canonically-sorted serialization of an entity's shape (workflow transition `guard` functions excluded, since they're unrepresentable and already stripped on the wire). Exposed as `version` on `EntitySummary` (`GET /metadata/entities`) and on the frontend's `EntitySummary` type.
+- `metadata_versions` table (migration `0005_condemned_cerise.sql`) + `MetadataDriftService` — compares each entity's current hash against the last-recorded one at boot and warns (never crashes) on drift, mirroring `HealthService`'s graceful-degradation stance. Wired into the container as `container.metadataDrift`, called from `buildApp`.
+- OpenAPI generator (`openapi-generator.ts`) — exposed at `GET /metadata/openapi.json`, built only from the safe `EntitySummary` projection.
+
+Also fixed as part of this work: `createContainer` (`src/core/container.ts`) previously imported `customerEntity` directly and registered it inline — a `core` file reaching into `modules`, which the layering (`modules -> metadata definitions`, not the reverse) doesn't allow. Entity registration is now an application-layer concern: `createContainer` returns an empty `MetadataRegistry`, and `registerEntities()` (`src/modules/registry.ts`) — the one place that knows the deployment's entity list — registers them and calls `validateReferences()` afterward. Callers (`buildApp`, the outbox worker, tests) call `registerEntities(container.metadata)` right after `createContainer(config)`.
 
 Goals:
 
@@ -83,7 +93,45 @@ Deliverables:
 
 ## Phase 3: Permission Engine
 
-**Status: Not started.** `PermissionService` still only does the Phase 0 scaffold's entity-level RBAC (per-action role allow-lists, `admin` bypasses everything). No field-level or record-level permission, ABAC, policy simulator, or permission snapshot cache.
+**Status: Done**, shipped as a 4-part initiative (specs/plans under
+`docs/superpowers/{specs,plans}/2026-07-31-dynamic-role-assignment*` and
+`2026-08-01-{policy-storage-rbac-abac,field-record-enforcement,policy-explainer-snapshot-cache}*`),
+going further than the roadmap's original "modest RBAC+ABAC scaffold" by
+making role assignment itself dynamic:
+
+1. **Dynamic role assignment** — roles live in the DB per `(tenantId, userId)`,
+   granted/revoked at runtime via an admin API (`RoleAssignmentService`,
+   `src/core/auth/role-assignment-service.ts`) instead of being baked into the
+   JWT; the JWT is now a bare identity assertion. `scripts/seed-admin.mjs`
+   bootstraps the first admin outside the (admin-gated) API.
+2. **Policy storage + RBAC/ABAC evaluator** — the `policies` table (per
+   tenant) combines a role allow-list with an optional attribute condition
+   (`PolicyCondition`, `src/core/permission/policy-condition.ts`), OR-combined
+   across multiple matching policies, no deny rules.
+3. **Field-level + record-level enforcement** — `condition-to-sql.ts`
+   translates record-scoped conditions into a Drizzle `WHERE` clause wired
+   into `QueryPlanner.planList`; `PermissionService`/`PermissionSnapshot` mask
+   field-level reads and gate field-level writes, wired into every
+   `CrudService` call site (`list`/`create`/`update`/`transition`).
+4. **`PolicyExplainer` + snapshot cache** — `explain()` produces a read-only
+   trace of every policy considered and why, exposed via the admin-gated
+   `POST /admin/policies/explain` simulator; `PermissionSnapshot` batches a
+   tenant/entity's policies into one DB fetch reused across a single
+   `CrudService` call (deliberately *not* a cross-request/TTL cache — see
+   that sub-project's spec for the reasoning).
+
+Known deviations/gaps, deliberately deferred rather than silently dropped:
+- Record-level read enforcement only runs through `list()` — there's no
+  single-record `GET /api/:entity/:id` endpoint yet for it to cover.
+- Two confirmed bugs found during manual E2E verification, intentionally left
+  unfixed pending their own bugfix plan: (1) `recordPolicyWhereClause` has no
+  admin bypass, so a non-admin-only record-level read policy incorrectly
+  empties an admin's `list()` results; (2) `filterReadableFields` only masks
+  the `data` JSONB blob, not the top-level `code`/`status` columns that
+  mirror fields inside it, so field-level masking on `status`/`code` is
+  incomplete. (Fixed: a third, minor issue where `POST /admin/policies`
+  didn't validate that `field`+`action` combinations were coherent — now
+  rejected with 400 via a schema refinement.)
 
 Goals:
 
@@ -104,7 +152,7 @@ Deliverables:
 
 ## Phase 4: Query Planner V1
 
-**Status: Not started.** `QueryPlanner` still only enforces the Phase 0 baseline invariants (tenant scope, metadata-constrained filter/sort fields, a max limit). No keyset pagination, full-text search strategy, generated-column/index strategy, or report query boundary.
+**Status: Not started.** `QueryPlanner` still only enforces the Phase 0 baseline invariants (tenant scope, metadata-constrained filter/sort fields, a max limit), plus one addition that landed as part of Phase 3 rather than this phase: `planList` now ANDs in a record-level policy `WHERE` clause (`condition-to-sql.ts`) when read policies apply. No keyset pagination, full-text search strategy, generated-column/index strategy, or report query boundary.
 
 Goals:
 
@@ -206,11 +254,11 @@ Unlike Phases 1-8, this phase is trigger-based, not sequential — it starts whe
 
 Triggers and the transition each one unlocks:
 
-- **A second phân hệ (CRM, sales, inventory, accounting, ...) actually needs to be built as its own deployable unit** → split the repo into a pnpm workspace: `packages/core` (today's `src/core` + shared `src/infra`) and one `apps/<phân-hệ>` per service, each a thin Fastify app importing `packages/core`.
+- **A second module (CRM, sales, inventory, accounting, ...) actually needs to be built as its own deployable unit** → split the repo into a pnpm workspace: `packages/core` (today's `src/core` + shared `src/infra`) and one `apps/<module>` per service, each a thin Fastify app importing `packages/core`.
 - **A single frontend screen needs to aggregate data from ≥2 services** → build a GraphQL gateway as a BFF in front of the REST services.
 - **The repo/package split above has actually happened** → evaluate gRPC for service-to-service calls where REST's overhead matters.
 
-Until a trigger fires, its transition is not built. The one thing to do now, ahead of any trigger: keep every new entity module's name domain-namespaced (`<phân-hệ>.<entity>`, e.g. `crm.customers`) and never let `QueryPlanner`/`CrudService` join across different entities' data in SQL — both are already true today and cost nothing to keep true.
+Until a trigger fires, its transition is not built. The one thing to do now, ahead of any trigger: keep every new entity module's name domain-namespaced (`<module>.<entity>`, e.g. `crm.customers`) and never let `QueryPlanner`/`CrudService` join across different entities' data in SQL — both are already true today and cost nothing to keep true.
 
 ## Success Criteria
 
@@ -222,3 +270,25 @@ Metap is successful if a developer can:
 4. Get reliable events without manual RabbitMQ publishing.
 5. Tune a slow list view through query/index metadata.
 6. Keep security enforcement on the server.
+
+## Phase 10: Monorepo, npm publish
+
+**Status: Not started.** Split the repo into a pnpm workspace and publish `packages/core` (today's `src/core` + shared `src/infra`) as an installable npm package, so a downstream project can depend on Metap's core instead of forking it. Overlaps Phase 9's repo/package-split trigger, but is scoped separately here because "publish an npm package other people install" is a distinct, additional commitment (semver, changelog, public API surface) beyond just splitting the repo for internal multi-service use.
+
+Goals:
+
+- Split into a pnpm workspace (`packages/core`, `apps/*`).
+- Define and stabilize `packages/core`'s public API surface.
+- Set up versioning/changelog and an npm publish pipeline.
+
+## Phase 11: Low-code Platform Backbone Architecture
+
+**Status: Not started.** Define the architecture for using Metap as the backbone of a low-code platform (ERP, CRM, and beyond — see `docs/superpowers/specs` project-vision context), not just a single-purpose ERP core. This is a design/architecture phase, not an implementation one — its output is a spec, to be broken into further implementation phases once written.
+
+Goals:
+
+- Define what "low-code" means concretely for Metap (who configures entities/workflows — code, admin UI, or both; what's user-editable at runtime vs. deploy-time).
+- Reconcile this with the metadata-driven design already in place (Phases 0-6) and the multi-service split (Phases 9-10).
+- Produce a design spec under `docs/superpowers/specs/` before any implementation plan is written.
+
+

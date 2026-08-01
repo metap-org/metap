@@ -1,9 +1,11 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { createContainer } from "../core/container";
+import { registerEntities } from "../modules/registry";
 import { loadConfig } from "../server/config";
 
 const config = loadConfig();
 const container = createContainer(config);
+registerEntities(container.metadata);
 
 let closing = false;
 

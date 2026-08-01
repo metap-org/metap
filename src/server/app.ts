@@ -7,6 +7,7 @@ import { createContainer } from "../core/container";
 import { registerErrorHandler } from "./error-handler";
 import { registerAuthHook } from "./plugins/auth-hook";
 import { registerRequestContextHooks } from "./plugins/request-id";
+import { registerEntities } from "../modules/registry";
 import { registerHealthRoutes } from "./routes/health";
 import { registerMetadataRoutes } from "./routes/metadata";
 import { registerAdminRoutes } from "./routes/admin";
@@ -40,6 +41,8 @@ export async function buildApp(config: AppConfig) {
   registerErrorHandler(app);
 
   const container = createContainer(config);
+  registerEntities(container.metadata);
+  await container.metadataDrift.check(container.metadata.listEntities(), app.log);
 
   registerHealthRoutes(app, container);
 
