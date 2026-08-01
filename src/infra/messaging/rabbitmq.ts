@@ -1,7 +1,7 @@
 import amqp from "amqplib";
 
 export function createRabbitPublisher(url: string) {
-  let connection: amqp.Connection | undefined;
+  let connection: amqp.ChannelModel | undefined;
   let channel: amqp.Channel | undefined;
 
   async function getChannel() {
