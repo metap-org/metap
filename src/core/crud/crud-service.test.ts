@@ -482,3 +482,195 @@ describe("CrudService.transition (live DB)", () => {
     }
   });
 });
+
+describe("CrudService field/record enforcement (live DB)", () => {
+  let container: AppContainer;
+  let tmpDir: string;
+  let pgClient: Client;
+  let dbAvailable = true;
+
+  const tenantId = "00000000-0000-0000-0000-000000000070";
+  const adminContext: RequestContext = {
+    tenantId,
+    userId: "00000000-0000-0000-0000-000000000071",
+    roles: ["admin"],
+  };
+  const editorContext: RequestContext = {
+    tenantId,
+    userId: "00000000-0000-0000-0000-000000000072",
+    roles: ["editor"],
+  };
+  const viewerContext: RequestContext = {
+    tenantId,
+    userId: "00000000-0000-0000-0000-000000000073",
+    roles: ["viewer"],
+  };
+
+  beforeAll(async () => {
+    const { publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+
+    tmpDir = mkdtempSync(path.join(tmpdir(), "metap-crud-enforcement-test-"));
+    const publicKeyPath = path.join(tmpDir, "public.pem");
+    writeFileSync(publicKeyPath, publicKey);
+
+    const config: AppConfig = {
+      nodeEnv: "test",
+      host: "0.0.0.0",
+      port: 3000,
+      databaseUrl,
+      rabbitmqUrl,
+      corsOrigins: [],
+      authJwtPublicKeyPath: publicKeyPath,
+    };
+
+    container = createContainer(config);
+
+    pgClient = new Client({ connectionString: databaseUrl });
+    try {
+      await pgClient.connect();
+    } catch (error) {
+      dbAvailable = false;
+      console.warn(
+        `Skipping CrudService enforcement live-DB tests: could not connect to ${databaseUrl}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  });
+
+  afterAll(async () => {
+    if (dbAvailable) {
+      await pgClient.query("DELETE FROM policies WHERE tenant_id = $1", [tenantId]);
+      await pgClient.end();
+    }
+    await container.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("masks a field the caller cannot read from create/update responses", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const policy = await container.permissions.createPolicy(
+      tenantId,
+      "crm.customers",
+      "read",
+      ["admin"],
+      undefined,
+      undefined,
+      "phone",
+    );
+
+    let recordId: string | undefined;
+
+    try {
+      const created = await container.crud.create(
+        "crm.customers",
+        { code: "E001", name: "Enforcement Co", phone: "555-1000" },
+        viewerContext,
+      );
+
+      expect(created.ok).toBe(true);
+      if (created.ok) {
+        recordId = created.data.id;
+        expect((created.data.data as { phone?: string }).phone).toBeUndefined();
+        expect((created.data.data as { name?: string }).name).toBe("Enforcement Co");
+      }
+    } finally {
+      if (policy) {
+        await container.permissions.deletePolicy(tenantId, policy.id);
+      }
+      if (recordId) {
+        await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [recordId]);
+        await pgClient.query("DELETE FROM records WHERE id = $1", [recordId]);
+      }
+    }
+  });
+
+  it("rejects a create payload touching a field the caller cannot write", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const policy = await container.permissions.createPolicy(
+      tenantId,
+      "crm.customers",
+      "write",
+      ["admin"],
+      undefined,
+      undefined,
+      "phone",
+    );
+
+    try {
+      const result = await container.crud.create(
+        "crm.customers",
+        { code: "E002", name: "Blocked Co", phone: "555-2000" },
+        viewerContext,
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.status).toBe(403);
+      }
+    } finally {
+      if (policy) {
+        await container.permissions.deletePolicy(tenantId, policy.id);
+      }
+    }
+  });
+
+  it("rejects updating a record that fails a record-level condition", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "E003", name: "Owned Co" },
+      adminContext,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const policy = await container.permissions.createPolicy(
+      tenantId,
+      "crm.customers",
+      "update",
+      undefined,
+      { attribute: "createdBy", op: "eq", value: { fromContext: "userId" } },
+      undefined,
+      undefined,
+      "record",
+    );
+
+    try {
+      const result = await container.crud.update(
+        "crm.customers",
+        created.data.id,
+        created.data.version,
+        { name: "Hijacked" },
+        editorContext,
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.status).toBe(403);
+      }
+    } finally {
+      if (policy) {
+        await container.permissions.deletePolicy(tenantId, policy.id);
+      }
+      await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [created.data.id]);
+      await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
+    }
+  });
+});

@@ -161,12 +161,10 @@ export function GeneratedList({ entityName }: { entityName: string }) {
                   <TextInput
                     placeholder="Filter..."
                     value={filterInputs[fieldName] ?? ""}
-                    onChange={(event) =>
-                      setFilterInputs((prev) => ({
-                        ...prev,
-                        [fieldName]: event.currentTarget.value,
-                      }))
-                    }
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      setFilterInputs((prev) => ({ ...prev, [fieldName]: value }));
+                    }}
                   />
                 </Table.Th>
               );

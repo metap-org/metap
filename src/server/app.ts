@@ -9,6 +9,7 @@ import { registerAuthHook } from "./plugins/auth-hook";
 import { registerRequestContextHooks } from "./plugins/request-id";
 import { registerHealthRoutes } from "./routes/health";
 import { registerMetadataRoutes } from "./routes/metadata";
+import { registerAdminRoutes } from "./routes/admin";
 import { registerRecordRoutes } from "./routes/records";
 
 export async function buildApp(config: AppConfig) {
@@ -43,9 +44,10 @@ export async function buildApp(config: AppConfig) {
   registerHealthRoutes(app, container);
 
   await app.register(async (protectedApp) => {
-    registerAuthHook(protectedApp, container.auth);
+    registerAuthHook(protectedApp, container.auth, container.roleAssignments);
     registerMetadataRoutes(protectedApp, container);
     registerRecordRoutes(protectedApp, container);
+    registerAdminRoutes(protectedApp, container);
   });
 
   app.addHook("onClose", async () => {

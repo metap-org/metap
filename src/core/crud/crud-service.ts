@@ -41,19 +41,27 @@ export class CrudService {
       return { ok: false, status: 404, error: "entity_not_found" };
     }
 
-    const decision = this.permissions.canReadEntity(context, entity.name);
+    const decision = await this.permissions.canReadEntity(context, entity.name);
 
     if (!decision.allowed) {
       return { ok: false, status: 403, error: decision.reason ?? "forbidden" };
     }
 
-    const plan = this.queryPlanner.planList(entity.name, input, context);
-    const data = await this.db.client
+    const snapshot = await this.permissions.loadSnapshot(context.tenantId, entity.name);
+    const recordPolicies = snapshot.getRecordPolicies("read");
+
+    const plan = this.queryPlanner.planList(entity.name, input, context, recordPolicies);
+    const rows = await this.db.client
       .select()
       .from(records)
       .where(plan.where)
       .orderBy(...plan.orderBy)
       .limit(plan.limit);
+
+    const data = rows.map((row) => ({
+      ...row,
+      data: snapshot.filterReadableFields(context, row.data as Record<string, unknown>),
+    }));
 
     return {
       ok: true,
@@ -75,10 +83,17 @@ export class CrudService {
       return { ok: false, status: 404, error: "entity_not_found" };
     }
 
-    const decision = this.permissions.canCreateEntity(context, entity.name);
+    const decision = await this.permissions.canCreateEntity(context, entity.name);
 
     if (!decision.allowed) {
       return { ok: false, status: 403, error: decision.reason ?? "forbidden" };
+    }
+
+    const snapshot = await this.permissions.loadSnapshot(context.tenantId, entity.name);
+    const writeDecision = snapshot.assertWritableFields(context, Object.keys(rawData), undefined);
+
+    if (!writeDecision.allowed) {
+      return { ok: false, status: 403, error: writeDecision.reason ?? "forbidden" };
     }
 
     const parsed = entity.schema.safeParse(rawData);
@@ -119,7 +134,13 @@ export class CrudService {
       return { ok: false, status: 500, error: "insert_failed" };
     }
 
-    return { ok: true, data: outcome.record };
+    return {
+      ok: true,
+      data: {
+        ...outcome.record,
+        data: snapshot.filterReadableFields(context, outcome.record.data as Record<string, unknown>),
+      },
+    };
   }
 
   async update(
@@ -135,7 +156,7 @@ export class CrudService {
       return { ok: false, status: 404, error: "entity_not_found" };
     }
 
-    const decision = this.permissions.canUpdateEntity(context, entity.name);
+    const decision = await this.permissions.canUpdateEntity(context, entity.name);
 
     if (!decision.allowed) {
       return { ok: false, status: 403, error: decision.reason ?? "forbidden" };
@@ -160,6 +181,20 @@ export class CrudService {
     }
 
     const existingData = existing.data as Record<string, unknown>;
+
+    const snapshot = await this.permissions.loadSnapshot(context.tenantId, entity.name);
+    const recordDecision = snapshot.canUpdateRecordCondition(context, existingData);
+
+    if (!recordDecision.allowed) {
+      return { ok: false, status: 403, error: recordDecision.reason ?? "forbidden" };
+    }
+
+    const writeDecision = snapshot.assertWritableFields(context, Object.keys(rawData), existingData);
+
+    if (!writeDecision.allowed) {
+      return { ok: false, status: 403, error: writeDecision.reason ?? "forbidden" };
+    }
+
     const mergedData: Record<string, unknown> = { ...existingData, ...rawData };
 
     if (entity.workflow) {
@@ -213,7 +248,13 @@ export class CrudService {
       return { ok: false, status: 409, error: "version_conflict" };
     }
 
-    return { ok: true, data: outcome.record };
+    return {
+      ok: true,
+      data: {
+        ...outcome.record,
+        data: snapshot.filterReadableFields(context, outcome.record.data as Record<string, unknown>),
+      },
+    };
   }
 
   async transition(
@@ -229,7 +270,7 @@ export class CrudService {
       return { ok: false, status: 404, error: "entity_not_found" };
     }
 
-    const decision = this.permissions.canUpdateEntity(context, entity.name);
+    const decision = await this.permissions.canUpdateEntity(context, entity.name);
 
     if (!decision.allowed) {
       return { ok: false, status: 403, error: decision.reason ?? "forbidden" };
@@ -253,11 +294,19 @@ export class CrudService {
       return { ok: false, status: 404, error: "record_not_found" };
     }
 
+    const existingData = existing.data as Record<string, unknown>;
+
+    const snapshot = await this.permissions.loadSnapshot(context.tenantId, entity.name);
+    const recordDecision = snapshot.canUpdateRecordCondition(context, existingData);
+
+    if (!recordDecision.allowed) {
+      return { ok: false, status: 403, error: recordDecision.reason ?? "forbidden" };
+    }
+
     if (!entity.workflow) {
       return { ok: false, status: 400, error: "no_workflow" };
     }
 
-    const existingData = existing.data as Record<string, unknown>;
     const fromState = existingData[entity.workflow.stateField];
 
     if (typeof fromState !== "string") {
@@ -334,7 +383,13 @@ export class CrudService {
       return { ok: false, status: 409, error: "version_conflict" };
     }
 
-    return { ok: true, data: outcome.record };
+    return {
+      ok: true,
+      data: {
+        ...outcome.record,
+        data: snapshot.filterReadableFields(context, outcome.record.data as Record<string, unknown>),
+      },
+    };
   }
 
   async flushOutbox() {

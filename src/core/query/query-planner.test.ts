@@ -206,4 +206,84 @@ describe("QueryPlanner (via CrudService.list, live DB)", () => {
       expect(result.data.length).toBe(0);
     }
   });
+
+  it("filters list() results by a record-level read policy", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const nonAdminContext: RequestContext = {
+      tenantId: context.tenantId,
+      userId: "00000000-0000-0000-0000-000000000032",
+      roles: ["viewer"],
+    };
+
+    const policy = await container.permissions.createPolicy(
+      context.tenantId,
+      "crm.customers",
+      "read",
+      undefined,
+      { attribute: "status", op: "eq", value: { literal: "active" } },
+      undefined,
+      undefined,
+      "record",
+    );
+
+    try {
+      const result = await container.crud.list(
+        "crm.customers",
+        { limit: 30 },
+        nonAdminContext,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const statuses = result.data.map((record) => (record.data as { status?: string }).status);
+        expect(statuses.every((status) => status === "active")).toBe(true);
+        expect(statuses.length).toBe(2);
+      }
+    } finally {
+      if (policy) {
+        await container.permissions.deletePolicy(context.tenantId, policy.id);
+      }
+    }
+  });
+
+  it("denies all rows when a record-level read policy's role gate matches no one", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const nonAdminContext: RequestContext = {
+      tenantId: context.tenantId,
+      userId: "00000000-0000-0000-0000-000000000033",
+      roles: ["viewer"],
+    };
+
+    const policy = await container.permissions.createPolicy(
+      context.tenantId,
+      "crm.customers",
+      "read",
+      ["nobody-has-this-role"],
+      undefined,
+      undefined,
+      undefined,
+      "record",
+    );
+
+    try {
+      const result = await container.crud.list("crm.customers", { limit: 30 }, nonAdminContext);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.length).toBe(0);
+      }
+    } finally {
+      if (policy) {
+        await container.permissions.deletePolicy(context.tenantId, policy.id);
+      }
+    }
+  });
 });

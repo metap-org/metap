@@ -1,5 +1,6 @@
 import type { AppConfig } from "../server/config";
 import { createJwtVerifier } from "./auth/jwt-verifier";
+import { RoleAssignmentService } from "./auth/role-assignment-service";
 import { createDatabase } from "../infra/db/client";
 import { createRabbitPublisher } from "../infra/messaging/rabbitmq";
 import { customerEntity } from "../modules/crm/customer.entity";
@@ -14,12 +15,13 @@ import { WorkflowEngine } from "./workflow/workflow-engine";
 export function createContainer(config: AppConfig) {
   const db = createDatabase(config.databaseUrl);
   const auth = createJwtVerifier(config.authJwtPublicKeyPath);
+  const roleAssignments = new RoleAssignmentService(db);
   const rabbit = createRabbitPublisher(config.rabbitmqUrl);
 
   const metadata = new MetadataRegistry();
   metadata.register(customerEntity);
 
-  const permissions = new PermissionService(metadata);
+  const permissions = new PermissionService(db);
   const queryPlanner = new QueryPlanner(metadata, permissions);
   const outbox = new OutboxService(db, rabbit);
   const workflow = new WorkflowEngine(outbox);
@@ -29,6 +31,7 @@ export function createContainer(config: AppConfig) {
   return {
     db,
     auth,
+    roleAssignments,
     rabbit,
     metadata,
     permissions,

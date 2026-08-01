@@ -70,9 +70,14 @@ describe("buildApp", () => {
 });
 
 describe("GET /metadata/entities/:entity", () => {
+  const databaseUrl = process.env.TEST_DATABASE_URL ?? "postgres://metap:metap@localhost:5433/metap_test";
+  const rabbitmqUrl = process.env.RABBITMQ_URL ?? "amqp://metap:metap@localhost:5672";
+
   let app: FastifyInstance;
   let tmpDir: string;
   let token: string;
+  let pgClient: Client;
+  let dbAvailable = true;
 
   beforeAll(async () => {
     const { publicKey, privateKey } = generateKeyPairSync("rsa", {
@@ -89,26 +94,46 @@ describe("GET /metadata/entities/:entity", () => {
       nodeEnv: "test",
       host: "0.0.0.0",
       port: 3000,
-      databaseUrl: "postgres://x:x@localhost:1/x",
-      rabbitmqUrl: "amqp://x:x@localhost:1",
+      databaseUrl,
+      rabbitmqUrl,
       corsOrigins: [],
       authJwtPublicKeyPath: publicKeyPath,
     };
 
     app = await buildApp(config);
-    token = jwt.sign(
-      { tenantId: "00000000-0000-0000-0000-000000000001", roles: ["admin"] },
-      privateKey,
-      { algorithm: "RS256", subject: "00000000-0000-0000-0000-000000000002", expiresIn: "1h" },
-    );
+    token = jwt.sign({ tenantId: "00000000-0000-0000-0000-000000000001" }, privateKey, {
+      algorithm: "RS256",
+      subject: "00000000-0000-0000-0000-000000000002",
+      expiresIn: "1h",
+    });
+
+    pgClient = new Client({ connectionString: databaseUrl });
+    try {
+      await pgClient.connect();
+    } catch (error) {
+      dbAvailable = false;
+      console.warn(
+        `Skipping GET /metadata/entities/:entity live-DB tests: could not connect to ${databaseUrl}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   });
 
   afterAll(async () => {
+    if (dbAvailable) {
+      await pgClient.end();
+    }
     await app.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("returns projected metadata without leaking the internal Zod schema", async () => {
+  it("returns projected metadata without leaking the internal Zod schema", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
     const response = await app.inject({
       method: "GET",
       url: "/metadata/entities/crm.customers",
@@ -123,7 +148,12 @@ describe("GET /metadata/entities/:entity", () => {
     expect(body.data).not.toHaveProperty("permissions");
   });
 
-  it("returns a structured 404 for an unknown entity", async () => {
+  it("returns a structured 404 for an unknown entity", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
     const response = await app.inject({
       method: "GET",
       url: "/metadata/entities/does.not.exist",

@@ -15,14 +15,14 @@ function makeKeyPair() {
 describe("verifyToken", () => {
   it("returns claims for a validly signed token", () => {
     const { publicKey, privateKey } = makeKeyPair();
-    const token = jwt.sign({ tenantId: "tenant-1", roles: ["admin"] }, privateKey, {
+    const token = jwt.sign({ tenantId: "tenant-1" }, privateKey, {
       algorithm: "RS256",
       subject: "user-1",
       expiresIn: "1h",
     });
 
     const claims = verifyToken(token, publicKey);
-    expect(claims).toMatchObject({ sub: "user-1", tenantId: "tenant-1", roles: ["admin"] });
+    expect(claims).toMatchObject({ sub: "user-1", tenantId: "tenant-1" });
     expect(typeof claims.exp).toBe("number");
   });
 

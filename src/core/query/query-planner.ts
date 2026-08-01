@@ -2,7 +2,8 @@ import type { SQL } from "drizzle-orm";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { records } from "../../infra/db/schema";
 import type { MetadataRegistry } from "../metadata/metadata-registry";
-import type { PermissionService, RequestContext } from "../permission/permission-service";
+import type { PermissionService, PolicyRow, RequestContext } from "../permission/permission-service";
+import { recordPolicyWhereClause } from "./condition-to-sql";
 
 export type ListInput = {
   limit: number;
@@ -52,6 +53,7 @@ export class QueryPlanner {
     entityName: string,
     input: ListInput,
     context: Partial<RequestContext>,
+    recordReadPolicies: PolicyRow[] = [],
   ): PlannedListQuery {
     const entity = this.metadata.getEntity(entityName);
 
@@ -68,6 +70,11 @@ export class QueryPlanner {
       eq(records.entity, entity.name),
       eq(records.deleted, false),
     ];
+
+    const recordCondition = recordPolicyWhereClause(recordReadPolicies, context as RequestContext);
+    if (recordCondition) {
+      conditions.push(recordCondition);
+    }
 
     const allowedFilterFields = new Set(listView?.filters ?? []);
     const fieldsByName = new Map(entity.fields.map((field) => [field.name, field]));

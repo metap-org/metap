@@ -6,7 +6,6 @@ import { AuthError } from "./errors";
 const ClaimsSchema = z.object({
   sub: z.string().min(1),
   tenantId: z.string().min(1),
-  roles: z.array(z.string()).default([]),
   functionId: z.string().optional(),
   exp: z.number(),
 });

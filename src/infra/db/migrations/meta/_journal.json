@@ -15,6 +15,27 @@
       "when": 1785509582427,
       "tag": "0001_panoramic_firestar",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785517303862,
+      "tag": "0002_sticky_drax",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785519261563,
+      "tag": "0003_goofy_giant_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785521336413,
+      "tag": "0004_clear_lockheed",
+      "breakpoints": true
     }
   ]
 }

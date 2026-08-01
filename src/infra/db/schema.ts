@@ -7,6 +7,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -80,6 +81,49 @@ export const workflowEvents = pgTable(
       table.entity,
       table.recordId,
       table.createdAt,
+    ),
+  }),
+);
+
+export const userRoles = pgTable(
+  "user_roles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    role: varchar("role", { length: 80 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid("created_by"),
+  },
+  (table) => ({
+    tenantUserRoleUnique: uniqueIndex("user_roles_tenant_user_role_unique").on(
+      table.tenantId,
+      table.userId,
+      table.role,
+    ),
+    tenantUserIdx: index("user_roles_tenant_user_idx").on(table.tenantId, table.userId),
+  }),
+);
+
+export const policies = pgTable(
+  "policies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id").notNull(),
+    entity: varchar("entity", { length: 120 }).notNull(),
+    action: varchar("action", { length: 20 }).notNull(),
+    field: varchar("field", { length: 120 }),
+    subject: varchar("subject", { length: 20 }).notNull().default("context"),
+    roles: jsonb("roles"),
+    condition: jsonb("condition"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid("created_by"),
+  },
+  (table) => ({
+    tenantEntityActionIdx: index("policies_tenant_entity_action_idx").on(
+      table.tenantId,
+      table.entity,
+      table.action,
     ),
   }),
 );
