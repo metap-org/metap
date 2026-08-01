@@ -87,7 +87,7 @@ export class CrudService {
       return { ok: false, status: 400, error: "validation_failed" };
     }
 
-    const data = parsed.data;
+    const data = parsed.data as Record<string, unknown>;
     const status = this.workflow.getInitialStatus(entity, data);
 
     const outcome = await this.db.client.transaction(async (tx) => {
@@ -174,7 +174,7 @@ export class CrudService {
       return { ok: false, status: 400, error: "validation_failed" };
     }
 
-    const data = parsed.data;
+    const data = parsed.data as Record<string, unknown>;
     const code = typeof data.code === "string" ? data.code : null;
 
     const outcome = await this.db.client.transaction(async (tx) => {
