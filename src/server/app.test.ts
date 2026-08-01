@@ -147,7 +147,7 @@ describe("GET /metadata/entities/:entity", () => {
 // `removeAdditional: "all"` config silently stripped the entire `data` payload
 // from `POST /api/:entity` requests before the route handler ever saw it.
 describe("buildApp (record creation, live DB)", () => {
-  const databaseUrl = process.env.DATABASE_URL ?? "postgres://metap:metap@localhost:5433/metap";
+  const databaseUrl = process.env.TEST_DATABASE_URL ?? "postgres://metap:metap@localhost:5433/metap_test";
   const rabbitmqUrl = process.env.RABBITMQ_URL ?? "amqp://metap:metap@localhost:5672";
 
   let app: FastifyInstance;

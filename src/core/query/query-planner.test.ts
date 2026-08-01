@@ -9,7 +9,7 @@ import { createContainer } from "../container";
 import type { RequestContext } from "../permission/permission-service";
 import type { AppConfig } from "../../server/config";
 
-const databaseUrl = process.env.DATABASE_URL ?? "postgres://metap:metap@localhost:5433/metap";
+const databaseUrl = process.env.TEST_DATABASE_URL ?? "postgres://metap:metap@localhost:5433/metap_test";
 const rabbitmqUrl = process.env.RABBITMQ_URL ?? "amqp://metap:metap@localhost:5672";
 
 describe("QueryPlanner (via CrudService.list, live DB)", () => {
