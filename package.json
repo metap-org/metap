@@ -16,6 +16,7 @@
     "format:check": "prettier . --check",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:test": "DATABASE_URL=postgres://metap:metap@localhost:5433/metap_test drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "auth:dev-keys": "node scripts/generate-dev-jwt-keypair.mjs",
     "mint-token": "node scripts/mint-dev-token.mjs"
