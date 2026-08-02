@@ -60,4 +60,38 @@ describe("generateOpenApiDocument", () => {
     const doc = generateOpenApiDocument([customer]);
     expect(doc.paths["/api/test.widgets/{id}/transitions/{action}"]).toBeDefined();
   });
+
+  it("registers a self-contained EntitySummary component schema for the meta-model", () => {
+    const doc = generateOpenApiDocument([customer]);
+    const entitySummarySchema = doc.components?.schemas?.EntitySummary as
+      { type: string; properties: Record<string, unknown> } | undefined;
+
+    expect(entitySummarySchema).toBeDefined();
+    expect(entitySummarySchema?.type).toBe("object");
+    expect(entitySummarySchema?.properties.name).toBeDefined();
+    expect(entitySummarySchema?.properties.fields).toBeDefined();
+    expect(entitySummarySchema?.properties.workflow).toBeDefined();
+    // guard is a server-side function, never sent over the wire — must not
+    // leak into the generated schema for workflow transitions.
+    expect(JSON.stringify(entitySummarySchema)).not.toContain("guard");
+  });
+
+  it("documents GET /metadata/entities and GET /metadata/entities/{entity}, referencing EntitySummary", () => {
+    const doc = generateOpenApiDocument([customer]);
+
+    const listOp = doc.paths["/metadata/entities"]?.get as
+      { responses: Record<string, unknown> } | undefined;
+    expect(listOp).toBeDefined();
+
+    const itemOp = doc.paths["/metadata/entities/{entity}"]?.get as
+      { responses: Record<string, unknown> } | undefined;
+    expect(itemOp).toBeDefined();
+
+    expect(JSON.stringify(doc.paths["/metadata/entities"])).toContain(
+      "#/components/schemas/EntitySummary",
+    );
+    expect(JSON.stringify(doc.paths["/metadata/entities/{entity}"])).toContain(
+      "#/components/schemas/EntitySummary",
+    );
+  });
 });

@@ -5,12 +5,15 @@ import type { Database } from "../../infra/db/client";
 import { PermissionSnapshot } from "./permission-snapshot";
 import { PermissionService } from "./permission-service";
 import type { RequestContext } from "./permission-service";
+import { PostgresPolicyStore } from "./policy-store";
+import type { PolicyStore } from "./policy-store";
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://metap:metap@localhost:5433/metap_test";
 
 describe("PermissionSnapshot (live DB)", () => {
   let db: Database;
+  let store: PolicyStore;
   let pgClient: Client;
   let service: PermissionService;
   let dbAvailable = true;
@@ -20,7 +23,8 @@ describe("PermissionSnapshot (live DB)", () => {
 
   beforeAll(async () => {
     db = createDatabase(databaseUrl);
-    service = new PermissionService(db);
+    store = new PostgresPolicyStore(db);
+    service = new PermissionService(store);
 
     pgClient = new Client({ connectionString: databaseUrl });
     try {
@@ -58,7 +62,7 @@ describe("PermissionSnapshot (live DB)", () => {
 
     try {
       await service.createPolicy(tenantId, entity, "read", ["hr"], undefined, undefined, "salary");
-      const snapshot = await PermissionSnapshot.load(db, tenantId, entity);
+      const snapshot = await PermissionSnapshot.load(store, tenantId, entity);
       const record = { name: "Alice", salary: 100000 };
 
       const asHr = snapshot.filterReadableFields(contextWithRoles(["hr"]), record);
@@ -89,7 +93,7 @@ describe("PermissionSnapshot (live DB)", () => {
         "record",
       );
 
-      const snapshot = await PermissionSnapshot.load(db, tenantId, entity);
+      const snapshot = await PermissionSnapshot.load(store, tenantId, entity);
       const activeRecord = { status: "active", internalNotes: "secret" };
       const draftRecord = { status: "draft", internalNotes: "secret" };
 
@@ -112,7 +116,7 @@ describe("PermissionSnapshot (live DB)", () => {
 
     try {
       await service.createPolicy(tenantId, entity, "write", ["hr"], undefined, undefined, "salary");
-      const snapshot = await PermissionSnapshot.load(db, tenantId, entity);
+      const snapshot = await PermissionSnapshot.load(store, tenantId, entity);
 
       const allowed = snapshot.assertWritableFields(
         contextWithRoles(["hr"]),
@@ -141,7 +145,7 @@ describe("PermissionSnapshot (live DB)", () => {
 
     try {
       await service.createPolicy(tenantId, entity, "write", ["hr"], undefined, undefined, "salary");
-      const snapshot = await PermissionSnapshot.load(db, tenantId, entity);
+      const snapshot = await PermissionSnapshot.load(store, tenantId, entity);
 
       const asHr = snapshot.writableFields(contextWithRoles(["hr"]), ["name", "salary"], undefined);
       expect(asHr).toEqual(["name", "salary"]);
@@ -175,7 +179,7 @@ describe("PermissionSnapshot (live DB)", () => {
         "record",
       );
 
-      const snapshot = await PermissionSnapshot.load(db, tenantId, entity);
+      const snapshot = await PermissionSnapshot.load(store, tenantId, entity);
       const callerContext = contextWithRoles(["editor"], { userId: "user-1" });
 
       const owned = snapshot.canUpdateRecordCondition(callerContext, { createdBy: "user-1" });
@@ -218,7 +222,7 @@ describe("PermissionSnapshot (live DB)", () => {
         "record",
       );
 
-      const snapshot = await PermissionSnapshot.load(db, tenantId, entity);
+      const snapshot = await PermissionSnapshot.load(store, tenantId, entity);
       expect(snapshot.getRecordPolicies("read")).toHaveLength(1);
       expect(snapshot.getRecordPolicies("update")).toHaveLength(1);
       expect(snapshot.getRecordPolicies("create")).toHaveLength(0);

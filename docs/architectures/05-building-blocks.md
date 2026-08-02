@@ -21,9 +21,9 @@ C4Container
   Person(admin, "Admin")
 
   System_Boundary(metap, "Metap") {
-    Container(web, "Web Frontend", "React, Vite, TanStack Query", "Dev harness SPA — platform/ pieces + demo/ pages")
-    Container(api, "API Server", "Node.js, Fastify", "Auth, CRUD, metadata, admin, query planning — src/server, src/core")
-    Container(worker, "Outbox Publisher", "Node.js", "Polls outbox_events, publishes to RabbitMQ — src/workers/outbox-publisher.ts")
+    Container(web, "Web Frontend", "React, Vite, TanStack Query", "Dev harness SPA — apps/demo, consuming packages/platform-react via workspace:*")
+    Container(api, "API Server", "Node.js, Fastify", "apps/crm: the one deployed module today, importing packages/core (auth, CRUD, metadata, admin, query planning)")
+    Container(worker, "Outbox Publisher", "Node.js", "apps/crm/src/workers/outbox-publisher.ts, calling packages/core's runOutboxPublisherLoop()")
   }
 
   ContainerDb(db, "PostgreSQL", "Postgres 16", "records, metadata_versions, policies, outbox_events, workflow_events, user_roles")
@@ -46,7 +46,7 @@ C4Component
   title Component diagram — API Server
 
   Container_Boundary(api, "API Server") {
-    Component(routes, "HTTP Routes", "Fastify handlers", "records / metadata / admin / health — src/server/routes")
+    Component(routes, "HTTP Routes", "Fastify handlers", "records / metadata / admin / health — packages/core/src/server/routes")
     Component(crud, "CrudService", "TypeScript class", "permission -> validate -> plan -> write -> workflow -> outbox")
     Component(metadata, "MetadataRegistry", "TypeScript class", "Entity definitions; validated + hashed at boot (MetadataCompiler)")
     Component(perm, "PermissionService", "TypeScript class", "RBAC/ABAC, field/record enforcement, PolicyExplainer")
@@ -357,7 +357,7 @@ Allowed dependencies:
 routes -> services
 services -> metadata / permission / query / workflow / repositories / outbox
 infra -> database / messaging
-modules -> metadata definitions + optional custom handlers
+apps/<module> -> packages/core (via workspace:*) — never the other way around
 ```
 
 Avoid:
@@ -367,24 +367,39 @@ Avoid:
 - workflow handlers publishing RabbitMQ directly
 - authorization living only in frontend or gateway config
 
-### Development View (source-tree organization)
+### Development View (workspace package organization)
 
-The same dependency rule above, visualized as source-tree packages (Kruchten 4+1's Development View).
+The same dependency rule above, visualized as pnpm workspace packages (Kruchten 4+1's Development View). Each box is a real package with its own `package.json`, not just a source-tree folder — as of the 2026-08-02 monorepo restructure, these boundaries are enforced by pnpm's isolated `node_modules`, not only by convention.
 
 ```mermaid
 graph TD
-  routes["src/server/routes<br/>+ src/server/app.ts"]
-  modules["src/modules<br/>*.entity.ts + registry.ts"]
-  workers["src/workers<br/>outbox-publisher.ts, reconcile-indexes.ts"]
-  core["src/core<br/>crud, metadata, permission, query, workflow, outbox"]
-  infra["src/infra<br/>db (Drizzle), messaging (RabbitMQ)"]
-  web["web/src<br/>React + Vite + TanStack Query"]
+  subgraph pkgcore["packages/core (@metap/core) — entity-agnostic library"]
+    routes["src/server/routes<br/>+ src/server/app.ts (buildApp(config, entities))"]
+    core["src/core<br/>crud, metadata, permission, query, workflow, outbox"]
+    infra["src/infra<br/>db (Drizzle), messaging (RabbitMQ)"]
+    loop["src/workers/outbox-publisher-loop.ts<br/>runOutboxPublisherLoop() — reusable"]
+  end
+
+  subgraph appscrm["apps/crm (@metap/crm) — the one deployed module today"]
+    modules["src/modules<br/>customer.entity.ts + registry.ts"]
+    entry["src/main.ts<br/>+ src/workers/*.ts (thin entry points)"]
+  end
+
+  subgraph pkgplatform["packages/platform-react (@metap/platform-react)"]
+    platform["GeneratedList/Form, FieldValue/Input,<br/>WorkflowActionBar, RecordDetail, api-client"]
+  end
+
+  subgraph appsdemo["apps/demo (@metap/demo)"]
+    demoapp["src/App.tsx, src/demo/*<br/>React + Vite + TanStack Query"]
+  end
 
   routes --> core
-  modules --> core
-  workers --> core
   core --> infra
-  web -.HTTP only, never imports core directly.-> routes
+  entry -->|"workspace:*"| routes
+  entry -->|"workspace:*"| loop
+  modules -.entity definitions, no core import.-> entry
+  demoapp -->|"workspace:*"| platform
+  demoapp -.HTTP only, never imports packages/core.-> routes
 ```
 
-`web/` is intentionally its own package (own `package.json`) — the dotted line marks that it can only ever reach the backend over HTTP, never by importing `src/` code.
+`apps/crm` depends on `packages/core`; `packages/core` has no dependency path back to `apps/crm` or any other `apps/*` package — that direction is what keeps `packages/core` genuinely entity-agnostic, not just conventionally so. `apps/demo` is the frontend's equivalent: it can only ever reach the backend over HTTP (the dotted line), never by importing backend code, and it consumes `packages/platform-react` the same way `apps/crm` consumes `packages/core`.

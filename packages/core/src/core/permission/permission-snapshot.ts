@@ -1,13 +1,6 @@
-import { and, eq } from "drizzle-orm";
-import type { Database } from "../../infra/db/client";
-import { policies } from "../../infra/db/schema";
 import { evaluatePolicyRow } from "./policy-condition";
-import type {
-  EntityAction,
-  PermissionDecision,
-  PolicyRow,
-  RequestContext,
-} from "./permission-service";
+import type { EntityAction, PermissionDecision, RequestContext } from "./permission-service";
+import type { PolicyRow, PolicyStore } from "./policy-store";
 
 export class PermissionSnapshot {
   private constructor(
@@ -15,11 +8,12 @@ export class PermissionSnapshot {
     private readonly recordPoliciesByAction: Map<string, PolicyRow[]>,
   ) {}
 
-  static async load(db: Database, tenantId: string, entity: string): Promise<PermissionSnapshot> {
-    const rows = await db.client
-      .select()
-      .from(policies)
-      .where(and(eq(policies.tenantId, tenantId), eq(policies.entity, entity)));
+  static async load(
+    store: PolicyStore,
+    tenantId: string,
+    entity: string,
+  ): Promise<PermissionSnapshot> {
+    const rows = await store.loadAllPolicies(tenantId, entity);
 
     const fieldPolicies = rows.filter((row) => row.field !== null);
 

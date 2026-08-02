@@ -10,11 +10,18 @@ import { MetadataDriftService } from "./metadata/metadata-drift";
 import { MetadataRegistry } from "./metadata/metadata-registry";
 import { OutboxService } from "./outbox/outbox-service";
 import { PermissionService } from "./permission/permission-service";
+import { PostgresPolicyStore } from "./permission/policy-store";
 import { QueryPlanner } from "./query/query-planner";
 import { WorkflowEngine } from "./workflow/workflow-engine";
 
 export function createContainer(config: AppConfig) {
   const db = createDatabase(config.databaseUrl);
+  // Decoupled from `db` on purpose: publishPending() reads/writes outbox_events
+  // through this connection, not through enqueue()'s caller-supplied transaction
+  // (which already ties an outbox write to wherever the business write happens).
+  // Not set -> reuses `db`, today's behavior. Set -> must point at whatever
+  // database outbox_events actually lives in for this deployment.
+  const outboxDb = config.outboxDatabaseUrl ? createDatabase(config.outboxDatabaseUrl) : db;
   const auth = createJwtVerifier(config.authJwtPublicKeyPath);
   const roleAssignments = new RoleAssignmentService(db);
   const rabbit = createRabbitPublisher(config.rabbitmqUrl);
@@ -24,9 +31,10 @@ export function createContainer(config: AppConfig) {
   // See src/modules/registry.ts.
   const metadata = new MetadataRegistry();
 
-  const permissions = new PermissionService(db);
+  const policyStore = new PostgresPolicyStore(db);
+  const permissions = new PermissionService(policyStore);
   const queryPlanner = new QueryPlanner(metadata, permissions);
-  const outbox = new OutboxService(db, rabbit);
+  const outbox = new OutboxService(outboxDb, rabbit);
   const workflow = new WorkflowEngine(outbox);
   const crud = new CrudService(db, metadata, queryPlanner, permissions, workflow, outbox);
   const health = new HealthService(db);
@@ -35,6 +43,7 @@ export function createContainer(config: AppConfig) {
 
   return {
     db,
+    outboxDb,
     auth,
     roleAssignments,
     rabbit,
@@ -49,6 +58,9 @@ export function createContainer(config: AppConfig) {
     indexReconciler,
     async close() {
       await rabbit.close();
+      if (outboxDb !== db) {
+        await outboxDb.close();
+      }
       await db.close();
     },
   };

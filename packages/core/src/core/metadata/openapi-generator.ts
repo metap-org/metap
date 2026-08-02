@@ -1,5 +1,7 @@
+import { z } from "zod";
 import type { EntityField, FieldKind } from "./entity";
 import type { EntitySummary } from "./metadata-registry";
+import { EntitySummarySchema } from "./entity-wire-schema";
 
 type JsonSchema = Record<string, unknown>;
 
@@ -39,10 +41,55 @@ export type OpenApiDocument = {
   openapi: "3.1.0";
   info: { title: string; version: string };
   paths: Record<string, Record<string, unknown>>;
+  components: { schemas: Record<string, JsonSchema> };
 };
 
 export function generateOpenApiDocument(entities: readonly EntitySummary[]): OpenApiDocument {
   const paths: Record<string, Record<string, unknown>> = {};
+
+  paths["/metadata/entities"] = {
+    get: {
+      summary: "List entity metadata",
+      responses: {
+        "200": {
+          description: "OK",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  data: {
+                    type: "array",
+                    items: { $ref: "#/components/schemas/EntitySummary" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  paths["/metadata/entities/{entity}"] = {
+    get: {
+      summary: "Get one entity's metadata",
+      responses: {
+        "200": {
+          description: "OK",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: { data: { $ref: "#/components/schemas/EntitySummary" } },
+              },
+            },
+          },
+        },
+        "404": { description: "Not found" },
+      },
+    },
+  };
 
   for (const entity of entities) {
     const schema = entitySchema(entity);
@@ -103,5 +150,10 @@ export function generateOpenApiDocument(entities: readonly EntitySummary[]): Ope
     openapi: "3.1.0",
     info: { title: "Metap API", version: "1.0.0" },
     paths,
+    components: {
+      schemas: {
+        EntitySummary: z.toJSONSchema(EntitySummarySchema, { target: "draft-7" }),
+      },
+    },
   };
 }

@@ -9,7 +9,7 @@ import { registerErrorHandler } from "./error-handler";
 import { registerAuthHook } from "./plugins/auth-hook";
 import { registerRequestContextHooks } from "./plugins/request-id";
 import { registerHealthRoutes } from "./routes/health";
-import { registerMetadataRoutes } from "./routes/metadata";
+import { registerMetadataRoutes, registerOpenApiRoute } from "./routes/metadata";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerRecordRoutes } from "./routes/records";
 
@@ -49,6 +49,7 @@ export async function buildApp(config: AppConfig, entities: readonly EntityDefin
   await container.indexReconciler.reconcile(container.metadata.listEntities(), app.log);
 
   registerHealthRoutes(app, container);
+  registerOpenApiRoute(app, container);
 
   await app.register((protectedApp) => {
     registerAuthHook(protectedApp, container.auth, container.roleAssignments);

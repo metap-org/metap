@@ -21,29 +21,37 @@ export class OutboxService {
   }
 
   async publishPending(limit = 100) {
-    const pending = await this.db.client
-      .select()
-      .from(outboxEvents)
-      .where(isNull(outboxEvents.publishedAt))
-      .orderBy(outboxEvents.createdAt)
-      .limit(limit);
+    // SELECT ... FOR UPDATE SKIP LOCKED, held open for the whole
+    // publish-then-mark-done cycle: a concurrent publishPending() call (a
+    // second outbox worker) skips whatever rows this transaction has locked
+    // instead of blocking or re-selecting them, so two workers never publish
+    // the same row twice.
+    await this.db.client.transaction(async (tx) => {
+      const pending = await tx
+        .select()
+        .from(outboxEvents)
+        .where(isNull(outboxEvents.publishedAt))
+        .orderBy(outboxEvents.createdAt)
+        .limit(limit)
+        .for("update", { skipLocked: true });
 
-    for (const event of pending) {
-      try {
-        await this.rabbit.publish(event.topic, event.payload);
-        await this.db.client
-          .update(outboxEvents)
-          .set({ publishedAt: new Date(), lastError: null })
-          .where(eq(outboxEvents.id, event.id));
-      } catch (error) {
-        await this.db.client
-          .update(outboxEvents)
-          .set({
-            attempts: sql`${outboxEvents.attempts} + 1`,
-            lastError: error instanceof Error ? error.message : String(error),
-          })
-          .where(and(eq(outboxEvents.id, event.id), isNull(outboxEvents.publishedAt)));
+      for (const event of pending) {
+        try {
+          await this.rabbit.publish(event.topic, event.payload);
+          await tx
+            .update(outboxEvents)
+            .set({ publishedAt: new Date(), lastError: null })
+            .where(eq(outboxEvents.id, event.id));
+        } catch (error) {
+          await tx
+            .update(outboxEvents)
+            .set({
+              attempts: sql`${outboxEvents.attempts} + 1`,
+              lastError: error instanceof Error ? error.message : String(error),
+            })
+            .where(and(eq(outboxEvents.id, event.id), isNull(outboxEvents.publishedAt)));
+        }
       }
-    }
+    });
   }
 }

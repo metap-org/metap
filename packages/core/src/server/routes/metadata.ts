@@ -3,14 +3,20 @@ import type { AppContainer } from "../../core/container";
 import { generateOpenApiDocument } from "../../core/metadata/openapi-generator";
 import { sendServiceError } from "../error-handler";
 
+// Public: describes API shape only (entity/field names, kinds, workflow
+// structure) — no tenant data, no records, comparable to any public
+// OpenAPI/Swagger doc. Fetchable without a token so codegen tooling
+// (openapi-typescript) can point straight at a running server.
+export function registerOpenApiRoute(app: FastifyInstance, container: AppContainer) {
+  app.get("/metadata/openapi.json", () =>
+    generateOpenApiDocument(container.metadata.listEntities()),
+  );
+}
+
 export function registerMetadataRoutes(app: FastifyInstance, container: AppContainer) {
   app.get("/metadata/entities", () => ({
     data: container.metadata.listEntities(),
   }));
-
-  app.get("/metadata/openapi.json", () =>
-    generateOpenApiDocument(container.metadata.listEntities()),
-  );
 
   app.get<{ Params: { entity: string } }>("/metadata/entities/:entity", async (request, reply) => {
     const entity = container.metadata.getEntityMetadata(request.params.entity);

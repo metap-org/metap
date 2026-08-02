@@ -1,13 +1,11 @@
-import { and, eq, isNull } from "drizzle-orm";
-import type { Database } from "../../infra/db/client";
-import { policies } from "../../infra/db/schema";
 import { evaluatePolicyRow } from "./policy-condition";
 import type { PolicyCondition } from "./policy-condition";
 import { explainPolicies } from "./policy-explainer";
 import type { PolicyExplanation } from "./policy-explainer";
 import { PermissionSnapshot } from "./permission-snapshot";
+import type { PolicyStore } from "./policy-store";
 
-export type PolicyRow = typeof policies.$inferSelect;
+export type { PolicyRow } from "./policy-store";
 
 export type RequestContext = {
   tenantId: string;
@@ -25,7 +23,7 @@ export type PermissionDecision = {
 export type EntityAction = "read" | "create" | "update" | "delete";
 
 export class PermissionService {
-  constructor(private readonly db: Database) {}
+  constructor(private readonly store: PolicyStore) {}
 
   private async checkAction(
     context: RequestContext,
@@ -36,18 +34,7 @@ export class PermissionService {
       return { allowed: true };
     }
 
-    const rows = await this.db.client
-      .select()
-      .from(policies)
-      .where(
-        and(
-          eq(policies.tenantId, context.tenantId),
-          eq(policies.entity, entityName),
-          eq(policies.action, action),
-          isNull(policies.field),
-          eq(policies.subject, "context"),
-        ),
-      );
+    const rows = await this.store.findContextPolicies(context.tenantId, entityName, action);
 
     if (rows.length === 0) {
       return { allowed: true };
@@ -79,15 +66,11 @@ export class PermissionService {
   }
 
   async loadSnapshot(tenantId: string, entity: string): Promise<PermissionSnapshot> {
-    return PermissionSnapshot.load(this.db, tenantId, entity);
+    return PermissionSnapshot.load(this.store, tenantId, entity);
   }
 
   async listPolicies(tenantId: string, entity?: string) {
-    const where = entity
-      ? and(eq(policies.tenantId, tenantId), eq(policies.entity, entity))
-      : eq(policies.tenantId, tenantId);
-
-    return this.db.client.select().from(policies).where(where);
+    return this.store.listPolicies(tenantId, entity);
   }
 
   async createPolicy(
@@ -100,27 +83,20 @@ export class PermissionService {
     field?: string,
     subject?: "context" | "record",
   ) {
-    const inserted = await this.db.client
-      .insert(policies)
-      .values({
-        tenantId,
-        entity,
-        action,
-        roles: roles ?? null,
-        condition: condition ?? null,
-        createdBy,
-        field: field ?? null,
-        subject: subject ?? "context",
-      })
-      .returning();
-
-    return inserted[0];
+    return this.store.createPolicy(
+      tenantId,
+      entity,
+      action,
+      roles,
+      condition,
+      createdBy,
+      field,
+      subject,
+    );
   }
 
   async deletePolicy(tenantId: string, id: string): Promise<void> {
-    await this.db.client
-      .delete(policies)
-      .where(and(eq(policies.tenantId, tenantId), eq(policies.id, id)));
+    await this.store.deletePolicy(tenantId, id);
   }
 
   async explain(
@@ -129,19 +105,10 @@ export class PermissionService {
     action: string,
     options?: { field?: string | undefined; record?: Record<string, unknown> | undefined },
   ): Promise<PolicyExplanation> {
-    const base = [
-      eq(policies.tenantId, context.tenantId),
-      eq(policies.entity, entity),
-      eq(policies.action, action),
-    ];
-
-    const where = options?.field
-      ? and(...base, eq(policies.field, options.field))
-      : options?.record
-        ? and(...base, isNull(policies.field), eq(policies.subject, "record"))
-        : and(...base, isNull(policies.field), eq(policies.subject, "context"));
-
-    const rows = await this.db.client.select().from(policies).where(where);
+    const rows = await this.store.findExplainPolicies(context.tenantId, entity, action, {
+      ...(options?.field ? { field: options.field } : {}),
+      ...(!options?.field && options?.record ? { subject: "record" as const } : {}),
+    });
 
     return explainPolicies(rows, context, options?.record);
   }

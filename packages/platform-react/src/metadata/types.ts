@@ -1,54 +1,13 @@
-export type FieldKind =
-  | "id"
-  | "string"
-  | "number"
-  | "boolean"
-  | "date"
-  | "datetime"
-  | "money"
-  | "enum"
-  | "reference"
-  | "json";
+// Thin façade over the generated wire-contract types — do not hand-add
+// fields here. Run `pnpm generate:types` (dev server must be running) after
+// a backend meta-model change, which regenerates ./generated-types.ts; these
+// exports pick the change up automatically since they're derived by
+// indexing into it, not redeclared.
+import type { components } from "./generated-types";
 
-export type EntityField = {
-  name: string;
-  label: string;
-  kind: FieldKind;
-  required?: boolean;
-  searchable?: boolean;
-  sortable?: boolean;
-  enumValues?: readonly string[];
-  refEntity?: string;
-};
-
-export type EntityListView = {
-  name: string;
-  label: string;
-  fields: readonly string[];
-  filters: readonly string[];
-  defaultSort?: string;
-  maxLimit: number;
-};
-
-export type WorkflowTransition = {
-  action: string;
-  from: string;
-  to: string;
-  label: string;
-};
-
-export type EntityWorkflow = {
-  stateField: string;
-  initialState: string;
-  terminalStates: readonly string[];
-  transitions: readonly WorkflowTransition[];
-};
-
-export type EntitySummary = {
-  name: string;
-  label: string;
-  fields: readonly EntityField[];
-  listViews: readonly EntityListView[];
-  workflow?: EntityWorkflow;
-  version?: string;
-};
+export type EntitySummary = components["schemas"]["EntitySummary"];
+export type EntityField = EntitySummary["fields"][number];
+export type EntityListView = EntitySummary["listViews"][number];
+export type EntityWorkflow = NonNullable<EntitySummary["workflow"]>;
+export type WorkflowTransition = EntityWorkflow["transitions"][number];
+export type FieldKind = EntityField["kind"];

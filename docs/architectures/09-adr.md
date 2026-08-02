@@ -22,11 +22,17 @@ This project already runs an informal ADR workflow: every non-trivial change get
 | 2026-08-01 | Hot field index strategy (metadata-driven expression indexes) | `docs/superpowers/specs/2026-08-01-hot-field-index-strategy-design.md` |
 | 2026-08-02 | Full-text search strategy (opt-in `tsvector`/GIN per field) | `docs/superpowers/specs/2026-08-02-full-text-search-strategy-design.md` |
 | 2026-08-02 | Keyset pagination (opaque cursor over the resolved sort) | `docs/superpowers/specs/2026-08-02-keyset-pagination-design.md` |
+| 2026-08-02 | List pagination + virtualization for `GeneratedList` | `docs/superpowers/specs/2026-08-02-list-pagination-design.md` |
+| 2026-08-02 | Permission-aware UI state (proactive record capabilities) | `docs/superpowers/specs/2026-08-02-permission-aware-ui-design.md` |
+| 2026-08-02 | List navigation + record delete (soft-delete) | `docs/superpowers/specs/2026-08-02-list-navigation-delete-design.md` |
+| 2026-08-02 | Monorepo restructure: `packages/core` (pnpm workspace, backend extraction) | `docs/superpowers/specs/2026-08-02-monorepo-packages-core-design.md` |
+| 2026-08-02 | Monorepo restructure: `packages/platform-react` + `apps/demo` | `docs/superpowers/specs/2026-08-02-monorepo-platform-react-design.md` |
+| 2026-08-02 | Monorepo restructure: `apps/crm` (real module split, pulled forward) | `docs/superpowers/specs/2026-08-02-monorepo-apps-crm-design.md` |
 
 All of the above are **Accepted** and implemented (see `docs/roadmap.md` for phase-level status).
 
 ## Notable decisions not covered by a dedicated spec
 
-- **`core->modules` layering**: `createContainer` (core) must never import a specific entity module — entity registration is an application-layer concern (`src/modules/registry.ts`, called after `createContainer()` returns), so core stays entity-agnostic. Fixed as part of the Metadata Compiler work above.
+- **`core->modules` layering**: `packages/core` must never import a specific business entity — entity registration is an application-layer concern owned by each `apps/<module>` (e.g. `apps/crm/src/modules/registry.ts`, called after `createContainer()`/`buildApp()` return). Originally fixed as a convention during the Metadata Compiler work; now also a hard package boundary (`packages/core` has no dependency path to any `apps/*` package) since the 2026-08-02 monorepo restructure.
 - **Index expression must match the query expression exactly**: an `IndexReconciler`-built index on `data->>'field'` is *never* selected by Postgres for a query written as `jsonb_extract_path_text(data, 'field')`, even though they're semantically equal — Postgres's expression-index matching is syntactic, not semantic. Every index this codebase builds uses `jsonb_extract_path_text`, matching `QueryPlanner`'s own filter/sort expression. Found and fixed during the Hot Field Index Strategy work.
 - **Postgres DDL accepts no bind parameters at all** (not just under `CONCURRENTLY`) — `IndexReconciler` inlines entity/field names as escaped SQL literals, safe only because they come exclusively from server-authored, `MetadataCompiler`-validated metadata, never request input.

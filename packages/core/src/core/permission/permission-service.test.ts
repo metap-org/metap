@@ -1,9 +1,70 @@
 import { Client } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDatabase } from "../../infra/db/client";
 import type { Database } from "../../infra/db/client";
 import { PermissionService } from "./permission-service";
 import type { RequestContext } from "./permission-service";
+import { PostgresPolicyStore } from "./policy-store";
+import type { PolicyStore, PolicyRow } from "./policy-store";
+
+describe("PermissionService with an injected PolicyStore (no DB)", () => {
+  function fakePolicyRow(overrides: Partial<PolicyRow>): PolicyRow {
+    return {
+      id: "policy-1",
+      tenantId: "t1",
+      entity: "some.entity",
+      action: "read",
+      field: null,
+      subject: "context",
+      roles: null,
+      condition: null,
+      createdAt: new Date(),
+      createdBy: null,
+      ...overrides,
+    };
+  }
+
+  it("delegates canReadEntity through the injected PolicyStore, not a raw Database", async () => {
+    const findContextPolicies = vi.fn(() => Promise.resolve<PolicyRow[]>([]));
+    const store: PolicyStore = {
+      findContextPolicies,
+      loadAllPolicies: () => Promise.resolve([]),
+      findExplainPolicies: () => Promise.resolve([]),
+      listPolicies: () => Promise.resolve([]),
+      createPolicy: () => Promise.resolve(fakePolicyRow({})),
+      deletePolicy: () => Promise.resolve(),
+    };
+    const service = new PermissionService(store);
+
+    const decision = await service.canReadEntity(
+      { tenantId: "t1", roles: ["viewer"] },
+      "some.entity",
+    );
+
+    expect(findContextPolicies).toHaveBeenCalledWith("t1", "some.entity", "read");
+    expect(decision.allowed).toBe(true);
+  });
+
+  it("denies when the injected PolicyStore returns a policy the caller's role doesn't match", async () => {
+    const store: PolicyStore = {
+      findContextPolicies: () => Promise.resolve([fakePolicyRow({ roles: ["editor"] })]),
+      loadAllPolicies: () => Promise.resolve([]),
+      findExplainPolicies: () => Promise.resolve([]),
+      listPolicies: () => Promise.resolve([]),
+      createPolicy: () => Promise.resolve(fakePolicyRow({})),
+      deletePolicy: () => Promise.resolve(),
+    };
+    const service = new PermissionService(store);
+
+    const decision = await service.canReadEntity(
+      { tenantId: "t1", roles: ["viewer"] },
+      "some.entity",
+    );
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toBe("forbidden");
+  });
+});
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://metap:metap@localhost:5433/metap_test";
@@ -19,7 +80,7 @@ describe("PermissionService (live DB)", () => {
 
   beforeAll(async () => {
     db = createDatabase(databaseUrl);
-    service = new PermissionService(db);
+    service = new PermissionService(new PostgresPolicyStore(db));
 
     pgClient = new Client({ connectionString: databaseUrl });
     try {

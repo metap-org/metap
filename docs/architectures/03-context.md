@@ -30,5 +30,5 @@ Metap has no external system integrations yet (no payment/email/notification pro
 
 - **Protocol**: REST over HTTPS, JSON bodies, `Authorization: Bearer <JWT>`.
 - **Auth**: Metap verifies externally-issued JWTs (RS256, public key configured via `authJwtPublicKeyPath`) — it does not mint tokens for production use. Roles are *not* carried in the JWT; they're looked up fresh per request from `user_roles` (see [05. Building Block View](05-building-blocks.md)).
-- **Errors**: structured JSON error bodies with a request id and trace id (`src/server/error-handler.ts`).
+- **Errors**: structured JSON error bodies with a request id and trace id (`packages/core/src/server/error-handler.ts`).
 - **Events out**: RabbitMQ, AMQP 0-9-1, via the transactional outbox — no synchronous webhook/callback mechanism exists.
