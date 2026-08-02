@@ -5,11 +5,13 @@ import { ApiErrorMessage } from "../api/ApiErrorMessage";
 import { useEntity } from "../metadata/useEntity";
 import { FieldValue } from "../field/FieldValue";
 import { WorkflowActionBar } from "../workflow/WorkflowActionBar";
+import type { RecordCapabilities } from "./recordCapabilities";
 
 type RecordDto = {
   id: string;
   version: number;
   data: Record<string, unknown>;
+  capabilities: RecordCapabilities;
 };
 
 function stateValue(value: unknown): string {
@@ -66,6 +68,7 @@ export function RecordDetail({ entityName, id }: { entityName: string; id: strin
           version={record.version}
           workflow={entity.workflow}
           currentState={stateValue(record.data[entity.workflow.stateField])}
+          capabilities={record.capabilities}
           onTransitioned={() => {
             void refetch();
           }}

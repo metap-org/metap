@@ -899,4 +899,155 @@ describe("CrudService field/record enforcement (live DB)", () => {
       await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
     }
   });
+
+  it("get() capabilities.writableFields excludes a field denied by write policy", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const policy = await container.permissions.createPolicy(
+      tenantId,
+      "crm.customers",
+      "write",
+      ["admin"],
+      undefined,
+      undefined,
+      "phone",
+    );
+
+    let recordId: string | undefined;
+
+    try {
+      const created = await container.crud.create(
+        "crm.customers",
+        { code: "G003", name: "Capability Co", phone: "555-4000" },
+        adminContext,
+      );
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      recordId = created.data.id;
+
+      const result = await container.crud.get("crm.customers", recordId, viewerContext);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.capabilities.writableFields).not.toContain("phone");
+        expect(result.data.capabilities.writableFields).toContain("name");
+      }
+    } finally {
+      if (policy) {
+        await container.permissions.deletePolicy(tenantId, policy.id);
+      }
+      if (recordId) {
+        await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [recordId]);
+        await pgClient.query("DELETE FROM records WHERE id = $1", [recordId]);
+      }
+    }
+  });
+
+  it("get() capabilities.transitions reports the real guard result, available or not", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const createdNoEmail = await container.crud.create(
+      "crm.customers",
+      { code: "G004", name: "No Email Co" },
+      adminContext,
+    );
+    expect(createdNoEmail.ok).toBe(true);
+    if (!createdNoEmail.ok) return;
+
+    const createdWithEmail = await container.crud.create(
+      "crm.customers",
+      { code: "G005", name: "Has Email Co", email: "g005@example.com" },
+      adminContext,
+    );
+    expect(createdWithEmail.ok).toBe(true);
+    if (!createdWithEmail.ok) return;
+
+    try {
+      const noEmailResult = await container.crud.get(
+        "crm.customers",
+        createdNoEmail.data.id,
+        adminContext,
+      );
+      expect(noEmailResult.ok).toBe(true);
+      if (noEmailResult.ok) {
+        const activate = noEmailResult.data.capabilities.transitions.find(
+          (t) => t.action === "activate",
+        );
+        expect(activate?.available).toBe(false);
+        expect(activate?.reason).toBe("Email is required to activate a customer.");
+      }
+
+      const withEmailResult = await container.crud.get(
+        "crm.customers",
+        createdWithEmail.data.id,
+        adminContext,
+      );
+      expect(withEmailResult.ok).toBe(true);
+      if (withEmailResult.ok) {
+        const activate = withEmailResult.data.capabilities.transitions.find(
+          (t) => t.action === "activate",
+        );
+        expect(activate?.available).toBe(true);
+        expect(activate?.reason).toBeUndefined();
+      }
+    } finally {
+      await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [
+        createdNoEmail.data.id,
+      ]);
+      await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [
+        createdWithEmail.data.id,
+      ]);
+      await pgClient.query("DELETE FROM records WHERE id = $1", [createdNoEmail.data.id]);
+      await pgClient.query("DELETE FROM records WHERE id = $1", [createdWithEmail.data.id]);
+    }
+  });
+
+  it("get() capabilities.canUpdate and transitions reflect a record-level update denial", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "G006", name: "Owned Co 2", email: "g006@example.com" },
+      adminContext,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const policy = await container.permissions.createPolicy(
+      tenantId,
+      "crm.customers",
+      "update",
+      undefined,
+      { attribute: "createdBy", op: "eq", value: { fromContext: "userId" } },
+      undefined,
+      undefined,
+      "record",
+    );
+
+    try {
+      const result = await container.crud.get("crm.customers", created.data.id, editorContext);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.capabilities.canUpdate).toBe(false);
+        const activate = result.data.capabilities.transitions.find((t) => t.action === "activate");
+        expect(activate?.available).toBe(false);
+        expect(activate?.reason).toBe("forbidden");
+      }
+    } finally {
+      if (policy) {
+        await container.permissions.deletePolicy(tenantId, policy.id);
+      }
+      await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [created.data.id]);
+      await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
+    }
+  });
 });

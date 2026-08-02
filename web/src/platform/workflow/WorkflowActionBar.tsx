@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Alert, Badge, Button, Group, Stack, Text } from "@mantine/core";
+import { Alert, Badge, Button, Group, Stack, Text, Tooltip } from "@mantine/core";
 import { useAuth } from "../auth/AuthContext";
 import { apiFetch, ApiError } from "../api/client";
 import type { EntityWorkflow } from "../metadata/types";
+import type { RecordCapabilities } from "../detail/recordCapabilities";
 
 type RecordDto = { id: string; version: number; data: Record<string, unknown> };
 
@@ -50,6 +51,7 @@ export function WorkflowActionBar({
   version,
   workflow,
   currentState,
+  capabilities,
   onTransitioned,
 }: {
   entityName: string;
@@ -57,6 +59,7 @@ export function WorkflowActionBar({
   version: number;
   workflow: EntityWorkflow;
   currentState: string;
+  capabilities: RecordCapabilities;
   onTransitioned: (record: RecordDto) => void;
 }) {
   const { token } = useAuth();
@@ -67,6 +70,7 @@ export function WorkflowActionBar({
   const columns = groupByLevel(computeLevels(workflow));
   const availableTransitions = workflow.transitions.filter((t) => t.from === currentState);
   const terminalStates = new Set(workflow.terminalStates);
+  const transitionInfo = new Map(capabilities.transitions.map((t) => [t.action, t]));
 
   async function handleTransition(action: string) {
     setActionError(null);
@@ -123,16 +127,30 @@ export function WorkflowActionBar({
         </Text>
       ) : (
         <Group>
-          {availableTransitions.map((transition) => (
-            <Button
-              key={transition.action}
-              onClick={() => void handleTransition(transition.action)}
-              loading={pendingAction === transition.action}
-              disabled={pendingAction !== null && pendingAction !== transition.action}
-            >
-              {transition.label} ({transition.from} → {transition.to})
-            </Button>
-          ))}
+          {availableTransitions.map((transition) => {
+            const info = transitionInfo.get(transition.action);
+            const blocked = info ? !info.available : false;
+
+            return (
+              <Tooltip
+                key={transition.action}
+                label={info?.reason ?? ""}
+                disabled={!info || info.available}
+              >
+                <span>
+                  <Button
+                    onClick={() => void handleTransition(transition.action)}
+                    loading={pendingAction === transition.action}
+                    disabled={
+                      blocked || (pendingAction !== null && pendingAction !== transition.action)
+                    }
+                  >
+                    {transition.label} ({transition.from} → {transition.to})
+                  </Button>
+                </span>
+              </Tooltip>
+            );
+          })}
         </Group>
       )}
     </Stack>

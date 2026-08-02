@@ -6,11 +6,13 @@ import { ApiError } from "../api/client";
 import { ApiErrorMessage } from "../api/ApiErrorMessage";
 import { useEntity } from "../metadata/useEntity";
 import { FieldInput } from "../field/FieldInput";
+import type { RecordCapabilities } from "../detail/recordCapabilities";
 
 type RecordDto = {
   id: string;
   version: number;
   data: Record<string, unknown>;
+  capabilities: RecordCapabilities;
 };
 
 export function GeneratedForm({
@@ -43,6 +45,9 @@ export function GeneratedForm({
       setFormData(existing.data);
     }
   }, [existing]);
+
+  const writableFields =
+    recordId && existing ? new Set(existing.capabilities.writableFields) : null;
 
   const createMutation = useApiMutation<{ data: RecordDto }, { data: Record<string, unknown> }>(
     "POST",
@@ -128,6 +133,7 @@ export function GeneratedForm({
               value={formData[field.name]}
               onChange={(value) => setFieldValue(field.name, value)}
               error={fieldErrors[field.name]?.join(", ")}
+              disabled={writableFields ? !writableFields.has(field.name) : false}
             />
           ))}
         <Button onClick={() => void handleSubmit()} loading={submitting}>

@@ -132,6 +132,30 @@ describe("PermissionSnapshot (live DB)", () => {
     }
   });
 
+  it("writableFields returns only the fields allowed for a non-admin caller", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    try {
+      await service.createPolicy(tenantId, entity, "write", ["hr"], undefined, undefined, "salary");
+      const snapshot = await PermissionSnapshot.load(db, tenantId, entity);
+
+      const asHr = snapshot.writableFields(contextWithRoles(["hr"]), ["name", "salary"], undefined);
+      expect(asHr).toEqual(["name", "salary"]);
+
+      const asViewer = snapshot.writableFields(
+        contextWithRoles(["viewer"]),
+        ["name", "salary"],
+        undefined,
+      );
+      expect(asViewer).toEqual(["name"]);
+    } finally {
+      await cleanup();
+    }
+  });
+
   it("canUpdateRecordCondition evaluates against the record, not context, defaulting to the 'update' action", async (ctx) => {
     if (!dbAvailable) {
       ctx.skip();

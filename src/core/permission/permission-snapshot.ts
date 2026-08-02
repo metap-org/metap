@@ -72,13 +72,13 @@ export class PermissionSnapshot {
     return result;
   }
 
-  assertWritableFields(
+  writableFields(
     context: RequestContext,
-    payloadFields: readonly string[],
+    allFieldNames: readonly string[],
     existingRecord: Record<string, unknown> | undefined,
-  ): PermissionDecision {
+  ): string[] {
     if (context.roles?.includes("admin")) {
-      return { allowed: true };
+      return [...allFieldNames];
     }
 
     const writePoliciesByField = new Map<string, PolicyRow[]>();
@@ -91,23 +91,28 @@ export class PermissionSnapshot {
       writePoliciesByField.set(policy.field, list);
     }
 
-    for (const field of payloadFields) {
-      const fieldWritePolicies = writePoliciesByField.get(field);
-
-      if (!fieldWritePolicies || fieldWritePolicies.length === 0) {
-        continue;
+    return allFieldNames.filter((field) => {
+      const policies = writePoliciesByField.get(field);
+      if (!policies || policies.length === 0) {
+        return true;
       }
+      return policies.some((policy) => evaluatePolicyRow(policy, context, existingRecord));
+    });
+  }
 
-      const passed = fieldWritePolicies.some((policy) =>
-        evaluatePolicyRow(policy, context, existingRecord),
-      );
-
-      if (!passed) {
-        return { allowed: false, reason: "forbidden", field };
-      }
+  assertWritableFields(
+    context: RequestContext,
+    payloadFields: readonly string[],
+    existingRecord: Record<string, unknown> | undefined,
+  ): PermissionDecision {
+    if (context.roles?.includes("admin")) {
+      return { allowed: true };
     }
 
-    return { allowed: true };
+    const writable = new Set(this.writableFields(context, payloadFields, existingRecord));
+    const deniedField = payloadFields.find((field) => !writable.has(field));
+
+    return deniedField ? { allowed: false, reason: "forbidden", field: deniedField } : { allowed: true };
   }
 
   canUpdateRecordCondition(

@@ -23,6 +23,18 @@ type RecordDto = {
   updatedAt: Date;
 };
 
+export type TransitionAvailability = {
+  action: string;
+  available: boolean;
+  reason?: string;
+};
+
+export type RecordCapabilities = {
+  writableFields: string[];
+  canUpdate: boolean;
+  transitions: TransitionAvailability[];
+};
+
 export class CrudService {
   constructor(
     private readonly db: Database,
@@ -53,6 +65,51 @@ export class CrudService {
       status: stateField && !(stateField in filteredData) ? null : row.status,
       data: filteredData,
     };
+  }
+
+  private computeCapabilities(
+    entity: EntityDefinition,
+    context: RequestContext,
+    snapshot: PermissionSnapshot,
+    existingData: Record<string, unknown>,
+  ): RecordCapabilities {
+    const writableFields = snapshot.writableFields(
+      context,
+      entity.fields.map((field) => field.name),
+      existingData,
+    );
+
+    const recordDecision = snapshot.canUpdateRecordCondition(context, existingData);
+    const canUpdate = recordDecision.allowed;
+
+    const transitions: TransitionAvailability[] = [];
+    const currentState = entity.workflow ? existingData[entity.workflow.stateField] : undefined;
+
+    if (entity.workflow && typeof currentState === "string") {
+      for (const transition of entity.workflow.transitions) {
+        if (transition.from !== currentState) {
+          continue;
+        }
+
+        if (!canUpdate) {
+          transitions.push({
+            action: transition.action,
+            available: false,
+            ...(recordDecision.reason ? { reason: recordDecision.reason } : {}),
+          });
+          continue;
+        }
+
+        const guardResult = this.workflow.runGuard(transition, existingData, context);
+        transitions.push({
+          action: transition.action,
+          available: guardResult === true,
+          ...(guardResult === true ? {} : { reason: guardResult }),
+        });
+      }
+    }
+
+    return { writableFields, canUpdate, transitions };
   }
 
   private sortFieldValue(row: RecordDto, field: string): string {
@@ -139,7 +196,7 @@ export class CrudService {
     entityName: string,
     id: string,
     context: RequestContext,
-  ): Promise<ServiceResult<RecordDto>> {
+  ): Promise<ServiceResult<RecordDto & { capabilities: RecordCapabilities }>> {
     const entity = this.metadata.getEntity(entityName);
 
     if (!entity) {
@@ -181,7 +238,10 @@ export class CrudService {
 
     return {
       ok: true,
-      data: this.maskRecordForRead(entity, context, snapshot, existing),
+      data: {
+        ...this.maskRecordForRead(entity, context, snapshot, existing),
+        capabilities: this.computeCapabilities(entity, context, snapshot, existingData),
+      },
     };
   }
 
