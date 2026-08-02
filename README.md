@@ -34,6 +34,6 @@ pnpm typecheck
 
 Docs:
 
-- [Architecture](docs/architecture.md)
+- [Architecture](docs/architectures/index.md)
 - [Why This Stack](docs/why.md)
 - [Roadmap](docs/roadmap.md)

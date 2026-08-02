@@ -8,7 +8,7 @@ Metap is a metadata-driven ERP/platform core. The core idea: entity behavior (fi
 
 After completing the feature, do not commit any changes. Keep the diff intact so I can review it first. Making roadmap stay updated
 
-Stack: Fastify + Zod + Drizzle ORM + PostgreSQL + RabbitMQ (outbox pattern for reliable event publishing). Read `docs/why.md` for the reasoning behind each choice and `docs/architecture.md` for the target layering — both are short and worth reading in full before making structural changes. `docs/roadmap.md` tracks phased goals; the repo is currently at "Phase 0: Skeleton" — most services (permission, query planner, workflow) are intentionally minimal scaffolds with the boundary fixed but the real logic not yet implemented (e.g. `PermissionService` currently allows everything).
+Stack: Fastify + Zod + Drizzle ORM + PostgreSQL + RabbitMQ (outbox pattern for reliable event publishing). Read `docs/why.md` for the reasoning behind each choice and `docs/architectures/05-building-blocks.md` for the target layering (start at `docs/architectures/index.md` for the full architecture doc set) — worth reading in full before making structural changes. `docs/roadmap.md` tracks phased goals.
 
 ## Commands
 
@@ -52,20 +52,20 @@ Everything is wired together in `src/core/container.ts` (`createContainer`), a p
 
 There is no per-entity database table. All business records live in one generic `records` table (`src/infra/db/schema.ts`): tenant/entity/status/code columns plus a `data jsonb` column for the metadata-driven fields, with a `version` column reserved for optimistic locking. Entities are defined as `EntityDefinition` objects (`src/core/metadata/entity.ts`) — see `src/modules/crm/customer.entity.ts` for the pattern: a Zod schema plus field/list-view/workflow metadata — and registered into `MetadataRegistry` inside `container.ts`. Adding a new business entity means adding a new `*.entity.ts` module and registering it there, not creating a new table or route by hand.
 
-The roadmap (`docs/roadmap.md`, Data Model Strategy in `docs/architecture.md`) explicitly plans to peel off dedicated typed tables for high-volume or accounting-critical modules later — the generic JSONB table is a deliberate starting point, not an oversight.
+The roadmap (`docs/roadmap.md`, Data Model Strategy in `docs/architectures/05-building-blocks.md`) explicitly plans to peel off dedicated typed tables for high-volume or accounting-critical modules later — the generic JSONB table is a deliberate starting point, not an oversight.
 
 ### Core services and their fixed boundaries
 
 - **`MetadataRegistry`** — owns entity definitions (fields, list views, workflow, validation schema). Read-only registry, populated once at startup in `container.ts`.
 - **`CrudService`** — the only thing routes call for record operations. Orchestrates: permission check -> Zod validation -> query planning -> DB write -> workflow status assignment -> outbox enqueue. Currently uses a hardcoded `defaultContext()` (tenant/user/roles) — this is a known placeholder pending real auth (Phase 1 in the roadmap), not something to silently work around elsewhere.
 - **`PermissionService`** — intended home for tenant scope, RBAC/ABAC, field- and record-level permission. Currently allows everything by design (scaffold phase); do not add ad-hoc permission checks elsewhere in anticipation of this — extend this service instead.
-- **`QueryPlanner`** — the *only* place list/filter/sort queries are turned into SQL. Rules from `docs/architecture.md` that matter for any change here: every list has a max limit, every query is tenant-scoped, filter/sort fields must come from entity metadata (never arbitrary client-supplied operators).
+- **`QueryPlanner`** — the *only* place list/filter/sort queries are turned into SQL. Rules from `docs/architectures/05-building-blocks.md` that matter for any change here: every list has a max limit, every query is tenant-scoped, filter/sort fields must come from entity metadata (never arbitrary client-supplied operators).
 - **`WorkflowEngine`** — metadata-driven state machine (state field, initial state, terminal states, transitions). Currently only assigns initial status and emits a `<entity>.record.created` outbox event on create; transition/guard logic is not yet implemented.
 - **`OutboxService`** — writes events to the `outbox_events` table in the same transaction as the business write (outbox pattern), so RabbitMQ downtime can't lose events. A separate worker (`src/workers/outbox-publisher.ts`, run via `pnpm worker:outbox`) polls and drains pending rows to RabbitMQ on a 1s loop — it is a separate long-running process from the API server, not a background task inside `main.ts`.
 
 ### Boundaries to preserve
 
-From `docs/architecture.md`, still true of the current code and worth enforcing in review:
+From `docs/architectures/05-building-blocks.md`, still true of the current code and worth enforcing in review:
 
 - Module/route code must not import the Drizzle client or RabbitMQ publisher directly — go through `CrudService`/`OutboxService` via the container.
 - Frontend/client query input must not map directly to SQL operators — it goes through `QueryPlanner`, constrained by entity metadata.

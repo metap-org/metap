@@ -22,7 +22,7 @@ share an `action`. A typo here fails silently (a filter on a non-existent
 field is just ignored by `QueryPlanner`) or crashes later, deep inside
 `CrudService`/`QueryPlanner`/`WorkflowEngine`, instead of at boot.
 
-`docs/architecture.md`'s Metadata Registry section already claims "Metap
+`docs/architectures/index.md`'s Metadata Registry section already claims "Metap
 validates and compiles metadata as a first-class runtime artifact rather
 than treating it as a passive schema description" — today that's aspirational,
 not true. This spec is what makes it true.
@@ -168,7 +168,7 @@ other route there; no new public route is introduced by this spec.
   small added boot latency (one query per entity), acceptable at this
   entity count.
 - New migration for `metadata_versions` (`pnpm db:generate`).
-- `docs/architecture.md`'s existing claim about metadata being "a
+- `docs/architectures/index.md`'s existing claim about metadata being "a
   first-class runtime artifact" becomes accurate; no wording change needed
   there once this ships.
 

@@ -13,7 +13,7 @@ Scope: third of four planned Phase 1 kernel pieces, in this priority order:
 
 ## Motivation
 
-`QueryPlanner.planList` (`src/core/query/query-planner.ts`) currently only enforces tenant scope and a max limit. It accepts no filters from the client at all, and `input.sort` is accepted by the API but silently ignored — every list is always `ORDER BY created_at DESC`. This is a gap, not a regression: the capability was never built. `docs/architecture.md`'s stated rule — "filter/sort fields must come from entity metadata (never arbitrary client-supplied operators)" — has nothing to violate yet because there's no filtering at all.
+`QueryPlanner.planList` (`src/core/query/query-planner.ts`) currently only enforces tenant scope and a max limit. It accepts no filters from the client at all, and `input.sort` is accepted by the API but silently ignored — every list is always `ORDER BY created_at DESC`. This is a gap, not a regression: the capability was never built. `docs/architectures/index.md`'s stated rule — "filter/sort fields must come from entity metadata (never arbitrary client-supplied operators)" — has nothing to violate yet because there's no filtering at all.
 
 The legacy system audited earlier in this project (see prior review, not referenced by name per this project's licensing constraints) had exactly the opposite failure mode: it *did* accept client-supplied filters, but forwarded them into MongoDB queries with no operator allowlist, letting a client-controlled object value (e.g. `?field[$ne]=null`) become a live NoSQL-operator-injection surface. This design builds the missing filter/sort capability the safe way from the start, rather than adding a permissive version now and hardening it later.
 

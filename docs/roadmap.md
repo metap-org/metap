@@ -197,7 +197,7 @@ concrete gap driving it yet — no reporting/analytics UI or consumer exists,
 and the system has exactly one entity (`crm.customers`). Building a
 `ReportService`/report-specific query path now would be infrastructure for a
 workload that doesn't exist, contradicting this project's own trigger-based
-evolution philosophy (see Phase 9, and `docs/architecture.md`'s Data Model
+evolution philosophy (see Phase 9, and `docs/architectures/05-building-blocks.md`'s Data Model
 Strategy: "none of it should be built ahead of its trigger"). Trigger: a
 concrete export/aggregation need shows up (a real UI or consumer asks for
 it), or an OLTP-path query is measurably slowed by report-shaped access
@@ -291,7 +291,7 @@ Goals:
 
 ## Phase 9: Multi-Service Evolution
 
-Unlike Phases 1-8, this phase is trigger-based, not sequential — it starts when its trigger condition happens, not when Phase 8 finishes. See `docs/architecture.md`'s "Target Architecture: Multi-Service Evolution" section for the full reasoning.
+Unlike Phases 1-8, this phase is trigger-based, not sequential — it starts when its trigger condition happens, not when Phase 8 finishes. See `docs/architectures/04-strategy.md`'s "Future Evolution: Multi-Service Split" section for the full reasoning.
 
 Triggers and the transition each one unlocks:
 

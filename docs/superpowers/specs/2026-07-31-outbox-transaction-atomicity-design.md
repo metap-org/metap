@@ -8,7 +8,7 @@ Scope: backend only (`src/core/crud`, `src/core/workflow`, `src/core/outbox`, `s
 
 ## Motivation
 
-The project's own documented invariant (`CLAUDE.md`, `docs/architecture.md`) is that `OutboxService` "writes events to the outbox_events table in the same transaction as the business write" — the whole point of the outbox pattern is that RabbitMQ downtime, or any failure between the two writes, can never lose an event or leave the two tables inconsistent.
+The project's own documented invariant (`CLAUDE.md`, `docs/architectures/index.md`) is that `OutboxService` "writes events to the outbox_events table in the same transaction as the business write" — the whole point of the outbox pattern is that RabbitMQ downtime, or any failure between the two writes, can never lose an event or leave the two tables inconsistent.
 
 The current code doesn't do this. `CrudService.create`/`update` issue the `records` insert/update as one Postgres statement (autocommits immediately on the node-postgres driver), then separately call `workflow.emitCreated`/`emitUpdated`, which calls `outbox.enqueue`, which issues a second, independent `outbox_events` insert. If the second write fails for any reason (a transient DB error, a constraint violation, a crash between the two calls), the business record now exists permanently with no corresponding outbox event — the event is lost forever, silently. This was flagged in two prior review passes this session and deferred until now.
 

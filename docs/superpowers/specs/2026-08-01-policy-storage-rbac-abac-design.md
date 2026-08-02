@@ -54,9 +54,9 @@ of the JWT.
   entity with no declared restrictions) — adding a deny concept would be
   a bigger semantic change than requested here.
 - A separate "auth service" or network boundary for policy evaluation.
-  Per `docs/architecture.md`'s Multi-Service Evolution section,
+  Per `docs/architectures/index.md`'s Multi-Service Evolution section,
   `PermissionService` already lives in `src/core`, the future
-  `packages/core` — every eventual `apps/<phân-hệ>` service imports it
+  `packages/core` — every eventual `apps/<module>` service imports it
   in-process, querying the same shared Postgres instance. `policies` is
   an infrastructure table (like `outbox_events`/`workflow_events`/
   `user_roles`), not entity business data, so it isn't subject to the

@@ -27,7 +27,7 @@ these lookups beyond the table's `(tenant_id, entity, status)` and
 `indexed?: boolean` and `unique?: boolean` per field (`src/core/metadata/entity.ts`),
 and `crm.customers`' `code`/`status` fields already set `indexed: true` — but
 nothing in the codebase reads either flag. It's a documented, not-yet-built gap:
-`docs/architecture.md`'s Data Model Strategy explicitly plans "indexed generated
+`docs/architectures/index.md`'s Data Model Strategy explicitly plans "indexed generated
 columns for hot fields" as the evolution step after the current generic-JSONB
 baseline.
 
@@ -58,7 +58,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_records_<e_sanitized>_<f>
   WHERE entity = '<e>' AND deleted = false;
 
 -- unique: true (tenant-scoped — uniqueness is never global, per
--- docs/architecture.md's "every business query includes tenant scope")
+-- docs/architectures/index.md's "every business query includes tenant scope")
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uniq_records_<e_sanitized>_<f>
   ON records (tenant_id, (jsonb_extract_path_text(data, '<f>')))
   WHERE entity = '<e>' AND deleted = false;

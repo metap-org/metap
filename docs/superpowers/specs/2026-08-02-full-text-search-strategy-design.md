@@ -67,7 +67,7 @@ the extracted lexemes — no operator injection surface.
 
 `'simple'` text search config: no stemming, no stopword removal. Chosen
 because this platform makes no language guarantee about entity data (see
-`docs/architecture.md`'s "Target Architecture: Multi-Service Evolution" —
+`docs/architectures/index.md`'s "Target Architecture: Multi-Service Evolution" —
 Metap is meant to back a multi-purpose low-code platform, not an
 English-only CRM demo); `'english'` stemming/stopwords would silently
 misbehave on non-English content.

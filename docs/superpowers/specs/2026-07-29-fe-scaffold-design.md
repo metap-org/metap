@@ -19,7 +19,7 @@ metap is a platform meant to be imported by separate downstream projects that im
 - `web/src/platform/` — the reusable pieces this spec builds (`api-client`, `metadata-client`, the auth context) that a future downstream project would import. Later slices' `GeneratedList`/`GeneratedForm` also land here.
 - `web/src/demo/` — `DevLoginPage` and `CustomersPage`. These are a development/testing harness for the platform code, not a real business app — the same role a component library's own demo/playground app plays in its own repo, distinct from what a real consumer would build.
 
-This folder split anticipates a future real package split (e.g. `web/` becoming its own publishable package, with the demo app moved to a separate consuming project) without doing that work now — same reasoning as the backend's own target-architecture doc (`docs/architecture.md`'s "Target Architecture: Multi-Service Evolution"): don't build the package/workspace split until a second, real consumer actually needs to import `web/src/platform` from outside this repo. Until then, one `package.json` for the whole `web/` directory is enough.
+This folder split anticipates a future real package split (e.g. `web/` becoming its own publishable package, with the demo app moved to a separate consuming project) without doing that work now — same reasoning as the backend's own target-architecture doc (`docs/architectures/index.md`'s "Target Architecture: Multi-Service Evolution"): don't build the package/workspace split until a second, real consumer actually needs to import `web/src/platform` from outside this repo. Until then, one `package.json` for the whole `web/` directory is enough.
 
 Developers run it independently: `cd web && pnpm install && pnpm dev`.
 
