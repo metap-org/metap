@@ -7,6 +7,7 @@ const CustomerSchema = z.object({
   phone: z.string().max(40).optional(),
   email: z.string().email().optional(),
   status: z.enum(["draft", "active", "blocked"]).default("draft"),
+  referredBy: z.string().uuid().optional(),
 });
 
 export const customerEntity: EntityDefinition<typeof CustomerSchema> = {
@@ -41,6 +42,13 @@ export const customerEntity: EntityDefinition<typeof CustomerSchema> = {
       enumValues: ["draft", "active", "blocked"],
       indexed: true,
       sortable: true,
+    },
+    {
+      name: "referredBy",
+      label: "Referred By",
+      kind: "reference",
+      refEntity: "crm.customers",
+      refDisplayField: "name",
     },
   ],
   listViews: [
