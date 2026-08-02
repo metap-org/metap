@@ -33,6 +33,14 @@ export class MetadataRegistry {
         if (field.kind === "reference" && field.refEntity && !this.entities.has(field.refEntity)) {
           issues.push(`field "${field.name}" references unknown entity "${field.refEntity}"`);
         }
+        if (field.kind === "reference" && field.refEntity && field.refDisplayField) {
+          const target = this.entities.get(field.refEntity);
+          if (target && !target.fields.some((f) => f.name === field.refDisplayField)) {
+            issues.push(
+              `field "${field.name}" has refDisplayField "${field.refDisplayField}" which does not exist on "${field.refEntity}"`,
+            );
+          }
+        }
       }
       if (issues.length > 0) {
         throw new MetadataValidationError(entity.name, issues);

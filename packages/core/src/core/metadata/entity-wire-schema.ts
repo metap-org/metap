@@ -30,6 +30,7 @@ export const EntityFieldSchema = z.object({
   unique: z.boolean().optional(),
   enumValues: z.array(z.string()).optional(),
   refEntity: z.string().optional(),
+  refDisplayField: z.string().optional(),
   searchable: z.boolean().optional(),
   searchMode: z.enum(["substring", "fts"]).optional(),
   sortable: z.boolean().optional(),

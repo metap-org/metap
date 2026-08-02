@@ -46,4 +46,48 @@ describe("MetadataRegistry.validateReferences", () => {
 
     expect(() => registry.validateReferences()).not.toThrow();
   });
+
+  it("does not throw when refDisplayField names a real field on the target entity", () => {
+    const registry = new MetadataRegistry();
+    registry.register(widgetEntity({ name: "test.owners" }));
+    registry.register(
+      widgetEntity({
+        name: "test.widgets",
+        fields: [
+          { name: "name", label: "Name", kind: "string" },
+          {
+            name: "ownerId",
+            label: "Owner",
+            kind: "reference",
+            refEntity: "test.owners",
+            refDisplayField: "name",
+          },
+        ],
+      }),
+    );
+
+    expect(() => registry.validateReferences()).not.toThrow();
+  });
+
+  it("throws when refDisplayField names a field that doesn't exist on the target entity", () => {
+    const registry = new MetadataRegistry();
+    registry.register(widgetEntity({ name: "test.owners" }));
+    registry.register(
+      widgetEntity({
+        name: "test.widgets",
+        fields: [
+          { name: "name", label: "Name", kind: "string" },
+          {
+            name: "ownerId",
+            label: "Owner",
+            kind: "reference",
+            refEntity: "test.owners",
+            refDisplayField: "nickname",
+          },
+        ],
+      }),
+    );
+
+    expect(() => registry.validateReferences()).toThrow(MetadataValidationError);
+  });
 });

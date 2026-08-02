@@ -22,6 +22,7 @@ export type EntityField = {
   unique?: boolean;
   enumValues?: readonly string[];
   refEntity?: string;
+  refDisplayField?: string;
   searchable?: boolean;
   searchMode?: "substring" | "fts"; // default: "substring" — only meaningful when searchable: true
   sortable?: boolean;
