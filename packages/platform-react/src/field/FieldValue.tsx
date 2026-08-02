@@ -1,6 +1,7 @@
 import { Badge, Tooltip } from "@mantine/core";
 import type { EntityField } from "../metadata/types";
 import { formatFieldValue } from "./fieldKindConfig";
+import { ReferenceFieldValue } from "./ReferenceFieldValue";
 
 export function FieldValue({ field, value }: { field: EntityField; value: unknown }) {
   if (value === null || value === undefined) {
@@ -14,6 +15,10 @@ export function FieldValue({ field, value }: { field: EntityField; value: unknow
       );
     }
     return <>—</>;
+  }
+
+  if (field.kind === "reference") {
+    return <ReferenceFieldValue field={field} value={value} />;
   }
 
   const formatted = formatFieldValue(field.kind, value) ?? "—";
