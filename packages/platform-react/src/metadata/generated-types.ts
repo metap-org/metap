@@ -132,6 +132,7 @@ export interface paths {
               email?: string;
               /** @enum {string} */
               status?: "draft" | "active" | "blocked";
+              referredBy?: string;
             };
           };
         };
@@ -184,6 +185,7 @@ export interface paths {
               email?: string;
               /** @enum {string} */
               status?: "draft" | "active" | "blocked";
+              referredBy?: string;
             };
           };
         };
@@ -267,6 +269,7 @@ export interface components {
         unique?: boolean;
         enumValues?: string[];
         refEntity?: string;
+        refDisplayField?: string;
         searchable?: boolean;
         /** @enum {string} */
         searchMode?: "substring" | "fts";
