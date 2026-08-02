@@ -61,7 +61,7 @@ export class QueryPlanner {
   planList(
     entityName: string,
     input: ListInput,
-    context: Partial<RequestContext>,
+    context: RequestContext,
     recordReadPolicies: PolicyRow[] = [],
   ): PlannedListQuery {
     const entity = this.metadata.getEntity(entityName);
@@ -80,7 +80,7 @@ export class QueryPlanner {
       eq(records.deleted, false),
     ];
 
-    const recordCondition = recordPolicyWhereClause(recordReadPolicies, context as RequestContext);
+    const recordCondition = recordPolicyWhereClause(recordReadPolicies, context);
     if (recordCondition) {
       conditions.push(recordCondition);
     }

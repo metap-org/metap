@@ -12,7 +12,7 @@ A business write and the event(s) it produces commit in the same PostgreSQL tran
 
 ## Multi-Tenancy
 
-Every business table carries `tenant_id`; every `QueryPlanner`/`CrudService` call is scoped by it (`PermissionService.scopedTenant`). There is no cross-tenant query path anywhere in the codebase.
+Every business table carries `tenant_id`; every `QueryPlanner`/`CrudService` call is scoped by it (`PermissionService.scopedTenant`). There is no cross-tenant query path anywhere in the codebase. `scopedTenant` takes a full `RequestContext` (not `Partial<RequestContext>`) and throws rather than silently falling back to a default tenant if `tenantId` is ever empty — an empty tenant at this point means a real bug upstream (the auth hook always derives a real `tenantId` from a verified JWT before any query-planning code runs), and a silent default would turn that bug into wrong-but-quiet cross-tenant-looking query results instead of a clear, loud failure. Fixed 2026-08-02 after an external architecture review flagged the old silent-fallback behavior — see [09. Architecture Decisions](09-adr.md).
 
 ## Permission Enforcement
 

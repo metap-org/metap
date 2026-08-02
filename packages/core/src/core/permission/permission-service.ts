@@ -61,8 +61,17 @@ export class PermissionService {
     return this.checkAction(context, entity, "delete");
   }
 
-  scopedTenant(context: Partial<RequestContext>) {
-    return context.tenantId ?? "00000000-0000-0000-0000-000000000001";
+  // context.tenantId is a required field on RequestContext, always derived
+  // from a verified JWT by the auth hook before this is ever called — an
+  // empty/missing value here means a real bug upstream, not a legitimate
+  // "no tenant" case. Fail loudly rather than silently scoping to a
+  // hardcoded default tenant, which would mask that bug as wrong-but-quiet
+  // query results instead of a clear error.
+  scopedTenant(context: RequestContext): string {
+    if (!context.tenantId) {
+      throw new Error("RequestContext.tenantId is required but was missing or empty");
+    }
+    return context.tenantId;
   }
 
   async loadSnapshot(tenantId: string, entity: string): Promise<PermissionSnapshot> {

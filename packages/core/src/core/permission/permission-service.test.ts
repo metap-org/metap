@@ -45,6 +45,20 @@ describe("PermissionService with an injected PolicyStore (no DB)", () => {
     expect(decision.allowed).toBe(true);
   });
 
+  it("scopedTenant throws rather than silently defaulting when tenantId is empty", () => {
+    const store: PolicyStore = {
+      findContextPolicies: () => Promise.resolve([]),
+      loadAllPolicies: () => Promise.resolve([]),
+      findExplainPolicies: () => Promise.resolve([]),
+      listPolicies: () => Promise.resolve([]),
+      createPolicy: () => Promise.resolve(fakePolicyRow({})),
+      deletePolicy: () => Promise.resolve(),
+    };
+    const service = new PermissionService(store);
+
+    expect(() => service.scopedTenant({ tenantId: "" })).toThrow(/tenantId/);
+  });
+
   it("denies when the injected PolicyStore returns a policy the caller's role doesn't match", async () => {
     const store: PolicyStore = {
       findContextPolicies: () => Promise.resolve([fakePolicyRow({ roles: ["editor"] })]),

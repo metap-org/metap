@@ -28,6 +28,11 @@ This project already runs an informal ADR workflow: every non-trivial change get
 | 2026-08-02 | Monorepo restructure: `packages/core` (pnpm workspace, backend extraction) | `docs/superpowers/specs/2026-08-02-monorepo-packages-core-design.md` |
 | 2026-08-02 | Monorepo restructure: `packages/platform-react` + `apps/demo` | `docs/superpowers/specs/2026-08-02-monorepo-platform-react-design.md` |
 | 2026-08-02 | Monorepo restructure: `apps/crm` (real module split, pulled forward) | `docs/superpowers/specs/2026-08-02-monorepo-apps-crm-design.md` |
+| 2026-08-02 | Outbox row locking (`FOR UPDATE SKIP LOCKED`) | `docs/superpowers/specs/2026-08-02-outbox-row-locking-design.md` |
+| 2026-08-02 | Permission storage seam (`PolicyStore` interface) | `docs/superpowers/specs/2026-08-02-permission-storage-seam-design.md` |
+| 2026-08-02 | Outbox per-service DB configurability | `docs/superpowers/specs/2026-08-02-outbox-per-service-db-design.md` |
+| 2026-08-02 | DB boot visibility + fail-fast schema check | `docs/superpowers/specs/2026-08-02-db-boot-visibility-design.md` |
+| 2026-08-02 | Generate frontend metadata types from backend OpenAPI | `docs/superpowers/specs/2026-08-02-fe-metadata-codegen-design.md` |
 
 All of the above are **Accepted** and implemented (see `docs/roadmap.md` for phase-level status).
 
@@ -36,3 +41,4 @@ All of the above are **Accepted** and implemented (see `docs/roadmap.md` for pha
 - **`core->modules` layering**: `packages/core` must never import a specific business entity — entity registration is an application-layer concern owned by each `apps/<module>` (e.g. `apps/crm/src/modules/registry.ts`, called after `createContainer()`/`buildApp()` return). Originally fixed as a convention during the Metadata Compiler work; now also a hard package boundary (`packages/core` has no dependency path to any `apps/*` package) since the 2026-08-02 monorepo restructure.
 - **Index expression must match the query expression exactly**: an `IndexReconciler`-built index on `data->>'field'` is *never* selected by Postgres for a query written as `jsonb_extract_path_text(data, 'field')`, even though they're semantically equal — Postgres's expression-index matching is syntactic, not semantic. Every index this codebase builds uses `jsonb_extract_path_text`, matching `QueryPlanner`'s own filter/sort expression. Found and fixed during the Hot Field Index Strategy work.
 - **Postgres DDL accepts no bind parameters at all** (not just under `CONCURRENTLY`) — `IndexReconciler` inlines entity/field names as escaped SQL literals, safe only because they come exclusively from server-authored, `MetadataCompiler`-validated metadata, never request input.
+- **`PermissionService.scopedTenant` fails loudly instead of defaulting a missing tenant**: it used to fall back to a hardcoded tenant UUID when `context.tenantId` was empty (and took `Partial<RequestContext>`, weaker than necessary — every real call site already had a full `RequestContext`). Flagged by an external architecture review (2026-08-02); fixed by tightening the parameter type to `RequestContext` and throwing if `tenantId` is empty, since that can only mean a bug upstream — see [08. Cross-cutting Concepts](08-cross-cutting.md#multi-tenancy).
