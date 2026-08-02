@@ -90,6 +90,15 @@ export class WorkflowEngine {
     });
   }
 
+  async emitDeleted(executor: DbExecutor, entity: EntityDefinition, recordId: string) {
+    await this.outbox.enqueue(executor, {
+      topic: `${entity.name}.record.deleted`,
+      aggregateType: entity.name,
+      aggregateId: recordId,
+      payload: { recordId },
+    });
+  }
+
   async emitUpdated(
     executor: DbExecutor,
     entity: EntityDefinition,

@@ -23,6 +23,10 @@ const UpdateBodySchema = z.object({
 
 const UpdateParamsSchema = z.object({ entity: z.string(), id: z.string().uuid() });
 
+const DeleteBodySchema = z.object({
+  version: z.number().int().positive(),
+});
+
 const TransitionBodySchema = z.object({
   version: z.number().int().positive(),
 });
@@ -127,6 +131,35 @@ export function registerRecordRoutes(app: FastifyInstance, container: AppContain
         params.id,
         body.version,
         body.data,
+        request.context,
+      );
+
+      if (!result.ok) {
+        return sendServiceError(request, reply, result);
+      }
+
+      return { data: result.data };
+    },
+  );
+
+  app.delete<{
+    Params: { entity: string; id: string };
+    Body: z.infer<typeof DeleteBodySchema>;
+  }>(
+    "/api/:entity/:id",
+    {
+      schema: {
+        params: z.toJSONSchema(UpdateParamsSchema, { target: "draft-7" }),
+        body: z.toJSONSchema(DeleteBodySchema, { target: "draft-7" }),
+      },
+    },
+    async (request, reply) => {
+      const params = UpdateParamsSchema.parse(request.params);
+      const body = DeleteBodySchema.parse(request.body);
+      const result = await container.crud.delete(
+        params.entity,
+        params.id,
+        body.version,
         request.context,
       );
 

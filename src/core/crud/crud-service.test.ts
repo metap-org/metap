@@ -1050,4 +1050,143 @@ describe("CrudService field/record enforcement (live DB)", () => {
       await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
     }
   });
+
+  it("delete() soft-deletes a record when the version matches; it then 404s on get()", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "D001", name: "Delete Me Co" },
+      adminContext,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    try {
+      const result = await container.crud.delete(
+        "crm.customers",
+        created.data.id,
+        created.data.version,
+        adminContext,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.version).toBe(created.data.version + 1);
+      }
+
+      const afterDelete = await container.crud.get("crm.customers", created.data.id, adminContext);
+      expect(afterDelete.ok).toBe(false);
+      if (!afterDelete.ok) {
+        expect(afterDelete.status).toBe(404);
+        expect(afterDelete.error).toBe("record_not_found");
+      }
+    } finally {
+      await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [created.data.id]);
+      await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
+    }
+  });
+
+  it("delete() rejects a stale version and leaves the record un-deleted", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "D002", name: "Stale Delete Co" },
+      adminContext,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    try {
+      const bumped = await container.crud.update(
+        "crm.customers",
+        created.data.id,
+        created.data.version,
+        { name: "Bumped First" },
+        adminContext,
+      );
+      expect(bumped.ok).toBe(true);
+
+      const stale = await container.crud.delete(
+        "crm.customers",
+        created.data.id,
+        created.data.version,
+        adminContext,
+      );
+
+      expect(stale.ok).toBe(false);
+      if (!stale.ok) {
+        expect(stale.status).toBe(409);
+        expect(stale.error).toBe("version_conflict");
+      }
+
+      const stillThere = await container.crud.get("crm.customers", created.data.id, adminContext);
+      expect(stillThere.ok).toBe(true);
+    } finally {
+      await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [created.data.id]);
+      await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
+    }
+  });
+
+  it("delete() is rejected by a record-level 'delete' policy that doesn't affect 'update'", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "D003", name: "Protected From Delete Co" },
+      adminContext,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const deletePolicy = await container.permissions.createPolicy(
+      tenantId,
+      "crm.customers",
+      "delete",
+      undefined,
+      { attribute: "createdBy", op: "eq", value: { fromContext: "userId" } },
+      undefined,
+      undefined,
+      "record",
+    );
+
+    try {
+      const updateStillAllowed = await container.crud.update(
+        "crm.customers",
+        created.data.id,
+        created.data.version,
+        { name: "Still Editable" },
+        editorContext,
+      );
+      expect(updateStillAllowed.ok).toBe(true);
+
+      const deleteResult = await container.crud.delete(
+        "crm.customers",
+        created.data.id,
+        updateStillAllowed.ok ? updateStillAllowed.data.version : created.data.version,
+        editorContext,
+      );
+
+      expect(deleteResult.ok).toBe(false);
+      if (!deleteResult.ok) {
+        expect(deleteResult.status).toBe(403);
+      }
+    } finally {
+      if (deletePolicy) {
+        await container.permissions.deletePolicy(tenantId, deletePolicy.id);
+      }
+      await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [created.data.id]);
+      await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
+    }
+  });
 });

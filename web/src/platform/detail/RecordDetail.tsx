@@ -1,7 +1,10 @@
-import { Anchor, Container, Stack, Text, Title } from "@mantine/core";
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Alert, Anchor, Button, Container, Group, Stack, Text, Title } from "@mantine/core";
+import { Link, useNavigate } from "react-router-dom";
 import { useApiQuery } from "../api/useApiQuery";
 import { ApiErrorMessage } from "../api/ApiErrorMessage";
+import { ApiError, apiFetch } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import { useEntity } from "../metadata/useEntity";
 import { FieldValue } from "../field/FieldValue";
 import { WorkflowActionBar } from "../workflow/WorkflowActionBar";
@@ -19,6 +22,10 @@ function stateValue(value: unknown): string {
 }
 
 export function RecordDetail({ entityName, id }: { entityName: string; id: string }) {
+  const { token } = useAuth();
+  const navigate = useNavigate();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const { data: entity, isLoading: entityLoading, error: entityError } = useEntity(entityName);
   const {
     data: record,
@@ -30,6 +37,25 @@ export function RecordDetail({ entityName, id }: { entityName: string; id: strin
     `/api/${entityName}/${id}`,
     (response) => response.data,
   );
+
+  async function handleDelete() {
+    if (!record || !window.confirm("Delete this record? This cannot be undone.")) {
+      return;
+    }
+
+    setDeleteError(null);
+    setDeleting(true);
+    try {
+      await apiFetch(`/api/${entityName}/${id}`, token, {
+        method: "DELETE",
+        body: JSON.stringify({ version: record.version }),
+      });
+      navigate(`/records/${entityName}`);
+    } catch (error) {
+      setDeleteError(error instanceof ApiError ? error.message : "Something went wrong.");
+      setDeleting(false);
+    }
+  }
 
   if (entityLoading || recordLoading) {
     return <div>Loading...</div>;
@@ -74,9 +100,19 @@ export function RecordDetail({ entityName, id }: { entityName: string; id: strin
           }}
         />
       ) : null}
-      <Anchor component={Link} to={`/records/${entityName}/${id}/edit`} mt="md" display="inline-block">
-        Edit
-      </Anchor>
+      {deleteError ? (
+        <Alert color="red" mt="md" onClose={() => setDeleteError(null)} withCloseButton>
+          {deleteError}
+        </Alert>
+      ) : null}
+      <Group mt="md">
+        <Anchor component={Link} to={`/records/${entityName}/${id}/edit`}>
+          Edit
+        </Anchor>
+        <Button color="red" variant="subtle" size="compact-sm" loading={deleting} onClick={() => void handleDelete()}>
+          Delete
+        </Button>
+      </Group>
     </Container>
   );
 }

@@ -576,6 +576,92 @@ export class CrudService {
     };
   }
 
+  async delete(
+    entityName: string,
+    id: string,
+    expectedVersion: number,
+    context: RequestContext,
+  ): Promise<ServiceResult<RecordDto>> {
+    const entity = this.metadata.getEntity(entityName);
+
+    if (!entity) {
+      return { ok: false, status: 404, error: "entity_not_found" };
+    }
+
+    const decision = await this.permissions.canDeleteEntity(context, entity.name);
+
+    if (!decision.allowed) {
+      return { ok: false, status: 403, error: decision.reason ?? "forbidden" };
+    }
+
+    const existingRows = await this.db.client
+      .select()
+      .from(records)
+      .where(
+        and(
+          eq(records.id, id),
+          eq(records.tenantId, context.tenantId),
+          eq(records.entity, entity.name),
+          eq(records.deleted, false),
+        ),
+      );
+
+    const existing = existingRows[0];
+
+    if (!existing) {
+      return { ok: false, status: 404, error: "record_not_found" };
+    }
+
+    const existingData = existing.data as Record<string, unknown>;
+
+    const snapshot = await this.permissions.loadSnapshot(context.tenantId, entity.name);
+    const recordDecision = snapshot.canUpdateRecordCondition(context, existingData, "delete");
+
+    if (!recordDecision.allowed) {
+      return { ok: false, status: 403, error: recordDecision.reason ?? "forbidden" };
+    }
+
+    const outcome = await this.db.client.transaction(async (tx) => {
+      const deletedRows = await tx
+        .update(records)
+        .set({
+          deleted: true,
+          version: sql`${records.version} + 1`,
+          updatedAt: new Date(),
+          updatedBy: context.userId,
+        })
+        .where(
+          and(
+            eq(records.id, id),
+            eq(records.tenantId, context.tenantId),
+            eq(records.entity, entity.name),
+            eq(records.version, expectedVersion),
+            eq(records.deleted, false),
+          ),
+        )
+        .returning();
+
+      const record = deletedRows[0];
+
+      if (!record) {
+        return { ok: false as const };
+      }
+
+      await this.workflow.emitDeleted(tx, entity, record.id);
+
+      return { ok: true as const, record };
+    });
+
+    if (!outcome.ok) {
+      return { ok: false, status: 409, error: "version_conflict" };
+    }
+
+    return {
+      ok: true,
+      data: this.maskRecordForRead(entity, context, snapshot, outcome.record),
+    };
+  }
+
   async flushOutbox() {
     await this.outbox.publishPending();
   }

@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Container, Select, Table, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Button, Container, Group, Select, Table, TextInput, Title } from "@mantine/core";
 import { useApiInfiniteQuery } from "../api/useApiInfiniteQuery";
 import { ApiErrorMessage } from "../api/ApiErrorMessage";
+import { ApiError, apiFetch } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import { FieldValue } from "../field/FieldValue";
 import { useEntity } from "../metadata/useEntity";
 import type { EntityField } from "../metadata/types";
@@ -26,6 +29,7 @@ type SortState = { field: string; descending: boolean } | null;
 const ROW_HEIGHT = 40;
 
 export function GeneratedList({ entityName }: { entityName: string }) {
+  const { token } = useAuth();
   const { data: entity, isLoading: entityLoading, error: entityError } = useEntity(entityName);
   // Text filters are debounced (wait for the user to stop typing before refetching).
   const [filterInputs, setFilterInputs] = useState<Record<string, string>>({});
@@ -33,6 +37,8 @@ export function GeneratedList({ entityName }: { entityName: string }) {
   const [enumFilters, setEnumFilters] = useState<Record<string, string>>({});
   const [sort, setSort] = useState<SortState>(null);
   const [debouncedTextFilters] = useDebouncedValue(filterInputs, 400);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const listView = entity?.listViews[0];
   const fieldsByName = useMemo(
@@ -74,6 +80,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
+    refetch,
   } = useApiInfiniteQuery<ListPage>(
     ["records", entityName, sort, activeFilters],
     (cursor) => {
@@ -144,13 +151,41 @@ export function GeneratedList({ entityName }: { entityName: string }) {
     });
   }
 
-  const columnCount = listView.fields.length;
+  async function handleDelete(record: RecordDto) {
+    if (!window.confirm("Delete this record? This cannot be undone.")) {
+      return;
+    }
+
+    setDeleteError(null);
+    setPendingDeleteId(record.id);
+    try {
+      await apiFetch(`/api/${entityName}/${record.id}`, token, {
+        method: "DELETE",
+        body: JSON.stringify({ version: record.version }),
+      });
+      await refetch();
+    } catch (error) {
+      setDeleteError(error instanceof ApiError ? error.message : "Something went wrong.");
+    } finally {
+      setPendingDeleteId(null);
+    }
+  }
+
+  const columnCount = listView.fields.length + 1;
 
   return (
     <Container py="xl">
-      <Title order={2} mb="md">
-        {entity.label}
-      </Title>
+      <Group justify="space-between" mb="md">
+        <Title order={2}>{entity.label}</Title>
+        <Button component={Link} to={`/records/${entityName}/new`}>
+          New
+        </Button>
+      </Group>
+      {deleteError ? (
+        <Alert color="red" mb="md" onClose={() => setDeleteError(null)} withCloseButton>
+          {deleteError}
+        </Alert>
+      ) : null}
       <div ref={scrollContainerRef} style={{ height: 600, overflow: "auto" }}>
         <Table>
           <Table.Thead
@@ -175,6 +210,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
                   </Table.Th>
                 );
               })}
+              <Table.Th>Actions</Table.Th>
             </Table.Tr>
             <Table.Tr>
               {listView.fields.map((fieldName) => {
@@ -213,6 +249,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
                   </Table.Th>
                 );
               })}
+              <Table.Th />
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody style={{ position: "relative", height: rowVirtualizer.getTotalSize() }}>
@@ -256,6 +293,23 @@ export function GeneratedList({ entityName }: { entityName: string }) {
                         </Table.Td>
                       );
                     })}
+                    <Table.Td>
+                      <Group gap="xs" wrap="nowrap">
+                        <Anchor component={Link} to={`/records/${entityName}/${record.id}`}>
+                          View
+                        </Anchor>
+                        <Button
+                          color="red"
+                          variant="subtle"
+                          size="compact-sm"
+                          loading={pendingDeleteId === record.id}
+                          disabled={pendingDeleteId !== null && pendingDeleteId !== record.id}
+                          onClick={() => void handleDelete(record)}
+                        >
+                          Delete
+                        </Button>
+                      </Group>
+                    </Table.Td>
                   </Table.Tr>
                 );
               })

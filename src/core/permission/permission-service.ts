@@ -22,7 +22,7 @@ export type PermissionDecision = {
   field?: string;
 };
 
-export type EntityAction = "read" | "create" | "update";
+export type EntityAction = "read" | "create" | "update" | "delete";
 
 export class PermissionService {
   constructor(private readonly db: Database) {}
@@ -68,6 +68,10 @@ export class PermissionService {
 
   canUpdateEntity(context: RequestContext, entity: string): Promise<PermissionDecision> {
     return this.checkAction(context, entity, "update");
+  }
+
+  canDeleteEntity(context: RequestContext, entity: string): Promise<PermissionDecision> {
+    return this.checkAction(context, entity, "delete");
   }
 
   scopedTenant(context: Partial<RequestContext>) {
