@@ -1,6 +1,7 @@
 import { Checkbox, NumberInput, Select, Textarea, TextInput } from "@mantine/core";
 import { DateInput, DateTimePicker } from "@mantine/dates";
 import type { EntityField } from "../metadata/types";
+import { ReferenceFieldInput } from "./ReferenceFieldInput";
 
 export function FieldInput({
   field,
@@ -90,13 +91,22 @@ export function FieldInput({
         />
       );
     case "string":
-    case "reference":
       return (
         <TextInput
           label={label}
           description={description}
           value={typeof value === "string" ? value : ""}
           onChange={(event) => onChange(event.currentTarget.value)}
+          error={error}
+          disabled={disabled}
+        />
+      );
+    case "reference":
+      return (
+        <ReferenceFieldInput
+          field={field}
+          value={value}
+          onChange={onChange}
           error={error}
           disabled={disabled}
         />
