@@ -165,6 +165,8 @@ This is not just UI work. It is part of the platform trust model.
 
 ## Phase A: Metadata Control Plane Foundation
 
+**Decomposed into 4 ordered sub-projects** (see `docs/roadmap.md`'s Phase 11 for status): (1) persisted metadata storage + draft/published versioning, (2) runtime loader that materializes published metadata through the existing `MetadataCompiler`/`MetadataRegistry` pipeline, (3) a publish validation pipeline layering deeper (cross-entity) checks on top of (1)'s shape validation, (4) a metadata admin API. Sub-project 1 has a written spec: `docs/superpowers/specs/2026-08-02-low-code-metadata-storage-design.md`. Key scoping decisions locked in there: DB-authored metadata is global (not per-tenant) for Phase A, has no workflow support yet (needs Phase B's declarative-rule work first), and `crm.customers` is not migrated off `*.entity.ts` as part of Phase A — DB storage is proven on new entities first.
+
 Objective:
 
 Move metadata from source code into a versioned, persisted control plane without changing the runtime execution model more than necessary.

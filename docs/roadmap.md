@@ -293,11 +293,13 @@ Goals:
 
 Unlike Phases 1-8, this phase is trigger-based, not sequential — it starts when its trigger condition happens, not when Phase 8 finishes. See `docs/architectures/04-strategy.md`'s "Future Evolution: Multi-Service Split" section for the full reasoning.
 
+**The repo/package structure itself is already done, ahead of its trigger.** The 2026-08-02 monorepo restructure pulled the pnpm-workspace split forward by explicit choice, not because the trigger condition fired: `packages/core` and `apps/crm` are already separate packages (`apps/crm` a thin Fastify app importing `packages/core` via `workspace:*`), matching the shape this trigger describes. What has *not* happened yet is the trigger's actual substance — there is still only one real module (`crm`); no second module has needed to be built as its own deployable unit. Treat the structural split as available infrastructure, not as evidence the underlying multi-service trigger has fired.
+
 Triggers and the transition each one unlocks:
 
-- **A second module (CRM, sales, inventory, accounting, ...) actually needs to be built as its own deployable unit** → split the repo into a pnpm workspace: `packages/core` (today's `src/core` + shared `src/infra`) and one `apps/<module>` per service, each a thin Fastify app importing `packages/core`.
-- **A single frontend screen needs to aggregate data from ≥2 services** → build a GraphQL gateway as a BFF in front of the REST services.
-- **The repo/package split above has actually happened** → evaluate gRPC for service-to-service calls where REST's overhead matters.
+- **A second module (CRM, sales, inventory, accounting, ...) actually needs to be built as its own deployable unit** → done structurally (see above); the remaining work is building that second module itself — see Phase 7.
+- **A single frontend screen needs to aggregate data from ≥2 services** → build a GraphQL gateway as a BFF in front of the REST services. Not yet triggered — still only one module, so no cross-service aggregation need exists.
+- **The repo/package split above has actually happened** → evaluate gRPC for service-to-service calls where REST's overhead matters. The split is structurally done, but with only one running process there is no real service-to-service call to optimize yet — evaluate this once a second module is actually deployed independently (Phase 7), not from the structural split alone.
 
 Until a trigger fires, its transition is not built. The one thing to do now, ahead of any trigger: keep every new entity module's name domain-namespaced (`<module>.<entity>`, e.g. `crm.customers`) and never let `QueryPlanner`/`CrudService` join across different entities' data in SQL — both are already true today and cost nothing to keep true.
 
@@ -314,22 +316,22 @@ Metap is successful if a developer can:
 
 ## Phase 10: Monorepo, npm publish
 
-**Status: Not started.** Split the repo into a pnpm workspace and publish `packages/core` (today's `src/core` + shared `src/infra`) as an installable npm package, so a downstream project can depend on Metap's core instead of forking it. Overlaps Phase 9's repo/package-split trigger, but is scoped separately here because "publish an npm package other people install" is a distinct, additional commitment (semver, changelog, public API surface) beyond just splitting the repo for internal multi-service use.
+**Status: Partially done.** Split the repo into a pnpm workspace and publish `packages/core` (today's `src/core` + shared `src/infra`) as an installable npm package, so a downstream project can depend on Metap's core instead of forking it. Overlaps Phase 9's repo/package-split trigger, but is scoped separately here because "publish an npm package other people install" is a distinct, additional commitment (semver, changelog, public API surface) beyond just splitting the repo for internal multi-service use.
 
 Goals:
 
-- Split into a pnpm workspace (`packages/core`, `apps/*`).
-- Define and stabilize `packages/core`'s public API surface.
+- ~~Split into a pnpm workspace (`packages/core`, `apps/*`)~~ — **Done** 2026-08-02 (`packages/core`, `packages/platform-react`, `apps/crm`, `apps/demo`). Pulled forward ahead of Phase 9's trigger, by explicit choice — see Phase 9 above.
+- Define and stabilize `packages/core`'s public API surface. — Not started; both `packages/core` and `packages/platform-react` are still `private: true`, no external (non-workspace) consumer exists yet.
 - Set up versioning/changelog and an npm publish pipeline.
 
 ## Phase 11: Low-code Platform Backbone Architecture
 
-**Status: Not started.** Define the architecture for using Metap as the backbone of a low-code platform (ERP, CRM, and beyond — see `docs/superpowers/specs` project-vision context), not just a single-purpose ERP core. This is a design/architecture phase, not an implementation one — its output is a spec, to be broken into further implementation phases once written.
+**Status: In progress.** Define the architecture for using Metap as the backbone of a low-code platform (ERP, CRM, and beyond — see `docs/superpowers/specs` project-vision context), not just a single-purpose ERP core. This is a design/architecture phase, not an implementation one — its output is a spec, to be broken into further implementation phases once written.
 
 Goals:
 
-- Define what "low-code" means concretely for Metap (who configures entities/workflows — code, admin UI, or both; what's user-editable at runtime vs. deploy-time).
-- Reconcile this with the metadata-driven design already in place (Phases 0-6) and the multi-service split (Phases 9-10).
-- Produce a design spec under `docs/superpowers/specs/` before any implementation plan is written.
+- ~~Define what "low-code" means concretely for Metap~~ — **Done, at the directional level**, by `docs/vision.md` and `docs/low-code-platform-v1.md` (both 2026-08-02): who configures things (operators, via a metadata control plane, not source-code edits for the standard path), what's user-editable at runtime (metadata: entities/fields/list views/workflow/policies) vs. deploy-time (the execution engine itself — `packages/core`'s services stay code, only their metadata *inputs* become persisted).
+- Reconcile this with the metadata-driven design already in place (Phases 0-6) and the multi-service split (Phases 9-10). — `docs/low-code-platform-v1.md`'s "Architectural Constraint" section already states the reconciliation principle (evolve the authoring model, keep the execution engine); making it concrete is this phase's remaining work.
+- Produce a design spec under `docs/superpowers/specs/` before any implementation plan is written. — In progress. `docs/low-code-platform-v1.md` decomposes the work into 3 phases (A: Metadata Control Plane Foundation, B: Builder UI and Safe Runtime Rules, C: Platform Hardening); Phase A is further decomposed into 4 ordered sub-projects, the first of which has a written spec: `docs/superpowers/specs/2026-08-02-low-code-metadata-storage-design.md` (persisted metadata storage + draft/published versioning — global, no workflow support yet, `crm.customers` stays code-authored for now). The remaining 3 Phase A sub-projects (runtime loader, publish validation pipeline, admin API) are named but not yet spec'd.
 
 
