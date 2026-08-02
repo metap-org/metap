@@ -11,11 +11,14 @@ Chosen stack:
 - RabbitMQ for integration events.
 - Outbox Pattern for reliable event publishing.
 
+This is a pnpm workspace: `packages/core` is the entity-agnostic platform library, `apps/crm` is the one business module (the only thing that actually runs), `packages/platform-react` + `apps/demo` are the frontend equivalent. Every command below runs from the repo root.
+
 Start locally:
 
 ```bash
 pnpm install
-cp .env.example .env
+cp packages/core/.env.example packages/core/.env
+cp apps/crm/.env.example apps/crm/.env
 docker compose up -d postgres rabbitmq
 pnpm db:generate
 pnpm db:migrate
