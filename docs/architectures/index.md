@@ -23,4 +23,4 @@ None of these compete — arc42 organizes the document, C4 draws the pictures, 4
 11. [Risks and Technical Debt](11-risks.md) — honest, trigger-based
 12. [Glossary](12-glossary.md)
 
-For the phased build-out (what's done, what's next), see `docs/roadmap.md`. For stack/technology reasoning, see `docs/why.md`.
+For the phased build-out (what's done, what's next), see `docs/roadmap.md`. For stack/technology reasoning, see `docs/why.md`. For where this is all headed — the low-code direction, and a concrete path toward a first version of it — see `docs/vision.md` and `docs/low-code-platform-v1.md`; both are deliberately kept outside this arc42 set since they describe a target, not what has shipped.

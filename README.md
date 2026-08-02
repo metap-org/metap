@@ -40,3 +40,5 @@ Docs:
 - [Architecture](docs/architectures/index.md)
 - [Why This Stack](docs/why.md)
 - [Roadmap](docs/roadmap.md)
+- [Vision](docs/vision.md) — where this is headed (low-code), and why
+- [Low-code Platform V1 Direction](docs/low-code-platform-v1.md) — a concrete phased path there

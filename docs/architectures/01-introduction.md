@@ -8,6 +8,8 @@ The difference is that helpers are a facade, not the architecture. The platform 
 
 Metap is meant to be the backbone of a low-code platform usable to build ERP, CRM, and more — not a single-purpose ERP app. `packages/core` (metadata, permission, query planner, workflow, outbox) is the reusable core platform — a real pnpm workspace package, entity-agnostic; each business subsystem is its own `apps/<module>` (CRM today, sales/inventory/accounting later), importing `packages/core` via `workspace:*` and registering only its own entities (see [04. Solution Strategy](04-strategy.md) and [07. Deployment View](07-deployment.md)).
 
+This is the terse, as-built version of that statement — for the fuller directional picture (why low-code is the higher destination, what that implies for decisions made now) see `docs/vision.md`; for a concrete phased path toward a first low-code platform version, see `docs/low-code-platform-v1.md`. Both are deliberately outside this arc42 set, since they describe a target, not what has shipped.
+
 ## Requirements Overview
 
 - Declare an entity once (fields, list views, validation schema, workflow) and get generic CRUD, list/filter/sort, permission enforcement, and workflow behavior for it — no per-entity route/controller/repository boilerplate.
