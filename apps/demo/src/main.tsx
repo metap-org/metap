@@ -8,6 +8,7 @@ import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
 import { ApiError } from "@metap/platform-react";
 import App from "./App";
+import { ReactRouterNavigationProvider } from "./reactRouterNavigationAdapter";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,7 +29,9 @@ createRoot(document.getElementById("root")!).render(
       <Notifications />
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
-          <App />
+          <ReactRouterNavigationProvider>
+            <App />
+          </ReactRouterNavigationProvider>
         </BrowserRouter>
       </QueryClientProvider>
     </MantineProvider>

@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Alert, Anchor, Button, Container, Group, Stack, Text, Title } from "@mantine/core";
-import { Link, useNavigate } from "react-router-dom";
 import { useApiQuery } from "../api/useApiQuery";
 import { ApiErrorMessage } from "../api/ApiErrorMessage";
 import { ApiError, apiFetch } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEntity } from "../metadata/useEntity";
 import { FieldValue } from "../field/FieldValue";
+import { useNavigationAdapter } from "../navigation/NavigationContext";
 import { WorkflowActionBar } from "../workflow/WorkflowActionBar";
 import type { RecordCapabilities } from "./recordCapabilities";
 
@@ -23,7 +23,7 @@ function stateValue(value: unknown): string {
 
 export function RecordDetail({ entityName, id }: { entityName: string; id: string }) {
   const { token } = useAuth();
-  const navigate = useNavigate();
+  const navAdapter = useNavigationAdapter();
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const { data: entity, isLoading: entityLoading, error: entityError } = useEntity(entityName);
@@ -50,7 +50,7 @@ export function RecordDetail({ entityName, id }: { entityName: string; id: strin
         method: "DELETE",
         body: JSON.stringify({ version: record.version }),
       });
-      navigate(`/records/${entityName}`);
+      navAdapter.navigate(navAdapter.toRecordList(entityName));
     } catch (error) {
       setDeleteError(error instanceof ApiError ? error.message : "Something went wrong.");
       setDeleting(false);
@@ -106,7 +106,7 @@ export function RecordDetail({ entityName, id }: { entityName: string; id: strin
         </Alert>
       ) : null}
       <Group mt="md">
-        <Anchor component={Link} to={`/records/${entityName}/${id}/edit`}>
+        <Anchor component={navAdapter.Link} to={navAdapter.toEditRecord(entityName, id)}>
           Edit
         </Anchor>
         <Button

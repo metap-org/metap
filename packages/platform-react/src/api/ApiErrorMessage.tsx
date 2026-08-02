@@ -1,11 +1,13 @@
-import { Link } from "react-router-dom";
+import { useNavigationAdapter } from "../navigation/NavigationContext";
 import { ApiError } from "./client";
 
 export function ApiErrorMessage({ error }: { error: unknown }) {
+  const adapter = useNavigationAdapter();
+
   if (error instanceof ApiError && error.status === 401) {
     return (
       <div>
-        Session expired. <Link to="/dev-login">Sign in again</Link>.
+        Session expired. <adapter.Link to={adapter.toLogin()}>Sign in again</adapter.Link>.
       </div>
     );
   }

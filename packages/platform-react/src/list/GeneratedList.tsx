@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -20,6 +19,7 @@ import { useAuth } from "../auth/AuthContext";
 import { FieldValue } from "../field/FieldValue";
 import { useEntity } from "../metadata/useEntity";
 import type { EntityField } from "../metadata/types";
+import { useNavigationAdapter } from "../navigation/NavigationContext";
 
 type RecordDto = {
   id: string;
@@ -40,6 +40,7 @@ const ROW_HEIGHT = 40;
 
 export function GeneratedList({ entityName }: { entityName: string }) {
   const { token } = useAuth();
+  const navAdapter = useNavigationAdapter();
   const { data: entity, isLoading: entityLoading, error: entityError } = useEntity(entityName);
   // Text filters are debounced (wait for the user to stop typing before refetching).
   const [filterInputs, setFilterInputs] = useState<Record<string, string>>({});
@@ -187,7 +188,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
     <Container py="xl">
       <Group justify="space-between" mb="md">
         <Title order={2}>{entity.label}</Title>
-        <Button component={Link} to={`/records/${entityName}/new`}>
+        <Button component={navAdapter.Link} to={navAdapter.toNewRecord(entityName)}>
           New
         </Button>
       </Group>
@@ -312,7 +313,10 @@ export function GeneratedList({ entityName }: { entityName: string }) {
                     })}
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap">
-                        <Anchor component={Link} to={`/records/${entityName}/${record.id}`}>
+                        <Anchor
+                          component={navAdapter.Link}
+                          to={navAdapter.toRecordDetail(entityName, record.id)}
+                        >
                           View
                         </Anchor>
                         <Button

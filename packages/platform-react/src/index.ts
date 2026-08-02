@@ -14,4 +14,5 @@ export * from "./list/GeneratedList";
 export * from "./metadata/types";
 export * from "./metadata/useEntities";
 export * from "./metadata/useEntity";
+export * from "./navigation/NavigationContext";
 export * from "./workflow/WorkflowActionBar";
