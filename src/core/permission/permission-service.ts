@@ -19,6 +19,7 @@ export type RequestContext = {
 export type PermissionDecision = {
   allowed: boolean;
   reason?: string;
+  field?: string;
 };
 
 export type EntityAction = "read" | "create" | "update";

@@ -9,4 +9,5 @@ export type ServiceResult<T> =
       status: number;
       error: string;
       message?: string;
+      fieldErrors?: Record<string, string[]>;
     };

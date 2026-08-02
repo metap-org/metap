@@ -135,6 +135,56 @@ export class CrudService {
     };
   }
 
+  async get(
+    entityName: string,
+    id: string,
+    context: RequestContext,
+  ): Promise<ServiceResult<RecordDto>> {
+    const entity = this.metadata.getEntity(entityName);
+
+    if (!entity) {
+      return { ok: false, status: 404, error: "entity_not_found" };
+    }
+
+    const decision = await this.permissions.canReadEntity(context, entity.name);
+
+    if (!decision.allowed) {
+      return { ok: false, status: 403, error: decision.reason ?? "forbidden" };
+    }
+
+    const existingRows = await this.db.client
+      .select()
+      .from(records)
+      .where(
+        and(
+          eq(records.id, id),
+          eq(records.tenantId, context.tenantId),
+          eq(records.entity, entity.name),
+          eq(records.deleted, false),
+        ),
+      );
+
+    const existing = existingRows[0];
+
+    if (!existing) {
+      return { ok: false, status: 404, error: "record_not_found" };
+    }
+
+    const existingData = existing.data as Record<string, unknown>;
+
+    const snapshot = await this.permissions.loadSnapshot(context.tenantId, entity.name);
+    const recordDecision = snapshot.canUpdateRecordCondition(context, existingData, "read");
+
+    if (!recordDecision.allowed) {
+      return { ok: false, status: 403, error: recordDecision.reason ?? "forbidden" };
+    }
+
+    return {
+      ok: true,
+      data: this.maskRecordForRead(entity, context, snapshot, existing),
+    };
+  }
+
   async create(
     entityName: string,
     rawData: Record<string, unknown>,
@@ -156,13 +206,23 @@ export class CrudService {
     const writeDecision = snapshot.assertWritableFields(context, Object.keys(rawData), undefined);
 
     if (!writeDecision.allowed) {
-      return { ok: false, status: 403, error: writeDecision.reason ?? "forbidden" };
+      return {
+        ok: false,
+        status: 403,
+        error: writeDecision.reason ?? "forbidden",
+        ...(writeDecision.field ? { fieldErrors: { [writeDecision.field]: ["forbidden"] } } : {}),
+      };
     }
 
     const parsed = entity.schema.safeParse(rawData);
 
     if (!parsed.success) {
-      return { ok: false, status: 400, error: "validation_failed" };
+      return {
+        ok: false,
+        status: 400,
+        error: "validation_failed",
+        fieldErrors: parsed.error.flatten().fieldErrors,
+      };
     }
 
     const data = parsed.data as Record<string, unknown>;
@@ -252,7 +312,12 @@ export class CrudService {
     const writeDecision = snapshot.assertWritableFields(context, Object.keys(rawData), existingData);
 
     if (!writeDecision.allowed) {
-      return { ok: false, status: 403, error: writeDecision.reason ?? "forbidden" };
+      return {
+        ok: false,
+        status: 403,
+        error: writeDecision.reason ?? "forbidden",
+        ...(writeDecision.field ? { fieldErrors: { [writeDecision.field]: ["forbidden"] } } : {}),
+      };
     }
 
     const mergedData: Record<string, unknown> = { ...existingData, ...rawData };
@@ -266,7 +331,12 @@ export class CrudService {
     const parsed = entity.schema.safeParse(mergedData);
 
     if (!parsed.success) {
-      return { ok: false, status: 400, error: "validation_failed" };
+      return {
+        ok: false,
+        status: 400,
+        error: "validation_failed",
+        fieldErrors: parsed.error.flatten().fieldErrors,
+      };
     }
 
     const data = parsed.data as Record<string, unknown>;

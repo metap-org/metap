@@ -234,7 +234,7 @@ Deliverables:
 
 ## Phase 6: Frontend Core
 
-**Status: Partial.** React + TypeScript app shell, TanStack Query API client (`web/src/platform/api`), the metadata client, and `GeneratedList` are done. `GeneratedForm`, `WorkflowActionBar`, a dedicated `FieldRenderer`, permission-aware UI state, and table virtualization are not yet built.
+**Status: Partial.** React + TypeScript app shell, TanStack Query API client (`web/src/platform/api`), the metadata client, `GeneratedList`, and `FieldRenderer`'s read-only half (`FieldValue` + `fieldKindConfig`, wired into `GeneratedList`) are done — see `docs/superpowers/specs/2026-08-02-field-renderer-design.md`. `GeneratedForm` (and `FieldInput`, `FieldRenderer`'s editable half), `WorkflowActionBar`, permission-aware UI state, and table virtualization/pagination are not yet built.
 
 Goals:
 

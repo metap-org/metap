@@ -70,6 +70,25 @@ export function registerRecordRoutes(app: FastifyInstance, container: AppContain
     },
   );
 
+  app.get<{ Params: { entity: string; id: string } }>(
+    "/api/:entity/:id",
+    {
+      schema: {
+        params: z.toJSONSchema(UpdateParamsSchema, { target: "draft-7" }),
+      },
+    },
+    async (request, reply) => {
+      const params = UpdateParamsSchema.parse(request.params);
+      const result = await container.crud.get(params.entity, params.id, request.context);
+
+      if (!result.ok) {
+        return sendServiceError(request, reply, result);
+      }
+
+      return { data: result.data };
+    },
+  );
+
   app.post<{ Params: { entity: string }; Body: z.infer<typeof RecordBodySchema> }>(
     "/api/:entity",
     {

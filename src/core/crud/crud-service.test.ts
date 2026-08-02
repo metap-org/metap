@@ -623,11 +623,28 @@ describe("CrudService field/record enforcement (live DB)", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.status).toBe(403);
+        expect(result.fieldErrors).toEqual({ phone: ["forbidden"] });
       }
     } finally {
       if (policy) {
         await container.permissions.deletePolicy(tenantId, policy.id);
       }
+    }
+  });
+
+  it("returns fieldErrors naming the invalid field(s) on a validation failure", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const result = await container.crud.create("crm.customers", { code: "" }, adminContext);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(400);
+      expect(result.fieldErrors?.code).toBeDefined();
+      expect(result.fieldErrors?.name).toBeDefined();
     }
   });
 
@@ -772,6 +789,114 @@ describe("CrudService field/record enforcement (live DB)", () => {
         await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [recordId]);
         await pgClient.query("DELETE FROM records WHERE id = $1", [recordId]);
       }
+    }
+  });
+
+  it("get() returns an existing record, field-masked the same way list() would mask it", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const policy = await container.permissions.createPolicy(
+      tenantId,
+      "crm.customers",
+      "read",
+      ["admin"],
+      undefined,
+      undefined,
+      "phone",
+    );
+
+    let recordId: string | undefined;
+
+    try {
+      const created = await container.crud.create(
+        "crm.customers",
+        { code: "G001", name: "Get Enforcement Co", phone: "555-3000" },
+        adminContext,
+      );
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      recordId = created.data.id;
+
+      const result = await container.crud.get("crm.customers", recordId, viewerContext);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect((result.data.data as { phone?: string }).phone).toBeUndefined();
+        expect((result.data.data as { name?: string }).name).toBe("Get Enforcement Co");
+      }
+    } finally {
+      if (policy) {
+        await container.permissions.deletePolicy(tenantId, policy.id);
+      }
+      if (recordId) {
+        await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [recordId]);
+        await pgClient.query("DELETE FROM records WHERE id = $1", [recordId]);
+      }
+    }
+  });
+
+  it("get() returns 404 record_not_found for a non-existent id", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const result = await container.crud.get(
+      "crm.customers",
+      "00000000-0000-0000-0000-000000000099",
+      adminContext,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(404);
+      expect(result.error).toBe("record_not_found");
+    }
+  });
+
+  it("get() returns 403 for a non-admin blocked by a record-level read policy, but still succeeds for admin", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const created = await container.crud.create(
+      "crm.customers",
+      { code: "G002", name: "Get Record Policy Co" },
+      adminContext,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const policy = await container.permissions.createPolicy(
+      tenantId,
+      "crm.customers",
+      "read",
+      undefined,
+      { attribute: "createdBy", op: "eq", value: { fromContext: "userId" } },
+      undefined,
+      undefined,
+      "record",
+    );
+
+    try {
+      const editorResult = await container.crud.get("crm.customers", created.data.id, editorContext);
+      expect(editorResult.ok).toBe(false);
+      if (!editorResult.ok) {
+        expect(editorResult.status).toBe(403);
+      }
+
+      const adminResult = await container.crud.get("crm.customers", created.data.id, adminContext);
+      expect(adminResult.ok).toBe(true);
+    } finally {
+      if (policy) {
+        await container.permissions.deletePolicy(tenantId, policy.id);
+      }
+      await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [created.data.id]);
+      await pgClient.query("DELETE FROM records WHERE id = $1", [created.data.id]);
     }
   });
 });

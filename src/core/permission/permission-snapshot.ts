@@ -103,7 +103,7 @@ export class PermissionSnapshot {
       );
 
       if (!passed) {
-        return { allowed: false, reason: "forbidden" };
+        return { allowed: false, reason: "forbidden", field };
       }
     }
 

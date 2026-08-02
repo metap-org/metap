@@ -3,6 +3,7 @@ import { useDebouncedValue } from "@mantine/hooks";
 import { Container, Select, Table, TextInput, Title } from "@mantine/core";
 import { useApiQuery } from "../api/useApiQuery";
 import { ApiErrorMessage } from "../api/ApiErrorMessage";
+import { FieldValue } from "../field/FieldValue";
 import { useEntity } from "../metadata/useEntity";
 import type { EntityField } from "../metadata/types";
 
@@ -189,9 +190,15 @@ export function GeneratedList({ entityName }: { entityName: string }) {
           ) : (
             records?.map((record) => (
               <Table.Tr key={record.id}>
-                {listView.fields.map((fieldName) => (
-                  <Table.Td key={fieldName}>{String(record.data[fieldName] ?? "")}</Table.Td>
-                ))}
+                {listView.fields.map((fieldName) => {
+                  const field = fieldsByName.get(fieldName);
+
+                  return (
+                    <Table.Td key={fieldName}>
+                      {field ? <FieldValue field={field} value={record.data[fieldName]} /> : null}
+                    </Table.Td>
+                  );
+                })}
               </Table.Tr>
             ))
           )}

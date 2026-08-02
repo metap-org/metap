@@ -9,16 +9,23 @@ type ErrorBody = {
     message: string;
     requestId: string;
     traceId: string;
+    fieldErrors?: Record<string, string[]>;
   };
 };
 
-function errorBody(request: FastifyRequest, code: string, message: string): ErrorBody {
+function errorBody(
+  request: FastifyRequest,
+  code: string,
+  message: string,
+  fieldErrors?: Record<string, string[]>,
+): ErrorBody {
   return {
     error: {
       code,
       message,
       requestId: request.id,
       traceId: request.traceId,
+      ...(fieldErrors ? { fieldErrors } : {}),
     },
   };
 }
@@ -83,5 +90,7 @@ export function sendServiceError(
   result: Extract<ServiceResult<unknown>, { ok: false }>,
 ) {
   const message = result.message ?? SERVICE_ERROR_MESSAGES[result.error] ?? result.error;
-  return reply.code(result.status).send(errorBody(request, result.error, message));
+  return reply
+    .code(result.status)
+    .send(errorBody(request, result.error, message, result.fieldErrors));
 }

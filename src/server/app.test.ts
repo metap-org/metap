@@ -271,6 +271,75 @@ describe("buildApp (record creation, live DB)", () => {
     }
   });
 
+  it("surfaces fieldErrors in the response body on a validation failure", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const tenantId = "00000000-0000-0000-0000-000000000010";
+    const userId = "00000000-0000-0000-0000-000000000011";
+    const token = jwt.sign({ tenantId, roles: ["admin"] }, privateKey, {
+      algorithm: "RS256",
+      subject: userId,
+      expiresIn: "1h",
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/crm.customers",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { data: { code: "" } },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json<{ error: { code: string; fieldErrors?: Record<string, string[]> } }>();
+    expect(body.error.fieldErrors?.code).toBeDefined();
+  });
+
+  it("GET /api/:entity/:id returns the record that was just created", async (ctx) => {
+    if (!dbAvailable) {
+      ctx.skip();
+      return;
+    }
+
+    const tenantId = "00000000-0000-0000-0000-000000000010";
+    const userId = "00000000-0000-0000-0000-000000000011";
+    const token = jwt.sign({ tenantId, roles: ["admin"] }, privateKey, {
+      algorithm: "RS256",
+      subject: userId,
+      expiresIn: "1h",
+    });
+
+    let recordId: string | undefined;
+
+    try {
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/crm.customers",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { data: { code: "R001", name: "Route Get Co" } },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const created = createRes.json<{ data: { id: string } }>();
+      recordId = created.data.id;
+
+      const getRes = await app.inject({
+        method: "GET",
+        url: `/api/crm.customers/${created.data.id}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(getRes.statusCode).toBe(200);
+      expect(getRes.json<{ data: { id: string } }>().data.id).toBe(created.data.id);
+    } finally {
+      if (recordId) {
+        await pgClient.query("DELETE FROM outbox_events WHERE aggregate_id = $1", [recordId]);
+        await pgClient.query("DELETE FROM records WHERE id = $1", [recordId]);
+      }
+    }
+  });
+
   it("persists the patched data payload intact (regression: AJV must not strip the free-form `data` object)", async (ctx) => {
     if (!dbAvailable) {
       ctx.skip();
