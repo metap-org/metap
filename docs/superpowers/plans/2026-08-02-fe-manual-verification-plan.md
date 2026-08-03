@@ -217,6 +217,20 @@ async function seedBulkRecords() {
   console.log("Seeded 120 bulk records.");
 }
 
+async function clientNavigate(page, path) {
+  // page.goto() is a hard navigation (like F5). The auth token lives only in
+  // React state (deliberately, per CLAUDE.md — "lost on refresh, not a
+  // bug"), so a hard nav wipes it and RequireAuth bounces to /dev-login.
+  // React Router's BrowserRouter listens for popstate, so a manual
+  // pushState+popstate is a client-side nav instead, same as a real user
+  // clicking a link — use this for any navigation after the initial login.
+  await page.evaluate((p) => {
+    window.history.pushState({}, "", p);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, path);
+  await page.waitForTimeout(200);
+}
+
 async function run() {
   await seedBulkRecords();
 
@@ -263,7 +277,9 @@ async function run() {
   console.log(`Rows before scroll: ${rowCountBeforeScroll}, after: ${rowCountAfterScroll}`);
 
   // --- Flow 4 + 8: create two records, second one referencing the first ---
-  await page.getByRole("button", { name: "New" }).click();
+  // Note: "New" renders as <Button component={navAdapter.Link}>, i.e. an <a>
+  // (role "link"), not a real <button> — accessible role is link, not button.
+  await page.getByRole("link", { name: "New" }).click();
   await page.waitForURL(`${BASE}/records/crm.customers/new`);
   await page.getByLabel("Code *").fill("VERIFY-A");
   await page.getByLabel("Name *").fill("Verify Customer A");
@@ -274,13 +290,14 @@ async function run() {
   await page.waitForURL(`${BASE}/records/crm.customers`);
   await cap.shot("09-after-create-a");
 
-  await page.getByRole("button", { name: "New" }).click();
+  await page.getByRole("link", { name: "New" }).click();
   await page.waitForURL(`${BASE}/records/crm.customers/new`);
   await page.getByLabel("Code *").fill("VERIFY-B");
   await page.getByLabel("Name *").fill("Verify Customer B");
   await page.getByLabel(/Email/).fill("verify-b@example.com");
-  await page.getByLabel("Referred By").click();
-  await page.getByLabel("Referred By").fill("Verify Customer A");
+  const referredByInput = page.getByRole("combobox", { name: "Referred By" });
+  await referredByInput.click();
+  await referredByInput.fill("Verify Customer A");
   await page.waitForTimeout(500); // search debounce (300ms)
   await cap.shot("10-reference-picker-open");
   await page.getByRole("option", { name: "Verify Customer A" }).click();
@@ -293,12 +310,10 @@ async function run() {
   const rowB = page.locator("table tbody tr", { hasText: "VERIFY-B" });
   await rowB.getByRole("link", { name: "View" }).click();
   await page.waitForURL(/\/records\/crm\.customers\/[^/]+$/);
+  await page.getByText("Referred By", { exact: true }).waitFor({ state: "visible" });
   await cap.shot("13-detail-b");
-  const referredByText = await page
-    .locator("text=Referred By")
-    .locator("xpath=following-sibling::*[1]")
-    .textContent();
-  console.log(`Referred By display text: "${referredByText}"`);
+  const detailBodyText = await page.locator("body").innerText();
+  console.log(`Detail page body text (record B):\n${detailBodyText}`);
 
   // --- Flow 6: edit record B ---
   await page.getByRole("link", { name: "Edit" }).click();
@@ -319,8 +334,7 @@ async function run() {
   await cap.shot("17-workflow-after-transition");
 
   // --- Flow 9: delete (one of the bulk-seeded records, not A or B) ---
-  await page.getByRole("link", { name: /Customer \(crm\.customers\)/ }).click().catch(() => {});
-  await page.goto(`${BASE}/records/crm.customers`);
+  await clientNavigate(page, "/records/crm.customers");
   const nameFilter2 = page.locator("table thead tr").nth(1).locator("th").nth(1).locator("input");
   await nameFilter2.fill("Bulk Customer 0");
   await page.waitForTimeout(600);
@@ -330,12 +344,12 @@ async function run() {
   await cap.shot("19-after-delete");
 
   // --- Flow 11: error states ---
-  await page.goto(`${BASE}/records/crm.customers/new`);
+  await clientNavigate(page, "/records/crm.customers/new");
   await page.getByRole("button", { name: "Save" }).click();
   await page.waitForTimeout(300);
   await cap.shot("20-validation-error");
 
-  await page.goto(`${BASE}/records/crm.customers/00000000-0000-0000-0000-000000000000`);
+  await clientNavigate(page, "/records/crm.customers/00000000-0000-0000-0000-000000000000");
   await page.waitForTimeout(500);
   await cap.shot("21-not-found-error");
 
@@ -392,6 +406,17 @@ if (!VIEWER_TOKEN) {
 const BASE = "http://localhost:5173";
 const ARTIFACTS = new URL("./artifacts", import.meta.url).pathname;
 
+async function clientNavigate(page, path) {
+  // page.goto() is a hard navigation (like F5) and wipes the in-memory-only
+  // auth token (see Task 3's admin-flow.mjs comment for the full reasoning).
+  // Use client-side history nav for anything after the initial login.
+  await page.evaluate((p) => {
+    window.history.pushState({}, "", p);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, path);
+  await page.waitForTimeout(200);
+}
+
 async function run() {
   const browser = await chromium.launch();
   const page = await browser.newPage();
@@ -430,7 +455,7 @@ async function run() {
   const nameDisabled = await nameInput.isDisabled();
   console.log(`Name input disabled for viewer (should be false — no write policy on name): ${nameDisabled}`);
 
-  await page.goto(`${BASE}/records/crm.customers`);
+  await clientNavigate(page, "/records/crm.customers");
   await nameFilter.fill("Verify Customer B");
   await page.waitForTimeout(600);
   await cap.shot("04-before-delete-attempt");
