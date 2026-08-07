@@ -21,6 +21,12 @@ pub struct AppConfig {
     pub rabbitmq_url: String,
     pub cors_origins: Vec<String>,
     pub auth_jwt_public_key_path: String,
+    /// Path (resolved relative to the binary's cwd, same convention as
+    /// `auth_jwt_public_key_path`) to a built frontend (`apps/crm-fe`'s `vite build` output)
+    /// to serve as static files alongside the API, single-process/single-port. Unset in the
+    /// normal split dev workflow (`pnpm dev:web` proxies to the API separately); set by the
+    /// `pnpm start` monolith script.
+    pub static_dir: Option<String>,
 }
 
 impl AppConfig {
@@ -86,6 +92,8 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow::anyhow!("AUTH_JWT_PUBLIC_KEY_PATH is required"))?;
 
+    let static_dir = env::var("STATIC_DIR").ok().filter(|s| !s.is_empty());
+
     Ok(AppConfig {
         node_env,
         host,
@@ -95,5 +103,6 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         rabbitmq_url,
         cors_origins,
         auth_jwt_public_key_path,
+        static_dir,
     })
 }

@@ -8,7 +8,7 @@ importers:
 
   .: {}
 
-  apps/demo:
+  apps/crm-fe:
     dependencies:
       '@mantine/core':
         specifier: ^9.5.0

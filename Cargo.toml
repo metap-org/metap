@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/crm-server",
+  "apps/crm-server",
   "crates/db-migrate",
   "crates/dev-tools",
   "crates/metap-crud",

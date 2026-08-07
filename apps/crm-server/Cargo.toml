@@ -1,0 +1,21 @@
+[package]
+name = "crm-server"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "crm-server"
+path = "src/main.rs"
+
+[dependencies]
+metap-http = { path = "../../crates/metap-http" }
+metap-infra = { path = "../../crates/metap-infra" }
+metap-metadata = { path = "../../crates/metap-metadata" }
+metap-peripherals = { path = "../../crates/metap-peripherals" }
+metap-permission = { path = "../../crates/metap-permission" }
+anyhow = "1"
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tower-http = { version = "0.6", features = ["fs"] }
+jsonwebtoken = "9"
+serde_json = "1"

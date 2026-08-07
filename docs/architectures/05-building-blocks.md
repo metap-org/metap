@@ -21,7 +21,7 @@ C4Container
   Person(admin, "Admin")
 
   System_Boundary(metap, "Metap") {
-    Container(web, "Web Frontend", "React, Vite, TanStack Query", "Dev harness SPA — apps/demo, consuming packages/platform-react via workspace:*")
+    Container(web, "Web Frontend", "React, Vite, TanStack Query", "Dev harness SPA — apps/crm-fe, consuming packages/platform-react via workspace:*")
     Container(api, "API Server", "Node.js, Fastify", "apps/crm: the one deployed module today, importing packages/core (auth, CRUD, metadata, admin, query planning)")
     Container(worker, "Outbox Publisher", "Node.js", "apps/crm/src/workers/outbox-publisher.ts, calling packages/core's runOutboxPublisherLoop()")
   }
@@ -389,7 +389,7 @@ graph TD
     platform["GeneratedList/Form, FieldValue/Input,<br/>WorkflowActionBar, RecordDetail, api-client"]
   end
 
-  subgraph appsdemo["apps/demo (@metap/demo)"]
+  subgraph appscrmfe["apps/crm-fe (@metap/crm-fe)"]
     demoapp["src/App.tsx, src/demo/*<br/>React + Vite + TanStack Query"]
   end
 
@@ -402,4 +402,4 @@ graph TD
   demoapp -.HTTP only, never imports packages/core.-> routes
 ```
 
-`apps/crm` depends on `packages/core`; `packages/core` has no dependency path back to `apps/crm` or any other `apps/*` package — that direction is what keeps `packages/core` genuinely entity-agnostic, not just conventionally so. `apps/demo` is the frontend's equivalent: it can only ever reach the backend over HTTP (the dotted line), never by importing backend code, and it consumes `packages/platform-react` the same way `apps/crm` consumes `packages/core`.
+`apps/crm` depends on `packages/core`; `packages/core` has no dependency path back to `apps/crm` or any other `apps/*` package — that direction is what keeps `packages/core` genuinely entity-agnostic, not just conventionally so. `apps/crm-fe` is the frontend's equivalent: it can only ever reach the backend over HTTP (the dotted line), never by importing backend code, and it consumes `packages/platform-react` the same way `apps/crm` consumes `packages/core`.

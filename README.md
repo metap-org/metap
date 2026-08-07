@@ -12,13 +12,13 @@ Chosen stack:
 
 The backend moved from TypeScript to Rust on 2026-08-07 — see [`docs/rust-core-viability.md`](docs/rust-core-viability.md) for why, and [`docs/roadmap.md`](docs/roadmap.md)'s Phase 12 for status.
 
-This repo is a Cargo workspace for the backend (`crates/` — `metap-*` library crates, the `crm-server`/`outbox-publisher` binaries, `db-migrate`, `dev-tools`) plus a pnpm workspace for the frontend (`packages/platform-react` + `apps/demo`, the only real app there). Every command below runs from the repo root.
+This repo is a Cargo workspace (`crates/` — the `metap-*` library crates plus the `outbox-publisher`/`db-migrate`/`dev-tools` ops binaries) and a pnpm workspace (`packages/platform-react`, the reusable frontend library), with sample/example consumers of both living under `apps/` (`apps/crm-server`, `apps/crm-fe`) — not the product itself, just proof the library surface works. Every command below runs from the repo root.
 
 Start locally:
 
 ```bash
 pnpm install
-cp crates/crm-server/.env.example crates/crm-server/.env
+cp apps/crm-server/.env.example apps/crm-server/.env
 docker compose up -d postgres rabbitmq
 pnpm db:migrate
 pnpm auth:dev-keys

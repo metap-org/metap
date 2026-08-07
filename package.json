@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev:web": "pnpm --filter @metap/demo dev",
+    "dev:web": "pnpm --filter @metap/crm-fe dev",
     "build": "pnpm -r build",
-    "dev:rs": "cargo build --release -p crm-server && cd crates/crm-server && ../../target/release/crm-server",
-    "worker:outbox:rs": "cargo build --release -p metap-outbox-publisher && cd crates/crm-server && ../../target/release/outbox-publisher",
+    "build:web": "pnpm --filter @metap/crm-fe build",
+    "dev:rs": "cargo build --release -p crm-server && cd apps/crm-server && ../../target/release/crm-server",
+    "start": "pnpm build:web && cargo build --release -p crm-server && cd apps/crm-server && STATIC_DIR=../../apps/crm-fe/dist ../../target/release/crm-server",
+    "worker:outbox:rs": "cargo build --release -p metap-outbox-publisher && cd apps/crm-server && ../../target/release/outbox-publisher",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "test:rs": "cargo test --workspace",
@@ -15,10 +17,10 @@
     "lint": "pnpm -r lint",
     "format": "pnpm -r format",
     "format:check": "pnpm -r format:check",
-    "db:migrate": "cargo build --release -p db-migrate --quiet && cd crates/crm-server && ../../target/release/db-migrate",
-    "auth:dev-keys": "cargo build --release -p dev-tools --quiet && cd crates/crm-server && ../../target/release/dev-tools gen-keys",
-    "mint-token": "cargo build --release -p dev-tools --quiet && cd crates/crm-server && ../../target/release/dev-tools mint-token",
-    "seed:admin": "cargo build --release -p dev-tools --quiet && cd crates/crm-server && ../../target/release/dev-tools seed-admin"
+    "db:migrate": "cargo build --release -p db-migrate --quiet && cd apps/crm-server && ../../target/release/db-migrate",
+    "auth:dev-keys": "cargo build --release -p dev-tools --quiet && cd apps/crm-server && ../../target/release/dev-tools gen-keys",
+    "mint-token": "cargo build --release -p dev-tools --quiet && cd apps/crm-server && ../../target/release/dev-tools mint-token",
+    "seed:admin": "cargo build --release -p dev-tools --quiet && cd apps/crm-server && ../../target/release/dev-tools seed-admin"
   },
   "packageManager": "pnpm@9.15.0"
 }

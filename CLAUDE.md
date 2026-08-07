@@ -8,13 +8,13 @@ Metap is a metadata-driven ERP/platform core. The core idea: entity behavior (fi
 
 After completing the feature, do not commit any changes. Keep the diff intact so I can review it first. Making roadmap stay updated.
 
-**Backend stack (2026-08-07 on): Rust — axum + sqlx + PostgreSQL + RabbitMQ** (outbox pattern for reliable event publishing), replacing the original TypeScript backend (Fastify + Zod + Drizzle) in full — see `docs/rust-core-viability.md` for the decision record and `docs/roadmap.md`'s Phase 12 for status. `docs/why.md` explains the *unchanged* choices (PostgreSQL, RabbitMQ, the outbox pattern) plus the historical TS-era reasoning for what's since been replaced. `docs/architectures/05-building-blocks.md` documents the target layering (start at `docs/architectures/index.md` for the full architecture doc set) — the layering is unchanged by the language migration, only the implementation is. `docs/roadmap.md` tracks phased goals. The frontend stack (`packages/platform-react` + `apps/demo`) is unaffected — React/TypeScript, talks to the backend over HTTP only, was never coupled to the backend's implementation language.
+**Backend stack (2026-08-07 on): Rust — axum + sqlx + PostgreSQL + RabbitMQ** (outbox pattern for reliable event publishing), replacing the original TypeScript backend (Fastify + Zod + Drizzle) in full — see `docs/rust-core-viability.md` for the decision record and `docs/roadmap.md`'s Phase 12 for status. `docs/why.md` explains the *unchanged* choices (PostgreSQL, RabbitMQ, the outbox pattern) plus the historical TS-era reasoning for what's since been replaced. `docs/architectures/05-building-blocks.md` documents the target layering (start at `docs/architectures/index.md` for the full architecture doc set) — the layering is unchanged by the language migration, only the implementation is. `docs/roadmap.md` tracks phased goals. The frontend stack (`packages/platform-react` + `apps/crm-fe`) is unaffected — React/TypeScript, talks to the backend over HTTP only, was never coupled to the backend's implementation language.
 
 ## Monorepo layout
 
-This repo is a pnpm workspace (`pnpm-workspace.yaml`: `packages/*`, `apps/*`) for the **frontend only**, plus a separate Cargo workspace (`crates/`) for the **backend**. Commands below are still run from the **repo root**; the root `package.json`'s scripts forward to the right place (`pnpm --filter`/`pnpm -r` for frontend packages, `cargo ... --manifest-path crates/*/Cargo.toml` for backend crates).
+This repo is a pnpm workspace (`pnpm-workspace.yaml`: `packages/*`, `apps/*`) and a Cargo workspace (root `Cargo.toml`), overlapping at `apps/`: `crates/` holds only the Rust **library** (`metap-*`) plus the ops binaries built on it (`outbox-publisher`, `db-migrate`, `dev-tools`); `apps/` holds the **sample/example consumers** of that library, one per language (`apps/crm-server`, a Cargo workspace member; `apps/crm-fe`, a pnpm workspace member) — kept together specifically so the "this is a throwaway example, not the product" signal lives in one place rather than being split by tooling. `packages/` holds the reusable **frontend** library. Commands below are still run from the **repo root**; the root `package.json`'s scripts forward to the right place (`pnpm --filter`/`pnpm -r` for frontend packages, plain `cargo ... -p <crate>` for Rust crates — the workspace `Cargo.toml` at the repo root means no `--manifest-path` is ever needed).
 
-Backend (`crates/`, a Cargo workspace — see `docs/rust-core-viability.md` for how each crate maps to what it replaced):
+Backend library (`crates/`, a Cargo workspace — see `docs/rust-core-viability.md` for how each crate maps to what it replaced). This is the reusable, entity-agnostic surface — no crate here knows about `crm.customers` or any other business entity:
 - **`metap-infra`** — Postgres pool, the `EventBus` trait + `RabbitEventBus` impl, config loading (`AppConfig`, same env vars the old `packages/core` used), outbox enqueue, health check.
 - **`metap-metadata`** — `EntityDefinition`/`EntityField`/etc., `MetadataCompiler` (validate + hash), `MetadataRegistry`, the OpenAPI generator (`/metadata/openapi.json`).
 - **`metap-permission`** — `PolicyCondition`, `PolicyStore` trait + `PostgresPolicyStore`, `PermissionSnapshot`, `PermissionService`, `PolicyExplainer`.
@@ -23,30 +23,33 @@ Backend (`crates/`, a Cargo workspace — see `docs/rust-core-viability.md` for 
 - **`metap-crud`** — `CrudService` (list/get/create/update/transition/delete), the field-metadata-driven payload validator (replaces per-entity Zod schemas), record masking/capabilities.
 - **`metap-http`** — the axum router: `/api/:entity*`, `/metadata/*`, `/health`, the JWT `AuthContext` extractor.
 - **`metap-peripherals`** — index reconciler, metadata drift check, role assignment (grant/revoke/list).
-- **`crm-server`** (binary) — the actual runnable app: registers the real `crm.customers` entity (ported from the old `customer.entity.ts`) and wires everything above into a running server. Owns its own `.env`/`keys/` (see Commands below).
-- **`outbox-publisher`** (binary) — the outbox drain/publish worker loop, a separate long-running process from `crm-server`.
+- **`outbox-publisher`** (binary) — the outbox drain/publish worker loop, a separate long-running process from `crm-server`. Ops tooling built on the library above, not itself entity-aware.
 - **`db-migrate`** (binary) — applies `crates/migrations/*.sql` via `sqlx::migrate!` to a fresh database. Replaces Drizzle's `db:generate`/`db:migrate`; there is no schema-diff tool anymore — new migrations are written by hand as new numbered `.sql` files in `crates/migrations/`.
 - **`dev-tools`** (binary) — `gen-keys`/`mint-token`/`seed-admin` subcommands, replacing the old `packages/core/scripts/*.mjs`.
 
-Frontend (pnpm workspace):
-- **`packages/platform-react`** (`@metap/platform-react`) — the reusable frontend pieces (api client, generated list/form, field renderers, workflow action bar, record detail).
-- **`apps/demo`** (`@metap/demo`) — the frontend dev harness (routing, dev-login, entities page) that consumes `packages/platform-react` via `workspace:*`. Not a real app — see "Frontend" below.
+Sample apps (`apps/`, both a Cargo workspace member and a pnpm workspace — deliberately mixed since both are the same kind of thing: a concrete, throwaway consumer proving the library surface works, not the product being distributed. A downstream project is expected to depend on `crates/metap-*`/`packages/platform-react` directly and write its own equivalent of these, not import `apps/*` itself):
+- **`apps/crm-server`** (binary crate `crm-server`) — the actual runnable backend: registers the real `crm.customers` entity (ported from the old `customer.entity.ts`) and wires every `crates/metap-*` crate above into a running server. Owns its own `.env`/`keys/` (see Commands below).
+- **`apps/crm-fe`** (`@metap/crm-fe`) — the frontend dev harness (routing, dev-login, entities page) that consumes `packages/platform-react` via `workspace:*`. Not a real app — see "Frontend" below.
 
-`crates/crm-server` keeps its **own** `.env`/`.env.example`/`keys/` (dotenv and the JWT key paths resolve relative to whichever directory a binary actually runs from — `pnpm dev:rs`/`mint-token`/etc. all `cd crates/crm-server` first). This mirrors the old TS-era per-package `.env` convention, now collapsed to one location since there's only one backend binary.
+Frontend library (pnpm workspace):
+- **`packages/platform-react`** (`@metap/platform-react`) — the reusable frontend pieces (api client, generated list/form, field renderers, workflow action bar, record detail).
+
+`apps/crm-server` keeps its **own** `.env`/`.env.example`/`keys/` (dotenv and the JWT key paths resolve relative to whichever directory a binary actually runs from — `pnpm dev:rs`/`mint-token`/etc. all `cd apps/crm-server` first). This mirrors the old TS-era per-package `.env` convention, now collapsed to one location since there's only one backend binary.
 
 ## Commands
 
 ```bash
-pnpm install                              # frontend workspace only (apps/demo, packages/platform-react)
-cp crates/crm-server/.env.example crates/crm-server/.env   # full runtime config
+pnpm install                              # frontend workspace only (apps/crm-fe, packages/platform-react)
+cp apps/crm-server/.env.example apps/crm-server/.env   # full runtime config
 docker compose up -d postgres rabbitmq   # postgres exposed on host port 5433, not 5432
 pnpm db:migrate                           # apply crates/migrations/*.sql to a fresh DB (sqlx migrate)
-pnpm auth:dev-keys                        # generate a dev JWT keypair into crates/crm-server/keys/
+pnpm auth:dev-keys                        # generate a dev JWT keypair into apps/crm-server/keys/
 pnpm mint-token [tenantId] [userId]       # mint a dev JWT (defaults to fixed dev tenant/user)
 pnpm seed:admin <tenantId> <userId>       # grant the 'admin' role
-pnpm dev:rs                               # build + run the API (crates/crm-server), port 3000
+pnpm dev:rs                               # build + run the API (apps/crm-server), port 3000
+pnpm start                                # build apps/crm-fe + apps/crm-server, serve both from one process/port
 pnpm worker:outbox:rs                     # run the outbox-publisher worker loop
-pnpm dev:web                              # run the frontend dev harness (apps/demo), port 5173
+pnpm dev:web                              # run the frontend dev harness (apps/crm-fe), port 5173
 
 pnpm typecheck                            # tsc --noEmit, frontend packages only
 pnpm test                                 # vitest run, frontend packages only (no backend TS tests anymore)
@@ -74,13 +77,13 @@ axum routes (crates/metap-http/src/routes/*)
       -> outbox (metap-infra::outbox::enqueue) -> RabbitMQ (metap-infra::EventBus)
 ```
 
-There's no single DI container the way `packages/core/src/core/container.ts` used to be — `CrudService::new(pool, metadata, permissions)` takes its dependencies directly, and `crates/crm-server/src/main.rs` does the wiring inline (connect DB, register entities, build `PermissionService`, build `AppState`, build the router, serve). Routes receive `AppState` (an axum `State` extractor) and call into `CrudService`; they never touch `sqlx`/`lapin` directly.
+There's no single DI container the way `packages/core/src/core/container.ts` used to be — `CrudService::new(pool, metadata, permissions)` takes its dependencies directly, and `apps/crm-server/src/main.rs` does the wiring inline (connect DB, register entities, build `PermissionService`, build `AppState`, build the router, serve). Routes receive `AppState` (an axum `State` extractor) and call into `CrudService`; they never touch `sqlx`/`lapin` directly.
 
 `metap_http::build_router(state, cors_origins)` takes the registered entities indirectly via `AppState`'s `MetadataRegistry` — it does not know about `crm.customers` or any other business entity. A second business module would be a new binary crate (or a flag/config on `crm-server`) registering its own entities, not a hardcoded entity import into any `metap-*` library crate.
 
 ### Metadata-driven records
 
-There is no per-entity database table. All business records live in one generic `records` table (`crates/migrations/*.sql`, originally generated from `packages/core/src/infra/db/schema.ts` before that was removed): tenant/entity/status/code columns plus a `data jsonb` column for the metadata-driven fields, with a `version` column reserved for optimistic locking. Entities are defined as `EntityDefinition` values (`crates/metap-metadata/src/entity.rs`) — see `crates/crm-server/src/customer_entity.rs` for the pattern: field/list-view/workflow metadata, no separate validation-schema object (see `metap-crud/src/validation.rs`'s doc comment for why) — and registered into `MetadataRegistry` by whichever binary owns them (see `crm-server/src/main.rs`), not inside any `metap-*` library crate. Adding a new business entity means adding a new entity-definition module and registering it in the owning binary's `main.rs`, not creating a new table or route by hand.
+There is no per-entity database table. All business records live in one generic `records` table (`crates/migrations/*.sql`, originally generated from `packages/core/src/infra/db/schema.ts` before that was removed): tenant/entity/status/code columns plus a `data jsonb` column for the metadata-driven fields, with a `version` column reserved for optimistic locking. Entities are defined as `EntityDefinition` values (`crates/metap-metadata/src/entity.rs`) — see `apps/crm-server/src/customer_entity.rs` for the pattern: field/list-view/workflow metadata, no separate validation-schema object (see `metap-crud/src/validation.rs`'s doc comment for why) — and registered into `MetadataRegistry` by whichever binary owns them (see `crm-server/src/main.rs`), not inside any `metap-*` library crate. Adding a new business entity means adding a new entity-definition module and registering it in the owning binary's `main.rs`, not creating a new table or route by hand.
 
 The roadmap (`docs/roadmap.md`, Data Model Strategy in `docs/architectures/05-building-blocks.md`) explicitly plans to peel off dedicated typed tables for high-volume or accounting-critical modules later — the generic JSONB table is a deliberate starting point, not an oversight.
 
@@ -105,7 +108,7 @@ From `docs/architectures/05-building-blocks.md`, still true of the current code 
 
 ## Frontend
 
-`apps/demo` (`@metap/demo`) is a real pnpm workspace member (Vite + React + TypeScript), consuming `packages/platform-react` via `workspace:*` — install/run it as part of the normal workspace `pnpm install`, then `pnpm dev:web` (serves on `http://localhost:5173`, proxying `/api`, `/metadata`, `/health` to the backend on port 3000 — unaffected by the backend's language, it's still plain HTTP). It's still a temporary dev harness, not a real app: `packages/platform-react` holds the reusable pieces (api-client, metadata-client, auth context, generated list/form, field renderers, workflow action bar) a future downstream project would import; `apps/demo/src/demo/` holds throwaway demo pages that exercise them.
+`apps/crm-fe` (`@metap/crm-fe`) is a real pnpm workspace member (Vite + React + TypeScript), consuming `packages/platform-react` via `workspace:*` — install/run it as part of the normal workspace `pnpm install`, then `pnpm dev:web` (serves on `http://localhost:5173`, proxying `/api`, `/metadata`, `/health` to the backend on port 3000 — unaffected by the backend's language, it's still plain HTTP). It's still a temporary dev harness, not a real app: `packages/platform-react` holds the reusable pieces (api-client, metadata-client, auth context, generated list/form, field renderers, workflow action bar) a future downstream project would import; `apps/crm-fe/src/demo/` holds throwaway demo pages that exercise them.
 
 There's no real login yet — the backend is verify-only. Run `pnpm mint-token` (repo root, requires `pnpm auth:dev-keys` to have been run once) to mint a JWT, then paste it into the `/dev-login` screen the frontend redirects to when there's no token. The token lives only in memory (React state) and is lost on refresh — that's deliberate, not a bug.
 
