@@ -1,6 +1,6 @@
 # Roadmap
 
-## Current Status (updated 2026-08-01)
+## Current Status (updated 2026-08-07)
 
 | Phase | Status |
 |---|---|
@@ -15,7 +15,8 @@
 | 8. Hardening | Not started |
 | 9. Multi-Service Evolution | Trigger-based (no trigger fired yet) |
 | 10. Monorepo, npm publish | Not started |
-| 11. Low-code Platform Backbone Architecture | Not started |
+| 11. Low-code Platform Backbone Architecture | In progress |
+| 12. Rust Core Migration | Decided; Migration Order (steps 1-9) done in `crates/`; not yet cut over to production |
 
 ## Phase 0: Skeleton
 
@@ -62,7 +63,7 @@ Deliverables:
 
 ## Phase 2: Metadata Compiler
 
-**Status: Done** (spec/plan under `docs/superpowers/{specs,plans}/2026-08-01-metadata-compiler*`).
+**Status: Done** (see `docs/architectures/09-adr.md` for the decision record).
 
 - `MetadataCompiler.validate` — startup validation per entity: duplicate field names, dangling listView field/filter/defaultSort references, enum fields with no `enumValues`, malformed workflow shape, duplicate transitions. Runs inside `MetadataRegistry.register()`, so a bad entity module fails at boot, not at first request.
 - `MetadataRegistry.validateReferences()` — cross-entity check that every `reference`-kind field's `refEntity` names a registered entity; runs once after all entities are registered (deferred out of `container.ts` — see the entity-registration note below).
@@ -93,9 +94,8 @@ Deliverables:
 
 ## Phase 3: Permission Engine
 
-**Status: Done**, shipped as a 4-part initiative (specs/plans under
-`docs/superpowers/{specs,plans}/2026-07-31-dynamic-role-assignment*` and
-`2026-08-01-{policy-storage-rbac-abac,field-record-enforcement,policy-explainer-snapshot-cache}*`),
+**Status: Done**, shipped as a 4-part initiative (see `docs/architectures/09-adr.md` for
+the decision record),
 going further than the roadmap's original "modest RBAC+ABAC scaffold" by
 making role assignment itself dynamic:
 
@@ -162,9 +162,8 @@ Deliverables:
 
 ## Phase 4: Query Planner V1
 
-**Status: Done**, shipped as 3 sub-projects (specs under
-`docs/superpowers/specs/2026-08-0{1,2,2}-*-design.md`, plans under
-`docs/superpowers/plans/` with matching names), in this order:
+**Status: Done**, shipped as 3 sub-projects (see `docs/architectures/09-adr.md` for the
+decision record), in this order:
 
 1. **Hot field index strategy** — `EntityField.indexed`/`unique` (previously
    declared but unread) now drive `IndexReconciler`
@@ -214,7 +213,7 @@ Original goals, for reference:
 
 ## Phase 5: Workflow Engine V1
 
-**Status: Done.** Atomic transition, optimistic locking, guard conditions (TypeScript predicates on `WorkflowTransition`), an append-only `workflow_events` audit log, and outbox side effects are implemented via `WorkflowEngine` + `CrudService.transition`, exposed at `POST /api/:entity/:id/transitions/:action`. See `docs/superpowers/specs/2026-07-31-workflow-engine-v1-design.md`. One scoped-down deliverable: "Notification integration" shipped as a stub outbox topic (`<entity>.workflow.transitioned`) only — no notification consumer exists yet, since there's no notification service to build one against.
+**Status: Done.** Atomic transition, optimistic locking, guard conditions (TypeScript predicates on `WorkflowTransition`), an append-only `workflow_events` audit log, and outbox side effects are implemented via `WorkflowEngine` + `CrudService.transition`, exposed at `POST /api/:entity/:id/transitions/:action` (see `docs/architectures/09-adr.md` for the decision record). One scoped-down deliverable: "Notification integration" shipped as a stub outbox topic (`<entity>.workflow.transitioned`) only — no notification consumer exists yet, since there's no notification service to build one against.
 
 Goals:
 
@@ -234,7 +233,7 @@ Deliverables:
 
 ## Phase 6: Frontend Core
 
-**Status: Done.** React + TypeScript app shell, TanStack Query API client (`packages/platform-react/src/api`), the metadata client, `GeneratedList` (with cursor-based infinite-scroll pagination and `@tanstack/react-virtual` row windowing — see `docs/superpowers/specs/2026-08-02-list-pagination-design.md`), and `FieldRenderer` (both halves — `FieldValue`/`fieldKindConfig` for read, `FieldInput` for write, see `docs/superpowers/specs/2026-08-02-field-renderer-design.md`) are done. `GeneratedForm` is done (`docs/superpowers/specs/2026-08-02-generated-form-design.md`). `WorkflowActionBar` is done (`docs/superpowers/specs/2026-08-02-workflow-action-bar-design.md`). Permission-aware UI state is done — `CrudService.get()` now returns proactive `capabilities` (writable fields, record-level `canUpdate`, real per-transition guard results) that `GeneratedForm`/`WorkflowActionBar`/`FieldValue` consume to disable/mark what would fail before the user tries (see `docs/superpowers/specs/2026-08-02-permission-aware-ui-design.md`). List navigation and delete were added as a follow-up gap-fix after manual verification found `GeneratedList` had no way to actually reach `GeneratedForm`'s create route or `RecordDetail`, and delete didn't exist anywhere: `GeneratedList` now has a "New" button and a per-row View/Delete action column, `RecordDetail` has a Delete button, and the backend gained soft-delete support (`EntityAction` extended with `"delete"`, `PermissionService.canDeleteEntity`, `CrudService.delete()`, `DELETE /api/:entity/:id`, `WorkflowEngine.emitDeleted`) — see `docs/superpowers/specs/2026-08-02-list-navigation-delete-design.md`. All of this passed typecheck/lint/the backend test suite and was committed; still not browser-verified in this sandbox (no working headless Chromium — missing system libraries, no `sudo`, no cached alternative). The frontend now lives in `packages/platform-react` + `apps/demo` (renamed from `web/`) as part of the 2026-08-02 monorepo restructure — see [Architecture](docs/architectures/04-strategy.md)'s "Frontend Platform Package". `packages/platform-react`'s remaining `react-router-dom` coupling (`ApiErrorMessage`/`GeneratedList`/`RecordDetail` calling `Link`/`useNavigate` directly) is also fixed: a `NavigationAdapter` injected via React Context replaces all 3 direct imports, and `apps/demo` provides the one real implementation — see `docs/superpowers/specs/2026-08-02-platform-react-navigation-decoupling-design.md`. Passed typecheck/build/lint/the full backend test suite; not browser-verified for the same sandbox reason as above.
+**Status: Done.** React + TypeScript app shell, TanStack Query API client (`packages/platform-react/src/api`), the metadata client, `GeneratedList` (with cursor-based infinite-scroll pagination and `@tanstack/react-virtual` row windowing), and `FieldRenderer` (both halves — `FieldValue`/`fieldKindConfig` for read, `FieldInput` for write) are done. `GeneratedForm` is done. `WorkflowActionBar` is done. Permission-aware UI state is done — `CrudService.get()` now returns proactive `capabilities` (writable fields, record-level `canUpdate`, real per-transition guard results) that `GeneratedForm`/`WorkflowActionBar`/`FieldValue` consume to disable/mark what would fail before the user tries. List navigation and delete were added as a follow-up gap-fix after manual verification found `GeneratedList` had no way to actually reach `GeneratedForm`'s create route or `RecordDetail`, and delete didn't exist anywhere: `GeneratedList` now has a "New" button and a per-row View/Delete action column, `RecordDetail` has a Delete button, and the backend gained soft-delete support (`EntityAction` extended with `"delete"`, `PermissionService.canDeleteEntity`, `CrudService.delete()`, `DELETE /api/:entity/:id`, `WorkflowEngine.emitDeleted`). All of this passed typecheck/lint/the backend test suite and was committed; still not browser-verified in this sandbox (no working headless Chromium — missing system libraries, no `sudo`, no cached alternative). The frontend now lives in `packages/platform-react` + `apps/demo` (renamed from `web/`) as part of the 2026-08-02 monorepo restructure — see [Architecture](docs/architectures/04-strategy.md)'s "Frontend Platform Package". `packages/platform-react`'s remaining `react-router-dom` coupling (`ApiErrorMessage`/`GeneratedList`/`RecordDetail` calling `Link`/`useNavigate` directly) is also fixed: a `NavigationAdapter` injected via React Context replaces all 3 direct imports, and `apps/demo` provides the one real implementation (see `docs/architectures/09-adr.md` for the decision record). Passed typecheck/build/lint/the full backend test suite; not browser-verified for the same sandbox reason as above.
 
 Goals:
 
@@ -326,12 +325,57 @@ Goals:
 
 ## Phase 11: Low-code Platform Backbone Architecture
 
-**Status: In progress.** Define the architecture for using Metap as the backbone of a low-code platform (ERP, CRM, and beyond — see `docs/superpowers/specs` project-vision context), not just a single-purpose ERP core. This is a design/architecture phase, not an implementation one — its output is a spec, to be broken into further implementation phases once written.
+**Status: In progress.** Define the architecture for using Metap as the backbone of a low-code platform (ERP, CRM, and beyond), not just a single-purpose ERP core. This is a design/architecture phase, not an implementation one — its output is a spec, to be broken into further implementation phases once written.
 
 Goals:
 
 - ~~Define what "low-code" means concretely for Metap~~ — **Done, at the directional level**, by `docs/vision.md` and `docs/low-code-platform-v1.md` (both 2026-08-02): who configures things (operators, via a metadata control plane, not source-code edits for the standard path), what's user-editable at runtime (metadata: entities/fields/list views/workflow/policies) vs. deploy-time (the execution engine itself — `packages/core`'s services stay code, only their metadata *inputs* become persisted).
 - Reconcile this with the metadata-driven design already in place (Phases 0-6) and the multi-service split (Phases 9-10). — `docs/low-code-platform-v1.md`'s "Architectural Constraint" section already states the reconciliation principle (evolve the authoring model, keep the execution engine); making it concrete is this phase's remaining work.
-- Produce a design spec under `docs/superpowers/specs/` before any implementation plan is written. — In progress. `docs/low-code-platform-v1.md` decomposes the work into 3 phases (A: Metadata Control Plane Foundation, B: Builder UI and Safe Runtime Rules, C: Platform Hardening); Phase A is further decomposed into 4 ordered sub-projects, the first of which has a written spec: `docs/superpowers/specs/2026-08-02-low-code-metadata-storage-design.md` (persisted metadata storage + draft/published versioning — global, no workflow support yet, `crm.customers` stays code-authored for now). The remaining 3 Phase A sub-projects (runtime loader, publish validation pipeline, admin API) are named but not yet spec'd.
+- Produce a design spec before any implementation plan is written. — In progress. `docs/low-code-platform-v1.md` decomposes the work into 3 phases (A: Metadata Control Plane Foundation, B: Builder UI and Safe Runtime Rules, C: Platform Hardening); Phase A is further decomposed into 4 ordered sub-projects, the first of which has a written spec: `docs/low-code-metadata-storage-design.md` (persisted metadata storage + draft/published versioning — global, no workflow support yet, `crm.customers` stays code-authored for now). The remaining 3 Phase A sub-projects (runtime loader, publish validation pipeline, admin API) are named but not yet spec'd. That spec predates Phase 12 below (the Rust decision) and needs its implementation retargeted from TS to Rust when it's actually built — see its own status note.
+
+## Phase 12: Rust Core Migration
+
+**Status: Decided, Migration Order complete, not yet deployed.** `packages/core` moves to
+Rust for every deployment profile — full decision record, spike results, and schema/codegen
+strategy in `docs/rust-core-viability.md`. Not a sub-item of any earlier phase: it recasts
+the *implementation language* of the execution engine every other phase above was built
+against, without changing what any of those phases actually deliver (metadata compiler,
+permission engine, query planner, workflow engine, CRUD, HTTP layer, peripherals — all
+re-implemented 1:1, not redesigned).
+
+Goals:
+
+- ~~Decide whether to move `packages/core` to Rust~~ — **Done (2026-08-07)**, Option B (all
+  profiles), after a spike measured real footprint/throughput gains — see
+  `docs/rust-core-viability.md`.
+- ~~Port the execution engine (Migration Order steps 1-9)~~ — **Done (2026-08-07)**:
+  `crates/` is a 9-crate Cargo workspace (`metap-infra`, `metap-metadata`,
+  `metap-permission`, `metap-query`, `metap-workflow`, `metap-crud`, `metap-http`,
+  `metap-peripherals`, plus the `outbox-publisher` binary) — 51 unit tests (no DB
+  dependency) + 19 e2e tests (real Postgres/RabbitMQ, one real HTTP server with a real
+  RS256 JWT) all passing, `cargo build --release --workspace` clean. Two real bugs were
+  caught only by e2e/live verification (a `data`/`status`-defaulting gap in `CrudService`,
+  a CORS-config panic only reachable with a non-empty origin list) — both fixed, both now
+  covered by tests.
+- ~~Prove the port against the real business entity, not just fixtures~~ — **Done
+  (2026-08-07)**: `crates/crm-server`, a real `apps/crm`-equivalent binary running the actual
+  `crm.customers` entity (ported from `customer.entity.ts`), verified live over HTTP —
+  `pnpm dev:rs` to run it.
+- ~~Delete `apps/crm`/`packages/core` once the port no longer needs them~~ — **Done
+  (2026-08-07)**. Closed three gaps first so nothing was silently stranded: JWT keys moved
+  to `crates/crm-server/keys/`, the three `packages/core/scripts/*.mjs` dev scripts became
+  `crates/dev-tools`'s subcommands, and Drizzle's migration SQL was copied to
+  `crates/migrations/` with `crates/db-migrate` (`sqlx::migrate!`) added to apply it — verified
+  by running the full e2e suite against a database migrated from scratch by that tool alone,
+  *before* deleting anything. See `docs/rust-core-viability.md`'s "TS Removal" section.
+  `packages/platform-react`/`apps/demo` untouched (frontend was always HTTP-only). Known
+  gaps this surfaced, not new ones: admin HTTP routes (policy CRUD, role grant/revoke) still
+  don't exist over HTTP, only as functions with e2e coverage.
+- Cut the Rust stack over to actually serving traffic. — **Not started.** No production
+  deployment topology exists for it yet (same gap Phase 8 Hardening already tracks for the
+  TS stack); this is a distinct, later decision, not implied by the port being finished.
+- Retarget Phase 11's in-flight TS-authored specs (starting with
+  `docs/low-code-metadata-storage-design.md`) to Rust before implementing them. — Not
+  started.
 
 

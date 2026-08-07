@@ -1,0 +1,19 @@
+[package]
+name = "metap-peripherals"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+metap-metadata = { path = "../metap-metadata" }
+anyhow = "1"
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "uuid",
+  "chrono",
+] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

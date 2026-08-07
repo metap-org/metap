@@ -11,7 +11,7 @@
 
 ## Organizational Constraints
 
-- **Every non-trivial change goes through a spec → plan → implementation cycle** before code is written (`docs/superpowers/specs/*.md` / `docs/superpowers/plans/*.md`) — see [09. Architecture Decisions](09-adr.md), which indexes these specs as this project's decision log.
+- **Non-trivial architectural decisions are recorded**, not just coded silently — see [09. Architecture Decisions](09-adr.md), this project's decision log. (Until 2026-08-07 this ran through a formal spec → plan → implementation cycle under `docs/superpowers/{specs,plans}/`; that directory was removed to cut ceremony/context overhead, and decisions are now recorded directly in `09-adr.md` or the relevant `docs/*.md` file instead.)
 - **`docs/roadmap.md` is the single source of truth for what phase the project is in** — this document describes the architecture of what has actually shipped, cross-referencing roadmap phases where relevant, not a target that hasn't been built.
 - **Trigger-based evolution**: speculative infrastructure (dedicated per-entity tables, a report/analytics query path) is not built ahead of a concrete trigger. The one deliberate exception: the monorepo/module-packaging split (`packages/core` + `apps/<module>`) was pulled forward ahead of its originally-documented trigger (a real second module) — see [04. Solution Strategy](04-strategy.md) and [11. Risks and Technical Debt](11-risks.md).
 

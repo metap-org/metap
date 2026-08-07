@@ -1,0 +1,20 @@
+[package]
+name = "db-migrate"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "db-migrate"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+dotenvy = "0.15"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "macros",
+  "migrate",
+] }

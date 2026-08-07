@@ -1,10 +1,17 @@
 # Why This Stack
 
-Chosen stack:
+Chosen stack (still what's actually deployed — the TS/Node stack this doc explains):
 
 ```txt
 Fastify + Zod + Drizzle + PostgreSQL + RabbitMQ + Outbox Pattern
 ```
+
+**2026-08-07:** `packages/core` is now decided to move to Rust (`docs/rust-core-viability.md`),
+which reuses the same PostgreSQL/RabbitMQ/outbox-pattern choices below unchanged — only
+`Fastify`/`Zod`/`Drizzle` (the framework/validation/ORM layer) are being replaced (with
+`axum`/hand-rolled validation from field metadata/`sqlx`, respectively). This document's
+reasoning for those three is historical context for why they were chosen originally, not a
+still-open comparison.
 
 ## Why Fastify
 

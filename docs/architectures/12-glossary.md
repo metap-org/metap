@@ -20,4 +20,4 @@
 | **C4 Model** | Simon Brown's four-level structural diagram notation: Context → Container → Component → Code. Used here for Context ([03](03-context.md)), Container + Component ([05](05-building-blocks.md)). |
 | **4+1 View Model** | Philippe Kruchten's five-viewpoint description of a system: Logical, Process, Development, Physical, plus Scenarios. Folded into this document's arc42 sections — Logical + Development into [05](05-building-blocks.md), Process + Scenarios into [06](06-runtime.md), Physical into [07](07-deployment.md). |
 | **arc42** | A 12-section documentation template for software architecture (not a diagram notation) — the section structure this whole `docs/architectures/` folder follows. |
-| **ADR** | Architecture Decision Record — this project uses its existing `docs/superpowers/specs/*.md` design-spec workflow as its ADR equivalent; see [09](09-adr.md). |
+| **ADR** | Architecture Decision Record — this project records decisions directly in [09](09-adr.md) (previously via a `docs/superpowers/specs/*.md` design-spec workflow, retired 2026-08-07). |

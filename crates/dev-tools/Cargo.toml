@@ -1,0 +1,18 @@
+[package]
+name = "dev-tools"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "dev-tools"
+path = "src/main.rs"
+
+[dependencies]
+metap-peripherals = { path = "../metap-peripherals" }
+anyhow = "1"
+dotenvy = "0.15"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid"] }
+uuid = { version = "1", features = ["v4"] }
+jsonwebtoken = "9"
+serde = { version = "1", features = ["derive"] }
