@@ -55,11 +55,14 @@ Level 3 — Providers
 An `Order.emit("Paid")` call at Level 1 never knows whether Level 2's `EventBus` is
 currently backed by an in-memory bus, RabbitMQ, or Kafka. A `Customer` entity's repository
 never knows whether it's reading from SQLite or Postgres. This is the generalized version
-of a pattern Metap already has exactly one working example of: `PolicyStore`
-(`packages/core/src/core/permission/policy-store.ts`) — `PermissionService` depends on the
-interface, `PostgresPolicyStore` is its only implementation today, and nothing about that
-seam has cost anything beyond the one interface file. The proposal is to extend the same
-shape to the other infrastructure dependencies that don't have it yet.
+of a pattern Metap already has two working examples of: `PolicyStore` (originally
+`packages/core/src/core/permission/policy-store.ts` in the TS codebase, now the
+`PolicyStore` trait in `crates/metap-permission`) — `PermissionService` depends on the
+interface, `PostgresPolicyStore` is its only implementation today — and, since the Rust
+port, `EventBus` (`crates/metap-infra`, `RabbitEventBus` its only implementation), built as
+a trait from the start rather than retrofitted. Neither seam has cost anything beyond the
+one interface/trait definition. The proposal is to extend the same shape to the other
+infrastructure dependencies that don't have it yet.
 
 ### The Rust question — decided, and no longer hypothetical
 
