@@ -160,7 +160,14 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        // Mirrors `apps/crm-server/src/main.rs` — the rate-limit layer needs
+        // `ConnectInfo<SocketAddr>`, see `build_router`'s doc comment.
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let base = format!("http://{addr}");
 
@@ -169,14 +176,35 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     // health is public, no auth needed
     let health = client.get(format!("{base}/health")).send().await.unwrap();
     assert_eq!(health.status(), 200);
+    // helmet-equivalent security headers (see `security_headers.rs`) on every response
+    assert_eq!(health.headers().get("x-content-type-options").unwrap(), "nosniff");
+    assert_eq!(health.headers().get("x-frame-options").unwrap(), "SAMEORIGIN");
+    assert!(health.headers().get("content-security-policy").is_some());
+    // request-id/trace-id (see `request_context.rs`): a trace id is generated when none is
+    // sent, and both ids are present as response headers
+    assert!(health.headers().get("x-request-id").is_some());
+    assert!(health.headers().get("x-trace-id").is_some());
+
+    // an incoming x-trace-id is validated and echoed back rather than replaced
+    let with_trace_id = client
+        .get(format!("{base}/health"))
+        .header("x-trace-id", "caller-supplied-trace-id")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(with_trace_id.headers().get("x-trace-id").unwrap(), "caller-supplied-trace-id");
 
     // openapi.json is public
     let openapi = client.get(format!("{base}/metadata/openapi.json")).send().await.unwrap();
     assert_eq!(openapi.status(), 200);
 
-    // records route without a token -> 401
+    // records route without a token -> 401, with requestId/traceId injected into the error body
     let unauthed = client.get(format!("{base}/api/test.orders")).send().await.unwrap();
     assert_eq!(unauthed.status(), 401);
+    let expected_request_id = unauthed.headers().get("x-request-id").unwrap().to_str().unwrap().to_string();
+    let unauthed_body: serde_json::Value = unauthed.json().await.unwrap();
+    assert_eq!(unauthed_body["error"]["requestId"], expected_request_id);
+    assert!(unauthed_body["error"]["traceId"].is_string());
 
     // create
     let create_res = client
@@ -201,7 +229,7 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
         .unwrap();
     assert_eq!(get_res.status(), 200);
     let fetched: serde_json::Value = get_res.json().await.unwrap();
-    assert_eq!(fetched["data"]["record"]["id"], id);
+    assert_eq!(fetched["data"]["id"], id);
     assert_eq!(fetched["data"]["capabilities"]["transitions"][0]["action"], "activate");
 
     // transition
@@ -252,6 +280,68 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     sqlx::query("DELETE FROM workflow_events WHERE tenant_id = $1").bind(tenant_id).execute(&pool).await.ok();
     sqlx::query("DELETE FROM records WHERE tenant_id = $1").bind(tenant_id).execute(&pool).await.ok();
     sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1").bind(tenant_id).execute(&pool).await.ok();
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn rate_limit_returns_429_once_the_burst_is_exhausted() {
+    let pool = connect().await;
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(test_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(metap_permission::PostgresPolicyStore::new(pool.clone())));
+    let keydir = tempdir();
+    let (_private_pem, public_pem) = openssl_genrsa(keydir.path());
+    let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
+    let state = AppState::new(pool, Arc::new(registry), Arc::new(permissions), decoding_key);
+    let router = build_router(state, &[]);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = reqwest::Client::new();
+
+    // Burst capacity is 300 (see `build_router`'s doc comment) — a fresh
+    // `GovernorConfig`/limiter per `build_router` call, so this is isolated from the
+    // lifecycle test above even though both hit a real server on loopback. Fired
+    // concurrently, not sequentially: at 5 tokens/sec replenishment, 305 sequential
+    // round-trips over loopback take long enough for the bucket to partially refill and
+    // never actually trip the limit.
+    let mut in_flight = tokio::task::JoinSet::new();
+    for _ in 0..400 {
+        let client = client.clone();
+        let base = base.clone();
+        in_flight.spawn(async move {
+            let res = client.get(format!("{base}/health")).send().await.unwrap();
+            if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                let has_retry_after = res.headers().get("retry-after").is_some();
+                let body: serde_json::Value = res.json().await.unwrap();
+                Some((has_retry_after, body))
+            } else {
+                None
+            }
+        });
+    }
+    let mut rate_limited = None;
+    while let Some(result) = in_flight.join_next().await {
+        if let Some(hit) = result.unwrap() {
+            rate_limited = Some(hit);
+        }
+    }
+    let (has_retry_after, body) = rate_limited
+        .expect("expected at least one 429 among 400 concurrent requests against a 300-request burst");
+    assert!(has_retry_after);
+    assert_eq!(body["error"]["code"], "too_many_requests");
+    assert!(body["error"]["requestId"].is_string());
+    assert!(body["error"]["traceId"].is_string());
 }
 
 fn tempdir() -> TempDir {

@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Metap is a metadata-driven ERP/platform core. The core idea: entity behavior (fields, list views, validation, workflow) is declared once as metadata, and CRUD/list/workflow behavior is generated from it — but each concern (metadata, permission, query planning, workflow, outbox) is an explicit service with a fixed boundary, not a grab-bag helper.
+Metap is a metadata-driven platform. The core idea: entity behavior (fields, list views, validation, workflow) is declared once as metadata, and CRUD/list/workflow behavior is generated from it — but each concern (metadata, permission, query planning, workflow, outbox) is an explicit service with a fixed boundary, not a grab-bag helper.
 
-After completing the feature, do not commit any changes. Keep the diff intact so I can review it first. Making roadmap stay updated.
+After completing the feature, do not commit any changes. Keep the diff intact so I can review it first. Making roadmap stay updated. Respond in Vietnamese; write docs and project artifacts in English.
 
 **Backend stack (2026-08-07 on): Rust — axum + sqlx + PostgreSQL + RabbitMQ** (outbox pattern for reliable event publishing), replacing the original TypeScript backend (Fastify + Zod + Drizzle) in full — see `docs/rust-core-viability.md` for the decision record and `docs/roadmap.md`'s Phase 12 for status. `docs/why.md` explains the *unchanged* choices (PostgreSQL, RabbitMQ, the outbox pattern) plus the historical TS-era reasoning for what's since been replaced. `docs/architectures/05-building-blocks.md` documents the target layering (start at `docs/architectures/index.md` for the full architecture doc set) — the layering is unchanged by the language migration, only the implementation is. `docs/roadmap.md` tracks phased goals. The frontend stack (`packages/platform-react` + `apps/crm-fe`) is unaffected — React/TypeScript, talks to the backend over HTTP only, was never coupled to the backend's implementation language.
 

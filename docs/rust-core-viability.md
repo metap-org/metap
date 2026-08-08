@@ -286,7 +286,8 @@ language wrote it.
    happened anyway, the same day, once the "Live Demo" section below proved the port
    complete; see that section and `docs/roadmap.md` Phase 12 for what changed. Phase 8
    Hardening's concerns (helmet-equivalent headers, rate limiting, `requestId`/`traceId`
-   propagation) remain explicitly deferred, not silently dropped.
+   propagation) remained explicitly deferred, not silently dropped — closed 2026-08-09, see
+   `docs/roadmap.md` Phase 8.
 
 `packages/platform-react`/`apps/demo` needed no changes throughout — the `/metadata/openapi.json`
 contract (see "Schema & Codegen Strategy" above) stayed stable across every step.
@@ -360,11 +361,13 @@ paths, the stack description itself). `packages/platform-react`/`apps/demo` were
 frontend was always HTTP-only, never a direct import), then `pnpm install` regenerated the
 lockfile to drop the two removed workspace members cleanly.
 
-**What still doesn't exist, named plainly:** admin HTTP routes (policy CRUD, role grant/
-revoke over HTTP — `metap_peripherals::assign_role`/`revoke_role`/`list_users` exist as
-functions and are covered by e2e tests, but nothing in `metap-http` exposes them as
-endpoints yet) and Phase 8 Hardening's concerns (see above). Both were already-known gaps
-before this deletion, not new ones created by it.
+**What didn't exist yet at this point, named plainly:** admin HTTP routes (policy CRUD, role
+grant/revoke over HTTP — `metap_peripherals::assign_role`/`revoke_role`/`list_users` existed
+as functions and were covered by e2e tests, but nothing in `metap-http` exposed them as
+endpoints yet) and Phase 8 Hardening's application-layer concerns (see above). Both were
+already-known gaps before this deletion, not new ones created by it, and both have since
+been closed — admin routes 2026-08-08 (`crates/metap-http/src/routes/admin.rs`), Hardening's
+app-layer piece 2026-08-09 (see `docs/roadmap.md` Phase 8).
 
 Per "Contributor / Outsource Accessibility" below: steps 1–3 are the right scope for a
 small team to validate real Rust proficiency on before anyone touches `CrudService`/the

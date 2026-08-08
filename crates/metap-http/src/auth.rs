@@ -30,14 +30,28 @@ struct Claims {
 }
 
 #[derive(Debug)]
-pub struct AuthError(pub &'static str);
+pub struct AuthError {
+    message: &'static str,
+    status: StatusCode,
+}
+
+impl AuthError {
+    fn unauthorized(message: &'static str) -> Self {
+        Self { message, status: StatusCode::UNAUTHORIZED }
+    }
+
+    fn forbidden(message: &'static str) -> Self {
+        Self { message, status: StatusCode::FORBIDDEN }
+    }
+}
 
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
+        let code = if self.status == StatusCode::FORBIDDEN { "forbidden" } else { "unauthorized" };
         (
-            StatusCode::UNAUTHORIZED,
+            self.status,
             Json(serde_json::json!({
-                "error": { "code": "unauthorized", "message": self.0 }
+                "error": { "code": code, "message": self.message }
             })),
         )
             .into_response()
@@ -63,25 +77,25 @@ where
             .headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
-            .ok_or(AuthError("Missing or invalid authorization header."))?;
+            .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
 
         let token = header
             .strip_prefix("Bearer ")
-            .ok_or(AuthError("Missing or invalid authorization header."))?;
+            .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
 
         let validation = Validation::new(Algorithm::RS256);
         let token_data = decode::<Claims>(token, &app_state.jwt_decoding_key, &validation)
-            .map_err(|_| AuthError("Invalid or expired token."))?;
+            .map_err(|_| AuthError::unauthorized("Invalid or expired token."))?;
         let claims = token_data.claims;
 
         let tenant_id = Uuid::parse_str(&claims.tenant_id)
-            .map_err(|_| AuthError("Token is missing required claims."))?;
-        let user_id =
-            Uuid::parse_str(&claims.sub).map_err(|_| AuthError("Token is missing required claims."))?;
+            .map_err(|_| AuthError::unauthorized("Token is missing required claims."))?;
+        let user_id = Uuid::parse_str(&claims.sub)
+            .map_err(|_| AuthError::unauthorized("Token is missing required claims."))?;
 
         let roles = get_roles_for_user(&app_state.pool, tenant_id, user_id)
             .await
-            .map_err(|_| AuthError("Failed to resolve roles."))?;
+            .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
 
         Ok(AuthContext(RequestContext {
             tenant_id: claims.tenant_id,
@@ -89,5 +103,27 @@ where
             roles: Some(roles),
             function_id: claims.function_id,
         }))
+    }
+}
+
+/// Same identity/tenant resolution as `AuthContext`, plus an `admin` role check — the
+/// extractor every `/admin/*` route uses instead of `AuthContext` so the gate can't be
+/// forgotten on a future handler the way a per-handler `if !context.is_admin()` check could
+/// be.
+pub struct AdminContext(pub RequestContext);
+
+impl<S> FromRequestParts<S> for AdminContext
+where
+    AppState: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = AuthError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let AuthContext(context) = AuthContext::from_request_parts(parts, state).await?;
+        if !context.is_admin() {
+            return Err(AuthError::forbidden("This action requires the admin role."));
+        }
+        Ok(AdminContext(context))
     }
 }

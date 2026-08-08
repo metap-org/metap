@@ -56,9 +56,15 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     eprintln!("[crm-server] listening on http://{addr}");
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // `build_router`'s rate-limit layer keys on peer IP via `ConnectInfo<SocketAddr>` — see
+    // `metap_http::build_router`'s doc comment. Plain `into_make_service()` wouldn't
+    // populate that extension and every request would fail rate-limit key extraction.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }
