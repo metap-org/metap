@@ -41,7 +41,7 @@ pub fn service_error_response(
 }
 
 pub fn internal_error_response(err: anyhow::Error) -> Response {
-    eprintln!("[metap-http] internal error: {err:#}");
+    tracing::error!(error = %format!("{err:#}"), "internal error");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(serde_json::json!({

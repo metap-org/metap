@@ -1,11 +1,14 @@
 //! Mirrors `packages/core/src/server/plugins/request-id.ts` (deleted, see git history):
 //! echo/generate `x-request-id`/`x-trace-id` response headers on every request. Fastify's
 //! version also attached both ids to a per-request child logger so every log line carried
-//! them; axum has no equivalent per-request logger to hook here, so the closest match to
-//! `error-handler.ts`'s `errorBody()` (which put both ids in every JSON error body) is done
-//! centrally in this same middleware — buffering and re-serializing only 4xx/5xx bodies —
-//! rather than threading a requestId/traceId parameter through the ~30
-//! `service_error_response`/`internal_error_response` call sites across `routes/*.rs`.
+//! them; the Rust equivalent is `request_id::generate_request_ids` (outermost layer, see
+//! `lib.rs`) stashing the same ids in request extensions for `TraceLayer` to fold into its
+//! span, so every `tracing` event logged anywhere during the request carries them without
+//! this module's help. What's left here is `error-handler.ts`'s `errorBody()` behavior (both
+//! ids in every JSON error body) — done centrally in this middleware, buffering and
+//! re-serializing only 4xx/5xx bodies, rather than threading a requestId/traceId parameter
+//! through the ~30 `service_error_response`/`internal_error_response` call sites across
+//! `routes/*.rs`.
 
 use axum::body::{to_bytes, Body};
 use axum::extract::Request;
@@ -13,26 +16,20 @@ use axum::http::header::CONTENT_LENGTH;
 use axum::http::HeaderValue;
 use axum::middleware::Next;
 use axum::response::Response;
-use uuid::Uuid;
+
+use crate::request_id::RequestIds;
 
 /// Error bodies are small JSON objects; this is just a sanity ceiling, not a tuned limit.
 const MAX_ERROR_BODY_BYTES: usize = 1024 * 1024;
 
-fn is_valid_trace_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-}
-
 pub async fn request_context(request: Request, next: Next) -> Response {
-    let trace_id = request
-        .headers()
-        .get("x-trace-id")
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| is_valid_trace_id(s))
-        .map(str::to_string)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let request_id = Uuid::new_v4().to_string();
+    // Always present — `generate_request_ids` runs outside this layer in `build_router`, so
+    // by construction every request reaching here already has one.
+    let RequestIds { request_id, trace_id } =
+        request.extensions().get::<RequestIds>().cloned().unwrap_or_else(|| RequestIds {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            trace_id: uuid::Uuid::new_v4().to_string(),
+        });
 
     let response = next.run(request).await;
     let (mut parts, body) = response.into_parts();

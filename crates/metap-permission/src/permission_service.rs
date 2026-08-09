@@ -35,7 +35,11 @@ impl PermissionService {
         entity_name: &str,
         action: EntityAction,
     ) -> anyhow::Result<PermissionDecision> {
+        let user_id = context.user_id.as_deref().unwrap_or("unknown");
+        let action_str = action.as_str();
+
         if context.is_admin() {
+            tracing::debug!(entity = entity_name, action = action_str, user_id, "allowed: admin role");
             return Ok(PermissionDecision::allowed());
         }
 
@@ -46,11 +50,29 @@ impl PermissionService {
             .await?;
 
         if rows.is_empty() {
+            tracing::debug!(
+                entity = entity_name,
+                action = action_str,
+                user_id,
+                "allowed: no policy scoped to this entity/action"
+            );
             return Ok(PermissionDecision::allowed());
         }
 
         let passed = rows.iter().any(|policy| evaluate_policy_row(policy, context, None));
-        Ok(if passed { PermissionDecision::allowed() } else { PermissionDecision::forbidden() })
+        if passed {
+            tracing::debug!(entity = entity_name, action = action_str, user_id, "allowed: policy matched");
+            Ok(PermissionDecision::allowed())
+        } else {
+            tracing::warn!(
+                entity = entity_name,
+                action = action_str,
+                user_id,
+                policy_count = rows.len(),
+                "denied: no policy condition matched"
+            );
+            Ok(PermissionDecision::forbidden())
+        }
     }
 
     pub async fn can_read_entity(

@@ -14,6 +14,7 @@ struct OutboxRow {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    metap_infra::init_tracing();
     let config = load_config()?;
 
     let poll_ms: u64 = env::var("OUTBOX_POLL_MS")
@@ -25,13 +26,13 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(100);
 
-    eprintln!("[outbox-publisher] connecting to postgres...");
+    tracing::info!("connecting to postgres...");
     let pool = connect_db(config.outbox_database_url()).await?;
 
-    eprintln!("[outbox-publisher] connecting to rabbitmq...");
+    tracing::info!("connecting to rabbitmq...");
     let bus = RabbitEventBus::connect(&config.rabbitmq_url).await?;
 
-    eprintln!("[outbox-publisher] ready, polling every {poll_ms}ms, batch={batch_size}");
+    tracing::info!(poll_ms, batch_size, "ready, polling");
 
     let mut shutdown = Box::pin(shutdown_signal());
 
@@ -39,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::select! {
             biased;
             _ = &mut shutdown => {
-                eprintln!("[outbox-publisher] shutdown signal received, exiting");
+                tracing::info!("shutdown signal received, exiting");
                 break;
             }
             result = publish_pending(&pool, &bus, batch_size) => {
@@ -54,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::select! {
             biased;
             _ = &mut shutdown => {
-                eprintln!("[outbox-publisher] shutdown signal received, exiting");
+                tracing::info!("shutdown signal received, exiting");
                 break;
             }
             _ = tokio::time::sleep(Duration::from_millis(poll_ms)) => {}
@@ -123,7 +124,15 @@ async fn publish_pending(
     for row in rows {
         match bus.publish(&row.topic, &row.payload).await {
             Ok(()) => mark_published(&mut tx, row.id).await?,
-            Err(err) => mark_failed(&mut tx, row.id, &err.to_string()).await?,
+            Err(err) => {
+                tracing::warn!(
+                    outbox_id = %row.id,
+                    topic = row.topic,
+                    error = %err,
+                    "failed to publish outbox event, will retry next poll"
+                );
+                mark_failed(&mut tx, row.id, &err.to_string()).await?;
+            }
         }
     }
 

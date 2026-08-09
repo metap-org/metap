@@ -8,9 +8,11 @@ name = "db-migrate"
 path = "src/main.rs"
 
 [dependencies]
+metap-infra = { path = "../metap-infra" }
 anyhow = "1"
 dotenvy = "0.15"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
 sqlx = { version = "0.8", default-features = false, features = [
   "runtime-tokio",
   "tls-rustls",

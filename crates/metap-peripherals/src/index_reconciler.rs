@@ -30,7 +30,7 @@ fn quote_identifier(value: &str) -> String {
 
 pub async fn reconcile(pool: &PgPool, entities: &[EntitySummary]) {
     if let Err(err) = reconcile_inner(pool, entities).await {
-        eprintln!("index: reconcile skipped, could not reach the database: {err:#}");
+        tracing::warn!(error = %format!("{err:#}"), "index reconcile skipped, could not reach the database");
     }
 }
 
@@ -94,9 +94,7 @@ async fn ensure_index(
     );
     sqlx::query(&sql).execute(pool).await?;
 
-    eprintln!(
-        "index: created (entity={entity_name}, field={field_name}, unique={unique}, index={index_name})"
-    );
+    tracing::info!(entity = entity_name, field = field_name, unique, index = index_name, "index created");
     Ok(())
 }
 
@@ -120,7 +118,7 @@ async fn ensure_gin_index(pool: &PgPool, entity_name: &str, field_name: &str) ->
     );
     sqlx::query(&sql).execute(pool).await?;
 
-    eprintln!("index: created (entity={entity_name}, field={field_name}, index={index_name})");
+    tracing::info!(entity = entity_name, field = field_name, index = index_name, "gin index created");
     Ok(())
 }
 

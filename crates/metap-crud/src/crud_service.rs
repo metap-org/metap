@@ -51,6 +51,7 @@ impl CrudService {
         context: &RequestContext,
     ) -> anyhow::Result<ServiceResult<Vec<RecordDto>>> {
         let Some(entity) = self.get_entity(entity_name) else {
+            tracing::debug!(entity = entity_name, "list rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
 
@@ -116,6 +117,7 @@ impl CrudService {
         context: &RequestContext,
     ) -> anyhow::Result<ServiceResult<(RecordDto, RecordCapabilities)>> {
         let Some(entity) = self.get_entity(entity_name) else {
+            tracing::debug!(entity = entity_name, "get rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
 
@@ -126,6 +128,7 @@ impl CrudService {
 
         let tenant_id = self.permissions.scoped_tenant(context)?;
         let Some(existing) = fetch_existing(&self.pool, id, tenant_id, &entity.name).await? else {
+            tracing::debug!(entity = entity.name, record_id = %id, "get rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
 
@@ -148,6 +151,7 @@ impl CrudService {
         context: &RequestContext,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let Some(entity) = self.get_entity(entity_name) else {
+            tracing::debug!(entity = entity_name, "create rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
 
@@ -168,7 +172,12 @@ impl CrudService {
         let mut data = match validate_payload(&entity, raw_data) {
             Ok(d) => d,
             Err(field_errors) => {
-                return Ok(ServiceResult::err_with_field_errors(400, "validation_failed", field_errors))
+                tracing::warn!(
+                    entity = entity.name,
+                    fields = ?field_errors.keys().collect::<Vec<_>>(),
+                    "create rejected: validation failed"
+                );
+                return Ok(ServiceResult::err_with_field_errors(400, "validation_failed", field_errors));
             }
         };
 
@@ -204,6 +213,7 @@ impl CrudService {
 
         emit_created(&mut *tx, &entity, record.id, &data).await?;
         tx.commit().await?;
+        tracing::info!(entity = entity.name, record_id = %record.id, "record created");
 
         Ok(ServiceResult::ok(mask_record_for_read(&entity, context, &snapshot, record)))
     }
@@ -217,6 +227,7 @@ impl CrudService {
         context: &RequestContext,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let Some(entity) = self.get_entity(entity_name) else {
+            tracing::debug!(entity = entity_name, "update rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
 
@@ -227,6 +238,7 @@ impl CrudService {
 
         let tenant_id = self.permissions.scoped_tenant(context)?;
         let Some(existing) = fetch_existing(&self.pool, id, tenant_id, &entity.name).await? else {
+            tracing::debug!(entity = entity.name, record_id = %id, "update rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
 
@@ -258,7 +270,13 @@ impl CrudService {
         let data = match validate_payload(&entity, &merged) {
             Ok(d) => d,
             Err(field_errors) => {
-                return Ok(ServiceResult::err_with_field_errors(400, "validation_failed", field_errors))
+                tracing::warn!(
+                    entity = entity.name,
+                    record_id = %id,
+                    fields = ?field_errors.keys().collect::<Vec<_>>(),
+                    "update rejected: validation failed"
+                );
+                return Ok(ServiceResult::err_with_field_errors(400, "validation_failed", field_errors));
             }
         };
 
@@ -283,12 +301,19 @@ impl CrudService {
 
         let Some(row) = row else {
             tx.rollback().await.ok();
+            tracing::warn!(
+                entity = entity.name,
+                record_id = %id,
+                expected_version,
+                "update rejected: version conflict"
+            );
             return Ok(ServiceResult::err(409, "version_conflict"));
         };
         let record = row_to_dto(row)?;
 
         emit_updated(&mut *tx, &entity, record.id, &data, record.version).await?;
         tx.commit().await?;
+        tracing::info!(entity = entity.name, record_id = %record.id, version = record.version, "record updated");
 
         Ok(ServiceResult::ok(mask_record_for_read(&entity, context, &snapshot, record)))
     }
@@ -302,6 +327,7 @@ impl CrudService {
         context: &RequestContext,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let Some(entity) = self.get_entity(entity_name) else {
+            tracing::debug!(entity = entity_name, "transition rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
 
@@ -312,6 +338,7 @@ impl CrudService {
 
         let tenant_id = self.permissions.scoped_tenant(context)?;
         let Some(existing) = fetch_existing(&self.pool, id, tenant_id, &entity.name).await? else {
+            tracing::debug!(entity = entity.name, record_id = %id, "transition rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
 
@@ -323,19 +350,41 @@ impl CrudService {
         }
 
         let Some(workflow) = &entity.workflow else {
+            tracing::warn!(entity = entity.name, record_id = %id, "transition rejected: entity has no workflow");
             return Ok(ServiceResult::err(400, "no_workflow"));
         };
 
         let Some(from_state) = existing.data.get(&workflow.state_field).and_then(Value::as_str) else {
+            tracing::warn!(
+                entity = entity.name,
+                record_id = %id,
+                state_field = workflow.state_field,
+                "transition rejected: record has no value for the workflow state field"
+            );
             return Ok(ServiceResult::err(409, "invalid_transition"));
         };
         let from_state = from_state.to_string();
 
         let Some(transition) = find_transition(&entity, action, &from_state) else {
+            tracing::warn!(
+                entity = entity.name,
+                record_id = %id,
+                action,
+                from_state,
+                "transition rejected: no transition defined for this action/from-state pair"
+            );
             return Ok(ServiceResult::err(409, "invalid_transition"));
         };
 
         if let Err(reason) = run_guard(transition, &existing.data, context) {
+            tracing::warn!(
+                entity = entity.name,
+                record_id = %id,
+                action,
+                from_state,
+                reason,
+                "transition rejected: guard failed"
+            );
             return Ok(ServiceResult::err_with_message(422, "guard_failed", reason));
         }
         let to_state = transition.to.clone();
@@ -363,6 +412,12 @@ impl CrudService {
 
         let Some(row) = row else {
             tx.rollback().await.ok();
+            tracing::warn!(
+                entity = entity.name,
+                record_id = %id,
+                expected_version,
+                "transition rejected: version conflict"
+            );
             return Ok(ServiceResult::err(409, "version_conflict"));
         };
         let record = row_to_dto(row)?;
@@ -370,6 +425,14 @@ impl CrudService {
         record_event(&mut *tx, &entity, record.id, action, &from_state, &to_state, context).await?;
         emit_transitioned(&mut *tx, &entity, record.id, action, &from_state, &to_state, user_id).await?;
         tx.commit().await?;
+        tracing::info!(
+            entity = entity.name,
+            record_id = %record.id,
+            action,
+            from = from_state,
+            to = to_state,
+            "record transitioned"
+        );
 
         Ok(ServiceResult::ok(mask_record_for_read(&entity, context, &snapshot, record)))
     }
@@ -382,6 +445,7 @@ impl CrudService {
         context: &RequestContext,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let Some(entity) = self.get_entity(entity_name) else {
+            tracing::debug!(entity = entity_name, "delete rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
 
@@ -392,6 +456,7 @@ impl CrudService {
 
         let tenant_id = self.permissions.scoped_tenant(context)?;
         let Some(existing) = fetch_existing(&self.pool, id, tenant_id, &entity.name).await? else {
+            tracing::debug!(entity = entity.name, record_id = %id, "delete rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
 
@@ -420,12 +485,19 @@ impl CrudService {
 
         let Some(row) = row else {
             tx.rollback().await.ok();
+            tracing::warn!(
+                entity = entity.name,
+                record_id = %id,
+                expected_version,
+                "delete rejected: version conflict"
+            );
             return Ok(ServiceResult::err(409, "version_conflict"));
         };
         let record = row_to_dto(row)?;
 
         emit_deleted(&mut *tx, &entity, record.id).await?;
         tx.commit().await?;
+        tracing::info!(entity = entity.name, record_id = %record.id, "record deleted");
 
         Ok(ServiceResult::ok(mask_record_for_read(&entity, context, &snapshot, record)))
     }

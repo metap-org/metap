@@ -18,19 +18,20 @@
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    metap_infra::init_tracing();
     dotenvy::dotenv().ok();
     let database_url = std::env::var("DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
 
-    eprintln!("[db-migrate] connecting to {database_url}...");
+    tracing::info!("connecting to postgres...");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(&database_url)
         .await?;
 
-    eprintln!("[db-migrate] applying migrations from crates/migrations/...");
+    tracing::info!("applying migrations from crates/migrations/...");
     sqlx::migrate!("../migrations").run(&pool).await?;
 
-    eprintln!("[db-migrate] done.");
+    tracing::info!("done");
     Ok(())
 }

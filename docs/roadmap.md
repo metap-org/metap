@@ -17,6 +17,8 @@
 | 10. Monorepo, npm publish | Partially done |
 | 11. Low-code Platform Backbone Architecture | In progress |
 | 12. Rust Core Migration | Decided; Migration Order (steps 1-9) done in `crates/`; not yet cut over to production |
+| 13. Dynamic Cron Jobs | Not started |
+| 14. Multi-language (i18n) | Not started |
 
 ## Phase 0: Skeleton
 
@@ -213,7 +215,7 @@ Original goals, for reference:
 
 ## Phase 5: Workflow Engine V1
 
-**Status: Done.** Atomic transition, optimistic locking, guard conditions (TypeScript predicates on `WorkflowTransition`), an append-only `workflow_events` audit log, and outbox side effects are implemented via `WorkflowEngine` + `CrudService.transition`, exposed at `POST /api/:entity/:id/transitions/:action` (see `docs/architectures/09-adr.md` for the decision record). One scoped-down deliverable: "Notification integration" shipped as a stub outbox topic (`<entity>.workflow.transitioned`) only — no notification consumer exists yet, since there's no notification service to build one against.
+**Status: Done.** Atomic transition, optimistic locking, guard conditions (TypeScript predicates on `WorkflowTransition`), an append-only `workflow_events` audit log, and outbox side effects are implemented via `WorkflowEngine` + `CrudService.transition`, exposed at `POST /api/:entity/:id/transitions/:action` (see `docs/architectures/09-adr.md` for the decision record). "Notification integration" originally shipped as a publish-only stub outbox topic (`<entity>.workflow.transitioned`) with no consumer. 2026-08-09: `EventBus` gained a `subscribe` side (`crates/metap-infra/src/event_bus.rs` — durable queue bind on a topic-exchange routing key, ack/nack) and `crates/notification-worker` is the first real consumer, logging every transition. Deliberately minimal (stdout only, no email/SMS/webhook) since no real notification channel has been asked for yet; it can run as its own process (`pnpm worker:notification:rs`, the default, mirroring `outbox-publisher`) or inline inside `crm-server` via `NOTIFICATION_WORKER_INLINE=true` for single-process deployments — same `notification_worker::run` either way. Delivery semantics, same day: at-least-once (durable queue, manual ack), a per-queue DLQ (`<queue>.dlq`, wired via `x-dead-letter-exchange`/`x-dead-letter-routing-key` — a nacked poison message lands there instead of vanishing, verified live against a real broker) and `basic_qos` prefetch (20) for backpressure; `notification_worker::run` now propagates an error (instead of a clean exit) when the event stream closes unexpectedly (bus disconnect) so a process manager can tell that apart from a real shutdown signal, matching `outbox-publisher`'s "propagate and let the process manager restart" contract. Deliberately *not* built: retry-with-backoff — no call site nacks with `requeue: true` yet (nothing in `notify()` can fail), so a delay-queue/attempt-counter chain would be speculative infra ahead of a real trigger; `EventBus::subscribe`'s doc comment flags this as a known gap for whichever future consumer needs bounded retries.
 
 Goals:
 
@@ -334,6 +336,35 @@ Goals:
   YAML alone. Not yet enforced as a merge gate (no branch protection configured) and
   `clippy`/`fmt --check` aren't `-D warnings`-strict yet — the codebase isn't fully clean
   under either, see the workflow's own comments.
+- ~~Structured logging / observability~~ (not an original Phase 8 goal — added 2026-08-09
+  after an audit found the core crates had effectively zero logging: `metap-crud`,
+  `metap-permission`, `metap-query`, `metap-workflow` had none at all, and the one place that
+  did log — `metap-http`'s 500 handler — didn't even carry the `requestId`/`traceId` the
+  response body already had, so a client-reported id couldn't be grepped against server
+  logs) — **Done (2026-08-09)**: `tracing` + `tracing-subscriber` wired in via
+  `metap_infra::init_tracing()` (one shared init, called first thing by every binary —
+  `crm-server`, `outbox-publisher`, `notification-worker`, `db-migrate` — reading `RUST_LOG`,
+  default `info`; `dev-tools` deliberately excluded, its stdout is CLI output — a minted
+  token, a usage message — not a log stream). `crates/metap-http/src/request_id.rs` (new,
+  outermost middleware) generates the request/trace id pair once into request extensions;
+  `tower_http::trace::TraceLayer` (also new, wrapping every other layer) builds one span per
+  request carrying both ids plus method/path/status/latency, so **any** `tracing` event
+  logged anywhere downstream — a permission denial in `metap-permission`, a validation
+  failure in `metap-crud`, a rejected filter in `metap-query` — is automatically correlated
+  with the same ids the client sees, with no id threaded through any of those crates'
+  function signatures. `request_context.rs` now reads the same ids from the extension
+  instead of minting its own. Instrumented the actual decision points that were previously
+  silent: permission allow/deny (`metap-permission`), rejected/ignored filter and sort fields
+  and invalid cursors (`metap-query`), and in `metap-crud::CrudService` — entity/record not
+  found, validation failure (with the offending field names), version conflicts, and the full
+  transition-rejection chain (no workflow, no transition defined, guard failed) plus INFO-level
+  success logs for create/update/transition/delete. Deliberately *not* done: no JSON/OTLP
+  exporter (logs to stderr as plain text only — no aggregator exists to send to yet, same gap
+  as the Docker/CI goals' "no production deployment topology documented"); revisit once one
+  does. Verified live against a real Postgres/RabbitMQ/crm-server (not just `cargo build`):
+  hit `/health`, an unauthenticated route, an unknown entity, and an empty-payload `create` —
+  confirmed the access-log line and the `metap-crud`/`metap-permission` decision logs both
+  carry the same `request_id`/`trace_id` and nest inside the same span.
 - load tests for list/query/export — Not started.
 - backup/restore drill — Not started.
 
@@ -432,5 +463,34 @@ Goals:
 - Retarget Phase 11's in-flight TS-authored specs (starting with
   `docs/low-code-metadata-storage-design.md`) to Rust before implementing them. — Not
   started.
+
+## Phase 13: Dynamic Cron Jobs
+
+**Status: Not started.** Metadata-driven scheduled jobs — an operator defines a recurring job (schedule + target action) through metadata/admin API, the same way entities/workflow/policies are defined today, instead of a developer hand-wiring a new cron entry in code. "Dynamic" is the operative word: the set of jobs is data the platform reads at runtime, not a fixed list baked into a binary at compile time.
+
+Goals:
+
+- Design the job metadata shape (schedule expression, target — e.g. a workflow transition, a webhook, a query-driven bulk action — tenant scope, enabled/disabled) and where it's stored (likely the same Postgres instance, a new table, following the outbox/`records` precedent of "one shared DB" from `docs/architectures/04-strategy.md`).
+- Design the scheduler/dispatch loop. Likely shape: a new ops binary/worker (`crates/cron-scheduler` or similar), following the `outbox-publisher`/`notification-worker` precedent — poll due jobs, execute, record run history — rather than an in-process `tokio::spawn` timer inside `crm-server` (same reasoning Phase 9 gives for keeping ops workers as separate deployable units: independent scaling/restart, no coupling to the HTTP process's lifecycle). Whether it reuses `EventBus`/outbox (enqueue a "job due" event, let a consumer act on it) or dispatches directly is an open design question.
+- Concurrency/locking: only one instance of a given due job should actually run when multiple scheduler replicas exist — needs the same `SELECT ... FOR UPDATE SKIP LOCKED` pattern `outbox-publisher` already uses for its batch claim, or an equivalent.
+- Admin API + `packages/platform-react` UI for CRUD on job definitions and viewing run history — mirrors the existing policy/role admin surface (`crates/metap-http/src/routes/admin.rs`).
+- Failure handling: retry policy, max attempts, alerting on repeated failure — ties into whatever the eventual real notification channel becomes (`crates/notification-worker` is stdout-only today, see its doc comment).
+
+No concrete trigger has fired for this yet (no operator has asked to schedule a recurring action) — flagged here as a known gap, not queued for immediate implementation.
+
+## Phase 14: Multi-language (i18n)
+
+**Status: Not started.** Two separable concerns, both currently absent:
+
+- **Metadata-authored content (entity/field/list-view labels, workflow action names, validation messages)** is hard-coded single-locale strings in `EntityDefinition`/`EntityField`/etc. today (see `apps/crm-server/src/customer_entity.rs`). Making these translatable means either a `Record<locale, string>` shape on every label field (breaking change to `EntityField` and the OpenAPI-generated types in `crates/metap-metadata/src/openapi.rs`) or a separate translation-key indirection layer. Needs a design decision before implementation — this is a metadata-model change, not just a UI one, so it should be scoped alongside Phase 11's low-code metadata work rather than bolted on separately.
+- **Frontend UI chrome** (`packages/platform-react`, `apps/crm-fe`) has no i18n library wired in yet (no `react-i18next`/`formatjs`/equivalent) — static strings throughout. Independent of the metadata-content question above; could start earlier since it doesn't require a backend metadata-model change.
+
+Goals:
+
+- Decide the metadata-label translation shape (blocks on Phase 11's metadata storage design, `docs/low-code-metadata-storage-design.md`, since translated labels are exactly the kind of runtime-editable content that design is meant to own).
+- Wire an i18n library into `packages/platform-react` for static UI chrome strings, with locale switching in `apps/crm-fe`.
+- Decide how record `data` (user-entered field values) relates to locale, if at all — likely out of scope (that's tenant business data, not platform-owned content), but worth stating explicitly so it isn't assumed later.
+
+No concrete trigger has fired for this yet (no multi-locale deployment requirement exists today) — flagged here as a known gap, not queued for immediate implementation.
 
 

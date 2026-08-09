@@ -13,6 +13,7 @@ members = [
   "crates/metap-permission",
   "crates/metap-query",
   "crates/metap-workflow",
+  "crates/notification-worker",
   "crates/outbox-publisher",
 ]
 

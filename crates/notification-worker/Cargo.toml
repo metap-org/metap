@@ -1,0 +1,19 @@
+[package]
+name = "metap-notification-worker"
+version = "0.1.0"
+edition.workspace = true
+
+[lib]
+name = "notification_worker"
+path = "src/lib.rs"
+
+[[bin]]
+name = "notification-worker"
+path = "src/main.rs"
+
+[dependencies]
+metap-infra = { path = "../metap-infra" }
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tracing = "0.1"

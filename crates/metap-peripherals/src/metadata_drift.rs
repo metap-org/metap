@@ -9,7 +9,7 @@ use sqlx::PgPool;
 
 pub async fn check(pool: &PgPool, entities: &[EntitySummary]) {
     if let Err(err) = check_inner(pool, entities).await {
-        eprintln!("metadata: drift check skipped, could not reach the database: {err:#}");
+        tracing::warn!(error = %format!("{err:#}"), "metadata drift check skipped, could not reach the database");
     }
 }
 
@@ -23,15 +23,14 @@ async fn check_inner(pool: &PgPool, entities: &[EntitySummary]) -> anyhow::Resul
 
         match &existing {
             None => {
-                eprintln!(
-                    "metadata: first boot, recording initial hash (entity={}, hash={})",
-                    entity.name, entity.version
-                );
+                tracing::info!(entity = entity.name, hash = entity.version, "metadata: first boot, recording initial hash");
             }
             Some(hash) if hash != &entity.version => {
-                eprintln!(
-                    "metadata: drift detected since last boot (entity={}, oldHash={}, newHash={})",
-                    entity.name, hash, entity.version
+                tracing::warn!(
+                    entity = entity.name,
+                    old_hash = hash,
+                    new_hash = entity.version,
+                    "metadata drift detected since last boot"
                 );
             }
             Some(_) => {}

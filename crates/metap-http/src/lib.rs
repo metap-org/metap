@@ -21,16 +21,23 @@
 pub mod auth;
 pub mod error;
 pub mod request_context;
+pub mod request_id;
 pub mod routes;
 pub mod security_headers;
 pub mod state;
 
+use axum::extract::Request;
 use axum::http::{header, HeaderValue, Method};
 use axum::middleware;
 use axum::Router;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::{GovernorError, GovernorLayer};
+use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+use tracing::Span;
+
+use request_id::RequestIds;
 
 pub use auth::{AdminContext, AuthContext};
 pub use state::AppState;
@@ -84,6 +91,38 @@ pub fn build_router(state: AppState, cors_origins: &[String]) -> Router {
         _ => error::internal_error_response(anyhow::anyhow!("rate limiter: {err}")),
     });
 
+    // One span per request, carrying the same request_id/trace_id `request_context` puts in
+    // the response — so a `tracing` event logged anywhere downstream (a permission denial in
+    // `metap-permission`, a validation failure in `metap-crud`, ...) is automatically
+    // correlated with both the client-visible ids and this access-log line, with no id
+    // threaded through any of those crates' function signatures.
+    let trace = TraceLayer::new_for_http()
+        .make_span_with(|request: &Request| {
+            let ids = request.extensions().get::<RequestIds>();
+            tracing::info_span!(
+                "http_request",
+                method = %request.method(),
+                path = %request.uri().path(),
+                request_id = ids.map(|i| i.request_id.as_str()).unwrap_or("unknown"),
+                trace_id = ids.map(|i| i.trace_id.as_str()).unwrap_or("unknown"),
+                status = tracing::field::Empty,
+                latency_ms = tracing::field::Empty,
+            )
+        })
+        .on_response(
+            |response: &axum::response::Response, latency: std::time::Duration, span: &Span| {
+                span.record("status", response.status().as_u16());
+                span.record("latency_ms", latency.as_millis() as u64);
+                tracing::event!(parent: span, tracing::Level::INFO, "request completed");
+            },
+        )
+        .on_failure(
+            |error: ServerErrorsFailureClass, latency: std::time::Duration, span: &Span| {
+                span.record("latency_ms", latency.as_millis() as u64);
+                tracing::event!(parent: span, tracing::Level::ERROR, %error, "request failed");
+            },
+        );
+
     Router::new()
         .merge(routes::health::router())
         .merge(routes::metadata::public_router())
@@ -94,5 +133,9 @@ pub fn build_router(state: AppState, cors_origins: &[String]) -> Router {
         .layer(rate_limit)
         .layer(middleware::from_fn(request_context::request_context))
         .layer(middleware::from_fn(security_headers::security_headers))
+        .layer(trace)
+        // Outermost: every layer/handler below runs with `RequestIds` already in the request
+        // extensions, and — via `trace` above — inside the span built from them.
+        .layer(middleware::from_fn(request_id::generate_request_ids))
         .with_state(state)
 }

@@ -10,6 +10,7 @@
     "dev:rs": "cargo build --release -p crm-server && cd apps/crm-server && ../../target/release/crm-server",
     "start": "pnpm build:web && cargo build --release -p crm-server && cd apps/crm-server && STATIC_DIR=../../apps/crm-fe/dist ../../target/release/crm-server",
     "worker:outbox:rs": "cargo build --release -p metap-outbox-publisher && cd apps/crm-server && ../../target/release/outbox-publisher",
+    "worker:notification:rs": "cargo build --release -p metap-notification-worker && cd apps/crm-server && ../../target/release/notification-worker",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "test:rs": "cargo test --workspace",

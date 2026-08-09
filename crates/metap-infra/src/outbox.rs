@@ -32,5 +32,6 @@ where
     .bind(&event.payload)
     .execute(executor)
     .await?;
+    tracing::debug!(topic = %event.topic, aggregate_id = %event.aggregate_id, "outbox event enqueued");
     Ok(())
 }

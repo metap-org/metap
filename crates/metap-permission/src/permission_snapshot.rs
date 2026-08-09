@@ -127,7 +127,10 @@ impl PermissionSnapshot {
             writable.iter().map(String::as_str).collect();
 
         match payload_fields.iter().find(|f| !writable_set.contains(f.as_str())) {
-            Some(denied_field) => PermissionDecision::forbidden_field(denied_field.clone()),
+            Some(denied_field) => {
+                tracing::warn!(field = %denied_field, "denied: field not writable");
+                PermissionDecision::forbidden_field(denied_field.clone())
+            }
             None => PermissionDecision::allowed(),
         }
     }
@@ -152,6 +155,7 @@ impl PermissionSnapshot {
         if passed {
             PermissionDecision::allowed()
         } else {
+            tracing::warn!(action = action.as_str(), "denied: no record-level policy condition matched");
             PermissionDecision::forbidden()
         }
     }

@@ -101,9 +101,10 @@ pub fn plan_list(
     context: &RequestContext,
     record_read_policies: &[PolicyRow],
 ) -> anyhow::Result<PlannedListQuery> {
-    let entity = metadata
-        .get_entity(entity_name)
-        .ok_or_else(|| anyhow::anyhow!("Entity not found: {entity_name}"))?;
+    let entity = metadata.get_entity(entity_name).ok_or_else(|| {
+        tracing::warn!(entity = entity_name, "list rejected: entity not found");
+        anyhow::anyhow!("Entity not found: {entity_name}")
+    })?;
 
     let tenant_id = permissions.scoped_tenant(context)?;
     let list_view = entity.list_views.first();
@@ -127,6 +128,11 @@ pub fn plan_list(
 
     for (field, value) in &input.filters {
         if !allowed_filter_fields.contains(field.as_str()) {
+            tracing::debug!(
+                entity = entity.name,
+                field,
+                "filter ignored: not in this entity's list-view filters"
+            );
             continue;
         }
 
@@ -165,6 +171,15 @@ pub fn plan_list(
     sortable_fields.insert("createdAt".to_string());
     sortable_fields.insert("updatedAt".to_string());
 
+    if let Some(requested) = input.sort.as_deref() {
+        if parse_sort(Some(requested), &sortable_fields).is_none() {
+            tracing::debug!(
+                entity = entity.name,
+                requested_sort = requested,
+                "sort ignored: field not sortable, falling back to entity default"
+            );
+        }
+    }
     let resolved_sort = parse_sort(input.sort.as_deref(), &sortable_fields)
         .or_else(|| parse_sort(list_view.and_then(|lv| lv.default_sort.as_deref()), &sortable_fields))
         .unwrap_or(ResolvedSort { field: "createdAt".to_string(), descending: true });
@@ -172,16 +187,26 @@ pub fn plan_list(
     let (sort_expr, sort_col_type) = sort_field_expression(&resolved_sort.field, &mut params);
 
     if let Some(raw_cursor) = &input.cursor {
-        let cursor = decode_cursor(raw_cursor)
-            .ok_or_else(|| InvalidCursorError("Cursor does not match the current sort".to_string()))?;
+        let cursor = decode_cursor(raw_cursor).ok_or_else(|| {
+            tracing::warn!(entity = entity.name, "list rejected: cursor failed to decode");
+            InvalidCursorError("Cursor does not match the current sort".to_string())
+        })?;
 
         let cursor_dir_matches = cursor.dir == if resolved_sort.descending { SortDir::Desc } else { SortDir::Asc };
         if cursor.field != resolved_sort.field || !cursor_dir_matches {
+            tracing::warn!(
+                entity = entity.name,
+                cursor_field = cursor.field,
+                resolved_field = resolved_sort.field,
+                "list rejected: cursor sort field/direction doesn't match the resolved sort"
+            );
             return Err(InvalidCursorError("Cursor does not match the current sort".to_string()).into());
         }
 
-        let cursor_id = Uuid::parse_str(&cursor.id)
-            .map_err(|_| InvalidCursorError("Cursor does not match the current sort".to_string()))?;
+        let cursor_id = Uuid::parse_str(&cursor.id).map_err(|_| {
+            tracing::warn!(entity = entity.name, "list rejected: cursor id is not a valid uuid");
+            InvalidCursorError("Cursor does not match the current sort".to_string())
+        })?;
         let value_ph = bind_cursor_value(&sort_col_type, &cursor.value, &mut params);
         let id_ph = params.push(BindValue::Uuid(cursor_id));
 

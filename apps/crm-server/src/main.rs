@@ -11,14 +11,16 @@ mod customer_entity;
 use std::sync::Arc;
 
 use jsonwebtoken::DecodingKey;
+use metap::infra::{EventBus, RabbitEventBus};
 use metap::prelude::*;
 use tower_http::services::{ServeDir, ServeFile};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    metap::infra::init_tracing();
     let config = load_config()?;
 
-    eprintln!("[crm-server] connecting to postgres...");
+    tracing::info!("connecting to postgres...");
     let pool = connect_db(&config.database_url).await?;
 
     let mut registry = MetadataRegistry::new();
@@ -40,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
 
     if let Some(dir) = &config.static_dir {
         if std::path::Path::new(dir).is_dir() {
-            eprintln!("[crm-server] serving frontend static files from {dir}");
+            tracing::info!(dir, "serving frontend static files");
             let index_html = format!("{dir}/index.html");
             // `.fallback()`, not `.not_found_service()` — the latter always forces the
             // response status to 404 (see its doc comment), which is wrong for SPA
@@ -48,13 +50,33 @@ async fn main() -> anyhow::Result<()> {
             // normally instead of treating it as an error page.
             router = router.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index_html)));
         } else {
-            eprintln!("[crm-server] STATIC_DIR={dir} is set but is not a directory, skipping static file serving");
+            tracing::warn!(dir, "STATIC_DIR is set but is not a directory, skipping static file serving");
         }
     }
 
+    // Off by default — the standalone `notification-worker` binary (`pnpm
+    // worker:notification:rs`) is the normal deployment shape, matching `outbox-publisher`.
+    // Set NOTIFICATION_WORKER_INLINE=true to run it as a background task in this same
+    // process instead, for single-process/monolithic deployments (same pattern as
+    // `pnpm start`'s STATIC_DIR merging crm-fe into this binary) — both modes call the exact
+    // same `notification_worker::run`, so they can't drift apart.
+    let notification_worker_handle = if env_flag_enabled("NOTIFICATION_WORKER_INLINE") {
+        tracing::info!("connecting notification worker to rabbitmq (inline mode)...");
+        let notification_bus = RabbitEventBus::connect(&config.rabbitmq_url).await?;
+        Some(tokio::spawn(async move {
+            if let Err(err) = notification_worker::run(&notification_bus, shutdown_signal()).await
+            {
+                tracing::error!(error = %err, "notification worker exited with error");
+            }
+            notification_bus.close().await.ok();
+        }))
+    } else {
+        None
+    };
+
     let addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    eprintln!("[crm-server] listening on http://{addr}");
+    tracing::info!(%addr, "listening");
 
     // `build_router`'s rate-limit layer keys on peer IP via `ConnectInfo<SocketAddr>` — see
     // `metap_http::build_router`'s doc comment. Plain `into_make_service()` wouldn't
@@ -66,10 +88,21 @@ async fn main() -> anyhow::Result<()> {
     .with_graceful_shutdown(shutdown_signal())
     .await?;
 
+    // Block on the inline notification worker's own shutdown branch (and its
+    // `bus.close()`) instead of letting the process exit as soon as the HTTP server drains —
+    // otherwise the spawned task above can be cut off mid-message.
+    if let Some(handle) = notification_worker_handle {
+        handle.await.ok();
+    }
+
     Ok(())
 }
 
 async fn shutdown_signal() {
     tokio::signal::ctrl_c().await.ok();
-    eprintln!("[crm-server] shutdown signal received, exiting");
+    tracing::info!("shutdown signal received, exiting");
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|v| v == "true" || v == "1")
 }
