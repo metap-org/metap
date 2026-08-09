@@ -1,6 +1,6 @@
 # 7. Deployment View
 
-Deployment topology for local development (`docker compose` + Rust processes run via `pnpm` script wrappers, or `cargo run` directly). Production isn't built out yet ([Phase 8: Hardening](../roadmap.md) is in progress — a non-root `Dockerfile` and CI exist, but no actual production deployment topology/orchestrator/secrets-manager does) — this reflects today's actual dev setup, not a target production topology. (Kruchten 4+1's Physical View.)
+Deployment topology for local development (`docker compose` + Rust processes run via `pnpm` script wrappers, or `cargo run` directly). Production isn't built out yet ([Phase 8: Hardening](../roadmap.md) is not started) — this reflects today's actual dev setup, not a target production topology. (Kruchten 4+1's Physical View.)
 
 ```mermaid
 graph TB
