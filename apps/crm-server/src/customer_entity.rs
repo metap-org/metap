@@ -10,10 +10,11 @@
 //! intent (an email must be present) without the type-check TS's predicate function could
 //! express directly.
 
-use metap_metadata::{
-    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, WorkflowTransition,
+use metap::permission::{ConditionOp, PolicyValue};
+use metap::prelude::{
+    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, PolicyCondition,
+    WorkflowTransition,
 };
-use metap_permission::{ConditionOp, PolicyCondition, PolicyValue};
 use serde_json::json;
 
 fn field(

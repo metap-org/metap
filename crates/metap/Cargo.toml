@@ -1,0 +1,14 @@
+[package]
+name = "metap"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+metap-crud = { path = "../metap-crud" }
+metap-http = { path = "../metap-http" }
+metap-infra = { path = "../metap-infra" }
+metap-metadata = { path = "../metap-metadata" }
+metap-peripherals = { path = "../metap-peripherals" }
+metap-permission = { path = "../metap-permission" }
+metap-query = { path = "../metap-query" }
+metap-workflow = { path = "../metap-workflow" }

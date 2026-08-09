@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build, unit tests, clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --all-targets --locked
+      # Unit tests only — no DATABASE_URL/RABBITMQ_URL set, so any #[ignore]'d e2e test in
+      # tests/ is skipped automatically.
+      - run: cargo test --locked
+      - run: cargo clippy --all-targets --locked
+
+  e2e:
+    name: e2e (real Postgres/RabbitMQ)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: metap
+          POSTGRES_PASSWORD: metap
+          POSTGRES_DB: metap
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U metap"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: metap
+          RABBITMQ_DEFAULT_PASS: metap
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://metap:metap@localhost:5432/metap
+      RABBITMQ_URL: amqp://metap:metap@localhost:5672
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # metap-* isn't published to crates.io yet — its dev tooling (db-migrate) is
+      # installed straight from the same git rev this project's Cargo.toml depends on.
+      - name: Install db-migrate
+        run: cargo install --git https://github.com/tuannm99/metap --branch poc/rust-core db-migrate
+      - name: Apply migrations
+        run: db-migrate
+      - name: Run e2e tests
+        run: cargo test --locked -- --ignored

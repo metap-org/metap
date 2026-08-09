@@ -1,6 +1,8 @@
 //! The boot sequence the old `apps/crm/src/main.ts` + `app.ts`'s `buildApp` used to
 //! document (register entities, validate references, drift check, index reconcile, serve)
-//! reassembled from the `crates/metap-*` crates. Run from this crate's own directory
+//! reassembled from the `metap` facade crate (see `crates/metap/src/lib.rs` — a thin
+//! re-export layer over `crates/metap-*`, so this file only needs one dependency/import
+//! instead of naming each sub-crate). Run from this crate's own directory
 //! (`apps/crm-server/`) so `.env`/`keys/` resolution works — `pnpm dev:rs` does this via
 //! `cd`; see `metap-infra/src/config.rs` for the `.env` resolution itself.
 
@@ -9,27 +11,25 @@ mod customer_entity;
 use std::sync::Arc;
 
 use jsonwebtoken::DecodingKey;
-use metap_http::{build_router, AppState};
-use metap_metadata::MetadataRegistry;
-use metap_permission::PermissionService;
+use metap::prelude::*;
 use tower_http::services::{ServeDir, ServeFile};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = metap_infra::load_config()?;
+    let config = load_config()?;
 
     eprintln!("[crm-server] connecting to postgres...");
-    let pool = metap_infra::connect_db(&config.database_url).await?;
+    let pool = connect_db(&config.database_url).await?;
 
     let mut registry = MetadataRegistry::new();
     registry.register(customer_entity::customer_entity())?;
     registry.validate_references()?;
 
     let entities = registry.list_entities();
-    metap_peripherals::check_metadata_drift(&pool, &entities).await;
-    metap_peripherals::reconcile_indexes(&pool, &entities).await;
+    check_metadata_drift(&pool, &entities).await;
+    reconcile_indexes(&pool, &entities).await;
 
-    let permissions = PermissionService::new(Box::new(metap_permission::PostgresPolicyStore::new(pool.clone())));
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
 
     let public_key_pem = std::fs::read(&config.auth_jwt_public_key_path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_public_key_path))?;
@@ -56,9 +56,15 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     eprintln!("[crm-server] listening on http://{addr}");
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // `build_router`'s rate-limit layer keys on peer IP via `ConnectInfo<SocketAddr>` — see
+    // `metap_http::build_router`'s doc comment. Plain `into_make_service()` wouldn't
+    // populate that extension and every request would fail rate-limit key extraction.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }

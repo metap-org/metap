@@ -1,0 +1,16 @@
+[template]
+cargo_generate_version = ">=0.17.0"
+# GitHub Actions' `${{ ... }}` expression syntax collides with Liquid's own `{{ ... }}` —
+# `exclude` copies everything under `.github/` verbatim instead of letting Liquid try (and
+# silently mangle) those expressions.
+exclude = [".github/**"]
+
+[placeholders.metap_git]
+type = "string"
+prompt = "Git URL for metap (the metap-* crates aren't published to crates.io yet)"
+default = "https://github.com/tuannm99/metap"
+
+[placeholders.metap_rev]
+type = "string"
+prompt = "Git branch/tag of metap to depend on (switch to a release tag once one exists)"
+default = "poc/rust-core"
