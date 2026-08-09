@@ -10,11 +10,11 @@
 | 3. Permission Engine | Done |
 | 4. Query Planner V1 | Done |
 | 5. Workflow Engine V1 | Done |
-| 6. Frontend Core | Partial |
+| 6. Frontend Core | Done (not browser-verified) |
 | 7. Module Migration Strategy | Not started |
 | 8. Hardening | In progress |
 | 9. Multi-Service Evolution | Trigger-based (no trigger fired yet) |
-| 10. Monorepo, npm publish | Not started |
+| 10. Monorepo, npm publish | Partially done |
 | 11. Low-code Platform Backbone Architecture | In progress |
 | 12. Rust Core Migration | Decided; Migration Order (steps 1-9) done in `crates/`; not yet cut over to production |
 
