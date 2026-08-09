@@ -1,0 +1,8 @@
+target
+node_modules
+.git
+.env
+**/.env
+apps/crm-server/keys
+dist
+.DS_Store

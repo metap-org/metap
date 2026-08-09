@@ -1,0 +1,30 @@
+[package]
+name = "{{project-name}}"
+version = "0.1.0"
+edition = "2021"
+
+# Binary name stays fixed regardless of the crate/project name so the Dockerfile never
+# needs templating (see its own comment).
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+[dependencies]
+metap = { git = "{{metap_git}}", branch = "{{metap_rev}}" }
+anyhow = "1"
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+jsonwebtoken = "9"
+serde_json = "1"
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "uuid",
+] }

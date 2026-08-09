@@ -1,0 +1,93 @@
+name: CI
+
+# Phase 8 Hardening ("CI checks", docs/roadmap.md) — the first workflow in the repo. Three
+# independent jobs: Rust unit tests need no external services (see metap-query/tests'
+# doc comment convention: unit tests never touch a DB); Rust e2e tests need a real
+# Postgres/RabbitMQ, so they get service containers mirroring docker-compose.yml's
+# credentials; the frontend workspace is entirely separate tooling (pnpm).
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust — build, unit tests, clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --all-targets --locked
+      # Unit tests only — no DATABASE_URL/RABBITMQ_URL set, so every #[ignore]'d e2e test
+      # is skipped automatically (see crates/metap-query/tests/*.rs's doc comment).
+      - run: cargo test --workspace --locked
+      # Not `-D warnings`: the codebase isn't clippy-clean yet (a couple of pre-existing
+      # warnings predate this workflow) — informational for now, not a merge gate.
+      - run: cargo clippy --workspace --all-targets --locked
+
+  rust-e2e:
+    name: Rust — e2e (real Postgres/RabbitMQ)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: metap
+          POSTGRES_PASSWORD: metap
+          POSTGRES_DB: metap
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U metap"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: metap
+          RABBITMQ_DEFAULT_PASS: metap
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://metap:metap@localhost:5432/metap
+      RABBITMQ_URL: amqp://metap:metap@localhost:5672
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Mirrors `pnpm db:migrate` (apps/crm-server/package.json script): a fresh DB, no
+      # prior Drizzle-applied schema to reconcile with (see crates/db-migrate's doc
+      # comment) — the service container above starts empty every run.
+      - name: Apply migrations
+        working-directory: apps/crm-server
+        run: cargo run --release -p db-migrate --locked
+      - name: Run e2e tests
+        run: cargo test --workspace --locked -- --ignored
+
+  frontend:
+    name: Frontend — typecheck, lint, format, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.15.0"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
