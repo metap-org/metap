@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Alert, Button, Container, PasswordInput, Stack, TextInput, Title } from "@mantine/core";
 import { useTranslation } from "react-i18next";
 import { apiFetch, ApiError } from "../api/client";
+import { useNavigationAdapter } from "../navigation/NavigationContext";
 import { useAuth } from "./AuthContext";
 
 type LoginResponse = { data: { token: string } };
@@ -9,6 +10,7 @@ type LoginResponse = { data: { token: string } };
 export function LoginForm() {
   const { t } = useTranslation();
   const { setToken } = useAuth();
+  const navAdapter = useNavigationAdapter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +25,7 @@ export function LoginForm() {
         body: JSON.stringify({ email, password }),
       });
       setToken(response.data.token);
+      navAdapter.navigate(navAdapter.toHome());
     } catch (err) {
       if (err instanceof ApiError && err.code === "invalid_credentials") {
         setError(t("login.invalidCredentials"));

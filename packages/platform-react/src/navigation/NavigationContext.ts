@@ -7,6 +7,8 @@ export type NavigationAdapter = {
   toRecordDetail: (entityName: string, id: string) => string;
   toEditRecord: (entityName: string, id: string) => string;
   toLogin: () => string;
+  /** Where a successful login should redirect to — the authenticated app's landing page. */
+  toHome: () => string;
   navigate: (path: string) => void;
   Link: FunctionComponent<{ to: string; children: ReactNode }>;
 };

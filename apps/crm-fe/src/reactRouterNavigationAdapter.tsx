@@ -12,6 +12,7 @@ function useReactRouterNavigationAdapter(): NavigationAdapter {
     toRecordDetail: (entityName, id) => `/records/${entityName}/${id}`,
     toEditRecord: (entityName, id) => `/records/${entityName}/${id}/edit`,
     toLogin: () => "/login",
+    toHome: () => "/",
     navigate,
     Link: RouterLink,
   };
