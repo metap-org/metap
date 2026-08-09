@@ -4,6 +4,7 @@ members = [
   "apps/crm-server",
   "crates/db-migrate",
   "crates/dev-tools",
+  "crates/metap",
   "crates/metap-crud",
   "crates/metap-http",
   "crates/metap-infra",

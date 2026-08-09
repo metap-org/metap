@@ -8,11 +8,7 @@ name = "crm-server"
 path = "src/main.rs"
 
 [dependencies]
-metap-http = { path = "../../crates/metap-http" }
-metap-infra = { path = "../../crates/metap-infra" }
-metap-metadata = { path = "../../crates/metap-metadata" }
-metap-peripherals = { path = "../../crates/metap-peripherals" }
-metap-permission = { path = "../../crates/metap-permission" }
+metap = { path = "../../crates/metap" }
 anyhow = "1"
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
