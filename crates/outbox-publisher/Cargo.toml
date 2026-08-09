@@ -1,0 +1,23 @@
+[package]
+name = "metap-outbox-publisher"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "outbox-publisher"
+path = "src/main.rs"
+
+[dependencies]
+metap-infra = { path = "../metap-infra" }
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "uuid",
+  "chrono",
+  "json",
+] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }

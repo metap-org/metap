@@ -18,9 +18,9 @@ None of these compete — arc42 organizes the document, C4 draws the pictures, 4
 6. [Runtime View](06-runtime.md) — Process View sequence diagram, key scenarios
 7. [Deployment View](07-deployment.md) — Physical View, local dev topology
 8. [Cross-cutting Concepts](08-cross-cutting.md) — patterns spanning multiple building blocks; security and performance principles
-9. [Architecture Decisions](09-adr.md) — decision log indexing `docs/superpowers/specs/`
+9. [Architecture Decisions](09-adr.md) — decision log (formerly indexed `docs/superpowers/specs/`, removed 2026-08-07; now records decisions directly)
 10. [Quality Requirements](10-quality.md) — quality tree and concrete, testable scenarios
 11. [Risks and Technical Debt](11-risks.md) — honest, trigger-based
 12. [Glossary](12-glossary.md)
 
-For the phased build-out (what's done, what's next), see `docs/roadmap.md`. For stack/technology reasoning, see `docs/why.md`. For where this is all headed — the low-code direction, and a concrete path toward a first version of it — see `docs/vision.md` and `docs/low-code-platform-v1.md`; both are deliberately kept outside this arc42 set since they describe a target, not what has shipped.
+For the phased build-out (what's done, what's next), see `docs/roadmap.md`. For stack/technology reasoning, see `docs/why.md`. For where this is all headed — the low-code direction, and a concrete path toward a first version of it — see `docs/vision.md` and `docs/low-code-platform-v1.md`; both are deliberately kept outside this arc42 set since they describe a target, not what has shipped. `docs/modular-spi-architecture.md` describes a related, still-undecided target: a Capability SPI boundary (Storage/EventBus/Scheduler/...) that would let the same source run as a single-binary/SQLite "Tiny" deployment or a distributed enterprise one — also directional, not built.

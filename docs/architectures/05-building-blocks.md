@@ -3,12 +3,12 @@
 ## High-level Layers
 
 ```txt
-HTTP routes
-  -> application services
-    -> platform core
-      -> repositories / database
-      -> outbox
-      -> RabbitMQ publisher
+axum routes (crates/metap-http/src/routes/*)
+  -> application service (crates/metap-crud/src/crud_service.rs)
+    -> platform core (metap-metadata / metap-permission / metap-query / metap-workflow)
+      -> PostgreSQL (sqlx::PgPool, injected directly — no repository abstraction; see
+         docs/architecture-review-2026-08-07.md Part 1's Repository finding for why)
+      -> outbox (metap-infra::outbox::enqueue) -> RabbitMQ (metap-infra::EventBus)
 ```
 
 ## C4 Level 2: Containers
@@ -21,9 +21,9 @@ C4Container
   Person(admin, "Admin")
 
   System_Boundary(metap, "Metap") {
-    Container(web, "Web Frontend", "React, Vite, TanStack Query", "Dev harness SPA — apps/demo, consuming packages/platform-react via workspace:*")
-    Container(api, "API Server", "Node.js, Fastify", "apps/crm: the one deployed module today, importing packages/core (auth, CRUD, metadata, admin, query planning)")
-    Container(worker, "Outbox Publisher", "Node.js", "apps/crm/src/workers/outbox-publisher.ts, calling packages/core's runOutboxPublisherLoop()")
+    Container(web, "Web Frontend", "React, Vite, TanStack Query", "Dev harness SPA — apps/crm-fe, consuming packages/platform-react via workspace:*")
+    Container(api, "API Server", "Rust, axum", "apps/crm-server: the one deployed module today, depending on crates/metap-* (auth, CRUD, metadata, query planning)")
+    Container(worker, "Outbox Publisher", "Rust", "crates/outbox-publisher, a separate binary calling metap-infra's outbox drain/publish loop")
   }
 
   ContainerDb(db, "PostgreSQL", "Postgres 16", "records, metadata_versions, policies, outbox_events, workflow_events, user_roles")
@@ -32,12 +32,12 @@ C4Container
   Rel(user, web, "Uses", "HTTPS")
   Rel(admin, web, "Uses", "HTTPS")
   Rel(web, api, "Calls", "REST/JSON, Bearer JWT")
-  Rel(api, db, "Reads/writes records, metadata, policies; writes outbox rows in the same transaction as the business write", "Drizzle/SQL")
-  Rel(worker, db, "Polls pending outbox rows", "SQL, 1s loop")
+  Rel(api, db, "Reads/writes records, metadata, policies; writes outbox rows in the same transaction as the business write", "sqlx/SQL")
+  Rel(worker, db, "Polls pending outbox rows", "SQL, ~1s loop, FOR UPDATE SKIP LOCKED")
   Rel(worker, mq, "Publishes", "AMQP")
 ```
 
-The API Server and the Outbox Publisher are deliberately separate processes (`pnpm dev` vs `pnpm worker:outbox`) — a RabbitMQ outage stalls the worker, never the API, because the transactional outbox write already committed.
+The API Server and the Outbox Publisher are deliberately separate processes (`pnpm dev:rs` vs `pnpm worker:outbox:rs`) — a RabbitMQ outage stalls the worker, never the API, because the transactional outbox write already committed. `apps/crm-server` can optionally also serve `apps/crm-fe`'s built static files from the same process/port (`pnpm start`, `STATIC_DIR` config) — a deployment convenience, not a change to this separation; the worker stays a distinct process either way.
 
 ## C4 Level 3: Components (inside the API Server)
 
@@ -46,15 +46,15 @@ C4Component
   title Component diagram — API Server
 
   Container_Boundary(api, "API Server") {
-    Component(routes, "HTTP Routes", "Fastify handlers", "records / metadata / admin / health — packages/core/src/server/routes")
-    Component(crud, "CrudService", "TypeScript class", "permission -> validate -> plan -> write -> workflow -> outbox")
-    Component(metadata, "MetadataRegistry", "TypeScript class", "Entity definitions; validated + hashed at boot (MetadataCompiler)")
-    Component(perm, "PermissionService", "TypeScript class", "RBAC/ABAC, field/record enforcement, PolicyExplainer")
-    Component(query, "QueryPlanner", "TypeScript class", "Metadata-constrained filter/sort/cursor -> SQL")
-    Component(workflow, "WorkflowEngine", "TypeScript class", "State machine transitions + audit log")
-    Component(outbox, "OutboxService", "TypeScript class", "Transactional outbox writes")
-    Component(idxr, "IndexReconciler", "TypeScript class", "Reconciles indexes from metadata at boot")
-    Component(drift, "MetadataDriftService", "TypeScript class", "Warns on metadata hash drift across restarts")
+    Component(routes, "HTTP Routes", "axum handlers", "records / metadata / health — crates/metap-http/src/routes")
+    Component(crud, "CrudService", "Rust struct", "permission -> validate -> plan -> write -> workflow -> outbox")
+    Component(metadata, "MetadataRegistry", "Rust struct", "Entity definitions; validated + hashed at boot (MetadataCompiler)")
+    Component(perm, "PermissionService", "Rust struct", "RBAC/ABAC, field/record enforcement, PolicyExplainer")
+    Component(query, "QueryPlanner", "Rust functions", "Metadata-constrained filter/sort/cursor -> SQL (plan_list)")
+    Component(workflow, "Workflow functions", "Rust functions", "State machine transitions + audit log (metap-workflow)")
+    Component(outbox, "Outbox", "Rust functions", "Transactional outbox writes (metap-infra::outbox::enqueue)")
+    Component(idxr, "IndexReconciler", "Rust functions", "Reconciles indexes from metadata at boot (metap-peripherals)")
+    Component(drift, "MetadataDriftService", "Rust functions", "Warns on metadata hash drift across restarts (metap-peripherals)")
   }
 
   ContainerDb(db, "PostgreSQL", "", "")
@@ -68,98 +68,99 @@ C4Component
   Rel(query, perm, "ANDs record-level policy WHERE clause")
   Rel(idxr, metadata, "Reads indexed / unique / searchMode flags")
   Rel(drift, metadata, "Reads entity hash (version)")
-  Rel(crud, db, "Reads/writes", "Drizzle")
+  Rel(crud, db, "Reads/writes", "sqlx")
   Rel(idxr, db, "CREATE INDEX CONCURRENTLY", "DDL, best-effort")
 ```
 
 ## Logical View (class-level)
 
-The object model behind the component diagram above — classes and how they depend on each other, not deployable units. (Kruchten 4+1's Logical View.)
+The object model behind the component diagram above — types and how they depend on each other, not deployable units. (Kruchten 4+1's Logical View.) `metap-query`/`metap-workflow` are function modules rather than structs (no per-call state to hold), shown here as pseudo-classes for consistency with the rest of the diagram.
 
 ```mermaid
 classDiagram
-  class Container {
-    +db
-    +auth
-    +metadata: MetadataRegistry
-    +permissions: PermissionService
-    +queryPlanner: QueryPlanner
-    +workflow: WorkflowEngine
-    +outbox: OutboxService
-    +crud: CrudService
-    +indexReconciler: IndexReconciler
-    +metadataDrift: MetadataDriftService
+  class AppState {
+    +pool: PgPool
+    +metadata: Arc~MetadataRegistry~
+    +permissions: Arc~PermissionService~
+    +decoding_key: DecodingKey
   }
   class MetadataRegistry {
-    -entities: Map~string, EntityDefinition~
+    -entities: HashMap~String, EntityDefinition~
     +register(entity)
-    +getEntity(name) EntityDefinition
-    +listEntities() EntitySummary[]
-    +validateReferences()
+    +get_entity(name) EntityDefinition
+    +list_entities() Vec~EntitySummary~
+    +validate_references()
   }
   class EntityDefinition {
-    +name: string
-    +fields: EntityField[]
-    +listViews: EntityListView[]
-    +workflow?: EntityWorkflow
-    +schema: ZodSchema
+    +name: String
+    +fields: Vec~EntityField~
+    +list_views: Vec~EntityListView~
+    +workflow: Option~EntityWorkflow~
   }
   class CrudService {
     +list(entity, input, context)
     +create(entity, data, context)
     +update(entity, id, version, data, context)
     +transition(entity, id, action, version, context)
+    +delete(entity, id, context)
   }
   class PermissionService {
-    +canReadEntity(context, entity)
-    +canCreateEntity(context, entity)
-    +canUpdateEntity(context, entity)
-    +loadSnapshot(tenantId, entity) PermissionSnapshot
-    +scopedTenant(context)
+    +can_read_entity(context, entity)
+    +can_create_entity(context, entity)
+    +can_update_entity(context, entity)
+    +load_snapshot(tenant_id, entity) PermissionSnapshot
+    +scoped_tenant(context)
   }
   class PermissionSnapshot {
-    +filterReadableFields(context, data)
-    +assertWritableFields(context, fields, existing)
-    +canUpdateRecordCondition(context, record)
-    +getRecordPolicies(action)
+    +filter_readable_fields(context, data)
+    +assert_writable_fields(context, fields, existing)
+    +can_update_record_condition(context, record)
+    +get_record_policies(action)
   }
-  class QueryPlanner {
-    +planList(entity, input, context, policies) PlannedListQuery
+  class QueryPlannerFns {
+    <<module: metap-query>>
+    +plan_list(entity, input, context, policies) PlannedListQuery
   }
-  class WorkflowEngine {
-    +getInitialStatus(entity, data)
-    +findTransition(entity, action, fromState)
-    +runGuard(transition, data, context)
+  class WorkflowFns {
+    <<module: metap-workflow>>
+    +get_initial_status(entity, data)
+    +find_transition(entity, action, from_state)
+    +run_guard(transition, data, context)
   }
-  class OutboxService {
+  class OutboxFns {
+    <<module: metap-infra::outbox>>
     +enqueue(executor, event)
-    +publishPending(limit)
+  }
+  class EventBus {
+    <<trait>>
+    +publish(topic, payload)
+  }
+  class RabbitEventBus {
+    +publish(topic, payload)
   }
   class IndexReconciler {
-    +reconcile(entities, log)
+    <<module: metap-peripherals>>
+    +reconcile_indexes(pool, entities)
   }
   class MetadataDriftService {
-    +check(entities, log)
+    <<module: metap-peripherals>>
+    +check_metadata_drift(pool, entities)
   }
 
-  Container --> MetadataRegistry
-  Container --> PermissionService
-  Container --> QueryPlanner
-  Container --> WorkflowEngine
-  Container --> OutboxService
-  Container --> CrudService
-  Container --> IndexReconciler
-  Container --> MetadataDriftService
+  AppState --> MetadataRegistry
+  AppState --> PermissionService
   MetadataRegistry --> EntityDefinition : holds
   CrudService --> MetadataRegistry
   CrudService --> PermissionService
-  CrudService --> QueryPlanner
-  CrudService --> WorkflowEngine
-  CrudService --> OutboxService
+  CrudService --> QueryPlannerFns
+  CrudService --> WorkflowFns
+  CrudService --> OutboxFns
   PermissionService --> PermissionSnapshot : creates per call
-  QueryPlanner --> PermissionService
+  QueryPlannerFns --> PermissionService
   IndexReconciler --> MetadataRegistry
   MetadataDriftService --> MetadataRegistry
+  EventBus <|.. RabbitEventBus : implements
+  OutboxFns ..> EventBus : drained by outbox-publisher, publishes through
 ```
 
 ## Whitebox: Core Services
@@ -170,42 +171,41 @@ Owns entity definitions:
 
 - fields
 - list views
-- validation schema
 - workflow
 - index/search/sort hints
 
-Metap validates and compiles metadata as a first-class runtime artifact rather than treating it as a passive schema description. `MetadataCompiler` enforces this at `MetadataRegistry.register()` time — duplicate fields, dangling listView field/filter/sort references, missing enum values, and malformed workflow shape all fail startup, not the first request. Each entity gets a deterministic hash of its shape (`MetadataCompiler.hash`, guard functions excluded) exposed as `version` on `GET /metadata/entities`; a `MetadataDriftService` compares that hash against the last-recorded one on every boot and warns — never crashes — on drift, mirroring `HealthService`'s graceful-degradation stance. The same safe metadata projection also drives a generated OpenAPI document at `GET /metadata/openapi.json`.
+Metap validates and compiles metadata as a first-class runtime artifact rather than treating it as a passive schema description. `MetadataCompiler` enforces this at `MetadataRegistry::register()` time — duplicate fields, dangling listView field/filter/sort references, missing enum values, and malformed workflow shape all fail startup, not the first request. Each entity gets a deterministic hash of its shape (`MetadataCompiler::hash`, guard conditions excluded) exposed as `version` on `GET /metadata/entities`; a `MetadataDriftService` compares that hash against the last-recorded one on every boot and warns — never crashes — on drift, mirroring the health check's graceful-degradation stance. The same safe metadata projection also drives a generated OpenAPI document at `GET /metadata/openapi.json` (hand-written in `metap-metadata/src/openapi.rs`, kept in sync with `entity.rs`'s structs by hand — there's no Zod-equivalent runtime-reflection step in Rust).
 
 ### CRUD Service
 
-Generic CRUD for metadata entities.
+Generic CRUD for metadata entities (`metap-crud::CrudService`), the only thing routes call for record operations.
 
 Responsibilities:
 
-- validate data with Zod
+- validate data with the field-metadata-driven validator (`metap-crud/src/validation.rs`, replaces per-entity Zod schemas — there's no separate hand-authored validation-schema object)
 - enforce permission through `PermissionService`
-- call `QueryPlanner` for list/search
+- call the query planner (`metap-query::plan_list`) for list/search
 - persist records
 - enqueue outbox events
-- call `WorkflowEngine` where needed
+- call the workflow functions where needed
 
 ### Permission Service
 
-The permission layer owns:
+The permission layer (`metap-permission::PermissionService`) owns:
 
 - tenant scope
-- role assignment — dynamic, DB-backed per `(tenantId, userId)`, granted/revoked at runtime through an admin API (`RoleAssignmentService`); the JWT itself is a bare identity assertion, not a role carrier
-- policy storage — a role allow-list combined with an optional attribute condition (`PolicyCondition`), OR-combined across matching policies, no deny rules
+- role assignment — dynamic, DB-backed per `(tenant_id, user_id)`, granted/revoked at runtime through the admin-gated HTTP API (`crates/metap-http/src/routes/admin.rs`, wrapping `metap-peripherals::assign_role`/`revoke_role`/`list_users`); the JWT itself is a bare identity assertion, not a role carrier
+- policy storage — a role allow-list combined with an optional attribute condition (`PolicyCondition`), OR-combined across matching policies, no deny rules, behind the `PolicyStore` trait (`PostgresPolicyStore` is the only implementation today)
 - field-level permission — read masking and write gating, wired into every `CrudService` call site (`list`/`create`/`update`/`transition`)
-- record-level permission — attribute conditions translated into a `WHERE` clause (`condition-to-sql.ts`) and ANDed into `QueryPlanner.planList` for reads, plus a same-shape check before writes
-- policy explanation/debugging — `PolicyExplainer` produces a read-only trace of every policy considered and why, exposed via an admin-gated simulator endpoint
+- record-level permission — attribute conditions translated into a `WHERE` clause (`metap-query::condition_to_sql::record_policy_where_clause`) and ANDed into `plan_list` for reads, plus a same-shape check before writes
+- policy explanation/debugging — `PolicyExplainer` produces a read-only trace of every policy considered and why, exposed as the admin-gated `POST /admin/policies/explain` simulator endpoint
 - a per-call `PermissionSnapshot` batches a tenant/entity's policies into one DB fetch reused across a single `CrudService` call — deliberately not a cross-request/TTL cache
 
-Started as a scaffold that allowed everything so the architecture could boot; the service boundary was fixed from day one and the real logic above now fills it in.
+Started as a scaffold that allowed everything so the architecture could boot (in the original TS codebase); the service boundary was fixed from day one and the real logic above now fills it in, reimplemented 1:1 in the Rust port.
 
 ### Query Planner
 
-The query planner turns safe view/query contracts into SQL.
+`metap-query::plan_list` turns safe view/query contracts into SQL — the *only* place list/filter/sort queries are turned into SQL.
 
 Rules:
 
@@ -217,13 +217,13 @@ Rules:
 
 Built on top of that baseline:
 
-- **Hot field indexes.** `EntityField.indexed`/`unique` drive `IndexReconciler`, which reconciles per-entity partial expression indexes on `records` automatically at boot (`CREATE INDEX CONCURRENTLY IF NOT EXISTS`, best-effort) and via a manual `pnpm index:reconcile` script. The indexed expression must byte-for-byte match the query's own filter/sort expression (`jsonb_extract_path_text`, not the semantically-equivalent `->>` operator) or Postgres never selects it.
+- **Hot field indexes.** `EntityField.indexed`/`unique` drive `IndexReconciler` (`metap-peripherals`), which reconciles per-entity partial expression indexes on `records` automatically at boot (`CREATE INDEX CONCURRENTLY IF NOT EXISTS`, best-effort) and via a manual `pnpm index:reconcile`-equivalent invocation. The indexed expression must byte-for-byte match the query's own filter/sort expression (`jsonb_extract_path_text`, not the semantically-equivalent `->>` operator) or Postgres never selects it.
 - **Full-text search.** `EntityField.searchMode: "fts"` (opt-in; default stays substring/ILIKE) matches via `to_tsvector('simple', ...) @@ plainto_tsquery('simple', ...)`, backed by a GIN index — same `IndexReconciler` mechanism as above.
-- **Keyset pagination.** An opaque, base64-encoded cursor (never interpreted by the client) is validated against the *resolved* sort (post-fallback) and turned into a keyset `WHERE` condition; a cursor for the wrong sort, or a malformed one, is a `400`, never silently accepted or a `500`.
+- **Keyset pagination.** An opaque, base64-encoded cursor (`metap-query/src/cursor.rs`, never interpreted by the client) is validated against the *resolved* sort (post-fallback) and turned into a keyset `WHERE` condition; a cursor for the wrong sort, or a malformed one, is a `400`, never silently accepted or a `500`.
 
-### Workflow Engine
+### Workflow Functions
 
-Workflow is metadata-driven:
+Workflow is metadata-driven (`metap-workflow`, free functions rather than a struct — no per-call state to hold):
 
 - state field
 - initial state
@@ -231,11 +231,11 @@ Workflow is metadata-driven:
 - transitions
 - actions
 
-Transitions are atomic operations with optimistic locking (a version-mismatch write fails the request, not the state), guarded by plain TypeScript predicates on `WorkflowTransition`. Every transition is logged to an append-only `workflow_events` audit table and emits a `<entity>.workflow.transitioned` outbox event after commit — side effects only ever flow through the outbox, never a direct publish.
+Transitions are atomic operations with optimistic locking (a version-mismatch write fails the request, not the state), guarded by a `PolicyCondition` — the same declarative shape policies already use (`metap-permission::PolicyCondition`), not a function, since Rust has no server-side-predicate-function equivalent to port from the original TS design (see `metap-metadata::entity::WorkflowTransition`'s doc comment for the reasoning). Every transition is logged to an append-only `workflow_events` audit table and emits a `<entity>.workflow.transitioned` outbox event after commit — side effects only ever flow through the outbox, never a direct publish.
 
-### Outbox Service
+### Outbox + EventBus
 
-API transactions write outbox rows in PostgreSQL. A publisher drains rows and publishes to RabbitMQ.
+API transactions write outbox rows in PostgreSQL (`metap-infra::outbox::enqueue`, same transaction as the business write). A publisher (`outbox-publisher`, a separate binary) drains rows and publishes to RabbitMQ through the `EventBus` trait (`metap-infra::EventBus`; `RabbitEventBus` is the only implementation today) — publishing is behind an interface from the start in the Rust port, unlike the original TS codebase where this was a documented gap (see `docs/architecture-review-2026-08-07.md`'s Event finding, superseded by this).
 
 This protects the system from losing business events when RabbitMQ is temporarily unavailable.
 
@@ -267,7 +267,7 @@ Steps 3-4 are not built and have no trigger yet — see [11. Risks and Technical
 
 ### Database Design (ER diagram)
 
-Six tables, no cross-table foreign key constraints — `tenant_id`/`entity`/`aggregate_id`/`record_id` are plain columns whose relationships are enforced by application code (`QueryPlanner`, `CrudService`), not the database schema. This is deliberate: `records` is one generic, entity-agnostic table, so a real FK from e.g. `workflow_events.record_id` to `records.id` would work today but would have to be dropped the moment any single entity gets peeled off into its own dedicated table (Step 3 above) — not before its trigger.
+Six tables (`crates/migrations/*.sql`, applied via `db-migrate`'s `sqlx::migrate!`), no cross-table foreign key constraints — `tenant_id`/`entity`/`aggregate_id`/`record_id` are plain columns whose relationships are enforced by application code (`QueryPlanner`, `CrudService`), not the database schema. This is deliberate: `records` is one generic, entity-agnostic table, so a real FK from e.g. `workflow_events.record_id` to `records.id` would work today but would have to be dropped the moment any single entity gets peeled off into its own dedicated table (Step 3 above) — not before its trigger.
 
 ```mermaid
 erDiagram
@@ -344,62 +344,79 @@ Notes:
 
 - `records.data` is the metadata-driven payload; `code`/`status` are denormalized top-level columns that mirror two fields inside `data` (`code` always, `status` mirrors `entity.workflow.stateField`'s value) purely so they can be indexed/queried as real columns.
 - `outbox_events`/`workflow_events` reference `records` rows by id (`aggregate_id`/`record_id`) but across the *whole* generic table, not a per-entity table — one outbox table serves every entity.
-- `policies.roles` is a JSONB array matched against a caller's roles at evaluation time (`roleGatePassed`), not a relational join to `user_roles`.
+- `policies.roles` is a JSONB array matched against a caller's roles at evaluation time (`role_gate_passed`), not a relational join to `user_roles`.
 - Real indexes beyond the primary keys shown above are covered in "Hot field indexes"/"Full-text search" above — those are per-entity partial expression indexes generated from metadata, not part of this fixed schema.
 
 ## Service Boundaries
 
-Do not let HTTP, Drizzle, RabbitMQ, and metadata logic leak everywhere.
+Do not let HTTP, `sqlx`, RabbitMQ, and metadata logic leak everywhere.
 
 Allowed dependencies:
 
 ```txt
 routes -> services
-services -> metadata / permission / query / workflow / repositories / outbox
-infra -> database / messaging
-apps/<module> -> packages/core (via workspace:*) — never the other way around
+services -> metadata / permission / query / workflow / outbox
+metap-infra -> database / messaging
+apps/crm-server -> crates/metap-* — never the other way around
 ```
 
 Avoid:
 
-- module code importing raw database client directly
+- route/handler code importing `sqlx`/`lapin` directly
 - frontend query operators mapping directly to SQL
 - workflow handlers publishing RabbitMQ directly
 - authorization living only in frontend or gateway config
 
-### Development View (workspace package organization)
+### Development View (workspace organization)
 
-The same dependency rule above, visualized as pnpm workspace packages (Kruchten 4+1's Development View). Each box is a real package with its own `package.json`, not just a source-tree folder — as of the 2026-08-02 monorepo restructure, these boundaries are enforced by pnpm's isolated `node_modules`, not only by convention.
+The same dependency rule above, visualized as workspace members (Kruchten 4+1's Development View). This repo overlaps two workspace systems at `apps/`: a Cargo workspace (root `Cargo.toml`) for the backend, a pnpm workspace (`pnpm-workspace.yaml`) for the frontend — each box below is a real package/crate with its own manifest, not just a source-tree folder.
 
 ```mermaid
 graph TD
-  subgraph pkgcore["packages/core (@metap/core) — entity-agnostic library"]
-    routes["src/server/routes<br/>+ src/server/app.ts (buildApp(config, entities))"]
-    core["src/core<br/>crud, metadata, permission, query, workflow, outbox"]
-    infra["src/infra<br/>db (Drizzle), messaging (RabbitMQ)"]
-    loop["src/workers/outbox-publisher-loop.ts<br/>runOutboxPublisherLoop() — reusable"]
+  subgraph cratesmetap["crates/metap-* (Cargo workspace members) — entity-agnostic library"]
+    infra["metap-infra<br/>db pool, EventBus trait, config, outbox enqueue"]
+    metadata["metap-metadata<br/>EntityDefinition, MetadataCompiler, MetadataRegistry, OpenAPI gen"]
+    permission["metap-permission<br/>PolicyStore, PermissionService, PolicyExplainer"]
+    query["metap-query<br/>plan_list, cursor, condition-to-sql"]
+    workflow["metap-workflow<br/>initial status, transitions, guards, audit"]
+    crud["metap-crud<br/>CrudService: list/get/create/update/transition/delete"]
+    http["metap-http<br/>axum router: /api/:entity*, /metadata/*, /health, JWT extractor"]
+    peripherals["metap-peripherals<br/>index reconciler, drift check, role assignment"]
   end
 
-  subgraph appscrm["apps/crm (@metap/crm) — the one deployed module today"]
-    modules["src/modules<br/>customer.entity.ts + registry.ts"]
-    entry["src/main.ts<br/>+ src/workers/*.ts (thin entry points)"]
+  subgraph opsbin["ops binaries (Cargo workspace members, built on metap-*)"]
+    outboxpub["outbox-publisher<br/>drain/publish worker loop"]
+    dbmigrate["db-migrate<br/>sqlx::migrate! over crates/migrations"]
+    devtools["dev-tools<br/>gen-keys / mint-token / seed-admin"]
   end
 
-  subgraph pkgplatform["packages/platform-react (@metap/platform-react)"]
+  subgraph appscrmserver["apps/crm-server (Cargo + pnpm member) — the one deployed module today"]
+    customerentity["src/customer_entity.rs"]
+    mainrs["src/main.rs<br/>inline wiring, boot sequence"]
+  end
+
+  subgraph pkgplatform["packages/platform-react (pnpm workspace member)"]
     platform["GeneratedList/Form, FieldValue/Input,<br/>WorkflowActionBar, RecordDetail, api-client"]
   end
 
-  subgraph appsdemo["apps/demo (@metap/demo)"]
+  subgraph appscrmfe["apps/crm-fe (pnpm workspace member)"]
     demoapp["src/App.tsx, src/demo/*<br/>React + Vite + TanStack Query"]
   end
 
-  routes --> core
-  core --> infra
-  entry -->|"workspace:*"| routes
-  entry -->|"workspace:*"| loop
-  modules -.entity definitions, no core import.-> entry
+  http --> crud
+  crud --> metadata
+  crud --> permission
+  crud --> query
+  crud --> workflow
+  crud --> infra
+  mainrs -->|"depends on"| http
+  mainrs -->|"depends on"| infra
+  customerentity -.entity definition, no metap-* business knowledge.-> mainrs
+  outboxpub --> infra
+  dbmigrate --> infra
+  devtools --> infra
   demoapp -->|"workspace:*"| platform
-  demoapp -.HTTP only, never imports packages/core.-> routes
+  demoapp -.HTTP only, never imports Rust code.-> http
 ```
 
-`apps/crm` depends on `packages/core`; `packages/core` has no dependency path back to `apps/crm` or any other `apps/*` package — that direction is what keeps `packages/core` genuinely entity-agnostic, not just conventionally so. `apps/demo` is the frontend's equivalent: it can only ever reach the backend over HTTP (the dotted line), never by importing backend code, and it consumes `packages/platform-react` the same way `apps/crm` consumes `packages/core`.
+`apps/crm-server` depends on `crates/metap-*`; no `metap-*` crate has a dependency path back to `apps/crm-server` or any other `apps/*` package — that direction is what keeps `metap-*` genuinely entity-agnostic, not just conventionally so. `apps/crm-fe` is the frontend's equivalent: it can only ever reach the backend over HTTP (the dotted line), never by importing backend code, and it consumes `packages/platform-react` the same way `apps/crm-server` consumes `crates/metap-*`.

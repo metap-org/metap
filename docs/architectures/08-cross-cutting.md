@@ -8,11 +8,11 @@ Every entity's fields, list views, validation schema, workflow, and index/search
 
 ## Transactional Outbox
 
-A business write and the event(s) it produces commit in the same PostgreSQL transaction; a separate publisher process drains and delivers them to RabbitMQ. This is the only mechanism through which side effects reach RabbitMQ — no service publishes directly. See [06. Runtime View](06-runtime.md).
+A business write and the event(s) it produces commit in the same PostgreSQL transaction; a separate publisher process (`outbox-publisher`) drains and delivers them to RabbitMQ through the `EventBus` trait (`metap-infra`). This is the only mechanism through which side effects reach RabbitMQ — no service publishes directly. See [06. Runtime View](06-runtime.md).
 
 ## Multi-Tenancy
 
-Every business table carries `tenant_id`; every `QueryPlanner`/`CrudService` call is scoped by it (`PermissionService.scopedTenant`). There is no cross-tenant query path anywhere in the codebase. `scopedTenant` takes a full `RequestContext` (not `Partial<RequestContext>`) and throws rather than silently falling back to a default tenant if `tenantId` is ever empty — an empty tenant at this point means a real bug upstream (the auth hook always derives a real `tenantId` from a verified JWT before any query-planning code runs), and a silent default would turn that bug into wrong-but-quiet cross-tenant-looking query results instead of a clear, loud failure. Fixed 2026-08-02 after an external architecture review flagged the old silent-fallback behavior — see [09. Architecture Decisions](09-adr.md).
+Every business table carries `tenant_id`; every `QueryPlanner`/`CrudService` call is scoped by it (`PermissionService::scoped_tenant`). There is no cross-tenant query path anywhere in the codebase. `scoped_tenant` takes a full `RequestContext` and errors rather than silently falling back to a default tenant if `tenant_id` is ever empty — an empty tenant at this point means a real bug upstream (the auth extractor always derives a real `tenant_id` from a verified JWT before any query-planning code runs), and a silent default would turn that bug into wrong-but-quiet cross-tenant-looking query results instead of a clear, loud failure. Originally fixed in the TS codebase (2026-08-02) after an external architecture review flagged the old silent-fallback behavior, and reimplemented the same way in the Rust port — see [09. Architecture Decisions](09-adr.md).
 
 ## Permission Enforcement
 

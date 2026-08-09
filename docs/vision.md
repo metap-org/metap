@@ -25,10 +25,10 @@ Metap already has the foundation of a platform, not just a single app:
 - generic CRUD, metadata-constrained query planning, and metadata-driven workflow
 - policy-driven, server-enforced permissions
 - reusable frontend rendering primitives (`packages/platform-react`)
-- clean package boundaries between the reusable core and each business module (`packages/core` + `apps/<module>`), and between the reusable frontend and its demo consumer (`packages/platform-react` + `apps/demo`) — a monorepo shape chosen specifically to keep this direction cheap, not a generic engineering preference
+- clean boundaries between the reusable core and each business module (`crates/metap-*` + `apps/<module>`, e.g. `apps/crm-server`), and between the reusable frontend and its demo consumer (`packages/platform-react` + `apps/crm-fe`) — a workspace shape chosen specifically to keep this direction cheap, not a generic engineering preference (the core moved from TypeScript to Rust 2026-08-07, see `docs/rust-core-viability.md`; the boundary shape itself is unchanged)
 - a generated (not hand-maintained) contract between backend and frontend for entity metadata, so the two can't silently drift the way described below in "What This Means For Decisions Now"
 
-This is already larger than a single CRM app, but it is still primarily a developer-authored platform core: metadata lives in `*.entity.ts` files, not in a database a non-developer could edit.
+This is already larger than a single CRM app, but it is still primarily a developer-authored platform core: metadata lives in code (entity-definition Rust modules, e.g. `apps/crm-server/src/customer_entity.rs`), not in a database a non-developer could edit.
 
 ## Higher Destination
 

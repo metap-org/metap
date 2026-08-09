@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+  "apps/crm-server",
+  "crates/db-migrate",
+  "crates/dev-tools",
+  "crates/metap-crud",
+  "crates/metap-http",
+  "crates/metap-infra",
+  "crates/metap-metadata",
+  "crates/metap-peripherals",
+  "crates/metap-permission",
+  "crates/metap-query",
+  "crates/metap-workflow",
+  "crates/outbox-publisher",
+]
+
+[workspace.package]
+edition = "2021"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
