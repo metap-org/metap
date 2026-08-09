@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   AuthProvider,
+  LocaleProvider,
   useAuth,
   RecordDetail,
   GeneratedForm,
@@ -21,21 +23,23 @@ function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 function RecordsRoute() {
+  const { t } = useTranslation();
   const { entityName } = useParams<{ entityName: string }>();
 
   if (!entityName) {
-    return <div>Missing entity name.</div>;
+    return <div>{t("common.missingEntityName")}</div>;
   }
 
   return <GeneratedList entityName={entityName} />;
 }
 
 function NewRecordRoute() {
+  const { t } = useTranslation();
   const { entityName } = useParams<{ entityName: string }>();
   const navigate = useNavigate();
 
   if (!entityName) {
-    return <div>Missing entity name.</div>;
+    return <div>{t("common.missingEntityName")}</div>;
   }
 
   return (
@@ -44,21 +48,23 @@ function NewRecordRoute() {
 }
 
 function RecordDetailRoute() {
+  const { t } = useTranslation();
   const { entityName, id } = useParams<{ entityName: string; id: string }>();
 
   if (!entityName || !id) {
-    return <div>Missing entity name or id.</div>;
+    return <div>{t("common.missingEntityOrId")}</div>;
   }
 
   return <RecordDetail entityName={entityName} id={id} />;
 }
 
 function EditRecordRoute() {
+  const { t } = useTranslation();
   const { entityName, id } = useParams<{ entityName: string; id: string }>();
   const navigate = useNavigate();
 
   if (!entityName || !id) {
-    return <div>Missing entity name or id.</div>;
+    return <div>{t("common.missingEntityOrId")}</div>;
   }
 
   return (
@@ -73,49 +79,51 @@ function EditRecordRoute() {
 export default function App() {
   return (
     <AuthProvider>
-      <Routes>
-        <Route path="/dev-login" element={<DevLoginPage />} />
-        <Route
-          path="/"
-          element={
-            <RequireAuth>
-              <EntitiesPage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/records/:entityName"
-          element={
-            <RequireAuth>
-              <RecordsRoute />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/records/:entityName/new"
-          element={
-            <RequireAuth>
-              <NewRecordRoute />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/records/:entityName/:id"
-          element={
-            <RequireAuth>
-              <RecordDetailRoute />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/records/:entityName/:id/edit"
-          element={
-            <RequireAuth>
-              <EditRecordRoute />
-            </RequireAuth>
-          }
-        />
-      </Routes>
+      <LocaleProvider>
+        <Routes>
+          <Route path="/dev-login" element={<DevLoginPage />} />
+          <Route
+            path="/"
+            element={
+              <RequireAuth>
+                <EntitiesPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/records/:entityName"
+            element={
+              <RequireAuth>
+                <RecordsRoute />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/records/:entityName/new"
+            element={
+              <RequireAuth>
+                <NewRecordRoute />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/records/:entityName/:id"
+            element={
+              <RequireAuth>
+                <RecordDetailRoute />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/records/:entityName/:id/edit"
+            element={
+              <RequireAuth>
+                <EditRecordRoute />
+              </RequireAuth>
+            }
+          />
+        </Routes>
+      </LocaleProvider>
     </AuthProvider>
   );
 }

@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Alert, Badge, Button, Group, Stack, Text, Tooltip } from "@mantine/core";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import { apiFetch, ApiError } from "../api/client";
+import { useEntityLabels } from "../i18n/useEntityLabels";
 import type { EntityWorkflow } from "../metadata/types";
 import type { RecordCapabilities } from "../detail/recordCapabilities";
 
@@ -62,6 +64,8 @@ export function WorkflowActionBar({
   capabilities: RecordCapabilities;
   onTransitioned: (record: RecordDto) => void;
 }) {
+  const { t } = useTranslation();
+  const { transitionLabel } = useEntityLabels(entityName);
   const { token } = useAuth();
   const [showBar, setShowBar] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -83,7 +87,7 @@ export function WorkflowActionBar({
       );
       onTransitioned(response.data);
     } catch (error) {
-      setActionError(error instanceof ApiError ? error.message : "Something went wrong.");
+      setActionError(error instanceof ApiError ? error.message : t("common.somethingWentWrong"));
     } finally {
       setPendingAction(null);
     }
@@ -92,7 +96,7 @@ export function WorkflowActionBar({
   return (
     <Stack gap="xs">
       <Button variant="subtle" size="compact-sm" onClick={() => setShowBar((v) => !v)}>
-        {showBar ? "Hide workflow" : "Show workflow"}
+        {showBar ? t("workflow.hide") : t("workflow.show")}
       </Button>
 
       {showBar ? (
@@ -129,7 +133,7 @@ export function WorkflowActionBar({
 
       {availableTransitions.length === 0 ? (
         <Text size="sm" c="dimmed">
-          No further actions available.
+          {t("workflow.noActions")}
         </Text>
       ) : (
         <Group>
@@ -151,7 +155,8 @@ export function WorkflowActionBar({
                       blocked || (pendingAction !== null && pendingAction !== transition.action)
                     }
                   >
-                    {transition.label} ({transition.from} → {transition.to})
+                    {transitionLabel(transition.action, transition.label)} ({transition.from} →{" "}
+                    {transition.to})
                   </Button>
                 </span>
               </Tooltip>

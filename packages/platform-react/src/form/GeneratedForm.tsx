@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Container, Stack, Title } from "@mantine/core";
+import { useTranslation } from "react-i18next";
 import { useApiQuery } from "../api/useApiQuery";
 import { useApiMutation } from "../api/useApiMutation";
 import { ApiError } from "../api/client";
 import { ApiErrorMessage } from "../api/ApiErrorMessage";
 import { useEntity } from "../metadata/useEntity";
 import { FieldInput } from "../field/FieldInput";
+import { useEntityLabels } from "../i18n/useEntityLabels";
 import type { RecordCapabilities } from "../detail/recordCapabilities";
 
 type RecordDto = {
@@ -24,6 +26,8 @@ export function GeneratedForm({
   recordId?: string;
   onSaved: (record: RecordDto) => void;
 }) {
+  const { t } = useTranslation();
+  const { entityLabel, fieldLabel } = useEntityLabels(entityName);
   const { data: entity, isLoading: entityLoading, error: entityError } = useEntity(entityName);
   const {
     data: existing,
@@ -59,7 +63,7 @@ export function GeneratedForm({
   >("PATCH", `/api/${entityName}/${recordId}`);
 
   if (entityLoading || (recordId && existingLoading)) {
-    return <div>Loading...</div>;
+    return <div>{t("common.loading")}</div>;
   }
   if (entityError) {
     return <ApiErrorMessage error={entityError} />;
@@ -68,7 +72,7 @@ export function GeneratedForm({
     return <ApiErrorMessage error={existingError} />;
   }
   if (!entity) {
-    return <div>Entity not found.</div>;
+    return <div>{t("common.entityNotFound")}</div>;
   }
 
   function setFieldValue(fieldName: string, value: unknown) {
@@ -86,7 +90,7 @@ export function GeneratedForm({
         try {
           payload[key] = value.trim() === "" ? undefined : JSON.parse(value);
         } catch {
-          setFieldErrors({ [key]: ["Invalid JSON"] });
+          setFieldErrors({ [key]: [t("common.invalidJson")] });
           return;
         }
       } else {
@@ -106,7 +110,7 @@ export function GeneratedForm({
           setFormError(error.message);
         }
       } else {
-        setFormError("Something went wrong.");
+        setFormError(t("common.somethingWentWrong"));
       }
     }
   }
@@ -116,7 +120,9 @@ export function GeneratedForm({
   return (
     <Container py="xl" size="sm">
       <Title order={2} mb="md">
-        {recordId ? `Edit ${entity.label}` : `New ${entity.label}`}
+        {recordId
+          ? t("form.editTitle", { label: entityLabel(entity.label) })
+          : t("form.newTitle", { label: entityLabel(entity.label) })}
       </Title>
       {formError ? (
         <Alert color="red" mb="md">
@@ -130,6 +136,7 @@ export function GeneratedForm({
             <FieldInput
               key={field.name}
               field={field}
+              label={fieldLabel(field.name, field.label)}
               value={formData[field.name]}
               onChange={(value) => setFieldValue(field.name, value)}
               error={fieldErrors[field.name]?.join(", ")}
@@ -137,7 +144,7 @@ export function GeneratedForm({
             />
           ))}
         <Button onClick={() => void handleSubmit()} loading={submitting}>
-          Save
+          {t("common.save")}
         </Button>
       </Stack>
     </Container>

@@ -2,9 +2,11 @@
 resolver = "2"
 members = [
   "apps/crm-server",
+  "crates/cron-scheduler",
   "crates/db-migrate",
   "crates/dev-tools",
   "crates/metap",
+  "crates/metap-cron",
   "crates/metap-crud",
   "crates/metap-http",
   "crates/metap-infra",

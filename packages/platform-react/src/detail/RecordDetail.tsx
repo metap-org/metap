@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { Alert, Anchor, Button, Container, Group, Stack, Text, Title } from "@mantine/core";
+import { useTranslation } from "react-i18next";
 import { useApiQuery } from "../api/useApiQuery";
 import { ApiErrorMessage } from "../api/ApiErrorMessage";
 import { ApiError, apiFetch } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEntity } from "../metadata/useEntity";
 import { FieldValue } from "../field/FieldValue";
+import { useEntityLabels } from "../i18n/useEntityLabels";
 import { useNavigationAdapter } from "../navigation/NavigationContext";
 import { WorkflowActionBar } from "../workflow/WorkflowActionBar";
 import type { RecordCapabilities } from "./recordCapabilities";
@@ -22,6 +24,8 @@ function stateValue(value: unknown): string {
 }
 
 export function RecordDetail({ entityName, id }: { entityName: string; id: string }) {
+  const { t } = useTranslation();
+  const { entityLabel, fieldLabel } = useEntityLabels(entityName);
   const { token } = useAuth();
   const navAdapter = useNavigationAdapter();
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -39,7 +43,7 @@ export function RecordDetail({ entityName, id }: { entityName: string; id: strin
   );
 
   async function handleDelete() {
-    if (!record || !window.confirm("Delete this record? This cannot be undone.")) {
+    if (!record || !window.confirm(t("common.deleteConfirm"))) {
       return;
     }
 
@@ -52,13 +56,13 @@ export function RecordDetail({ entityName, id }: { entityName: string; id: strin
       });
       navAdapter.navigate(navAdapter.toRecordList(entityName));
     } catch (error) {
-      setDeleteError(error instanceof ApiError ? error.message : "Something went wrong.");
+      setDeleteError(error instanceof ApiError ? error.message : t("common.somethingWentWrong"));
       setDeleting(false);
     }
   }
 
   if (entityLoading || recordLoading) {
-    return <div>Loading...</div>;
+    return <div>{t("common.loading")}</div>;
   }
   if (entityError) {
     return <ApiErrorMessage error={entityError} />;
@@ -67,13 +71,13 @@ export function RecordDetail({ entityName, id }: { entityName: string; id: strin
     return <ApiErrorMessage error={recordError} />;
   }
   if (!entity || !record) {
-    return <div>Not found.</div>;
+    return <div>{t("common.notFound")}</div>;
   }
 
   return (
     <Container py="xl">
       <Title order={2} mb="md">
-        {entity.label}
+        {entityLabel(entity.label)}
       </Title>
       <Stack mb="md">
         {entity.fields
@@ -81,7 +85,7 @@ export function RecordDetail({ entityName, id }: { entityName: string; id: strin
           .map((field) => (
             <div key={field.name}>
               <Text size="sm" fw={500}>
-                {field.label}
+                {fieldLabel(field.name, field.label)}
               </Text>
               <FieldValue field={field} value={record.data[field.name]} />
             </div>
@@ -107,7 +111,7 @@ export function RecordDetail({ entityName, id }: { entityName: string; id: strin
       ) : null}
       <Group mt="md">
         <Anchor component={navAdapter.Link} to={navAdapter.toEditRecord(entityName, id)}>
-          Edit
+          {t("common.edit")}
         </Anchor>
         <Button
           color="red"
@@ -116,7 +120,7 @@ export function RecordDetail({ entityName, id }: { entityName: string; id: strin
           loading={deleting}
           onClick={() => void handleDelete()}
         >
-          Delete
+          {t("common.delete")}
         </Button>
       </Group>
     </Container>

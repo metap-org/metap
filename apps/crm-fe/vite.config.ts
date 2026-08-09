@@ -8,6 +8,7 @@ export default defineConfig({
       "/api": "http://localhost:3000",
       "/metadata": "http://localhost:3000",
       "/health": "http://localhost:3000",
+      "/preferences": "http://localhost:3000",
     },
   },
 });

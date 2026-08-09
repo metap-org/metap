@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useTranslation } from "react-i18next";
 import {
   Alert,
   Anchor,
@@ -19,6 +20,7 @@ import { useAuth } from "../auth/AuthContext";
 import { FieldValue } from "../field/FieldValue";
 import { useEntity } from "../metadata/useEntity";
 import type { EntityField } from "../metadata/types";
+import { useEntityLabels } from "../i18n/useEntityLabels";
 import { useNavigationAdapter } from "../navigation/NavigationContext";
 
 type RecordDto = {
@@ -39,6 +41,8 @@ type SortState = { field: string; descending: boolean } | null;
 const ROW_HEIGHT = 40;
 
 export function GeneratedList({ entityName }: { entityName: string }) {
+  const { t } = useTranslation();
+  const { entityLabel, fieldLabel } = useEntityLabels(entityName);
   const { token } = useAuth();
   const navAdapter = useNavigationAdapter();
   const { data: entity, isLoading: entityLoading, error: entityError } = useEntity(entityName);
@@ -129,7 +133,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
   }, [lastVirtualIndex, records.length, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   if (entityLoading) {
-    return <div>Loading...</div>;
+    return <div>{t("common.loading")}</div>;
   }
 
   if (entityError) {
@@ -137,11 +141,11 @@ export function GeneratedList({ entityName }: { entityName: string }) {
   }
 
   if (!entity) {
-    return <div>Entity not found.</div>;
+    return <div>{t("common.entityNotFound")}</div>;
   }
 
   if (!listView) {
-    return <div>{entity.label} has no list view configured.</div>;
+    return <div>{t("common.noListView", { label: entityLabel(entity.label) })}</div>;
   }
 
   function toggleSort(field: EntityField) {
@@ -163,7 +167,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
   }
 
   async function handleDelete(record: RecordDto) {
-    if (!window.confirm("Delete this record? This cannot be undone.")) {
+    if (!window.confirm(t("common.deleteConfirm"))) {
       return;
     }
 
@@ -176,7 +180,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
       });
       await refetch();
     } catch (error) {
-      setDeleteError(error instanceof ApiError ? error.message : "Something went wrong.");
+      setDeleteError(error instanceof ApiError ? error.message : t("common.somethingWentWrong"));
     } finally {
       setPendingDeleteId(null);
     }
@@ -187,9 +191,9 @@ export function GeneratedList({ entityName }: { entityName: string }) {
   return (
     <Container py="xl">
       <Group justify="space-between" mb="md">
-        <Title order={2}>{entity.label}</Title>
+        <Title order={2}>{entityLabel(entity.label)}</Title>
         <Button component={navAdapter.Link} to={navAdapter.toNewRecord(entityName)}>
-          New
+          {t("common.new")}
         </Button>
       </Group>
       {deleteError ? (
@@ -221,12 +225,12 @@ export function GeneratedList({ entityName }: { entityName: string }) {
                     onClick={() => toggleSort(field)}
                     style={{ cursor: field.sortable ? "pointer" : undefined }}
                   >
-                    {field.label}
+                    {fieldLabel(field.name, field.label)}
                     {sort?.field === fieldName ? (sort.descending ? " ▼" : " ▲") : ""}
                   </Table.Th>
                 );
               })}
-              <Table.Th>Actions</Table.Th>
+              <Table.Th>{t("common.actions")}</Table.Th>
             </Table.Tr>
             <Table.Tr>
               {listView.fields.map((fieldName) => {
@@ -240,7 +244,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
                   return (
                     <Table.Th key={fieldName}>
                       <Select
-                        placeholder="Any"
+                        placeholder={t("common.any")}
                         clearable
                         data={(field.enumValues ?? []).map((value) => ({ value, label: value }))}
                         value={enumFilters[fieldName] || null}
@@ -255,7 +259,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
                 return (
                   <Table.Th key={fieldName}>
                     <TextInput
-                      placeholder="Filter..."
+                      placeholder={t("common.filterPlaceholder")}
                       value={filterInputs[fieldName] ?? ""}
                       onChange={(event) => {
                         const value = event.currentTarget.value;
@@ -271,7 +275,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
           <Table.Tbody style={{ position: "relative", height: rowVirtualizer.getTotalSize() }}>
             {recordsLoading ? (
               <Table.Tr>
-                <Table.Td colSpan={columnCount}>Loading...</Table.Td>
+                <Table.Td colSpan={columnCount}>{t("common.loading")}</Table.Td>
               </Table.Tr>
             ) : recordsError ? (
               <Table.Tr>
@@ -281,7 +285,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
               </Table.Tr>
             ) : records.length === 0 ? (
               <Table.Tr>
-                <Table.Td colSpan={columnCount}>No records.</Table.Td>
+                <Table.Td colSpan={columnCount}>{t("common.noRecords")}</Table.Td>
               </Table.Tr>
             ) : (
               virtualRows.map((virtualRow) => {
@@ -317,7 +321,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
                           component={navAdapter.Link}
                           to={navAdapter.toRecordDetail(entityName, record.id)}
                         >
-                          View
+                          {t("common.view")}
                         </Anchor>
                         <Button
                           color="red"
@@ -327,7 +331,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
                           disabled={pendingDeleteId !== null && pendingDeleteId !== record.id}
                           onClick={() => void handleDelete(record)}
                         >
-                          Delete
+                          {t("common.delete")}
                         </Button>
                       </Group>
                     </Table.Td>
@@ -338,7 +342,7 @@ export function GeneratedList({ entityName }: { entityName: string }) {
           </Table.Tbody>
         </Table>
         {isFetchingNextPage ? (
-          <div style={{ padding: 8, textAlign: "center" }}>Loading more…</div>
+          <div style={{ padding: 8, textAlign: "center" }}>{t("common.loadingMore")}</div>
         ) : null}
       </div>
     </Container>

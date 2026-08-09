@@ -17,8 +17,9 @@
 | 10. Monorepo, npm publish | Partially done |
 | 11. Low-code Platform Backbone Architecture | In progress |
 | 12. Rust Core Migration | Decided; Migration Order (steps 1-9) done in `crates/`; not yet cut over to production |
-| 13. Dynamic Cron Jobs | Not started |
-| 14. Multi-language (i18n) | Not started |
+| 13. Dynamic Cron Jobs | Backend done; no admin UI yet |
+| 14. Multi-language (i18n) | UI chrome + locale storage done; metadata-label translation not started |
+| 15. Shared App Shell (UI kit, real login, permission-aware components) | **Not started — High priority** |
 
 ## Phase 0: Skeleton
 
@@ -466,31 +467,46 @@ Goals:
 
 ## Phase 13: Dynamic Cron Jobs
 
-**Status: Not started.** Metadata-driven scheduled jobs — an operator defines a recurring job (schedule + target action) through metadata/admin API, the same way entities/workflow/policies are defined today, instead of a developer hand-wiring a new cron entry in code. "Dynamic" is the operative word: the set of jobs is data the platform reads at runtime, not a fixed list baked into a binary at compile time.
+**Status: Backend done (2026-08-09); no admin UI yet.** Metadata-driven scheduled jobs — an operator defines a recurring job (schedule + target action) through the admin API, the same way policies/roles are defined today, instead of a developer hand-wiring a new cron entry in code. "Dynamic" is the operative word: the set of jobs is data the platform reads at runtime, not a fixed list baked into a binary at compile time.
 
-Goals:
+Implemented:
 
-- Design the job metadata shape (schedule expression, target — e.g. a workflow transition, a webhook, a query-driven bulk action — tenant scope, enabled/disabled) and where it's stored (likely the same Postgres instance, a new table, following the outbox/`records` precedent of "one shared DB" from `docs/architectures/04-strategy.md`).
-- Design the scheduler/dispatch loop. Likely shape: a new ops binary/worker (`crates/cron-scheduler` or similar), following the `outbox-publisher`/`notification-worker` precedent — poll due jobs, execute, record run history — rather than an in-process `tokio::spawn` timer inside `crm-server` (same reasoning Phase 9 gives for keeping ops workers as separate deployable units: independent scaling/restart, no coupling to the HTTP process's lifecycle). Whether it reuses `EventBus`/outbox (enqueue a "job due" event, let a consumer act on it) or dispatches directly is an open design question.
-- Concurrency/locking: only one instance of a given due job should actually run when multiple scheduler replicas exist — needs the same `SELECT ... FOR UPDATE SKIP LOCKED` pattern `outbox-publisher` already uses for its batch claim, or an equivalent.
-- Admin API + `packages/platform-react` UI for CRUD on job definitions and viewing run history — mirrors the existing policy/role admin surface (`crates/metap-http/src/routes/admin.rs`).
-- Failure handling: retry policy, max attempts, alerting on repeated failure — ties into whatever the eventual real notification channel becomes (`crates/notification-worker` is stdout-only today, see its doc comment).
+- **Storage** (`crates/metap-cron`): `cron_jobs`/`cron_job_runs` tables (`crates/migrations/0006_cron_jobs.sql`) — platform/ops config, not an `EntityDefinition`/generic `records` row, same category as `policies`/`user_roles`. A job has `cronExpr` (standard 6-field `cron` crate syntax, e.g. `0 */5 * * * *`), an explicit IANA `timezone` (occurrences computed in that zone, not server-local time — `schedule::next_run_at`), and a `targetType` (`workflow_transition` | `bulk_query_action` | `webhook`) + `targetConfig` JSON blob.
+- **Dispatch, per-job reliable-vs-fire-and-forget** (`crates/cron-scheduler`, run with `pnpm worker:cron:rs`): a ticker polls `cron_jobs` for due entries (`SELECT ... FOR UPDATE SKIP LOCKED`, the same concurrency-safe claim `outbox-publisher::publish_pending` uses, so multiple scheduler replicas never double-fire a job), advances `next_run_at`, and inserts a `cron_job_runs` row — then branches on the job's `dispatchMode` (2026-08-09, added after review: not every job needs outbox-grade durability). `dispatchMode: "outbox"` (default) writes a `cron.job.due` outbox event in the same transaction, reusing the existing `outbox-publisher` to actually get it onto RabbitMQ (never publishing directly); an executor in the same `cron-scheduler` process subscribes to that routing key and runs the job — at-least-once, survives a `cron-scheduler` crash between claim and execution. `dispatchMode: "direct"` skips the outbox/RabbitMQ hop entirely: the ticker calls the exact same execution function in-process, in the same tick that claimed the job — lower latency (confirmed live: claim-to-webhook-call in ~16ms vs. the outbox path's ~1s poll-interval latency), but genuinely fire-and-forget — a crash mid-execution loses that firing, no redelivery. `metap_cron::DispatchMode`'s doc comment has the full tradeoff.
+- **Execution stays entity-agnostic**: `workflow_transition`/`bulk_query_action` targets call back into the owning `crm-server`'s own `/api/:entity/...` HTTP surface with a pre-minted service JWT (`CRON_SERVICE_JWT`) instead of `cron-scheduler` linking `metap-crud`/`metap-metadata` directly — reuses permission checks, field validation, optimistic-locking, and the workflow audit trail for free, and keeps the boundary CLAUDE.md's rules require (no `metap-*`/ops-binary business-entity knowledge). `webhook` targets call an arbitrary external URL instead. Known constraint: the service JWT's `tenantId` claim fixes which tenant's jobs an executor can actually run — a job whose `tenant_id` doesn't match fails at execution time (record/entity not found), not a security hole, but multi-tenant deployments need one `CRON_SERVICE_JWT`/executor per tenant for now.
+- **Admin API** (`crates/metap-http/src/routes/cron.rs`): `GET/POST /admin/cron-jobs`, `GET/PATCH/DELETE /admin/cron-jobs/{id}`, `GET /admin/cron-jobs/{id}/runs` — `AdminContext`-gated like `routes/admin.rs`, validates `cronExpr`/`timezone`/`targetType` at write time (`metap_cron::validate_schedule`) instead of failing silently the first time the ticker tries to schedule a bad job.
 
-No concrete trigger has fired for this yet (no operator has asked to schedule a recurring action) — flagged here as a known gap, not queued for immediate implementation.
+Not done:
+
+- **`packages/platform-react` admin UI** for cron job CRUD/run-history — the HTTP API exists, nothing consumes it from the frontend yet.
+- **Retry policy / alerting on repeated failure** — a failed run is recorded (`status = "failed"`, `error`) but nothing retries it or notifies anyone; ties into whatever the eventual real notification channel becomes (`crates/notification-worker` is stdout-only today).
+- **Multi-tenant executor routing** — see the `CRON_SERVICE_JWT` constraint above.
 
 ## Phase 14: Multi-language (i18n)
 
-**Status: Not started.** Two separable concerns, both currently absent:
+**Status: UI chrome done (2026-08-09); metadata-label translation not started.** Two separable concerns:
 
-- **Metadata-authored content (entity/field/list-view labels, workflow action names, validation messages)** is hard-coded single-locale strings in `EntityDefinition`/`EntityField`/etc. today (see `apps/crm-server/src/customer_entity.rs`). Making these translatable means either a `Record<locale, string>` shape on every label field (breaking change to `EntityField` and the OpenAPI-generated types in `crates/metap-metadata/src/openapi.rs`) or a separate translation-key indirection layer. Needs a design decision before implementation — this is a metadata-model change, not just a UI one, so it should be scoped alongside Phase 11's low-code metadata work rather than bolted on separately.
-- **Frontend UI chrome** (`packages/platform-react`, `apps/crm-fe`) has no i18n library wired in yet (no `react-i18next`/`formatjs`/equivalent) — static strings throughout. Independent of the metadata-content question above; could start earlier since it doesn't require a backend metadata-model change.
+- **Frontend UI chrome** (`packages/platform-react`, `apps/crm-fe`) — done. `react-i18next`/`i18next` wired into `platform-react` (`src/i18n/`: `resources.ts` holds the `en`/`vi` string tables, `i18n.ts` creates a dedicated i18next instance — not the module-level singleton, so an app embedding `platform-react` alongside its own i18next setup can't collide with it). `LocaleProvider` (must nest inside `AuthProvider`) loads the caller's locale from the new `GET /preferences` on mount and wraps `I18nextProvider`; `useLocale()`/`LocaleSwitcher` write it back via `PUT /preferences`. Every static chrome string in `GeneratedForm`/`GeneratedList`/`RecordDetail`/`WorkflowActionBar`/`ApiErrorMessage` and `crm-fe`'s `DevLoginPage`/`EntitiesPage`/`App.tsx` route guards now goes through `useTranslation()` — entity/field labels are untouched (see below, still single-locale from metadata).
+- **Backend locale storage** — done. `user_preferences` table (`crates/migrations/0007_user_preferences.sql`, `tenant_id`+`user_id` primary key) via `metap_peripherals::preferences` (`get_locale`/`set_locale`, mirrors `role_assignment.rs`'s plain-function style) and `GET/PUT /preferences` (`crates/metap-http/src/routes/preferences.rs`, `AuthContext`-gated self-service, not `/api/preferences` — would collide with `routes::records`' `/api/{entity}` wildcard). Locale validated against a small `SUPPORTED_LOCALES` allowlist (`en`, `vi` today — must stay in sync with `packages/platform-react/src/i18n/resources.ts`'s `SUPPORTED_LOCALES`, checked manually, no shared source of truth yet).
+- **Metadata-authored content (entity/field/list-view labels, workflow action names, validation messages)** — not started. Still hard-coded single-locale strings in `EntityDefinition`/`EntityField`/etc. (see `apps/crm-server/src/customer_entity.rs`). Making these translatable means either a `Record<locale, string>` shape on every label field (breaking change to `EntityField` and the OpenAPI-generated types in `crates/metap-metadata/src/openapi.rs`) or a separate translation-key indirection layer — needs a design decision before implementation, scoped alongside Phase 11's low-code metadata work rather than bolted on separately.
+
+Not done:
+
+- Metadata-label translation shape (see above — blocks on Phase 11's metadata storage design, `docs/low-code-metadata-storage-design.md`).
+- Only two locales have translated resources (`en`/`vi`); adding a third means both a new `resources.ts` entry and adding it to the backend's `SUPPORTED_LOCALES`.
+- Record `data` (user-entered field values) and locale: out of scope by design — that's tenant business data, not platform-owned content — but worth stating explicitly so it isn't assumed later.
+
+## Phase 15: Shared App Shell (UI kit, real login, permission-aware components)
+
+**Status: Not started — High priority (flagged 2026-08-09).** `apps/crm-fe` already proves `packages/platform-react`'s generated CRUD screens (`GeneratedList`/`GeneratedForm`/`RecordDetail`/`WorkflowActionBar`) work generically across entities, but everything *around* those screens is still hand-rolled per app: login is a throwaway "paste a JWT" dev screen, there's no shared page shell (header/nav/locale-switcher placement — see `EntitiesPage.tsx` for the `Container`/`Group`/`Title` boilerplate every page currently repeats by hand), and there's no reusable primitive for permission-gated UI beyond what `CrudService`'s per-record `capabilities` (`writableFields`/`transitions`) already returns. A second downstream app today would have to copy-paste all of this rather than pull it from `platform-react`.
 
 Goals:
 
-- Decide the metadata-label translation shape (blocks on Phase 11's metadata storage design, `docs/low-code-metadata-storage-design.md`, since translated labels are exactly the kind of runtime-editable content that design is meant to own).
-- Wire an i18n library into `packages/platform-react` for static UI chrome strings, with locale switching in `apps/crm-fe`.
-- Decide how record `data` (user-entered field values) relates to locale, if at all — likely out of scope (that's tenant business data, not platform-owned content), but worth stating explicitly so it isn't assumed later.
+- **Real login flow** — replace `DevLoginPage`'s paste-a-JWT screen with an actual login UI. Blocked on a design decision the backend doesn't have an answer to yet: today there is no username/password (or any) auth endpoint, only JWTs hand-minted by `dev-tools mint-token` — does `crm-server` gain a real `/auth/login` (and if so, against what credential store?), or does auth stay federated to an external IdP (OIDC/SSO) that mints the JWT instead? This is a backend/auth-architecture question before it's a frontend one.
+- **Shared app shell in `packages/platform-react`**: header/nav chrome, a consistent page container, and a standard place to mount `LocaleSwitcher` — so a downstream app assembles a shell from `platform-react` instead of each one hand-rolling it (`apps/crm-fe`'s own pages are the current duplication example).
+- **Permission-aware UI primitives**: a `<Can .../>`-style component or `useCapability()` hook wrapping the per-record `capabilities` `CrudService` already computes, plus role-level gates (e.g. hide a nav link unless the token's roles include `admin`) — today this is duplicated ad hoc per component (`WorkflowActionBar` inlines its own `blocked` check from `capabilities.transitions`, `FieldInput`'s `disabled` prop is threaded manually by each caller).
+- **Admin UI kit**: `platform-react` has zero admin screens today — policy/role CRUD (`/admin/policies`, `/admin/users`) and cron-job CRUD (`/admin/cron-jobs`, Phase 13) exist only as raw HTTP APIs, nothing in the frontend consumes them. A reusable "admin table + form" kit here would also close Phase 13's "no admin UI yet" gap for free.
 
-No concrete trigger has fired for this yet (no multi-locale deployment requirement exists today) — flagged here as a known gap, not queued for immediate implementation.
+Relates to: Phase 13 (cron admin UI blocked on the admin kit specifically), Phase 11 (a shared shell is part of the platform surface, not a per-app concern).
 
 

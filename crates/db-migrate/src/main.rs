@@ -1,20 +1,20 @@
 //! Replaces `packages/core`'s `db:generate`/`db:migrate` (Drizzle) for the Rust stack.
-//! Applies `crates/migrations/*.sql` — the same SQL Drizzle originally generated from
+//! Applies `crates/migrations/*.sql` via `sqlx::migrate!`, which tracks applied versions in
+//! its own `_sqlx_migrations` table. `crates/migrations/` is the sole source of truth for
+//! schema now (the original 0000-0005 files are the same SQL Drizzle once generated from
 //! `packages/core/src/infra/db/schema.ts`, copied here verbatim when `packages/core` was
-//! removed (see `docs/rust-core-viability.md`) — via `sqlx::migrate!`, which tracks applied
-//! versions in its own `_sqlx_migrations` table.
+//! removed — see `docs/rust-core-viability.md` — and `_sqlx_migrations` was backfilled to
+//! match once schema changes started landing here instead, 2026-08-09). No schema changes go
+//! through Drizzle anymore; add new numbered `.sql` files here directly.
 //!
-//! **Only for a fresh database.** The repo's existing dev Postgres already has this schema
-//! applied (via Drizzle, tracked in Drizzle's own journal, not `_sqlx_migrations`) — running
-//! this against it is a no-op in effect (all statements are already-applied DDL) but would
-//! still try to CREATE things that exist and fail, since sqlx has no record of them. This
-//! tool is for bootstrapping a database that doesn't have the schema yet: CI, a fresh dev
-//! setup, or a new environment. There is currently no reconciliation between Drizzle's and
-//! sqlx's migration-tracking tables for the *existing* dev database — not needed unless a
-//! new migration is written after this point and needs to land on both.
-//!
-//! No schema changes go through Drizzle from here on — `crates/migrations/` is the source of
-//! truth going forward; add new numbered `.sql` files here directly.
+//! **`sqlx::migrate!`'s directory scan is a compile-time proc-macro expansion, not a build
+//! script with a `rerun-if-changed` on the directory** — cargo has no way to know a *new*
+//! migration file should trigger recompilation unless something it already tracks (this
+//! file) also changed. Adding a migration file without touching this crate's own source can
+//! leave `cargo build -p db-migrate` reusing a stale cached binary that's silently missing
+//! it. If a freshly-added migration doesn't show up in `_sqlx_migrations` after running this,
+//! `touch src/main.rs` (or `cargo clean -p db-migrate`) and rebuild before assuming something
+//! else is wrong.
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

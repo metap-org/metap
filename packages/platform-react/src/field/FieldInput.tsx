@@ -9,14 +9,18 @@ export function FieldInput({
   onChange,
   error,
   disabled,
+  label: labelOverride,
 }: {
   field: EntityField;
   value: unknown;
   onChange: (value: unknown) => void;
   error?: string;
   disabled?: boolean;
+  /** Overrides `field.label` (e.g. a translated label) — the required-field `" *"` suffix is
+   *  still appended here either way. */
+  label?: string;
 }) {
-  const label = field.label + (field.required ? " *" : "");
+  const label = (labelOverride ?? field.label) + (field.required ? " *" : "");
   const description = disabled ? "You can't edit this field" : undefined;
 
   switch (field.kind) {

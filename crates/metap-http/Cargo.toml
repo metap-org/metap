@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+metap-cron = { path = "../metap-cron" }
 metap-crud = { path = "../metap-crud" }
 metap-infra = { path = "../metap-infra" }
 metap-peripherals = { path = "../metap-peripherals" }
@@ -27,6 +28,7 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 uuid = { version = "1", features = ["v4", "serde"] }
 jsonwebtoken = "9"
+chrono = "0.4"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

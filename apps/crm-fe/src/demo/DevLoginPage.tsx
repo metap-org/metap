@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { Button, Container, Textarea, Title } from "@mantine/core";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@metap/platform-react";
 
 export function DevLoginPage() {
+  const { t } = useTranslation();
   const [value, setValue] = useState("");
   const { setToken } = useAuth();
   const navigate = useNavigate();
@@ -16,16 +18,16 @@ export function DevLoginPage() {
   return (
     <Container size="sm" py="xl">
       <Title order={2} mb="md">
-        Dev Login
+        {t("devLogin.title")}
       </Title>
       <Textarea
-        label="Paste a JWT minted with `pnpm mint-token` (run in the backend repo)"
+        label={t("devLogin.label")}
         minRows={4}
         value={value}
         onChange={(event) => setValue(event.currentTarget.value)}
       />
       <Button mt="md" onClick={handleSubmit} disabled={value.trim().length === 0}>
-        Use token
+        {t("devLogin.useToken")}
       </Button>
     </Container>
   );
