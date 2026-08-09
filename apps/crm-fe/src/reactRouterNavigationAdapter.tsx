@@ -11,7 +11,7 @@ function useReactRouterNavigationAdapter(): NavigationAdapter {
     toNewRecord: (entityName) => `/records/${entityName}/new`,
     toRecordDetail: (entityName, id) => `/records/${entityName}/${id}`,
     toEditRecord: (entityName, id) => `/records/${entityName}/${id}/edit`,
-    toLogin: () => "/dev-login",
+    toLogin: () => "/login",
     navigate,
     Link: RouterLink,
   };

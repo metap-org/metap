@@ -1,8 +1,10 @@
+pub mod auth;
 pub mod index_reconciler;
 pub mod metadata_drift;
 pub mod preferences;
 pub mod role_assignment;
 
+pub use auth::{create_user, mint_jwt, verify_credentials, AuthUser};
 pub use index_reconciler::reconcile as reconcile_indexes;
 pub use metadata_drift::check as check_metadata_drift;
 pub use preferences::{get_locale, set_locale, DEFAULT_LOCALE};

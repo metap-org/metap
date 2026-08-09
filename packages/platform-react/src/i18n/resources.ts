@@ -47,10 +47,12 @@ const en = {
     show: "Show workflow",
     noActions: "No further actions available.",
   },
-  devLogin: {
-    title: "Dev Login",
-    label: "Paste a JWT minted with `pnpm mint-token` (run in the backend repo)",
-    useToken: "Use token",
+  login: {
+    title: "Log In",
+    email: "Email",
+    password: "Password",
+    submit: "Log In",
+    invalidCredentials: "Invalid email or password.",
   },
   entities: {
     title: "Entities",
@@ -96,10 +98,12 @@ const vi = {
     show: "Hiện quy trình",
     noActions: "Không còn hành động nào khả dụng.",
   },
-  devLogin: {
-    title: "Đăng nhập (dev)",
-    label: "Dán JWT được tạo bằng `pnpm mint-token` (chạy trong repo backend)",
-    useToken: "Dùng token",
+  login: {
+    title: "Đăng nhập",
+    email: "Email",
+    password: "Mật khẩu",
+    submit: "Đăng nhập",
+    invalidCredentials: "Email hoặc mật khẩu không đúng.",
   },
   entities: {
     title: "Entities",

@@ -21,6 +21,11 @@ pub struct AppConfig {
     pub rabbitmq_url: String,
     pub cors_origins: Vec<String>,
     pub auth_jwt_public_key_path: String,
+    /// Needed only by binaries that mint tokens (`crm-server`'s `POST /auth/login` —
+    /// `dev-tools mint-token` reads its own copy of the key file directly, not this config).
+    /// Required, like `auth_jwt_public_key_path`: `crm-server` is no longer verify-only once
+    /// it can issue tokens from a real login, so both keys are load-bearing at boot.
+    pub auth_jwt_private_key_path: String,
     /// Path (resolved relative to the binary's cwd, same convention as
     /// `auth_jwt_public_key_path`) to a built frontend (`apps/crm-fe`'s `vite build` output)
     /// to serve as static files alongside the API, single-process/single-port. Unset in the
@@ -92,6 +97,11 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow::anyhow!("AUTH_JWT_PUBLIC_KEY_PATH is required"))?;
 
+    let auth_jwt_private_key_path = env::var("AUTH_JWT_PRIVATE_KEY_PATH")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("AUTH_JWT_PRIVATE_KEY_PATH is required"))?;
+
     let static_dir = env::var("STATIC_DIR").ok().filter(|s| !s.is_empty());
 
     Ok(AppConfig {
@@ -103,6 +113,7 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         rabbitmq_url,
         cors_origins,
         auth_jwt_public_key_path,
+        auth_jwt_private_key_path,
         static_dir,
     })
 }

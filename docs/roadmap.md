@@ -19,7 +19,7 @@
 | 12. Rust Core Migration | Decided; Migration Order (steps 1-9) done in `crates/`; not yet cut over to production |
 | 13. Dynamic Cron Jobs | Backend done; no admin UI yet |
 | 14. Multi-language (i18n) | UI chrome + locale storage done; metadata-label translation not started |
-| 15. Shared App Shell (UI kit, real login, permission-aware components) | **Not started — High priority** |
+| 15. Shared App Shell (UI kit, real login, permission-aware components) | Real login done; shell/permission-primitives/admin-kit not started — **High priority** |
 
 ## Phase 0: Skeleton
 
@@ -498,14 +498,21 @@ Not done:
 
 ## Phase 15: Shared App Shell (UI kit, real login, permission-aware components)
 
-**Status: Not started — High priority (flagged 2026-08-09).** `apps/crm-fe` already proves `packages/platform-react`'s generated CRUD screens (`GeneratedList`/`GeneratedForm`/`RecordDetail`/`WorkflowActionBar`) work generically across entities, but everything *around* those screens is still hand-rolled per app: login is a throwaway "paste a JWT" dev screen, there's no shared page shell (header/nav/locale-switcher placement — see `EntitiesPage.tsx` for the `Container`/`Group`/`Title` boilerplate every page currently repeats by hand), and there's no reusable primitive for permission-gated UI beyond what `CrudService`'s per-record `capabilities` (`writableFields`/`transitions`) already returns. A second downstream app today would have to copy-paste all of this rather than pull it from `platform-react`.
+**Status: Real login done (2026-08-09); app shell, permission primitives, and admin UI kit not started — High priority.** `apps/crm-fe` already proves `packages/platform-react`'s generated CRUD screens (`GeneratedList`/`GeneratedForm`/`RecordDetail`/`WorkflowActionBar`) work generically across entities, but everything *around* those screens was still hand-rolled per app: login was a throwaway "paste a JWT" dev screen, there's no shared page shell (header/nav/locale-switcher placement — see `EntitiesPage.tsx` for the `Container`/`Group`/`Title` boilerplate every page currently repeats by hand), and there's no reusable primitive for permission-gated UI beyond what `CrudService`'s per-record `capabilities` (`writableFields`/`transitions`) already returns. A second downstream app today would still have to copy-paste the latter three rather than pull them from `platform-react`.
 
-Goals:
+Implemented:
 
-- **Real login flow** — replace `DevLoginPage`'s paste-a-JWT screen with an actual login UI. Blocked on a design decision the backend doesn't have an answer to yet: today there is no username/password (or any) auth endpoint, only JWTs hand-minted by `dev-tools mint-token` — does `crm-server` gain a real `/auth/login` (and if so, against what credential store?), or does auth stay federated to an external IdP (OIDC/SSO) that mints the JWT instead? This is a backend/auth-architecture question before it's a frontend one.
+- **Real login flow** (local username/password, decided over federated IdP for this phase — self-contained, no external dependency for a demo/kernel platform). `users` table (`crates/migrations/0009_users.sql`: `tenant_id`, `email` unique, `password_hash`) via `metap_peripherals::auth` — `create_user`/`verify_credentials` (argon2id; `verify_credentials` always pays the same argon2-verify cost on a nonexistent email via a precomputed dummy hash, so "email doesn't exist" and "wrong password" can't be told apart by timing) and `mint_jwt`, the **one** JWT-encoding implementation in the repo now — `POST /auth/login` (`crates/metap-http/src/routes/auth.rs`) and `dev-tools mint-token` both call it, so a CLI-minted token and a real-login one can't drift on claim shape. `crm-server` had been deliberately verify-only (only held the JWT *decoding* key); minting from a real login means it now also loads the *encoding* key at boot (`AUTH_JWT_PRIVATE_KEY_PATH`, required, same keypair `pnpm auth:dev-keys` already generates) — a real architecture shift, not just a new route.
+- **Provisioning**: `POST /admin/users` (email+password, optional `roles` to assign in the same call; `409 email_taken` on a duplicate email) and `dev-tools create-user <tenantId> <email> <password>` for dev-seeding — both call the same `create_user`.
+- **Frontend**: `LoginForm` in `packages/platform-react` (email+password, calls `POST /auth/login`, distinguishes `invalid_credentials` for a translated message vs. other failures), replacing `apps/crm-fe`'s `DevLoginPage` — renamed to `LoginPage` at route `/login` (was `/dev-login`, misleading now that it's a real login). `pnpm mint-token`/`pnpm seed:admin` still work unchanged for minting a token by hand without a real login.
+- Verified live: login with a bad password and a nonexistent email both return the identical `401 invalid_credentials`; a minted token works against a protected route; admin-provisioned user can immediately log in with the password the admin set.
+
+Not done:
+
 - **Shared app shell in `packages/platform-react`**: header/nav chrome, a consistent page container, and a standard place to mount `LocaleSwitcher` — so a downstream app assembles a shell from `platform-react` instead of each one hand-rolling it (`apps/crm-fe`'s own pages are the current duplication example).
 - **Permission-aware UI primitives**: a `<Can .../>`-style component or `useCapability()` hook wrapping the per-record `capabilities` `CrudService` already computes, plus role-level gates (e.g. hide a nav link unless the token's roles include `admin`) — today this is duplicated ad hoc per component (`WorkflowActionBar` inlines its own `blocked` check from `capabilities.transitions`, `FieldInput`'s `disabled` prop is threaded manually by each caller).
-- **Admin UI kit**: `platform-react` has zero admin screens today — policy/role CRUD (`/admin/policies`, `/admin/users`) and cron-job CRUD (`/admin/cron-jobs`, Phase 13) exist only as raw HTTP APIs, nothing in the frontend consumes them. A reusable "admin table + form" kit here would also close Phase 13's "no admin UI yet" gap for free.
+- **Admin UI kit**: `platform-react` has zero admin screens today — policy/role/user CRUD (`/admin/policies`, `/admin/users`) and cron-job CRUD (`/admin/cron-jobs`, Phase 13) exist only as raw HTTP APIs, nothing in the frontend consumes them. A reusable "admin table + form" kit here would also close Phase 13's "no admin UI yet" gap for free.
+- Token refresh/rotation, "forgot password", email verification, per-route login rate-limiting beyond the existing global per-IP limiter — none of these exist yet; flagged as known gaps for a real deployment, not queued.
 
 Relates to: Phase 13 (cron admin UI blocked on the admin kit specifically), Phase 11 (a shared shell is part of the platform surface, not a per-app concern).
 

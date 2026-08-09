@@ -19,8 +19,65 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::auth::AdminContext;
-use crate::error::internal_error_response;
+use crate::error::{internal_error_response, service_error_response};
 use crate::state::AppState;
+
+#[derive(Deserialize)]
+struct CreateUserBody {
+    email: String,
+    password: String,
+    #[serde(default)]
+    roles: Vec<String>,
+}
+
+/// Provisions a new local-login user (`docs/roadmap.md` Phase 15) — the admin-driven
+/// counterpart to `dev-tools create-user`'s dev-seeding path; both call
+/// `metap_peripherals::create_user`, so the two can't diverge on how a password gets hashed.
+async fn create_user(
+    State(state): State<AppState>,
+    AdminContext(context): AdminContext,
+    Json(body): Json<CreateUserBody>,
+) -> Response {
+    let tenant_id = match state.permissions.scoped_tenant(&context) {
+        Ok(id) => id,
+        Err(e) => return internal_error_response(e),
+    };
+
+    let user = match metap_peripherals::create_user(&state.pool, tenant_id, &body.email, &body.password)
+        .await
+    {
+        Ok(user) => user,
+        Err(e) => {
+            let is_duplicate_email = e
+                .downcast_ref::<sqlx::Error>()
+                .and_then(|e| e.as_database_error())
+                .is_some_and(|e| e.is_unique_violation());
+            if is_duplicate_email {
+                return service_error_response(
+                    409,
+                    "email_taken",
+                    Some("A user with this email already exists."),
+                    None,
+                );
+            }
+            return internal_error_response(e);
+        }
+    };
+
+    let assigned_by = context.user_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
+    for role in &body.roles {
+        if let Err(e) = metap_peripherals::assign_role(&state.pool, tenant_id, user.id, role, assigned_by).await
+        {
+            return internal_error_response(e);
+        }
+    }
+
+    (
+        StatusCode::CREATED,
+        Json(json!({ "data": { "userId": user.id, "email": user.email, "roles": body.roles } })),
+    )
+        .into_response()
+}
 
 fn policy_to_json(row: &PolicyRow) -> Value {
     json!({
@@ -193,7 +250,7 @@ async fn explain_policy(
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/admin/users", get(list_users))
+        .route("/admin/users", get(list_users).post(create_user))
         .route("/admin/users/{userId}/roles", post(assign_role))
         .route("/admin/users/{userId}/roles/{role}", axum::routing::delete(revoke_role))
         .route("/admin/policies", get(list_policies).post(create_policy))

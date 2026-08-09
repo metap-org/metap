@@ -9,14 +9,14 @@ import {
   GeneratedForm,
   GeneratedList,
 } from "@metap/platform-react";
-import { DevLoginPage } from "./demo/DevLoginPage";
+import { LoginPage } from "./demo/LoginPage";
 import { EntitiesPage } from "./demo/EntitiesPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { token } = useAuth();
 
   if (!token) {
-    return <Navigate to="/dev-login" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   return <>{children}</>;
@@ -81,7 +81,7 @@ export default function App() {
     <AuthProvider>
       <LocaleProvider>
         <Routes>
-          <Route path="/dev-login" element={<DevLoginPage />} />
+          <Route path="/login" element={<LoginPage />} />
           <Route
             path="/"
             element={

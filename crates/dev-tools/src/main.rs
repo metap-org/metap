@@ -11,6 +11,7 @@ fn usage() -> ! {
     eprintln!("  dev-tools gen-keys [dir]                         (default dir: ./keys)");
     eprintln!("  dev-tools mint-token [tenantId] [userId]         (RS256, reads ./keys/dev-jwt-private.pem)");
     eprintln!("  dev-tools seed-admin <tenantId> <userId>");
+    eprintln!("  dev-tools create-user <tenantId> <email> <password>  (local login, argon2id)");
     std::process::exit(1);
 }
 
@@ -21,6 +22,7 @@ async fn main() -> anyhow::Result<()> {
         Some("gen-keys") => gen_keys(args.get(2).cloned().unwrap_or_else(|| "keys".to_string())),
         Some("mint-token") => mint_token(&args),
         Some("seed-admin") => seed_admin(&args).await,
+        Some("create-user") => create_user(&args).await,
         _ => usage(),
     }
 }
@@ -49,41 +51,29 @@ fn gen_keys(dir: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(serde::Serialize)]
-struct Claims {
-    sub: String,
-    #[serde(rename = "tenantId")]
-    tenant_id: String,
-    exp: usize,
-}
-
 /// Mirrors `mint-dev-token.mjs`: same default tenant/user IDs, same 1h expiry, same
 /// `keys/dev-jwt-private.pem` path (relative to cwd, matching that script's convention).
+/// Delegates the actual encoding to `metap_peripherals::mint_jwt` — the same function
+/// `POST /auth/login` calls — so this CLI and a real login can't mint differently-shaped
+/// tokens.
 fn mint_token(args: &[String]) -> anyhow::Result<()> {
-    let tenant_id = args.get(2).cloned().unwrap_or_else(|| "00000000-0000-0000-0000-000000000001".to_string());
-    let user_id = args.get(3).cloned().unwrap_or_else(|| "00000000-0000-0000-0000-000000000002".to_string());
+    let tenant_id: Uuid = args
+        .get(2)
+        .map(String::as_str)
+        .unwrap_or("00000000-0000-0000-0000-000000000001")
+        .parse()?;
+    let user_id: Uuid = args
+        .get(3)
+        .map(String::as_str)
+        .unwrap_or("00000000-0000-0000-0000-000000000002")
+        .parse()?;
 
     let private_pem = std::fs::read_to_string("keys/dev-jwt-private.pem")
         .map_err(|e| anyhow::anyhow!("failed to read keys/dev-jwt-private.pem: {e}"))?;
-    let key = jsonwebtoken::EncodingKey::from_rsa_pem(private_pem.as_bytes())?;
 
-    let claims = Claims {
-        sub: user_id,
-        tenant_id,
-        exp: expiry_in_one_hour()?,
-    };
-    let token = jsonwebtoken::encode(
-        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256),
-        &claims,
-        &key,
-    )?;
+    let token = metap_peripherals::mint_jwt(&private_pem, tenant_id, user_id, 3600)?;
     println!("{token}");
     Ok(())
-}
-
-fn expiry_in_one_hour() -> anyhow::Result<usize> {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
-    Ok((now.as_secs() + 3600) as usize)
 }
 
 /// Mirrors `seed-admin.mjs`, via `metap_peripherals::assign_role` (the same function
@@ -104,5 +94,26 @@ async fn seed_admin(args: &[String]) -> anyhow::Result<()> {
     assign_role(&pool, tenant_id, user_id, "admin", None).await?;
 
     println!("Granted 'admin' role to user {user_id} in tenant {tenant_id}.");
+    Ok(())
+}
+
+/// Dev-seeding counterpart to `POST /admin/users` (`crates/metap-http/src/routes/admin.rs`) —
+/// both call `metap_peripherals::create_user`, so a seeded dev user and an admin-provisioned
+/// one get their password hashed identically.
+async fn create_user(args: &[String]) -> anyhow::Result<()> {
+    let (Some(tenant_id), Some(email), Some(password)) = (args.get(2), args.get(3), args.get(4))
+    else {
+        eprintln!("Usage: dev-tools create-user <tenantId> <email> <password>");
+        std::process::exit(1);
+    };
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL")
+        .map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
+
+    let tenant_id: Uuid = tenant_id.parse()?;
+    let user = metap_peripherals::create_user(&pool, tenant_id, email, password).await?;
+
+    println!("Created user {} ({email}) in tenant {tenant_id}.", user.id);
     Ok(())
 }

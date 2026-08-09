@@ -129,6 +129,7 @@ pub fn build_router(state: AppState, cors_origins: &[String]) -> Router {
         .merge(routes::metadata::protected_router())
         .merge(routes::records::router())
         .merge(routes::admin::router())
+        .merge(routes::auth::router())
         .merge(routes::cron::router())
         .merge(routes::preferences::router())
         .layer(cors)

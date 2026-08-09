@@ -151,7 +151,13 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     registry.register(test_entity()).unwrap();
     let permissions = PermissionService::new(Box::new(metap_permission::PostgresPolicyStore::new(pool.clone())));
     let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
-    let state = AppState::new(pool.clone(), Arc::new(registry), Arc::new(permissions), decoding_key);
+    let state = AppState::new(
+        pool.clone(),
+        Arc::new(registry),
+        Arc::new(permissions),
+        decoding_key,
+        private_pem.clone(),
+    );
     // A real origin list, not empty — exercises the `allow_credentials` +
     // explicit-origin/header CORS branch (see `lib.rs`'s doc comment on the panic this
     // once triggered; an empty list here would silently skip that branch again).
@@ -291,9 +297,9 @@ async fn rate_limit_returns_429_once_the_burst_is_exhausted() {
     registry.register(test_entity()).unwrap();
     let permissions = PermissionService::new(Box::new(metap_permission::PostgresPolicyStore::new(pool.clone())));
     let keydir = tempdir();
-    let (_private_pem, public_pem) = openssl_genrsa(keydir.path());
+    let (private_pem, public_pem) = openssl_genrsa(keydir.path());
     let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
-    let state = AppState::new(pool, Arc::new(registry), Arc::new(permissions), decoding_key);
+    let state = AppState::new(pool, Arc::new(registry), Arc::new(permissions), decoding_key, private_pem);
     let router = build_router(state, &[]);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

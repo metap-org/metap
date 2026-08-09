@@ -37,7 +37,19 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_public_key_path))?;
     let decoding_key = DecodingKey::from_rsa_pem(&public_key_pem)?;
 
-    let state = AppState::new(pool, Arc::new(registry), Arc::new(permissions), decoding_key);
+    // Needed only for POST /auth/login (metap_peripherals::mint_jwt) — crm-server issues
+    // tokens now, not just verifies them, so both halves of the keypair are load-bearing.
+    let private_key_pem = std::fs::read_to_string(&config.auth_jwt_private_key_path).map_err(|e| {
+        anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_private_key_path)
+    })?;
+
+    let state = AppState::new(
+        pool,
+        Arc::new(registry),
+        Arc::new(permissions),
+        decoding_key,
+        private_key_pem,
+    );
     let mut router = build_router(state, &config.cors_origins);
 
     if let Some(dir) = &config.static_dir {
