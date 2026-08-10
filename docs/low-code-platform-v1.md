@@ -1,207 +1,207 @@
-# Low-code Platform V1 Direction
+# Định hướng Low-code Platform V1
 
-Date: 2026-08-02
+Ngày: 2026-08-02
 
-Status: exploratory
+Trạng thái: exploratory (đang khám phá)
 
-## Purpose
+## Mục đích
 
-This document is not the main product roadmap.
+Tài liệu này không phải là roadmap sản phẩm chính.
 
-`docs/roadmap.md` tracks the core platform's current build-out and official phase status. This document captures a separate question:
+`docs/roadmap.md` theo dõi tiến độ xây dựng và trạng thái phase chính thức của core platform. Tài liệu này ghi lại một câu hỏi riêng biệt:
 
-> If Metap keeps evolving beyond a metadata-driven app core, what would a practical path toward a real low-code platform look like?
+> Nếu Metap tiếp tục phát triển vượt ra ngoài một metadata-driven app core, thì một lộ trình thực tế hướng tới một low-code platform thực sự sẽ trông như thế nào?
 
-It should be read together with `docs/vision.md`, which states the broader direction more plainly:
+Nên đọc cùng với `docs/vision.md`, tài liệu phát biểu định hướng rộng hơn một cách rõ ràng hơn:
 
-> low-code is the higher destination, not just an optional side branch.
+> low-code là đích đến cao hơn, không chỉ là một nhánh phụ tùy chọn.
 
-The goal here is to describe:
+Mục tiêu ở đây là mô tả:
 
-- what already exists that supports that direction
-- what is still missing
-- a realistic 3-phase path to a "low-code platform v1"
+- những gì đã tồn tại hỗ trợ cho định hướng đó
+- những gì còn thiếu
+- một lộ trình 3 phase thực tế để đạt "low-code platform v1"
 
-## Starting Point
+## Điểm xuất phát
 
-Metap already has several important low-code-friendly foundations:
+Metap đã có sẵn một số nền tảng quan trọng thân thiện với low-code:
 
-- metadata-authored entities
-- generic CRUD over a shared runtime
-- metadata-constrained query planning
-- metadata-driven workflow
+- các Entity được authored qua metadata
+- CRUD tổng quát trên một runtime dùng chung
+- query planning bị ràng buộc bởi metadata
+- Workflow điều khiển bởi metadata
 - policy-driven permission enforcement
-- reusable frontend rendering primitives in `packages/platform-react`
+- các primitive render frontend có thể tái sử dụng trong `packages/platform-react`
 
-That means the system is already more than a single CRM app. It is a metadata-driven platform core.
+Điều đó có nghĩa là hệ thống hiện tại đã vượt xa một ứng dụng CRM đơn lẻ. Nó là một metadata-driven platform core.
 
-What it is **not** yet:
+Những gì nó **chưa** có:
 
-- a self-serve builder
-- a runtime that accepts user-authored metadata safely
-- a versioned metadata control plane
-- a platform where non-developers can define and publish apps without writing TypeScript
+- một self-serve builder
+- một runtime chấp nhận metadata do người dùng tự tạo một cách an toàn
+- một metadata control plane có versioning
+- một platform mà người không phải lập trình viên có thể định nghĩa và publish app mà không cần viết TypeScript
 
-Today, metadata is still **code-authored**. That is the main line between the current system and the higher low-code destination.
+Hiện tại, metadata vẫn **được authored bằng code**. Đó là ranh giới chính giữa hệ thống hiện tại và đích đến low-code cao hơn.
 
-## Product Goal
+## Mục tiêu sản phẩm
 
-The practical V1 goal should be:
+Mục tiêu thực tế cho V1 nên là:
 
-> Let an internal operator or advanced admin define and publish a basic business app from metadata, without editing application code, while preserving the server-side safety properties Metap already cares about.
+> Cho phép một operator nội bộ hoặc admin nâng cao định nghĩa và publish một business app cơ bản từ metadata, mà không cần chỉnh sửa application code, đồng thời vẫn giữ được các thuộc tính an toàn phía server mà Metap đã quan tâm từ đầu.
 
-That is intentionally narrower than "full Airtable + Retool + Salesforce builder."
+Điều này cố ý hẹp hơn so với "full Airtable + Retool + Salesforce builder".
 
-This document therefore describes a reachable first platform version on the way toward the broader vision, not the final ceiling of the product.
+Vì vậy tài liệu này mô tả một phiên bản platform đầu tiên có thể đạt được trên đường tới tầm nhìn rộng hơn, chứ không phải giới hạn cuối cùng của sản phẩm.
 
-V1 should support:
+V1 nên hỗ trợ:
 
-- entity modeling
-- field configuration
-- list and form generation
-- workflow configuration
-- permission policy setup
-- publish/version history
+- entity modeling (mô hình hóa Entity)
+- cấu hình field
+- sinh list và form
+- cấu hình Workflow
+- thiết lập permission policy
+- publish/lịch sử version
 
-V1 should **not** try to solve all of this yet:
+V1 **chưa nên** cố giải quyết những điều sau:
 
 - visual workflow automation builder
-- arbitrary scripting by end users
-- marketplace/plugin ecosystem
-- cross-app analytics suite
-- drag-and-drop page builder for every UI pattern
+- scripting tùy ý bởi end user
+- hệ sinh thái marketplace/plugin
+- bộ phân tích cross-app analytics
+- drag-and-drop page builder cho mọi UI pattern
 
-## Architectural Constraint
+## Ràng buộc kiến trúc
 
-Metap should not throw away the current architecture to chase low-code.
+Metap không nên vứt bỏ kiến trúc hiện tại để chạy theo low-code.
 
-The correct direction is:
+Hướng đi đúng là:
 
-- keep `packages/core` as the execution engine
-- add a metadata control plane around it
-- move from code-authored metadata to safely persisted metadata
-- compile persisted metadata into the same kind of runtime contract the current code path already uses
+- giữ `packages/core` làm execution engine
+- bổ sung một metadata control plane bao quanh nó
+- chuyển từ metadata authored bằng code sang metadata được persist một cách an toàn
+- compile metadata đã persist thành cùng loại runtime contract mà code path hiện tại đang dùng
 
-In other words: evolve the authoring model, not the whole runtime model.
+Nói cách khác: tiến hóa authoring model, không phải toàn bộ runtime model.
 
-## What Must Exist Before V1 Is Real
+## Những gì phải tồn tại trước khi V1 trở thành hiện thực
 
-### 1. Metadata persistence and versioning
+### 1. Metadata persistence và versioning
 
-Current state:
+Trạng thái hiện tại:
 
-- metadata lives in `*.entity.ts`
-- registration happens at boot
+- metadata nằm trong `*.entity.ts`
+- việc đăng ký (registration) diễn ra lúc boot
 
-Needed:
+Cần có:
 
-- metadata stored in the database or a dedicated configuration store
-- draft and published versions
-- revision history
-- rollback support
-- validation before publish
+- metadata được lưu trong database hoặc một configuration store riêng
+- các phiên bản draft và published
+- lịch sử revision
+- hỗ trợ rollback
+- validation trước khi publish
 
-Without this, there is no real low-code platform, only a code-first framework with metadata.
+Nếu không có điều này, sẽ không có low-code platform thực sự, chỉ có một framework code-first kèm metadata.
 
-### 2. A metadata control plane
+### 2. Một metadata control plane
 
-Current state:
+Trạng thái hiện tại:
 
-- developers author metadata directly in TypeScript
+- lập trình viên author metadata trực tiếp bằng TypeScript
 
-Needed:
+Cần có:
 
-- API for managing metadata definitions
-- UI for creating and editing entities, fields, list views, workflow, and policies
-- review/publish flow
+- API để quản lý các định nghĩa metadata
+- UI để tạo và chỉnh sửa Entity, field, list view, Workflow, và policy
+- luồng review/publish
 
-This is the minimum "builder" layer.
+Đây là lớp "builder" tối thiểu.
 
-### 3. Runtime compilation from persisted metadata
+### 3. Runtime compilation từ metadata đã persist
 
-Current state:
+Trạng thái hiện tại:
 
-- metadata is already compiled and validated at boot by `MetadataCompiler`
+- metadata đã được compile và validate lúc boot bởi `MetadataCompiler`
 
-Needed:
+Cần có:
 
-- a compile step from stored metadata into runtime-safe internal definitions
-- clear publish-time validation errors
-- protection against malformed or dangerous metadata
-- deterministic version hashes for published metadata snapshots
+- một bước compile từ metadata đã lưu thành các định nghĩa nội bộ an toàn cho runtime
+- các lỗi validation rõ ràng tại thời điểm publish
+- bảo vệ chống lại metadata sai định dạng hoặc nguy hiểm
+- deterministic version hash cho các snapshot metadata đã publish
 
-This is where the existing compiler architecture helps a lot.
+Đây là nơi kiến trúc compiler hiện có giúp ích rất nhiều.
 
-### 4. Safe extension boundaries
+### 4. Ranh giới mở rộng an toàn (safe extension boundaries)
 
-Current state:
+Trạng thái hiện tại:
 
-- workflow guards are plain TypeScript functions in code
+- workflow guard là các hàm TypeScript thuần trong code
 
-Needed:
+Cần có:
 
-- a V1-safe rule model that does not require arbitrary user code execution
-- declarative conditions for workflow guards and policies
-- optionally, a tightly-controlled catalog of built-in actions
+- một rule model an toàn cho V1, không yêu cầu thực thi user code tùy ý
+- các điều kiện khai báo (declarative conditions) cho workflow guard và policy
+- tùy chọn: một catalog các action built-in được kiểm soát chặt chẽ
 
-Low-code V1 should avoid arbitrary runtime scripting if the platform wants to keep predictable safety and operability.
+Low-code V1 nên tránh scripting runtime tùy ý nếu platform muốn giữ được tính an toàn và khả năng vận hành có thể dự đoán được.
 
-### 5. Tenant-facing administration model
+### 5. Mô hình quản trị hướng tenant
 
-Current state:
+Trạng thái hiện tại:
 
-- admin APIs exist for role assignment and policy management
+- đã có admin API cho việc gán role và quản lý policy
 
-Needed:
+Cần có:
 
-- who is allowed to design schema
-- who is allowed to publish app changes
-- how tenants are isolated from each other's metadata and runtime
-- how published changes are audited
+- ai được phép thiết kế schema
+- ai được phép publish thay đổi app
+- các Tenant được cô lập với metadata và runtime của nhau như thế nào
+- các thay đổi đã publish được audit như thế nào
 
-This is not just UI work. It is part of the platform trust model.
+Đây không chỉ là công việc UI. Nó là một phần của mô hình tin cậy (trust model) của platform.
 
-## Suggested 3-Phase Path
+## Lộ trình 3-Phase đề xuất
 
-## Phase A: Metadata Control Plane Foundation
+## Phase A: Nền tảng Metadata Control Plane
 
-**Decomposed into 4 ordered sub-projects** (see `docs/roadmap.md`'s Phase 11 for status): (1) persisted metadata storage + draft/published versioning, (2) runtime loader that materializes published metadata through the existing `MetadataCompiler`/`MetadataRegistry` pipeline, (3) a publish validation pipeline layering deeper (cross-entity) checks on top of (1)'s shape validation, (4) a metadata admin API. Sub-project 1 has a written spec: `docs/low-code-metadata-storage-design.md`. Key scoping decisions locked in there: DB-authored metadata is global (not per-tenant) for Phase A, has no workflow support yet (needs Phase B's declarative-rule work first), and `crm.customers` is not migrated off `*.entity.ts` as part of Phase A — DB storage is proven on new entities first.
+**Được chia thành 4 sub-project theo thứ tự** (xem trạng thái ở Phase 11 của `docs/roadmap.md`): (1) persisted metadata storage + draft/published versioning, (2) runtime loader hiện thực hóa (materialize) metadata đã publish thông qua pipeline `MetadataCompiler`/`MetadataRegistry` sẵn có, (3) một publish validation pipeline bổ sung các kiểm tra sâu hơn (cross-entity) lên trên phần shape validation của (1), (4) một metadata admin API. Sub-project 1 đã có spec viết sẵn: `docs/low-code-metadata-storage-design.md`. Các quyết định phạm vi (scoping) then chốt đã được chốt ở đó: metadata authored qua DB là global (không theo từng Tenant) cho Phase A, chưa hỗ trợ Workflow (cần công việc declarative-rule của Phase B trước), và `crm.customers` không được migrate ra khỏi `*.entity.ts` như một phần của Phase A — DB storage được chứng minh trên các Entity mới trước.
 
-Objective:
+Mục tiêu:
 
-Move metadata from source code into a versioned, persisted control plane without changing the runtime execution model more than necessary.
+Chuyển metadata từ source code sang một control plane có versioning, được persist, mà không thay đổi runtime execution model nhiều hơn mức cần thiết.
 
 Deliverables:
 
-- metadata storage schema
-- draft/published metadata versions
+- schema lưu trữ metadata
+- các phiên bản metadata draft/published
 - metadata admin API
 - publish validation pipeline
-- rollback to previous published snapshot
-- runtime boot/load path that can read published metadata instead of only static code
+- rollback về snapshot published trước đó
+- runtime boot/load path có thể đọc metadata đã publish thay vì chỉ đọc static code
 
-Key principle:
+Nguyên tắc then chốt:
 
-Keep the existing `MetadataCompiler`, `CrudService`, `QueryPlanner`, `WorkflowEngine`, and `PermissionService` as the execution core. Replace the metadata source, not the engine.
+Giữ nguyên `MetadataCompiler`, `CrudService`, `QueryPlanner`, `WorkflowEngine`, và `PermissionService` hiện có làm execution core. Thay thế nguồn metadata, không thay thế engine.
 
-Likely design shape:
+Hình dạng thiết kế dự kiến:
 
-- new metadata tables
+- các bảng metadata mới
 - `published_metadata_versions`
 - `draft_metadata_changes`
-- loader service that materializes runtime `EntityDefinition`-like structures
+- loader service hiện thực hóa các cấu trúc kiểu `EntityDefinition` cho runtime
 
-Exit criteria:
+Tiêu chí hoàn thành (exit criteria):
 
-- a developer can define an entity without editing `*.entity.ts`
-- the server can validate and publish that metadata safely
-- the generated CRUD/list/form experience still works from published metadata
+- một lập trình viên có thể định nghĩa một Entity mà không cần chỉnh sửa `*.entity.ts`
+- server có thể validate và publish metadata đó một cách an toàn
+- trải nghiệm CRUD/list/form được sinh tự động vẫn hoạt động từ metadata đã publish
 
-## Phase B: Builder UI and Safe Runtime Rules
+## Phase B: Builder UI và Safe Runtime Rules
 
-Objective:
+Mục tiêu:
 
-Give operators a usable authoring surface and remove the remaining code-only configuration seams that block low-code adoption.
+Cung cấp cho operator một bề mặt authoring dùng được, và loại bỏ các điểm cấu hình chỉ-bằng-code còn lại đang cản trở việc áp dụng low-code.
 
 Deliverables:
 
@@ -213,115 +213,115 @@ Deliverables:
 - declarative workflow guard model
 - publish preview / validation report
 
-Key principle:
+Nguyên tắc then chốt:
 
-Do not introduce arbitrary scripting yet.
+Chưa đưa vào scripting tùy ý.
 
-Instead:
+Thay vào đó:
 
-- support condition builders
-- support a catalog of built-in field types and rule operators
-- support a small set of built-in actions and transitions
+- hỗ trợ condition builder
+- hỗ trợ một catalog các field type và rule operator built-in
+- hỗ trợ một tập nhỏ các action và transition built-in
 
-This keeps V1 safe, operable, and testable.
+Điều này giữ cho V1 an toàn, vận hành được, và kiểm thử được.
 
-Exit criteria:
+Tiêu chí hoàn thành:
 
-- an advanced admin can create and publish a simple CRM-style app from the UI
-- no source code changes are required for the standard path
-- permission and workflow behavior remain server-enforced
+- một admin nâng cao có thể tạo và publish một app kiểu CRM đơn giản từ UI
+- không cần thay đổi source code cho luồng chuẩn (standard path)
+- hành vi permission và Workflow vẫn được thực thi (enforced) phía server
 
-## Phase C: Platform Hardening for Real Low-code Use
+## Phase C: Củng cố Platform cho việc sử dụng Low-code thực tế
 
-Objective:
+Mục tiêu:
 
-Make the low-code system governable enough to run real tenant-facing apps.
+Làm cho hệ thống low-code đủ khả năng quản trị (governable) để chạy các app tenant-facing thực sự.
 
 Deliverables:
 
-- metadata audit log
-- publish approval workflow if needed
-- tenant-level schema isolation rules
-- migration impact checks for destructive metadata changes
-- stronger rollback and recovery tooling
-- operational visibility for metadata publish events
-- import/export of app definitions
+- audit log cho metadata
+- publish approval workflow nếu cần
+- quy tắc cô lập schema ở cấp Tenant
+- kiểm tra tác động migration cho các thay đổi metadata mang tính phá hủy (destructive)
+- công cụ rollback và recovery mạnh mẽ hơn
+- khả năng quan sát vận hành (operational visibility) cho các sự kiện publish metadata
+- import/export định nghĩa app
 
-Optional V1.5 candidates, only if demand is real:
+Các ứng viên V1.5 tùy chọn, chỉ khi nhu cầu là thực sự:
 
 - computed fields
 - integration actions
 - event-driven automations
 - templated app starters
 
-Exit criteria:
+Tiêu chí hoàn thành:
 
-- metadata changes are auditable
-- publish operations are reversible
-- operators can understand and recover from bad metadata releases
-- tenants can safely run different app definitions on the same platform core
+- các thay đổi metadata có thể audit được
+- các thao tác publish có thể đảo ngược (reversible)
+- operator có thể hiểu và khôi phục sau các bản release metadata lỗi
+- các Tenant có thể chạy an toàn các định nghĩa app khác nhau trên cùng một platform core
 
-## What Not To Do Too Early
+## Những điều không nên làm quá sớm
 
-To keep this effort realistic, avoid these traps:
+Để giữ cho nỗ lực này thực tế, cần tránh các cạm bẫy sau:
 
-### 1. Do not add arbitrary end-user scripting first
+### 1. Không thêm scripting tùy ý cho end user trước tiên
 
-That would create:
+Điều đó sẽ tạo ra:
 
-- security risk
-- debugging complexity
-- operability problems
-- unclear execution guarantees
+- rủi ro bảo mật
+- độ phức tạp khi debug
+- vấn đề vận hành
+- các đảm bảo thực thi (execution guarantee) không rõ ràng
 
-Start with declarative rules and a bounded action catalog.
+Hãy bắt đầu với declarative rule và một action catalog có giới hạn.
 
-### 2. Do not build a generic drag-and-drop page builder first
+### 2. Không xây dựng một generic drag-and-drop page builder trước tiên
 
-Metap's real advantage today is:
+Lợi thế thực sự của Metap hiện nay là:
 
-- metadata-driven business entities
-- server-side enforcement
-- generated business UI
+- các business Entity điều khiển bởi metadata
+- việc thực thi (enforcement) phía server
+- UI nghiệp vụ được sinh tự động
 
-A page-builder-first direction would pull attention away from the platform's strongest core.
+Một hướng đi page-builder-first sẽ kéo sự chú ý ra khỏi phần core mạnh nhất của platform.
 
-### 3. Do not bypass the existing server-side engine
+### 3. Không bỏ qua (bypass) execution engine phía server hiện có
 
-The current runtime already has valuable guarantees:
+Runtime hiện tại đã có sẵn những đảm bảo giá trị:
 
-- tenant scope
+- Tenant scope
 - permission enforcement
 - optimistic locking
-- outbox-backed business events
+- các business event dựa trên Outbox pattern
 
-The low-code direction should reuse those guarantees, not recreate them in a parallel stack.
+Hướng đi low-code nên tái sử dụng những đảm bảo đó, không nên tái tạo lại chúng trong một stack song song.
 
-## Concrete Near-term Recommendations
+## Khuyến nghị cụ thể trong ngắn hạn
 
-If the project wants to preserve the option of becoming a low-code platform cleanly, the next architecture steps should be:
+Nếu dự án muốn giữ lại một cách "sạch" lựa chọn trở thành một low-code platform, các bước kiến trúc tiếp theo nên là:
 
-1. ~~Tighten permission defaults so the control plane will inherit a safer runtime.~~ **Done (2026-08-02)** — `PermissionService.scopedTenant` now fails loudly instead of silently defaulting a missing tenant; see `docs/architectures/08-cross-cutting.md#multi-tenancy`. The broader RBAC/ABAC "allow when no policy exists" model is a deliberate Phase 3 design choice (opt-in restriction, not default-deny), not something this fix touched — revisit only if the control plane specifically needs default-deny.
-2. ~~Introduce a shared public contract package for metadata DTOs.~~ **Done (2026-08-02), different shape than proposed here** — instead of a hand-maintained `packages/contracts` package, the backend documents its entity-metadata wire contract as part of its OpenAPI doc (`GET /metadata/openapi.json`), and `packages/platform-react`'s types are generated from it via `openapi-typescript` (`pnpm --filter @metap/platform-react generate:types`). See `docs/architectures/09-adr.md`.
-3. Design persisted metadata storage and publish semantics. **Spec written, not implemented** — `docs/low-code-metadata-storage-design.md` (Phase 11 sub-project 1). That spec predates the 2026-08-07 decision to move `packages/core` to Rust (`docs/rust-core-viability.md`); its data model/service contract still apply, but implementation should target Rust, not the TS file paths it names — see that spec's own status note.
-4. ~~Refactor workflow guards toward declarative rule support, even if TypeScript guards remain temporarily.~~ **Done, in the Rust port only (2026-08-07)** — `crates/metap-metadata`'s `WorkflowTransition.guard` is a `metap_permission::PolicyCondition`, not a function, from the start (see `entity.rs`'s doc comment in that crate). The deployed TS system's guards (`WorkflowTransition.guard: (data, context) => true | string` in `entity.ts`) are unchanged and still function-based — this item is only resolved once/if the Rust core actually replaces the running TS system, not yet.
-5. Separate runtime app startup from maintenance concerns such as index reconcile where useful for future control-plane operation. Tracked but not yet done — see `docs/architectures/11-risks.md`. Still true in the Rust port too: `apps/crm-server`'s boot sequence runs `metadata_drift::check`/`index_reconciler::reconcile` inline before serving, same shape as `app.ts`'s `buildApp`, not separated.
+1. ~~Siết chặt các permission default để control plane thừa hưởng một runtime an toàn hơn.~~ **Đã hoàn thành (2026-08-02)** — `PermissionService.scopedTenant` giờ đây báo lỗi rõ ràng (fail loudly) thay vì âm thầm mặc định một Tenant bị thiếu; xem `docs/architectures/08-cross-cutting.md#multi-tenancy`. Mô hình RBAC/ABAC "allow when no policy exists" (cho phép khi không có policy nào) rộng hơn là một lựa chọn thiết kế cố ý của Phase 3 (opt-in restriction, không phải default-deny), không phải là thứ mà fix này đụng tới — chỉ xem xét lại nếu control plane thực sự cần default-deny.
+2. ~~Giới thiệu một shared public contract package cho các metadata DTO.~~ **Đã hoàn thành (2026-08-02), theo hình dạng khác so với đề xuất ở đây** — thay vì một package `packages/contracts` được bảo trì thủ công, backend tài liệu hóa wire contract của entity-metadata như một phần của tài liệu OpenAPI (`GET /metadata/openapi.json`), và các type của `packages/platform-react` được sinh từ đó thông qua `openapi-typescript` (`pnpm --filter @metap/platform-react generate:types`). Xem `docs/architectures/09-adr.md`.
+3. Thiết kế persisted metadata storage và publish semantics. **Đã viết spec, chưa triển khai** — `docs/low-code-metadata-storage-design.md` (Phase 11, sub-project 1). Spec đó có trước quyết định ngày 2026-08-07 về việc chuyển `packages/core` sang Rust (`docs/rust-core-viability.md`); data model/service contract của nó vẫn còn áp dụng, nhưng phần triển khai nên nhắm tới Rust, không phải các đường dẫn file TS mà nó đề cập — xem ghi chú trạng thái của chính spec đó.
+4. ~~Refactor workflow guard hướng tới hỗ trợ declarative rule, ngay cả khi các guard TypeScript vẫn còn tồn tại tạm thời.~~ **Đã hoàn thành, chỉ trong bản Rust port (2026-08-07)** — `WorkflowTransition.guard` của `crates/metap-metadata` là một `metap_permission::PolicyCondition`, không phải một hàm, ngay từ đầu (xem doc comment của `entity.rs` trong crate đó). Các guard của hệ thống TS đang được triển khai (`WorkflowTransition.guard: (data, context) => true | string` trong `entity.ts`) không thay đổi và vẫn dựa trên hàm — mục này chỉ được coi là giải quyết xong một khi/nếu Rust core thực sự thay thế hệ thống TS đang chạy, hiện vẫn chưa.
+5. Tách riêng runtime app startup khỏi các mối quan tâm về bảo trì như index reconcile, ở những nơi hữu ích cho việc vận hành control-plane trong tương lai. Đã được theo dõi nhưng chưa thực hiện — xem `docs/architectures/11-risks.md`. Điều này vẫn đúng ở bản Rust port: boot sequence của `apps/crm-server` chạy `metadata_drift::check`/`index_reconciler::reconcile` inline trước khi serve, cùng hình dạng với `buildApp` của `app.ts`, chưa được tách riêng.
 
-## Bottom Line
+## Kết luận
 
-Metap already has the right foundation for a low-code platform:
+Metap đã có sẵn nền tảng đúng đắn cho một low-code platform:
 
-- metadata as the source of behavior
-- generic runtime services
-- reusable generated UI
-- explicit service boundaries
+- metadata như nguồn gốc của hành vi (behavior)
+- các runtime service tổng quát
+- UI được sinh tự động có thể tái sử dụng
+- các ranh giới service rõ ràng (explicit service boundaries)
 
-The real transition is not "build more CRUD."
+Sự chuyển đổi thực sự không phải là "xây thêm nhiều CRUD hơn."
 
-It is:
+Mà là:
 
-> move from developer-authored metadata in code to operator-authored metadata with safe persistence, validation, publishing, and governance.
+> chuyển từ metadata được authored bởi lập trình viên trong code sang metadata được authored bởi operator với khả năng persist, validate, publish, và governance an toàn.
 
-If that transition is done well, Metap can evolve into a credible low-code platform without discarding its current architecture.
+Nếu quá trình chuyển đổi đó được thực hiện tốt, Metap có thể tiến hóa thành một low-code platform đáng tin cậy mà không cần từ bỏ kiến trúc hiện tại của nó.
 
-Low-code is therefore best understood as the higher destination above today's metadata-driven core, and this document is one practical route toward that destination.
+Vì vậy, low-code nên được hiểu là đích đến cao hơn, nằm phía trên metadata-driven core hiện nay, và tài liệu này là một lộ trình thực tế hướng tới đích đến đó.

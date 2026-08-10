@@ -1,8 +1,8 @@
 # 6. Runtime View
 
-## Concurrency: two independent processes
+## Concurrency: hai process độc lập
 
-The API Server and the Outbox Publisher are connected only through PostgreSQL (the transactional outbox) and RabbitMQ — never a direct call. The sequence below shows a `create()` request (API Server process) and the Outbox Publisher's polling loop (separate process) running concurrently. (Kruchten 4+1's Process View.)
+API Server và Outbox Publisher chỉ kết nối với nhau qua PostgreSQL (transactional outbox) và RabbitMQ — không bao giờ gọi trực tiếp lẫn nhau. Sequence diagram bên dưới mô tả một request `create()` (process API Server) chạy song song với vòng lặp polling của Outbox Publisher (process riêng biệt). (Process View của Kruchten 4+1.)
 
 ```mermaid
 sequenceDiagram
@@ -36,14 +36,14 @@ sequenceDiagram
   end
 ```
 
-If RabbitMQ is down, the loop above just keeps failing and retrying — the `create()` request already committed and returned before the loop ever runs, so API availability never depends on RabbitMQ being up.
+Nếu RabbitMQ bị down, vòng lặp trên chỉ tiếp tục fail và retry — request `create()` đã commit và trả về xong trước khi vòng lặp đó chạy, nên tính khả dụng của API không bao giờ phụ thuộc vào việc RabbitMQ có đang chạy hay không.
 
 ## Scenarios
 
-The scenarios that exercise the building blocks above, used as the basis for this codebase's live-DB e2e tests (`cargo test --workspace -- --ignored`, needs `DATABASE_URL` + a running dev Postgres/RabbitMQ). (Kruchten 4+1's "+1" — the scenarios that validate the other views.)
+Các scenario dùng để kiểm chứng những building block ở trên, làm cơ sở cho các e2e test chạy trên DB thật của codebase này (`cargo test --workspace -- --ignored`, cần `DATABASE_URL` + một Postgres/RabbitMQ dev đang chạy). (Phần "+1" của Kruchten 4+1 — các scenario dùng để xác thực những view còn lại.)
 
-- **Create a record** — `CrudService` → `PermissionService` → workflow fns → outbox `enqueue`, one PostgreSQL transaction. Sequence: above.
-- **Update with a stale version** — same path as create, but `CrudService::update`'s `WHERE version = $expected_version` matches zero rows, returning `409 version_conflict` instead of silently overwriting a concurrent write.
-- **Workflow transition** — `find_transition` + `run_guard` (a `PolicyCondition` evaluation) gate the state change; on success, an append-only `workflow_events` row is written and a `<entity>.workflow.transitioned` outbox event enqueued in the same transaction as the create scenario.
-- **List with filter, full-text search, and keyset pagination** — exercises `plan_list` end-to-end: metadata-constrained filters, the `searchMode: "fts"` branch, the record-level policy `WHERE` clause, and a cursor validated against the resolved sort — all ANDed into one query against the indexes `IndexReconciler` maintains.
-- **Admin grants a role** — `POST /admin/users/{userId}/roles` (admin-gated, `crates/metap-http/src/routes/admin.rs`) writes a `user_roles` row via `metap_peripherals::assign_role`; the next request from that user picks up the new role immediately (roles are read fresh per request, never cached in the JWT).
+- **Tạo một record** — `CrudService` → `PermissionService` → workflow fns → outbox `enqueue`, gói gọn trong một transaction PostgreSQL. Sequence: như trên.
+- **Update với version đã lỗi thời** — cùng luồng như create, nhưng `WHERE version = $expected_version` của `CrudService::update` khớp 0 dòng, trả về `409 version_conflict` thay vì âm thầm ghi đè lên một write đang diễn ra đồng thời.
+- **Workflow transition** — `find_transition` + `run_guard` (một phép đánh giá `PolicyCondition`) gác cổng cho việc đổi state; khi thành công, một dòng `workflow_events` dạng append-only được ghi và một outbox event `<entity>.workflow.transitioned` được enqueue trong cùng transaction với scenario create.
+- **List có filter, full-text search, và keyset pagination** — thực thi toàn bộ `plan_list`: filter bị ràng buộc bởi metadata, nhánh `searchMode: "fts"`, mệnh đề `WHERE` của policy ở mức record, và một cursor được kiểm tra khớp với sort đã resolve — tất cả được AND lại thành một query duy nhất, chạy trên các index mà `IndexReconciler` duy trì.
+- **Admin cấp một role** — `POST /admin/users/{userId}/roles` (chỉ admin mới gọi được, `crates/metap-http/src/routes/admin.rs`) ghi một dòng `user_roles` qua `metap_peripherals::assign_role`; request tiếp theo của user đó nhận role mới ngay lập tức (role luôn được đọc mới ở mỗi request, không bao giờ cache trong JWT).

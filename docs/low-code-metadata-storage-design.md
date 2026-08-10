@@ -1,56 +1,56 @@
-Status: written 2026-08-02, still the only spec for Phase 11 / Phase A sub-project 1
-(`docs/roadmap.md`), not yet implemented (no plan, no code). Relocated from
-`docs/superpowers/specs/` on 2026-08-07 when that directory was deleted (see
-`docs/architectures/09-adr.md`) — this is the one item under `docs/superpowers/` that
-wasn't already shipped, so its content is preserved here rather than dropped.
+Status: được viết ngày 2026-08-02, vẫn là spec duy nhất cho Phase 11 / Phase A sub-project 1
+(`docs/roadmap.md`), chưa được triển khai (không có plan, không có code). Được chuyển từ
+`docs/superpowers/specs/` vào ngày 2026-08-07 khi thư mục đó bị xóa (xem
+`docs/architectures/09-adr.md`) — đây là mục duy nhất trong `docs/superpowers/` chưa được
+ship, nên nội dung của nó được giữ lại ở đây thay vì bị bỏ đi.
 
-**Predates the 2026-08-07 decision to move `packages/core` to Rust**
-(`docs/rust-core-viability.md`). The design below (data model, draft/publish/rollback
-service contract, the three locked-in scoping decisions) is still valid — none of it is
-TypeScript-specific in substance. The concrete file paths and Zod code sample under
-"Data model"/"Service" are from the old TS layout and need re-targeting to Rust (following
-`docs/rust-core-viability.md`'s Migration Order — this sub-project belongs after step 3,
-Metadata layer) when this is actually planned and built, not taken as literal file paths
-to create.
+**Có trước quyết định ngày 2026-08-07 về việc chuyển `packages/core` sang Rust**
+(`docs/rust-core-viability.md`). Thiết kế bên dưới (data model, service contract của
+draft/publish/rollback, ba quyết định phạm vi đã chốt) vẫn còn hiệu lực — về bản chất không
+có phần nào trong đó gắn riêng với TypeScript. Các đường dẫn file cụ thể và mẫu code Zod
+trong mục "Data model"/"Service" là từ layout TS cũ và cần được nhắm lại (re-target) sang
+Rust (theo Migration Order của `docs/rust-core-viability.md` — sub-project này thuộc về sau
+bước 3, Metadata layer) khi công việc này thực sự được lên kế hoạch và xây dựng, không nên
+coi là các đường dẫn file cần tạo ra theo đúng nghĩa đen.
 
 ---
 
 # Low-code Metadata Storage & Versioning Design
 
-## Problem
+## Vấn đề
 
-Metap's stated higher destination (`docs/vision.md`) is to become a low-code platform: operators define, publish, and govern business applications from metadata, without editing source code for the standard path. `docs/low-code-platform-v1.md` already lays out a concrete, phased path — Phase A ("Metadata Control Plane Foundation"), Phase B ("Builder UI and Safe Runtime Rules"), Phase C ("Platform Hardening") — but that document is intentionally directional ("Status: exploratory"), not an implementation-ready spec.
+Đích đến cao hơn mà Metap đã tuyên bố (`docs/vision.md`) là trở thành một nền tảng low-code: người vận hành định nghĩa, publish, và quản trị các ứng dụng nghiệp vụ từ metadata, không cần sửa source code cho đường đi tiêu chuẩn. `docs/low-code-platform-v1.md` đã vạch ra một lộ trình cụ thể, chia theo phase — Phase A ("Metadata Control Plane Foundation"), Phase B ("Builder UI and Safe Runtime Rules"), Phase C ("Platform Hardening") — nhưng tài liệu đó cố tình mang tính định hướng ("Status: exploratory"), không phải một spec sẵn sàng để triển khai.
 
-This spec covers the first concrete slice of Phase A: **persisted metadata storage with draft/published versioning**, decomposed as the first of four ordered sub-projects that together deliver Phase A:
+Spec này bao phủ lát cắt cụ thể đầu tiên của Phase A: **lưu trữ metadata bền vững với draft/published versioning**, được phân rã thành sub-project đầu tiên trong bốn sub-project có thứ tự, cùng nhau tạo nên Phase A:
 
-1. **Persisted metadata storage + draft/published versioning** (this spec).
-2. Runtime loader — materialize published metadata through the existing `MetadataCompiler`/`MetadataRegistry` pipeline, proving `CrudService`/`QueryPlanner` work unchanged against DB-authored entities.
-3. Publish validation pipeline — deeper semantic validation (cross-entity reference checks against the merged code+DB registry) gating every publish/rollback, once sub-project 2's merged registry exists to check against.
-4. Metadata admin API — the HTTP surface an eventual builder UI calls.
+1. **Lưu trữ metadata bền vững + draft/published versioning** (spec này).
+2. Runtime loader — hiện thực hóa metadata đã published thông qua pipeline `MetadataCompiler`/`MetadataRegistry` sẵn có, chứng minh `CrudService`/`QueryPlanner` hoạt động không đổi với các entity được tạo từ DB (DB-authored).
+3. Publish validation pipeline — validation ngữ nghĩa sâu hơn (kiểm tra tham chiếu xuyên entity dựa trên registry gộp code+DB) chặn trước mỗi lần publish/rollback, một khi registry gộp của sub-project 2 tồn tại để kiểm tra dựa vào.
+4. Metadata admin API — bề mặt HTTP mà một builder UI trong tương lai sẽ gọi.
 
-Each sub-project gets its own spec → plan → implementation cycle, matching this project's established practice for multi-part efforts (e.g. the DB-coupling risk work, the frontend-architecture work, both done earlier in the same overall project).
+Mỗi sub-project có chu trình spec → plan → implementation riêng của nó, khớp với thông lệ đã thiết lập của dự án cho các nỗ lực nhiều phần (ví dụ: công việc về rủi ro DB-coupling, công việc về frontend-architecture, cả hai đều đã làm trước đó trong cùng dự án tổng thể).
 
-## Decisions already made (recorded here so this spec doesn't re-litigate them)
+## Các quyết định đã chốt (ghi lại ở đây để spec này không phải bàn lại)
 
-- **DB-authored entities will eventually fully replace code-authored `*.entity.ts` files** — this is the stated direction, not a permanent dual-source architecture. `crm.customers` is not migrated as part of Phase A; it keeps working as a code-authored entity while the DB-authored path is built and proven on new entities first. `MetadataRegistry` will need to merge both sources for a transition period (sub-project 2's concern), but that merge is scaffolding for the migration, not a permanent feature.
-- **Global metadata, not per-tenant, for Phase A.** DB-authored entities are managed platform-wide (one definition, visible to every tenant), matching how code-authored entities work today. Per-tenant custom entity definitions are a materially bigger architectural change (a load-once-at-boot `MetadataRegistry` would need to become dynamic/per-request) and are explicitly deferred past Phase A.
-- **No workflow support for DB-authored entities in Phase A.** `WorkflowTransition.guard` is a TypeScript function today; DB-authored entities have no code to write one in. Phase B's declarative-rule work is the prerequisite for DB-authored workflow, so Phase A's persisted definition shape has no `workflow` key at all — not even a guard-less one, to avoid shipping a half-feature that needs reshaping later.
+- **Các entity được tạo từ DB (DB-authored) cuối cùng sẽ thay thế hoàn toàn các file `*.entity.ts` được tạo từ code (code-authored)** — đây là hướng đi đã tuyên bố, không phải một kiến trúc dual-source vĩnh viễn. `crm.customers` không được migrate như một phần của Phase A; nó vẫn tiếp tục hoạt động như một code-authored entity trong khi đường DB-authored được xây dựng và chứng minh trên các entity mới trước. `MetadataRegistry` sẽ cần gộp cả hai nguồn trong một giai đoạn chuyển tiếp (thuộc phạm vi sub-project 2), nhưng việc gộp đó là scaffolding phục vụ cho quá trình migration, không phải một tính năng vĩnh viễn.
+- **Metadata toàn cục, không phải theo từng tenant, cho Phase A.** Các DB-authored entity được quản lý trên toàn platform (một định nghĩa duy nhất, hiển thị với mọi tenant), khớp với cách các code-authored entity hoạt động hiện nay. Các định nghĩa entity tùy chỉnh theo từng tenant là một thay đổi kiến trúc lớn hơn đáng kể (một `MetadataRegistry` chỉ load một lần lúc boot sẽ cần trở thành dynamic/per-request) và được hoãn lại một cách tường minh sau Phase A.
+- **Không hỗ trợ workflow cho các DB-authored entity trong Phase A.** `WorkflowTransition.guard` hiện nay là một hàm TypeScript; các DB-authored entity không có code để viết một hàm như vậy. Công việc declarative-rule của Phase B là tiền đề cho DB-authored workflow, nên hình dạng định nghĩa được lưu trữ của Phase A hoàn toàn không có key `workflow` — thậm chí không có một phiên bản không-guard, để tránh ship một tính năng nửa vời rồi phải tái định hình sau này.
 
-## Scope of this sub-project
+## Phạm vi của sub-project này
 
-**In scope:** a storage/versioning service, its DB schema, and shape-level (Zod) validation — usable and independently testable without touching `MetadataRegistry`, `buildApp`, or any HTTP route.
+**Trong phạm vi:** một storage/versioning service, DB schema của nó, và validation ở mức hình dạng (shape-level, dùng Zod) — có thể dùng được và test độc lập mà không cần đụng tới `MetadataRegistry`, `buildApp`, hay bất kỳ HTTP route nào.
 
-**Out of scope (explicitly deferred to later sub-projects):**
-- Wiring into boot/`MetadataRegistry` (sub-project 2).
-- Cross-entity reference validation (e.g. a DB-authored `"reference"`-kind field's `refEntity` pointing at a real, existing entity) — sub-project 3, once a merged registry exists to validate against.
-- Any HTTP endpoint (sub-project 4).
-- Preventing a draft's `name` from colliding with an already-registered code-authored entity name (e.g. `"crm.customers"`) — this needs `MetadataRegistry` knowledge this service deliberately doesn't have; deferred to whichever of sub-project 2/4 first has both pieces in hand.
+**Ngoài phạm vi (hoãn lại tường minh sang các sub-project sau):**
+- Đấu nối vào boot/`MetadataRegistry` (sub-project 2).
+- Validation tham chiếu xuyên entity (ví dụ: `refEntity` của một field kiểu `"reference"` DB-authored trỏ tới một entity thật, đang tồn tại) — sub-project 3, một khi có một registry gộp để validate dựa vào.
+- Bất kỳ HTTP endpoint nào (sub-project 4).
+- Ngăn `name` của một draft trùng với tên một code-authored entity đã được đăng ký (ví dụ `"crm.customers"`) — điều này cần kiến thức về `MetadataRegistry` mà service này cố tình không có; hoãn lại cho sub-project 2 hoặc 4, tùy cái nào có đủ cả hai mảnh ghép trước.
 
 ## Data model
 
-Reuses `EntityFieldSchema`/`EntityListViewSchema` (already defined in `packages/core/src/core/metadata/entity-wire-schema.ts`, already the source of truth for what crosses the wire) as the shape of a persisted definition's `fields`/`listViews` — no new, parallel field-shape modeling.
+Tái sử dụng `EntityFieldSchema`/`EntityListViewSchema` (đã được định nghĩa trong `packages/core/src/core/metadata/entity-wire-schema.ts`, vốn đã là source of truth cho những gì đi qua wire) làm hình dạng cho `fields`/`listViews` của một định nghĩa được lưu trữ — không mô hình hóa một field-shape song song, mới.
 
-**New file `packages/core/src/core/metadata/low-code-entity-schema.ts`:**
+**File mới `packages/core/src/core/metadata/low-code-entity-schema.ts`:**
 
 ```ts
 import { z } from "zod";
@@ -66,27 +66,27 @@ export const LowCodeEntityDefinitionSchema = z.object({
 export type LowCodeEntityDefinition = z.infer<typeof LowCodeEntityDefinitionSchema>;
 ```
 
-**Two new tables in `packages/core/src/infra/db/schema.ts`** (naming deliberately distinct from the existing `metadata_versions` table, which is an unrelated boot-time drift-detection cache for code-authored entities — see `MetadataDriftService` — not a versioning store):
+**Hai bảng mới trong `packages/core/src/infra/db/schema.ts`** (tên được đặt cố tình khác biệt với bảng `metadata_versions` hiện có, vốn là một cache drift-detection lúc boot không liên quan, dành cho các code-authored entity — xem `MetadataDriftService` — không phải một kho versioning):
 
-- **`low_code_entity_drafts`** — one row per entity name currently being authored. The mutable, in-progress copy; overwritten on every save.
+- **`low_code_entity_drafts`** — một dòng cho mỗi tên entity đang được biên soạn. Bản sao có thể thay đổi, đang dang dở; bị ghi đè ở mỗi lần save.
   - `entityName` (`varchar`, primary key)
-  - `definition` (`jsonb`, not null) — a `LowCodeEntityDefinition`
+  - `definition` (`jsonb`, not null) — một `LowCodeEntityDefinition`
   - `updatedAt` (`timestamp with time zone`, not null, default now)
 
-- **`low_code_entity_versions`** — append-only publish history. Rows are never updated or deleted; rollback creates a new row rather than rewriting one.
+- **`low_code_entity_versions`** — lịch sử publish chỉ-thêm-vào (append-only). Các dòng không bao giờ bị update hay xóa; rollback tạo ra một dòng mới thay vì ghi đè lên một dòng cũ.
   - `id` (`uuid`, primary key, default random)
   - `entityName` (`varchar`, not null, indexed)
-  - `definition` (`jsonb`, not null) — a `LowCodeEntityDefinition` snapshot at publish time
-  - `versionNumber` (`integer`, not null) — increments per `entityName`, starting at 1
+  - `definition` (`jsonb`, not null) — một snapshot của `LowCodeEntityDefinition` tại thời điểm publish
+  - `versionNumber` (`integer`, not null) — tăng dần theo từng `entityName`, bắt đầu từ 1
   - `publishedAt` (`timestamp with time zone`, not null, default now)
-  - `restoredFromVersion` (`integer`, nullable) — set when this version was created by a rollback, naming the version number it restored; `null` for an ordinary publish
-  - Unique constraint on `(entityName, versionNumber)`
+  - `restoredFromVersion` (`integer`, nullable) — được set khi version này được tạo ra bởi một lần rollback, ghi tên version number mà nó khôi phục; `null` với một lần publish thông thường
+  - Ràng buộc unique trên `(entityName, versionNumber)`
 
-Rollback restoring version 3 doesn't delete versions 4-5 or resurrect version 3's row — it creates version 6 with version 3's content and `restoredFromVersion: 3`, keeping history strictly append-only and audit-friendly (same "never mutate the past" instinct as this project's existing `workflow_events` append-only audit log).
+Một lần rollback khôi phục version 3 không xóa version 4-5 cũng không hồi sinh lại dòng của version 3 — nó tạo ra version 6 với nội dung của version 3 và `restoredFromVersion: 3`, giữ cho lịch sử luôn nghiêm ngặt chỉ-thêm-vào và thân thiện với audit (cùng bản năng "không bao giờ sửa đổi quá khứ" như audit log `workflow_events` append-only sẵn có của dự án).
 
 ## Service
 
-**New file `packages/core/src/core/metadata/metadata-draft-service.ts`:**
+**File mới `packages/core/src/core/metadata/metadata-draft-service.ts`:**
 
 ```ts
 export class MetadataDraftNotFoundError extends Error {}
@@ -114,35 +114,35 @@ export class MetadataDraftService {
 }
 ```
 
-Behavior:
+Hành vi:
 
-- **`saveDraft`** — validates `definition` against `LowCodeEntityDefinitionSchema` (throws Zod's own error on failure, no custom wrapper needed at this layer), then upserts into `low_code_entity_drafts` (insert-or-update on `entityName`).
-- **`getDraft`** — returns the current draft row's definition, or `undefined` if none exists (a brand-new entity with nothing saved yet).
-- **`publish`** — reads the current draft; throws `MetadataDraftNotFoundError` if there isn't one (nothing to publish). Re-validates against `LowCodeEntityDefinitionSchema` (defense in depth — a draft could in principle have been written before a schema tightening). Computes the next `versionNumber` as `1 + (max existing versionNumber for this entityName, or 0)`, inserts a new `low_code_entity_versions` row with `restoredFromVersion: null`, and returns the new version number. Does not clear or modify the draft row — draft and the newly-published version are identical content immediately after publish, which is the correct "no pending changes" state; further edits diverge from there naturally.
-- **`rollback`** — reads the target `(entityName, toVersionNumber)` version row; throws `MetadataDraftNotFoundError` if it doesn't exist. Upserts its definition into the draft row (so an eventual builder UI shows the restored content as the live draft), computes the next `versionNumber` the same way `publish` does (continuing the monotonic sequence — rollback never reuses or rewinds a version number), and inserts a new version row with `restoredFromVersion: toVersionNumber`.
-- **`getPublished`** — the highest-`versionNumber` row for `entityName`, or `undefined` if never published.
-- **`listVersions`** — all versions for `entityName`, ordered newest-first, for an eventual history/rollback UI.
+- **`saveDraft`** — validate `definition` dựa trên `LowCodeEntityDefinitionSchema` (ném ra lỗi gốc của Zod khi thất bại, không cần một wrapper tùy chỉnh ở tầng này), sau đó upsert vào `low_code_entity_drafts` (insert-or-update theo `entityName`).
+- **`getDraft`** — trả về `definition` của dòng draft hiện tại, hoặc `undefined` nếu chưa có (một entity hoàn toàn mới chưa được lưu gì).
+- **`publish`** — đọc draft hiện tại; ném ra `MetadataDraftNotFoundError` nếu không có draft nào (không có gì để publish). Validate lại dựa trên `LowCodeEntityDefinitionSchema` (defense in depth — về nguyên tắc một draft có thể đã được ghi trước khi schema bị siết chặt hơn). Tính `versionNumber` tiếp theo là `1 + (versionNumber lớn nhất hiện có cho entityName này, hoặc 0)`, chèn một dòng `low_code_entity_versions` mới với `restoredFromVersion: null`, và trả về version number mới. Không xóa hay sửa dòng draft — draft và version vừa được publish có nội dung giống hệt nhau ngay sau khi publish, đây chính là trạng thái "không có thay đổi đang chờ" đúng đắn; các chỉnh sửa tiếp theo sẽ tự nhiên phân kỳ từ đó.
+- **`rollback`** — đọc dòng version đích `(entityName, toVersionNumber)`; ném ra `MetadataDraftNotFoundError` nếu nó không tồn tại. Upsert `definition` của dòng đó vào dòng draft (để một builder UI trong tương lai hiển thị nội dung đã khôi phục như draft đang sống), tính `versionNumber` tiếp theo theo đúng cách `publish` làm (tiếp tục chuỗi tăng dần đơn điệu — rollback không bao giờ dùng lại hay tua lùi một version number), và chèn một dòng version mới với `restoredFromVersion: toVersionNumber`.
+- **`getPublished`** — dòng có `versionNumber` cao nhất cho `entityName`, hoặc `undefined` nếu chưa từng được publish.
+- **`listVersions`** — tất cả các version của `entityName`, sắp xếp mới nhất trước, phục vụ một UI lịch sử/rollback trong tương lai.
 
-No cross-entity validation (e.g. checking a `"reference"`-kind field's `refEntity` names a real entity) happens here — `saveDraft`/`publish` only validate the shape of the definition being saved in isolation. Sub-project 3 layers the deeper, registry-aware validation on top of `publish`/`rollback` once a merged registry exists to validate against (sub-project 2).
+Không có validation xuyên entity nào (ví dụ kiểm tra `refEntity` của một field kiểu `"reference"` có đặt tên một entity thật) diễn ra ở đây — `saveDraft`/`publish` chỉ validate hình dạng của `definition` đang được lưu một cách độc lập. Sub-project 3 sẽ đặt lớp validation sâu hơn, có nhận biết registry, lên trên `publish`/`rollback` một khi có một registry gộp để validate dựa vào (sub-project 2).
 
 ## Testing
 
-TDD, following this project's established backend discipline (failing test first, verified red, then implementation, verified green) and its integration-test conventions (real Postgres via the existing test DB setup, not mocks — this project's tests consistently hit a real database).
+TDD, theo đúng kỷ luật backend đã thiết lập của dự án (viết test thất bại trước, xác nhận đỏ, rồi mới implement, xác nhận xanh) và các quy ước integration-test của nó (dùng Postgres thật qua test DB setup sẵn có, không dùng mock — các test của dự án này luôn nhất quán chạm vào một database thật).
 
-`packages/core/src/core/metadata/metadata-draft-service.test.ts` — new file, covering:
-- `saveDraft` then `getDraft` round-trips the definition.
-- `saveDraft` with an invalid shape (e.g. a field missing `kind`) rejects via the Zod schema.
-- `publish` with no draft throws `MetadataDraftNotFoundError`.
-- `publish` after `saveDraft` creates version 1; a second `publish` after another `saveDraft` creates version 2.
-- `getPublished` returns the latest version's content and number.
-- `listVersions` returns all versions, newest first.
-- `rollback` to a nonexistent version throws `MetadataDraftNotFoundError`.
-- `rollback` to an existing older version creates a new version with `restoredFromVersion` set to the target, and updates the draft to match.
+`packages/core/src/core/metadata/metadata-draft-service.test.ts` — file mới, bao phủ:
+- `saveDraft` rồi `getDraft` round-trip đúng `definition`.
+- `saveDraft` với một hình dạng không hợp lệ (ví dụ một field thiếu `kind`) bị từ chối bởi Zod schema.
+- `publish` khi không có draft ném ra `MetadataDraftNotFoundError`.
+- `publish` sau `saveDraft` tạo ra version 1; một lần `publish` thứ hai sau một `saveDraft` khác tạo ra version 2.
+- `getPublished` trả về nội dung và số hiệu của version mới nhất.
+- `listVersions` trả về tất cả các version, mới nhất trước.
+- `rollback` tới một version không tồn tại ném ra `MetadataDraftNotFoundError`.
+- `rollback` tới một version cũ hơn đang tồn tại tạo ra một version mới với `restoredFromVersion` được set thành version đích, và cập nhật draft khớp với nó.
 
 ## File summary
 
 - Create: `packages/core/src/core/metadata/low-code-entity-schema.ts`
 - Create: `packages/core/src/core/metadata/metadata-draft-service.ts`
 - Create: `packages/core/src/core/metadata/metadata-draft-service.test.ts`
-- Modify: `packages/core/src/infra/db/schema.ts` (add `lowCodeEntityDrafts`, `lowCodeEntityVersions` tables)
-- Generated: a new Drizzle migration (`pnpm db:generate` + `pnpm db:migrate`, `packages/core`'s established workflow)
+- Modify: `packages/core/src/infra/db/schema.ts` (thêm các bảng `lowCodeEntityDrafts`, `lowCodeEntityVersions`)
+- Generated: một migration Drizzle mới (`pnpm db:generate` + `pnpm db:migrate`, quy trình đã thiết lập của `packages/core`)

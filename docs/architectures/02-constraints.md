@@ -1,23 +1,24 @@
-# 2. Architecture Constraints
+# 2. Ràng buộc Kiến trúc
 
-## Technical Constraints
+## Ràng buộc Kỹ thuật
 
-- **Stack is fixed**: Rust (axum + sqlx) + PostgreSQL + RabbitMQ (outbox pattern). See `docs/why.md` for the reasoning behind the choices that predate the Rust migration (PostgreSQL, RabbitMQ, the outbox pattern) and `docs/rust-core-viability.md` for the decision to move the execution engine itself from TypeScript/Fastify/Zod/Drizzle to Rust/axum/sqlx — not repeated here.
-- **A recent stable Rust toolchain**, no pinned MSRV yet; workspace edition 2021 (`Cargo.toml`'s `resolver = "2"`). No CommonJS/ESM concerns on the backend — that constraint applies only to the frontend (`apps/crm-fe`/`packages/platform-react`, Node >=24.15.0, ESM throughout).
-- **One generic `records` table**, not per-entity tables. Every business entity's data lives in `records.data jsonb`; there is no schema migration per new entity, only a new entity-definition Rust module (see `apps/crm-server/src/customer_entity.rs`). See [05. Building Block View](05-building-blocks.md#data-model).
-- **PostgreSQL is the only datastore.** No Redis/cache layer, no separate search engine (full-text search is Postgres `tsvector`/GIN, not Elasticsearch).
-- **RabbitMQ is the only message broker** for outbound events — no Kafka, no SNS/SQS. (`metap-infra::EventBus` is a trait with one implementation, `RabbitEventBus`; see [05. Building Block View](05-building-blocks.md#event-bus) — this is an existing seam, not a plan to add a second broker.)
+- **Stack đã cố định**: Rust (axum + sqlx) + PostgreSQL + RabbitMQ (outbox pattern). Xem `docs/why.md` để biết lý do đằng sau các lựa chọn có từ trước khi migrate sang Rust (PostgreSQL, RabbitMQ, outbox pattern) và `docs/rust-core-viability.md` để biết quyết định chuyển execution engine từ TypeScript/Fastify/Zod/Drizzle sang Rust/axum/sqlx — không nhắc lại ở đây.
+- **Một Rust toolchain stable gần đây**, chưa pin MSRV; workspace dùng edition 2021 (`resolver = "2"` trong `Cargo.toml`). Không có vấn đề CommonJS/ESM ở backend — ràng buộc đó chỉ áp dụng cho frontend (`apps/crm-fe`/`packages/platform-react`, Node >=24.15.0, ESM xuyên suốt).
+- **Một bảng `records` generic duy nhất**, không có bảng riêng cho từng entity. Dữ liệu của mọi business entity nằm trong `records.data jsonb`; không có schema migration cho mỗi entity mới, chỉ cần một entity-definition Rust module mới (xem `apps/crm-server/src/customer_entity.rs`). Xem [05. Building Block View](05-building-blocks.md#data-model).
+- **PostgreSQL là datastore duy nhất.** Không có Redis/cache layer, không có search engine riêng (full-text search dùng Postgres `tsvector`/GIN, không dùng Elasticsearch).
+- **RabbitMQ là message broker duy nhất** cho các outbound event — không dùng Kafka, không dùng SNS/SQS. (`metap-infra::EventBus` là một trait với một implementation duy nhất, `RabbitEventBus`; xem [05. Building Block View](05-building-blocks.md#event-bus) — đây là một seam đã có sẵn, không phải kế hoạch thêm broker thứ hai.)
 
-## Organizational Constraints
+## Ràng buộc Tổ chức
 
-- **Non-trivial architectural decisions are recorded**, not just coded silently — see [09. Architecture Decisions](09-adr.md), this project's decision log. (Until 2026-08-07 this ran through a formal spec → plan → implementation cycle under `docs/superpowers/{specs,plans}/`; that directory was removed to cut ceremony/context overhead, and decisions are now recorded directly in `09-adr.md` or the relevant `docs/*.md` file instead.)
-- **`docs/roadmap.md` is the single source of truth for what phase the project is in** — this document describes the architecture of what has actually shipped, cross-referencing roadmap phases where relevant, not a target that hasn't been built.
-- **Trigger-based evolution**: speculative infrastructure (dedicated per-entity tables, a report/analytics query path) is not built ahead of a concrete trigger. The one deliberate exception: the workspace/module-packaging split (`crates/metap-*` + `apps/<consumer>`) was pulled forward ahead of its originally-documented trigger (a real second module) — see [04. Solution Strategy](04-strategy.md) and [11. Risks and Technical Debt](11-risks.md).
+- **Các quyết định kiến trúc không tầm thường đều được ghi lại**, không chỉ code âm thầm — xem [09. Architecture Decisions](09-adr.md), decision log của dự án. (Đến trước 2026-08-07, việc này đi qua một chu trình formal spec → plan → implementation dưới `docs/superpowers/{specs,plans}/`; thư mục đó đã bị xóa để giảm ceremony/context overhead, và các quyết định giờ được ghi trực tiếp vào `09-adr.md` hoặc file `docs/*.md` liên quan.)
+- **`docs/roadmap.md` là single source of truth cho biết dự án đang ở phase nào** — tài liệu này mô tả kiến trúc của những gì đã thực sự được ship, có tham chiếu chéo tới các roadmap phase khi liên quan, không phải một mục tiêu chưa được xây dựng.
+- **Tiến hóa theo trigger (trigger-based evolution)**: hạ tầng mang tính speculative (bảng riêng cho từng entity, một report/analytics query path) không được xây trước khi có một trigger cụ thể. Ngoại lệ có chủ ý duy nhất: việc tách workspace/module-packaging (`crates/metap-*` + `apps/<consumer>`) đã được đẩy lên sớm hơn trigger đã tài liệu hóa ban đầu của nó (một second module thực sự) — xem [04. Solution Strategy](04-strategy.md) và [11. Risks and Technical Debt](11-risks.md).
+- **Việc sở hữu module (module ownership) và định tuyến review giữa các track**, cho thời điểm repo này không còn do một người duy trì nữa, được theo dõi tại `docs/team-charter.md` thay vì ở đây — tài liệu đó cũng chia các roadmap phase còn lại thành các work stream có thể chạy song song. `docs/CONTRIBUTING.md` bao quát quy trình đóng góp mang tính cơ học (branching, các check bắt buộc).
 
-## Conventions (binding, from `CLAUDE.md`)
+## Quy ước (bắt buộc, theo `CLAUDE.md`)
 
-- Route/handler code must not import `sqlx`/`lapin` directly — go through `CrudService` (`metap-crud`) / `metap-infra`'s `EventBus`.
-- Frontend/client query input must never map directly to SQL operators — it goes through `QueryPlanner` (`metap-query`), constrained by entity metadata.
-- Workflow side effects are emitted through the outbox, never published to RabbitMQ directly from a service.
-- Every business route assumes tenant scope.
-- No `metap-*` library crate gets business-entity knowledge — that's `apps/crm-server`'s job (or a future second binary's).
+- Code route/handler không được import `sqlx`/`lapin` trực tiếp — phải đi qua `CrudService` (`metap-crud`) / `EventBus` của `metap-infra`.
+- Query input từ frontend/client không bao giờ được map trực tiếp sang SQL operator — nó phải đi qua `QueryPlanner` (`metap-query`), bị ràng buộc bởi entity metadata.
+- Các workflow side effect được emit qua outbox, không bao giờ publish trực tiếp lên RabbitMQ từ một service.
+- Mọi business route đều giả định có tenant scope.
+- Không có `metap-*` library crate nào được biết về business entity — đó là việc của `apps/crm-server` (hoặc một binary thứ hai trong tương lai).

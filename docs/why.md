@@ -1,80 +1,86 @@
-# Why This Stack
+# Vì sao chọn stack này
 
-Chosen stack (still what's actually deployed — the TS/Node stack this doc explains):
+Stack đã chọn (vẫn là stack đang thực sự được deploy — stack TS/Node mà tài liệu này giải thích):
 
 ```txt
 Fastify + Zod + Drizzle + PostgreSQL + RabbitMQ + Outbox Pattern
 ```
 
-**2026-08-07:** `packages/core` is now decided to move to Rust (`docs/rust-core-viability.md`),
-which reuses the same PostgreSQL/RabbitMQ/outbox-pattern choices below unchanged — only
-`Fastify`/`Zod`/`Drizzle` (the framework/validation/ORM layer) are being replaced (with
-`axum`/hand-rolled validation from field metadata/`sqlx`, respectively). This document's
-reasoning for those three is historical context for why they were chosen originally, not a
-still-open comparison.
+**2026-08-07:** `packages/core` hiện đã được quyết định chuyển sang Rust
+(`docs/rust-core-viability.md`), việc này tái sử dụng nguyên vẹn các lựa chọn
+PostgreSQL/RabbitMQ/outbox pattern bên dưới — chỉ có `Fastify`/`Zod`/`Drizzle` (lớp
+framework/validation/ORM) bị thay thế (lần lượt bằng `axum`/validation viết tay dựa trên field
+metadata/`sqlx`). Phần lý giải của tài liệu này cho ba lựa chọn đó là bối cảnh lịch sử cho lý do
+chúng được chọn ban đầu, không phải một so sánh còn đang mở.
 
-## Why Fastify
+## Vì sao chọn Fastify
 
-Fastify is a good fit for a metadata-driven ERP core because it is:
+Fastify là lựa chọn phù hợp cho một metadata-driven ERP core vì nó:
 
-- fast at runtime
-- light at startup
-- explicit
-- plugin-friendly
-- less ceremonial than NestJS
-- easier to keep close to the platform architecture
+- nhanh khi chạy runtime
+- khởi động nhẹ
+- explicit (tường minh)
+- thân thiện với plugin
+- ít nghi thức (ceremony) hơn NestJS
+- dễ giữ sát với kiến trúc platform hơn
 
-NestJS is productive, but it adds decorators, reflection, module ceremony, and build/runtime overhead. Metap should keep framework overhead low and put architecture in our own core modules.
+NestJS có năng suất tốt, nhưng nó thêm vào decorator, reflection, nghi thức module, và overhead
+khi build/runtime. Metap nên giữ overhead của framework ở mức thấp và đặt kiến trúc vào các core
+module của riêng mình.
 
-## Why Zod
+## Vì sao chọn Zod
 
-Zod is familiar and readable for TypeScript teams.
+Zod quen thuộc và dễ đọc đối với các team TypeScript.
 
-Use it for:
+Dùng nó cho:
 
-- environment config validation
-- route payload validation
-- entity metadata input schemas
-- generated API docs through JSON schema conversion
+- validate environment config
+- validate route payload
+- schema input cho entity metadata
+- sinh API docs thông qua chuyển đổi sang JSON schema
 
-TypeBox is faster for JSON schema-first apps, but Zod is easier to onboard and flexible enough for this phase.
+TypeBox nhanh hơn cho các app theo hướng JSON schema-first, nhưng Zod dễ onboard hơn và đủ linh
+hoạt cho giai đoạn này.
 
-## Why Drizzle
+## Vì sao chọn Drizzle
 
-Drizzle is selected over Prisma because this ERP core needs:
+Drizzle được chọn thay vì Prisma vì ERP core này cần:
 
-- fast build and runtime
-- low magic
-- SQL-friendly design
-- strong TypeScript inference
-- good PostgreSQL support
-- easy JSONB usage
-- direct control of query shape
+- build và runtime nhanh
+- ít "magic"
+- thiết kế thân thiện với SQL
+- suy luận kiểu TypeScript mạnh
+- hỗ trợ PostgreSQL tốt
+- dễ dùng JSONB
+- kiểm soát trực tiếp hình dạng query
 
-Prisma is still a good choice for teams that want maximum onboarding comfort. The tradeoff is heavier generated client/runtime and less direct SQL control for complex ERP reports.
+Prisma vẫn là lựa chọn tốt cho các team muốn tối đa sự thoải mái khi onboard. Đánh đổi là
+generated client/runtime nặng hơn và ít kiểm soát SQL trực tiếp hơn cho các báo cáo ERP phức tạp.
 
-Drizzle fits the target better: productive, but close enough to SQL that performance tuning remains straightforward.
+Drizzle phù hợp hơn với mục tiêu: có năng suất, nhưng vẫn đủ gần với SQL để việc tuning hiệu năng
+luôn đơn giản.
 
-## Why PostgreSQL
+## Vì sao chọn PostgreSQL
 
-PostgreSQL is the system of record.
+PostgreSQL là system of record.
 
-Compared with MongoDB, it gives stronger support for:
+So với MongoDB, nó hỗ trợ tốt hơn cho:
 
-- transactions
-- constraints
-- relational integrity
-- reporting SQL
-- row locks
-- indexes
-- materialized views
-- JSONB for dynamic metadata fields
+- transaction
+- constraint
+- tính toàn vẹn quan hệ (relational integrity)
+- SQL cho reporting
+- row lock
+- index
+- materialized view
+- JSONB cho các field metadata động
 
-Metap still keeps a dynamic development style through `jsonb`, but uses PostgreSQL to make accounting, inventory, and permission-sensitive data safer.
+Metap vẫn giữ phong cách phát triển linh hoạt (dynamic) thông qua `jsonb`, nhưng dùng PostgreSQL
+để làm cho dữ liệu accounting, inventory, và dữ liệu nhạy cảm về permission an toàn hơn.
 
-## Why RabbitMQ
+## Vì sao chọn RabbitMQ
 
-RabbitMQ is appropriate for ERP because modules need reliable integration events:
+RabbitMQ phù hợp cho ERP vì các module cần các integration event đáng tin cậy:
 
 - workflow transitioned
 - record created/updated
@@ -83,31 +89,31 @@ RabbitMQ is appropriate for ERP because modules need reliable integration events
 - file uploaded
 - webhook dispatch requested
 
-RabbitMQ is better than an in-memory queue for multi-service ERP integration.
+RabbitMQ tốt hơn một in-memory queue cho việc tích hợp ERP nhiều service (multi-service).
 
-## Why Outbox Pattern
+## Vì sao chọn Outbox Pattern
 
-Directly publishing to RabbitMQ inside an API request can lose events:
+Publish trực tiếp lên RabbitMQ bên trong một API request có thể làm mất event:
 
-1. DB commit succeeds.
-2. RabbitMQ publish fails.
-3. The business change exists, but other modules never hear about it.
+1. DB commit thành công.
+2. RabbitMQ publish thất bại.
+3. Thay đổi business đã tồn tại, nhưng các module khác không bao giờ biết về nó.
 
-Outbox fixes this:
+Outbox pattern khắc phục điều này:
 
-1. Write business data and outbox event in the same DB transaction.
-2. Background publisher drains outbox rows.
-3. RabbitMQ receives events reliably.
-4. Failed publishes can retry.
+1. Ghi business data và outbox event trong cùng một DB transaction.
+2. Background publisher rút (drain) các row trong outbox.
+3. RabbitMQ nhận event một cách đáng tin cậy.
+4. Các lần publish thất bại có thể retry.
 
-## Why Keep Metadata-driven Core
+## Vì sao giữ Metadata-driven Core
 
-A metadata-driven core works well for ERP development speed. Metap keeps:
+Một metadata-driven core hoạt động tốt cho tốc độ phát triển ERP. Metap giữ lại:
 
-- generic CRUD
-- generic list/form metadata
+- CRUD tổng quát
+- metadata list/form tổng quát
 - workflow metadata
-- reusable field definitions
-- permission-aware generated behavior
+- định nghĩa field có thể tái sử dụng
+- hành vi được sinh ra có nhận biết permission (permission-aware)
 
-The rewrite target is not less abstraction. The target is cleaner abstraction.
+Mục tiêu của việc rewrite không phải là giảm abstraction. Mục tiêu là abstraction sạch hơn.

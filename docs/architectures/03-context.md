@@ -1,15 +1,15 @@
-# 3. System Scope and Context
+# 3. Phạm vi và Context Hệ thống
 
-## Business Context
+## Context Nghiệp vụ
 
-| Actor | Interaction |
+| Actor | Tương tác |
 |---|---|
-| End User | Uses a business app built on Metap (CRM today) — creates/reads/updates records, lists/filters/searches, runs workflow transitions |
-| Admin | Grants/revokes roles per user, manages field- and record-level permission policies, via the admin-gated `/admin/*` HTTP routes (`crates/metap-http/src/routes/admin.rs`) |
+| End User | Sử dụng một business app xây dựng trên Metap (CRM hiện tại) — tạo/đọc/cập nhật records, list/filter/search, thực hiện workflow transitions |
+| Admin | Grant/revoke role cho từng user, quản lý các permission policy ở cấp field và record, thông qua các admin-gated HTTP route `/admin/*` (`crates/metap-http/src/routes/admin.rs`) |
 
-Out of scope today: no external system integrations exist (no payment gateway, no email/notification provider, no third-party identity provider). Auth is local username/password (`docs/roadmap.md` Phase 15, 2026-08-09 on) — `POST /auth/login` verifies against the `users` table and mints a JWT itself; there is no external IdP/OIDC federation.
+Ngoài phạm vi hiện tại: chưa có tích hợp hệ thống bên ngoài nào (không có payment gateway, không có email/notification provider, không có third-party identity provider). Auth là local username/password (`docs/roadmap.md` Phase 15, từ 2026-08-09) — `POST /auth/login` verify với bảng `users` và tự mint một JWT; không có external IdP/OIDC federation.
 
-## C4 Level 1: System Context
+## C4 Level 1: Context Hệ thống
 
 ```mermaid
 C4Context
@@ -24,11 +24,11 @@ C4Context
   Rel(admin, metap, "Administers roles & policies", "HTTPS/JSON, JWT")
 ```
 
-Metap has no external system integrations yet (no payment/email/notification providers) — the only actors today are end users and admins of whatever business app is built on top of it.
+Metap chưa có tích hợp hệ thống bên ngoài nào (không có payment/email/notification provider) — các actor duy nhất hiện tại là end user và admin của bất kỳ business app nào được xây dựng trên nền tảng này.
 
-## Technical Context
+## Context Kỹ thuật
 
-- **Protocol**: REST over HTTPS, JSON bodies, `Authorization: Bearer <JWT>`.
-- **Auth**: RS256 JWT, both minted and verified by Metap itself — `POST /auth/login` (email+password against the `users` table, argon2id) mints via the private key (`AUTH_JWT_PRIVATE_KEY_PATH`); every other route verifies via the public key (`AUTH_JWT_PUBLIC_KEY_PATH`). Roles are *not* carried in the JWT; they're looked up fresh per request from `user_roles` (see [05. Building Block View](05-building-blocks.md)).
-- **Errors**: structured JSON error bodies with a request id and trace id (`crates/metap-http`).
-- **Events out**: RabbitMQ, AMQP 0-9-1, via the transactional outbox — no synchronous webhook/callback mechanism exists.
+- **Protocol**: REST qua HTTPS, JSON body, `Authorization: Bearer <JWT>`.
+- **Auth**: RS256 JWT, được Metap tự mint và tự verify — `POST /auth/login` (email+password kiểm tra với bảng `users`, argon2id) mint bằng private key (`AUTH_JWT_PRIVATE_KEY_PATH`); mọi route khác verify bằng public key (`AUTH_JWT_PUBLIC_KEY_PATH`). Role *không* được mang trong JWT; chúng được tra cứu lại (fresh) cho mỗi request từ `user_roles` (xem [05. Building Block View](05-building-blocks.md)).
+- **Errors**: JSON error body có cấu trúc, kèm request id và trace id (`crates/metap-http`).
+- **Events out**: RabbitMQ, AMQP 0-9-1, thông qua transactional outbox — không tồn tại cơ chế webhook/callback đồng bộ nào.

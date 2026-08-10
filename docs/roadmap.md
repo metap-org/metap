@@ -1,31 +1,35 @@
 # Roadmap
 
-## Current Status (updated 2026-08-09)
+Tài liệu này chỉ theo dõi trạng thái ở cấp độ phase. Với một feature nhỏ hơn một phase, xem
+`docs/features/`; về ownership/process của team, xem `docs/team-charter.md`, `docs/CONTRIBUTING.md`,
+và `docs/agile-process.md`.
+
+## Trạng thái hiện tại (cập nhật 2026-08-10)
 
 | Phase | Status |
 |---|---|
-| 0. Skeleton | Done |
-| 1. Production-shaped Platform Kernel | Done |
-| 2. Metadata Compiler | Done |
-| 3. Permission Engine | Done |
-| 4. Query Planner V1 | Done |
-| 5. Workflow Engine V1 | Done |
-| 6. Frontend Core | Done (not browser-verified) |
-| 7. Module Migration Strategy | Not started |
-| 8. Hardening | In progress |
-| 9. Multi-Service Evolution | Trigger-based (no trigger fired yet) |
-| 10. Monorepo, npm publish | Partially done |
-| 11. Low-code Platform Backbone Architecture | In progress |
-| 12. Rust Core Migration | Decided; Migration Order (steps 1-9) done in `crates/`; not yet cut over to production |
-| 13. Dynamic Cron Jobs | Backend done; no admin UI yet |
-| 14. Multi-language (i18n) | UI chrome + locale storage done; metadata-label translation not started |
-| 15. Shared App Shell (UI kit, real login, permission-aware components) | Real login done; shell/permission-primitives/admin-kit not started — **High priority** |
+| 0. Skeleton | Đã xong |
+| 1. Production-shaped Platform Kernel | Đã xong |
+| 2. Metadata Compiler | Đã xong |
+| 3. Permission Engine | Đã xong |
+| 4. Query Planner V1 | Đã xong |
+| 5. Workflow Engine V1 | Đã xong |
+| 6. Frontend Core | Đã xong (chưa verify trên browser) |
+| 7. Module Migration Strategy | Chưa bắt đầu |
+| 8. Hardening | Đang làm |
+| 9. Multi-Service Evolution | Trigger-based (chưa trigger nào xảy ra) |
+| 10. Monorepo, npm publish | Làm một phần |
+| 11. Low-code Platform Backbone Architecture | Đang làm |
+| 12. Rust Core Migration | Đã quyết định; Migration Order (bước 1-9) đã xong trong `crates/`; chưa cut over sang production |
+| 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
+| 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
+| 15. Shared App Shell (UI kit, real login, permission-aware components) | Đã xong |
 
 ## Phase 0: Skeleton
 
-**Status: Done.**
+**Trạng thái: Đã xong.**
 
-Current scaffold:
+Scaffold hiện tại:
 
 - Fastify app shell
 - Zod config validation
@@ -41,19 +45,19 @@ Current scaffold:
 
 ## Phase 1: Production-shaped Platform Kernel
 
-**Status: Done.** Auth middleware, `RequestContext` (`tenantId`/`userId`/`roles`/`functionId`), structured error responses with request/trace id, tenant scope enforcement, the outbox publisher worker, and CRUD/query service tests are all in place. `defaultContext()` has been fully replaced by real JWT-derived context — no code in `src/` still references it. One deliberate deviation: no separate `TransactionManager`/`BaseRepository` classes were built — DB transactions are handled inline via Drizzle's `db.client.transaction()`, which has been sufficient so far (YAGNI over premature abstraction).
+**Trạng thái: Đã xong.** Auth middleware, `RequestContext` (`tenantId`/`userId`/`roles`/`functionId`), structured error response kèm request/trace id, enforce tenant scope, outbox publisher worker, và service test cho CRUD/query đều đã có đủ. `defaultContext()` đã được thay thế hoàn toàn bằng real JWT-derived context — không còn code nào trong `src/` reference đến nó nữa. Một điểm lệch có chủ đích: không xây riêng class `TransactionManager`/`BaseRepository` — DB transaction được xử lý inline qua `db.client.transaction()` của Drizzle, và cách này đã đủ dùng cho đến nay (YAGNI thay vì abstraction sớm).
 
-Goals:
+Mục tiêu:
 
-- Add auth middleware.
-- Add request context with `tenantId`, `userId`, `roles`, `functionId`.
-- Replace default context in `CrudService`.
-- Enforce tenant scope everywhere.
-- Add structured error response.
-- Add request id and trace id.
-- Add service tests for CRUD/query/metadata.
-- Add outbox publisher worker.
-- Add DB transaction helper.
+- Thêm auth middleware.
+- Thêm request context với `tenantId`, `userId`, `roles`, `functionId`.
+- Thay thế default context trong `CrudService`.
+- Enforce tenant scope ở mọi nơi.
+- Thêm structured error response.
+- Thêm request id và trace id.
+- Thêm service test cho CRUD/query/metadata.
+- Thêm outbox publisher worker.
+- Thêm DB transaction helper.
 
 Deliverables:
 
@@ -62,98 +66,99 @@ Deliverables:
 - `TransactionManager`
 - `OutboxPublisherWorker`
 - `BaseRepository`
-- first real migration
+- migration thật đầu tiên
 
 ## Phase 2: Metadata Compiler
 
-**Status: Done** (see `docs/architectures/09-adr.md` for the decision record).
+**Trạng thái: Đã xong** (xem `docs/architectures/09-adr.md` để biết decision record).
 
-- `MetadataCompiler.validate` — startup validation per entity: duplicate field names, dangling listView field/filter/defaultSort references, enum fields with no `enumValues`, malformed workflow shape, duplicate transitions. Runs inside `MetadataRegistry.register()`, so a bad entity module fails at boot, not at first request.
-- `MetadataRegistry.validateReferences()` — cross-entity check that every `reference`-kind field's `refEntity` names a registered entity; runs once after all entities are registered (deferred out of `container.ts` — see the entity-registration note below).
-- `MetadataCompiler.hash` — deterministic SHA-256 over a canonically-sorted serialization of an entity's shape (workflow transition `guard` functions excluded, since they're unrepresentable and already stripped on the wire). Exposed as `version` on `EntitySummary` (`GET /metadata/entities`) and on the frontend's `EntitySummary` type.
-- `metadata_versions` table (migration `0005_condemned_cerise.sql`) + `MetadataDriftService` — compares each entity's current hash against the last-recorded one at boot and warns (never crashes) on drift, mirroring `HealthService`'s graceful-degradation stance. Wired into the container as `container.metadataDrift`, called from `buildApp`.
-- OpenAPI generator (`openapi-generator.ts`) — exposed at `GET /metadata/openapi.json`, built only from the safe `EntitySummary` projection.
+- `MetadataCompiler.validate` — validate lúc startup cho từng entity: duplicate field names, dangling listView field/filter/defaultSort reference, enum field không có `enumValues`, workflow shape sai định dạng, duplicate transition. Chạy bên trong `MetadataRegistry.register()`, nên một entity module lỗi sẽ fail ngay lúc boot, không đợi đến request đầu tiên.
+- `MetadataRegistry.validateReferences()` — kiểm tra cross-entity rằng mọi field kiểu `reference` có `refEntity` trỏ đến một entity đã đăng ký; chạy một lần sau khi mọi entity đã được đăng ký (tách ra khỏi `container.ts` — xem ghi chú về entity-registration bên dưới).
+- `MetadataCompiler.hash` — SHA-256 xác định (deterministic) trên một serialization đã sắp xếp canonical của shape entity (loại trừ các hàm `guard` của workflow transition, vì chúng không thể biểu diễn được và đã bị strip khi truyền qua wire). Được expose dưới dạng `version` trên `EntitySummary` (`GET /metadata/entities`) và trên type `EntitySummary` phía frontend.
+- Bảng `metadata_versions` (migration `0005_condemned_cerise.sql`) + `MetadataDriftService` — so sánh hash hiện tại của mỗi entity với hash đã ghi nhận lần trước lúc boot, và cảnh báo (không bao giờ crash) khi có drift, theo cùng tinh thần graceful-degradation của `HealthService`. Được wire vào container dưới tên `container.metadataDrift`, gọi từ `buildApp`.
+- OpenAPI generator (`openapi-generator.ts`) — expose tại `GET /metadata/openapi.json`, chỉ build từ projection an toàn `EntitySummary`.
 
-Also fixed as part of this work: `createContainer` (`src/core/container.ts`) previously imported `customerEntity` directly and registered it inline — a `core` file reaching into `modules`, which the layering (`modules -> metadata definitions`, not the reverse) doesn't allow. Entity registration is now an application-layer concern: `createContainer` returns an empty `MetadataRegistry`, and `registerEntities()` (`src/modules/registry.ts`) — the one place that knows the deployment's entity list — registers them and calls `validateReferences()` afterward. Callers (`buildApp`, the outbox worker, tests) call `registerEntities(container.metadata)` right after `createContainer(config)`.
+Cũng đã fix trong lần này: `createContainer` (`src/core/container.ts`) trước đây import trực tiếp `customerEntity` và đăng ký nó inline — tức một file `core` với tay vào `modules`, điều mà layering (`modules -> metadata definitions`, không theo chiều ngược lại) không cho phép. Entity registration giờ là mối quan tâm ở tầng application: `createContainer` trả về một `MetadataRegistry` rỗng, và `registerEntities()` (`src/modules/registry.ts`) — nơi duy nhất biết danh sách entity của deployment — đăng ký chúng rồi gọi `validateReferences()` sau đó. Các caller (`buildApp`, outbox worker, test) gọi `registerEntities(container.metadata)` ngay sau `createContainer(config)`.
 
-Goals:
+Mục tiêu:
 
-- Validate entity definitions at startup.
-- Compile field definitions into:
+- Validate entity definition lúc startup.
+- Compile field definition thành:
   - validation schema
-  - list view contracts
+  - list view contract
   - OpenAPI schema
   - frontend metadata
-  - index recommendations
-- Add metadata version/hash.
-- Add schema compatibility checks.
+  - index recommendation
+- Thêm metadata version/hash.
+- Thêm schema compatibility check.
 
 Deliverables:
 
 - `MetadataCompiler`
 - `MetadataValidationError`
-- generated OpenAPI
-- generated frontend metadata endpoint
+- OpenAPI được generate
+- endpoint frontend metadata được generate
 
 ## Phase 3: Permission Engine
 
-**Status: Done**, shipped as a 4-part initiative (see `docs/architectures/09-adr.md` for
-the decision record),
-going further than the roadmap's original "modest RBAC+ABAC scaffold" by
-making role assignment itself dynamic:
+**Trạng thái: Đã xong**, được ship thành một initiative 4 phần (xem `docs/architectures/09-adr.md`
+để biết decision record), đi xa hơn so với "modest RBAC+ABAC scaffold" ban đầu trong roadmap
+bằng cách khiến chính role assignment trở nên dynamic:
 
-1. **Dynamic role assignment** — roles live in the DB per `(tenantId, userId)`,
-   granted/revoked at runtime via an admin API (`RoleAssignmentService`,
-   `src/core/auth/role-assignment-service.ts`) instead of being baked into the
-   JWT; the JWT is now a bare identity assertion. `scripts/seed-admin.mjs`
-   bootstraps the first admin outside the (admin-gated) API.
-2. **Policy storage + RBAC/ABAC evaluator** — the `policies` table (per
-   tenant) combines a role allow-list with an optional attribute condition
-   (`PolicyCondition`, `src/core/permission/policy-condition.ts`), OR-combined
-   across multiple matching policies, no deny rules.
-3. **Field-level + record-level enforcement** — `condition-to-sql.ts`
-   translates record-scoped conditions into a Drizzle `WHERE` clause wired
-   into `QueryPlanner.planList`; `PermissionService`/`PermissionSnapshot` mask
-   field-level reads and gate field-level writes, wired into every
-   `CrudService` call site (`list`/`create`/`update`/`transition`).
-4. **`PolicyExplainer` + snapshot cache** — `explain()` produces a read-only
-   trace of every policy considered and why, exposed via the admin-gated
-   `POST /admin/policies/explain` simulator; `PermissionSnapshot` batches a
-   tenant/entity's policies into one DB fetch reused across a single
-   `CrudService` call (deliberately *not* a cross-request/TTL cache — see
-   that sub-project's spec for the reasoning).
+1. **Dynamic role assignment** — role sống trong DB theo `(tenantId, userId)`,
+   được grant/revoke lúc runtime qua một admin API (`RoleAssignmentService`,
+   `src/core/auth/role-assignment-service.ts`) thay vì được bake cứng vào
+   JWT; JWT giờ chỉ là một bare identity assertion. `scripts/seed-admin.mjs`
+   bootstrap admin đầu tiên bên ngoài API (vốn đã bị gate bởi admin).
+2. **Policy storage + bộ đánh giá RBAC/ABAC** — bảng `policies` (theo từng
+   tenant) kết hợp một role allow-list với một attribute condition tùy chọn
+   (`PolicyCondition`, `src/core/permission/policy-condition.ts`), OR-combine
+   giữa nhiều policy khớp nhau, không có deny rule.
+3. **Enforcement ở field-level + record-level** — `condition-to-sql.ts`
+   dịch các condition scoped theo record thành một mệnh đề `WHERE` của
+   Drizzle, wire vào `QueryPlanner.planList`; `PermissionService`/
+   `PermissionSnapshot` mask các field-level read và gate các field-level
+   write, wire vào mọi call site của `CrudService` (`list`/`create`/
+   `update`/`transition`).
+4. **`PolicyExplainer` + snapshot cache** — `explain()` tạo ra một trace
+   read-only về mọi policy đã được xét và lý do, expose qua simulator
+   `POST /admin/policies/explain` (bị gate bởi admin); `PermissionSnapshot`
+   gom các policy của một tenant/entity vào một lần fetch DB duy nhất, tái
+   sử dụng trong suốt một lệnh gọi `CrudService` (có chủ đích *không* phải
+   một cache cross-request/TTL — xem spec của sub-project đó để biết lý do).
 
-Known deviations/gaps, deliberately deferred rather than silently dropped:
-- Record-level read enforcement only runs through `list()` — there's no
-  single-record `GET /api/:entity/:id` endpoint yet for it to cover.
+Các điểm lệch/gap đã biết, có chủ đích để lại chứ không âm thầm bỏ qua:
+- Record-level read enforcement chỉ chạy qua `list()` — chưa có endpoint
+  `GET /api/:entity/:id` cho một record đơn để nó bao phủ.
 
-Bugfixed since (2026-08-01), both found during Phase 3's manual E2E
-verification and confirmed with regression tests in
+Đã bugfix từ đó (2026-08-01), cả hai được phát hiện trong lần verify E2E thủ
+công của Phase 3 và được xác nhận bằng regression test trong
 `src/core/crud/crud-service.test.ts`:
-- `recordPolicyWhereClause` (`src/core/query/condition-to-sql.ts`) had no
-  admin bypass, so a non-admin-scoped record-level read policy incorrectly
-  emptied an admin's `list()` results. Fixed by bypassing policy evaluation
-  entirely when `context.roles` includes `admin`, matching every other
-  permission-decision entry point (`PermissionSnapshot.filterReadableFields`/
+- `recordPolicyWhereClause` (`src/core/query/condition-to-sql.ts`) không có
+  admin bypass, nên một record-level read policy không scoped cho admin đã
+  làm rỗng nhầm kết quả `list()` của admin. Đã fix bằng cách bypass hoàn
+  toàn việc đánh giá policy khi `context.roles` chứa `admin`, khớp với mọi
+  entry point quyết định permission khác (`PermissionSnapshot.filterReadableFields`/
   `assertWritableFields`/`canUpdateRecordCondition`).
-- `filterReadableFields` only masked the `data` JSONB blob, not the
-  top-level `code`/`status` columns on `records` that mirror fields inside
-  it (`src/infra/db/schema.ts`), so field-level masking of `code`/`status`
-  was incomplete. Fixed with a new `CrudService.maskRecordForRead` helper
-  that also nulls out `code`/`status` when the mirrored field
-  (`code`, or `entity.workflow.stateField` for `status`) was masked out of
-  `data`. (A third, minor issue was fixed earlier in the same diff:
-  `POST /admin/policies` didn't validate that `field`+`action` combinations
-  were coherent — now rejected with 400 via a schema refinement.)
+- `filterReadableFields` chỉ mask blob JSONB `data`, không mask các cột
+  top-level `code`/`status` trên `records` vốn mirror các field bên trong đó
+  (`src/infra/db/schema.ts`), nên việc field-level masking cho `code`/
+  `status` chưa đầy đủ. Đã fix bằng một helper mới
+  `CrudService.maskRecordForRead`, cũng null hóa `code`/`status` khi field
+  mirror tương ứng (`code`, hoặc `entity.workflow.stateField` cho `status`)
+  bị mask khỏi `data`. (Một vấn đề thứ ba, nhỏ hơn, đã được fix sớm hơn
+  trong cùng diff: `POST /admin/policies` không validate rằng tổ hợp
+  `field`+`action` là hợp lệ — giờ bị reject với 400 qua một schema
+  refinement.)
 
-Goals:
+Mục tiêu:
 
-- Implement RBAC + ABAC.
-- Support field-level permission.
-- Support record-level permission.
-- Support policy context.
-- Add policy simulator.
-- Cache user permission snapshot.
+- Triển khai RBAC + ABAC.
+- Hỗ trợ permission ở field-level.
+- Hỗ trợ permission ở record-level.
+- Hỗ trợ policy context.
+- Thêm policy simulator.
+- Cache permission snapshot của user.
 
 Deliverables:
 
@@ -161,70 +166,70 @@ Deliverables:
 - `AccessDecision`
 - `PolicyExplainer`
 - `PermissionSnapshotCache`
-- policy tests
+- policy test
 
 ## Phase 4: Query Planner V1
 
-**Status: Done**, shipped as 3 sub-projects (see `docs/architectures/09-adr.md` for the
-decision record), in this order:
+**Trạng thái: Đã xong**, được ship thành 3 sub-project (xem `docs/architectures/09-adr.md` để
+biết decision record), theo thứ tự sau:
 
-1. **Hot field index strategy** — `EntityField.indexed`/`unique` (previously
-   declared but unread) now drive `IndexReconciler`
-   (`src/core/metadata/index-reconciler.ts`): per-entity partial expression
-   indexes on `records`, reconciled automatically at boot (`CREATE INDEX
-   CONCURRENTLY IF NOT EXISTS`, best-effort, never blocks startup) and via a
-   manual `pnpm index:reconcile` script. Caught and fixed a real bug during
-   implementation: the indexed expression has to be
-   `jsonb_extract_path_text(data, field)`, byte-for-byte matching
-   `QueryPlanner`'s own filter/sort expression — an index built on the
-   semantically-equivalent `data->>field` form is silently never selected by
-   Postgres's planner.
-2. **Full-text search strategy** — new opt-in `EntityField.searchMode: "fts"`
-   (default `"substring"`, i.e. today's ILIKE behavior unchanged) matched via
-   `to_tsvector('simple', ...) @@ plainto_tsquery('simple', ...)`, backed by a
-   GIN index (`IndexReconciler`'s third index kind, same expression-matching
-   discipline as above).
-3. **Keyset pagination** — opaque base64 cursor (`src/core/query/cursor.ts`)
-   validated against the *resolved* sort (post-fallback); `QueryPlanner`
-   builds the keyset `WHERE` condition as an explicit two-clause OR (not a
-   single row-value comparison) because the existing `orderBy` tiebreaker
-   (`id ASC`) doesn't flip with the primary field's direction.
-   `CrudService.list` executes with a `limit + 1` lookahead to produce
-   `page.nextCursor: string | null`; a cursor for the wrong sort, or a
-   malformed one, is a clean `400 invalid_cursor`, never a 500.
+1. **Chiến lược index cho hot field** — `EntityField.indexed`/`unique`
+   (trước đây được khai báo nhưng chưa được đọc) giờ dẫn động
+   `IndexReconciler` (`src/core/metadata/index-reconciler.ts`): partial
+   expression index theo từng entity trên `records`, được reconcile tự động
+   lúc boot (`CREATE INDEX CONCURRENTLY IF NOT EXISTS`, best-effort, không
+   bao giờ chặn startup) và qua script thủ công `pnpm index:reconcile`. Đã
+   bắt và fix một bug thật trong lúc implement: expression được index phải
+   là `jsonb_extract_path_text(data, field)`, khớp byte-for-byte với chính
+   expression filter/sort của `QueryPlanner` — một index được build trên
+   dạng `data->>field` (tương đương về mặt ngữ nghĩa) sẽ âm thầm không bao
+   giờ được planner của Postgres chọn.
+2. **Chiến lược full-text search** — `EntityField.searchMode: "fts"` mới,
+   opt-in (mặc định `"substring"`, tức hành vi ILIKE hiện tại không đổi),
+   match qua `to_tsvector('simple', ...) @@ plainto_tsquery('simple', ...)`,
+   được backing bởi một GIN index (loại index thứ ba của `IndexReconciler`,
+   cùng kỷ luật khớp expression như trên).
+3. **Keyset pagination** — cursor base64 mờ (opaque) (`src/core/query/cursor.ts`)
+   được validate theo sort *đã resolve* (sau fallback); `QueryPlanner` build
+   điều kiện `WHERE` của keyset dưới dạng OR hai mệnh đề tường minh (không
+   phải một so sánh row-value đơn) vì tiebreaker `orderBy` hiện tại
+   (`id ASC`) không đảo chiều theo hướng của field chính. `CrudService.list`
+   thực thi với một lookahead `limit + 1` để tạo ra
+   `page.nextCursor: string | null`; một cursor sai sort, hoặc malformed, sẽ
+   trả về `400 invalid_cursor` sạch sẽ, không bao giờ là 500.
 
-**Report query boundary — deferred, trigger-based** (not built), matching
-Phase 9's style rather than this phase's other three items: there is no
-concrete gap driving it yet — no reporting/analytics UI or consumer exists,
-and the system has exactly one entity (`crm.customers`). Building a
-`ReportService`/report-specific query path now would be infrastructure for a
-workload that doesn't exist, contradicting this project's own trigger-based
-evolution philosophy (see Phase 9, and `docs/architectures/05-building-blocks.md`'s Data Model
-Strategy: "none of it should be built ahead of its trigger"). Trigger: a
-concrete export/aggregation need shows up (a real UI or consumer asks for
-it), or an OLTP-path query is measurably slowed by report-shaped access
-patterns.
+**Report query boundary — deferred, trigger-based** (chưa build), theo cùng
+phong cách của Phase 9 chứ không phải ba item còn lại của phase này: chưa có
+gap cụ thể nào thúc đẩy nó — chưa có UI/consumer reporting-analytics nào tồn
+tại, và hệ thống hiện chỉ có đúng một entity (`crm.customers`). Xây dựng
+`ReportService`/report-specific query path ngay bây giờ sẽ là hạ tầng cho
+một workload chưa tồn tại, mâu thuẫn với chính triết lý tiến hóa
+trigger-based của dự án (xem Phase 9, và mục Data Model Strategy của
+`docs/architectures/05-building-blocks.md`: "none of it should be built
+ahead of its trigger"). Trigger: xuất hiện nhu cầu export/aggregation cụ thể
+(một UI hoặc consumer thật sự yêu cầu), hoặc một query trên OLTP path bị làm
+chậm đáng kể bởi các access pattern kiểu report.
 
-Original goals, for reference:
+Mục tiêu ban đầu, để tham khảo:
 
-- Support metadata-defined filters. (Phase 1/pre-existing.)
-- Support safe sort fields. (Phase 1/pre-existing.)
-- Add keyset pagination. (Done, sub-project 3 above.)
-- Add full-text search strategy. (Done, sub-project 2 above.)
-- Add generated column/index strategy for hot JSONB fields. (Done, sub-project 1 above.)
-- Add report query boundary. (Deferred, see above.)
+- Hỗ trợ filter định nghĩa bằng metadata. (Phase 1/đã có sẵn.)
+- Hỗ trợ safe sort field. (Phase 1/đã có sẵn.)
+- Thêm keyset pagination. (Đã xong, sub-project 3 ở trên.)
+- Thêm chiến lược full-text search. (Đã xong, sub-project 2 ở trên.)
+- Thêm chiến lược generated column/index cho hot JSONB field. (Đã xong, sub-project 1 ở trên.)
+- Thêm report query boundary. (Deferred, xem ở trên.)
 
 ## Phase 5: Workflow Engine V1
 
-**Status: Done.** Atomic transition, optimistic locking, guard conditions (TypeScript predicates on `WorkflowTransition`), an append-only `workflow_events` audit log, and outbox side effects are implemented via `WorkflowEngine` + `CrudService.transition`, exposed at `POST /api/:entity/:id/transitions/:action` (see `docs/architectures/09-adr.md` for the decision record). "Notification integration" originally shipped as a publish-only stub outbox topic (`<entity>.workflow.transitioned`) with no consumer. 2026-08-09: `EventBus` gained a `subscribe` side (`crates/metap-infra/src/event_bus.rs` — durable queue bind on a topic-exchange routing key, ack/nack) and `crates/notification-worker` is the first real consumer, logging every transition. Deliberately minimal (stdout only, no email/SMS/webhook) since no real notification channel has been asked for yet; it can run as its own process (`pnpm worker:notification:rs`, the default, mirroring `outbox-publisher`) or inline inside `crm-server` via `NOTIFICATION_WORKER_INLINE=true` for single-process deployments — same `notification_worker::run` either way. Delivery semantics, same day: at-least-once (durable queue, manual ack), a per-queue DLQ (`<queue>.dlq`, wired via `x-dead-letter-exchange`/`x-dead-letter-routing-key` — a nacked poison message lands there instead of vanishing, verified live against a real broker) and `basic_qos` prefetch (20) for backpressure; `notification_worker::run` now propagates an error (instead of a clean exit) when the event stream closes unexpectedly (bus disconnect) so a process manager can tell that apart from a real shutdown signal, matching `outbox-publisher`'s "propagate and let the process manager restart" contract. Deliberately *not* built: retry-with-backoff — no call site nacks with `requeue: true` yet (nothing in `notify()` can fail), so a delay-queue/attempt-counter chain would be speculative infra ahead of a real trigger; `EventBus::subscribe`'s doc comment flags this as a known gap for whichever future consumer needs bounded retries.
+**Trạng thái: Đã xong.** Atomic transition, optimistic locking, guard condition (các predicate TypeScript trên `WorkflowTransition`), một audit log `workflow_events` append-only, và outbox side effect được implement qua `WorkflowEngine` + `CrudService.transition`, expose tại `POST /api/:entity/:id/transitions/:action` (xem `docs/architectures/09-adr.md` để biết decision record). "Notification integration" ban đầu được ship dưới dạng một outbox topic publish-only, dạng stub (`<entity>.workflow.transitioned`) không có consumer. 2026-08-09: `EventBus` có thêm phía `subscribe` (`crates/metap-infra/src/event_bus.rs` — bind một durable queue vào một routing key của topic-exchange, ack/nack) và `crates/notification-worker` là consumer thật đầu tiên, log mọi transition. Cố tình để tối giản (chỉ stdout, không email/SMS/webhook) vì chưa có kênh notification thật nào được yêu cầu; nó có thể chạy như một process riêng (`pnpm worker:notification:rs`, mặc định, cùng kiểu với `outbox-publisher`) hoặc inline bên trong `crm-server` qua `NOTIFICATION_WORKER_INLINE=true` cho các deployment single-process — cả hai đều gọi cùng `notification_worker::run`. Delivery semantics, cùng ngày: at-least-once (durable queue, manual ack), một DLQ theo từng queue (`<queue>.dlq`, wire qua `x-dead-letter-exchange`/`x-dead-letter-routing-key` — một message bị nack sẽ rơi vào đó thay vì biến mất, đã verify live trên một broker thật) và `basic_qos` prefetch (20) để backpressure; `notification_worker::run` giờ propagate lỗi (thay vì exit sạch) khi event stream đóng bất ngờ (bus disconnect) để process manager phân biệt được điều đó với một tín hiệu shutdown thật, khớp với contract "propagate and let the process manager restart" của `outbox-publisher`. Cố tình *chưa* build: retry-with-backoff — chưa có call site nào nack với `requeue: true` (không có gì trong `notify()` có thể fail), nên một chuỗi delay-queue/attempt-counter sẽ là hạ tầng suy đoán trước khi có trigger thật; doc comment của `EventBus::subscribe` đánh dấu đây là gap đã biết cho consumer tương lai nào cần bounded retry.
 
-Goals:
+Mục tiêu:
 
 - Atomic transition.
 - Optimistic locking.
-- Guard conditions.
-- Append-only workflow events.
-- Side effects after commit through outbox.
+- Guard condition.
+- Append-only workflow event.
+- Side effect sau commit qua outbox.
 - Notification integration.
 
 Deliverables:
@@ -232,13 +237,13 @@ Deliverables:
 - `WorkflowTransitionService`
 - `WorkflowGuard`
 - `WorkflowEvent`
-- workflow tests
+- workflow test
 
 ## Phase 6: Frontend Core
 
-**Status: Done.** React + TypeScript app shell, TanStack Query API client (`packages/platform-react/src/api`), the metadata client, `GeneratedList` (with cursor-based infinite-scroll pagination and `@tanstack/react-virtual` row windowing), and `FieldRenderer` (both halves — `FieldValue`/`fieldKindConfig` for read, `FieldInput` for write) are done. `GeneratedForm` is done. `WorkflowActionBar` is done. Permission-aware UI state is done — `CrudService.get()` now returns proactive `capabilities` (writable fields, record-level `canUpdate`, real per-transition guard results) that `GeneratedForm`/`WorkflowActionBar`/`FieldValue` consume to disable/mark what would fail before the user tries. List navigation and delete were added as a follow-up gap-fix after manual verification found `GeneratedList` had no way to actually reach `GeneratedForm`'s create route or `RecordDetail`, and delete didn't exist anywhere: `GeneratedList` now has a "New" button and a per-row View/Delete action column, `RecordDetail` has a Delete button, and the backend gained soft-delete support (`EntityAction` extended with `"delete"`, `PermissionService.canDeleteEntity`, `CrudService.delete()`, `DELETE /api/:entity/:id`, `WorkflowEngine.emitDeleted`). All of this passed typecheck/lint/the backend test suite and was committed; still not browser-verified in this sandbox (no working headless Chromium — missing system libraries, no `sudo`, no cached alternative). The frontend now lives in `packages/platform-react` + `apps/crm-fe` (renamed from `web/`) as part of the 2026-08-02 monorepo restructure — see [Architecture](docs/architectures/04-strategy.md)'s "Frontend Platform Package". `packages/platform-react`'s remaining `react-router-dom` coupling (`ApiErrorMessage`/`GeneratedList`/`RecordDetail` calling `Link`/`useNavigate` directly) is also fixed: a `NavigationAdapter` injected via React Context replaces all 3 direct imports, and `apps/crm-fe` provides the one real implementation (see `docs/architectures/09-adr.md` for the decision record). Passed typecheck/build/lint/the full backend test suite; not browser-verified for the same sandbox reason as above.
+**Trạng thái: Đã xong.** React + TypeScript app shell, TanStack Query API client (`packages/platform-react/src/api`), metadata client, `GeneratedList` (kèm cursor-based infinite-scroll pagination và row windowing bằng `@tanstack/react-virtual`), và `FieldRenderer` (cả hai nửa — `FieldValue`/`fieldKindConfig` cho read, `FieldInput` cho write) đều đã xong. `GeneratedForm` đã xong. `WorkflowActionBar` đã xong. Permission-aware UI state đã xong — `CrudService.get()` giờ trả về `capabilities` chủ động (writable field, `canUpdate` ở record-level, kết quả guard thật cho từng transition) mà `GeneratedForm`/`WorkflowActionBar`/`FieldValue` dùng để disable/đánh dấu trước những gì sẽ fail, trước khi user thử. Điều hướng danh sách và delete được thêm vào như một gap-fix follow-up sau khi verify thủ công phát hiện `GeneratedList` không có cách nào thực sự đến được route create của `GeneratedForm` hay `RecordDetail`, và delete thì chưa tồn tại ở đâu cả: `GeneratedList` giờ có nút "New" và một cột action View/Delete theo từng dòng, `RecordDetail` có nút Delete, và backend có thêm hỗ trợ soft-delete (`EntityAction` mở rộng thêm `"delete"`, `PermissionService.canDeleteEntity`, `CrudService.delete()`, `DELETE /api/:entity/:id`, `WorkflowEngine.emitDeleted`). Tất cả những cái này đã pass typecheck/lint/bộ test backend và đã được commit; vẫn chưa được verify trên browser trong sandbox này (không có headless Chromium chạy được — thiếu system library, không có `sudo`, không có phương án cache thay thế). Frontend giờ nằm trong `packages/platform-react` + `apps/crm-fe` (đổi tên từ `web/`) như một phần của việc restructure monorepo ngày 2026-08-02 — xem mục "Frontend Platform Package" của [Architecture](docs/architectures/04-strategy.md). Sự phụ thuộc còn lại của `packages/platform-react` vào `react-router-dom` (`ApiErrorMessage`/`GeneratedList`/`RecordDetail` gọi trực tiếp `Link`/`useNavigate`) cũng đã được fix: một `NavigationAdapter` được inject qua React Context thay thế cả 3 chỗ import trực tiếp, và `apps/crm-fe` cung cấp implementation thật duy nhất (xem `docs/architectures/09-adr.md` để biết decision record). Đã pass typecheck/build/lint/toàn bộ bộ test backend; chưa verify trên browser vì cùng lý do sandbox như trên.
 
-Goals:
+Mục tiêu:
 
 - React + TypeScript app shell.
 - TanStack Query API client.
@@ -259,261 +264,268 @@ Deliverables:
 
 ## Phase 7: Module Migration Strategy
 
-**Status: Not started.**
+**Trạng thái: Chưa bắt đầu.**
 
-Goals:
+Mục tiêu:
 
-- Port one simple master-data module.
-- Port one transaction module.
-- Port one workflow-heavy module.
-- Port one report/export flow.
+- Port một module master-data đơn giản.
+- Port một module transaction.
+- Port một module nặng về workflow.
+- Port một flow report/export.
 
-Suggested order:
+Thứ tự đề xuất:
 
 1. CRM customer/vendor master data.
-2. Sales order or purchase order.
+2. Sales order hoặc purchase order.
 3. Inventory movement.
 4. Accounting journal/report.
 
 ## Phase 8: Hardening
 
-**Status: In progress** — started 2026-08-09. `docs/rust-core-viability.md`'s Migration
-Order step 8 note deliberately deferred this whole phase's Rust-side gap (helmet-equivalent
-headers, rate limiting, requestId/traceId) out of the initial HTTP port; that gap is what
-got closed first, followed by the Docker/CI infra goals below.
+**Trạng thái: Đang làm** — bắt đầu 2026-08-09. Ghi chú ở bước 8 của Migration Order trong
+`docs/rust-core-viability.md` đã có chủ đích deferred toàn bộ gap phía Rust của phase này
+(header tương đương helmet, rate limiting, requestId/traceId) ra khỏi lần port HTTP ban đầu;
+gap đó là thứ được đóng lại đầu tiên, tiếp theo là các mục tiêu hạ tầng Docker/CI bên dưới.
 
-Goals:
+Mục tiêu:
 
-- ~~Secret manager integration~~ — Not started. No production deployment topology is
-  documented yet (`docs/architectures/11-risks.md`) to say what secret manager it would
-  integrate with; config today is `.env` files (dev-appropriate, not a production posture).
-- ~~CORS allowlist by environment~~ — **Done**, predates this phase being tracked:
-  `CORS_ORIGINS` (`crates/metap-infra/src/config.rs`) is a per-environment env var, comma-
-  separated, defaulting to empty (permissive `CorsLayer::new()`) only when unset — see
-  `metap_http::build_router`'s doc comment for the `allow_credentials` + explicit-origin-list
-  constraint this enforces.
-- ~~Helmet-equivalent security headers~~ — **Done (2026-08-09)**:
-  `crates/metap-http/src/security_headers.rs`, applied globally in `build_router` (covers
-  `apps/crm-server`'s static SPA fallback too, not just `/api`/`/metadata`) —
-  Content-Security-Policy (helmet's `'self'`-based default, safe for a same-origin SPA),
-  X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Strict-Transport-Security,
-  Cross-Origin-Opener/Resource-Policy, and the rest of helmet's default set.
-- CSP — see "Helmet-equivalent security headers" above; folded in rather than tracked
-  separately, since axum has no helmet-equivalent crate to configure a CSP directive on.
-- HTML sanitizer / File scanning hook — Not applicable yet: this is a JSON-only API with no
-  HTML rendering and no file-upload endpoint. Revisit if either is added.
-- ~~Rate limiting~~ (not an original Phase 8 goal, added from the Rust-specific gap above) —
-  **Done (2026-08-09)**: `tower_governor`, keyed on peer IP, ~300 req/min (a token-bucket
-  approximation of the old `@fastify/rate-limit` fixed-window default — see
-  `build_router`'s doc comment), 429 with the same `too_many_requests` error-body shape as
-  every other error response. Needs the serving binary to use
-  `into_make_service_with_connect_info::<SocketAddr>()` — `apps/crm-server/src/main.rs` and
-  the `metap-http` e2e test both do.
-- ~~requestId/traceId propagation~~ (the other Rust-specific gap) — **Done (2026-08-09)**:
-  `crates/metap-http/src/request_context.rs`, `x-request-id`/`x-trace-id` response headers
-  on every request, `x-trace-id` echoed when the caller sends a valid one, and both ids
-  injected into every 4xx/5xx JSON error body centrally (not threaded through the ~30
-  individual `service_error_response`/`internal_error_response` call sites).
-- ~~non-root Docker image~~ — **Done (2026-08-09)**: `apps/crm-server/Dockerfile` — the
-  first Dockerfile in the repo, colocated with the example app it packages rather than at
-  the repo root (same reasoning as `apps/crm-server`'s own `keys/`/`.env`: it's this example
-  app's own Dockerfile, not "the" repo Dockerfile — a downstream project builds its own
-  equivalent binary and writes its own analogous Dockerfile for it, same as it writes its
-  own `main.rs` rather than importing this one). Build context is still the repo root
-  (`docker build -f apps/crm-server/Dockerfile .`) since both the Cargo and pnpm workspaces
-  live there. Multi-stage (`node:24-slim` for `apps/crm-fe`'s static build, `rust:1-slim-
-  bookworm` for `crm-server --release`, `debian:bookworm-slim` runtime), no secrets baked in
-  (DB/RabbitMQ/JWT key path all read from the environment at container start, same as the
-  local `.env` convention — the JWT key itself is mounted, not copied in), runs as a fixed
-  non-root `metap` user (uid/gid 10001). Verified by actually building the image and running
-  it against a live dev Postgres/RabbitMQ (`docker run --entrypoint id` confirmed
-  `uid=10001(metap)`, `curl /health` returned 200 with every hardening header present).
-- ~~CI checks~~ — **Done (2026-08-09)**: `.github/workflows/ci.yml`, three jobs — `rust`
-  (build + unit tests + clippy, no DB needed), `rust-e2e` (Postgres/RabbitMQ service
-  containers mirroring `docker-compose.yml`'s credentials, `db-migrate` against a fresh DB,
-  then the full `--ignored` e2e suite), `frontend` (typecheck/lint/format:check/test).
-  Verified by actually running the same sequence locally against throwaway Postgres/
-  RabbitMQ containers (fresh-DB migration + full e2e suite passing) rather than trusting the
-  YAML alone. Not yet enforced as a merge gate (no branch protection configured) and
-  `clippy`/`fmt --check` aren't `-D warnings`-strict yet — the codebase isn't fully clean
-  under either, see the workflow's own comments.
-- ~~Structured logging / observability~~ (not an original Phase 8 goal — added 2026-08-09
-  after an audit found the core crates had effectively zero logging: `metap-crud`,
-  `metap-permission`, `metap-query`, `metap-workflow` had none at all, and the one place that
-  did log — `metap-http`'s 500 handler — didn't even carry the `requestId`/`traceId` the
-  response body already had, so a client-reported id couldn't be grepped against server
-  logs) — **Done (2026-08-09)**: `tracing` + `tracing-subscriber` wired in via
-  `metap_infra::init_tracing()` (one shared init, called first thing by every binary —
-  `crm-server`, `outbox-publisher`, `notification-worker`, `db-migrate` — reading `RUST_LOG`,
-  default `info`; `dev-tools` deliberately excluded, its stdout is CLI output — a minted
-  token, a usage message — not a log stream). `crates/metap-http/src/request_id.rs` (new,
-  outermost middleware) generates the request/trace id pair once into request extensions;
-  `tower_http::trace::TraceLayer` (also new, wrapping every other layer) builds one span per
-  request carrying both ids plus method/path/status/latency, so **any** `tracing` event
-  logged anywhere downstream — a permission denial in `metap-permission`, a validation
-  failure in `metap-crud`, a rejected filter in `metap-query` — is automatically correlated
-  with the same ids the client sees, with no id threaded through any of those crates'
-  function signatures. `request_context.rs` now reads the same ids from the extension
-  instead of minting its own. Instrumented the actual decision points that were previously
-  silent: permission allow/deny (`metap-permission`), rejected/ignored filter and sort fields
-  and invalid cursors (`metap-query`), and in `metap-crud::CrudService` — entity/record not
-  found, validation failure (with the offending field names), version conflicts, and the full
-  transition-rejection chain (no workflow, no transition defined, guard failed) plus INFO-level
-  success logs for create/update/transition/delete. Deliberately *not* done: no JSON/OTLP
-  exporter (logs to stderr as plain text only — no aggregator exists to send to yet, same gap
-  as the Docker/CI goals' "no production deployment topology documented"); revisit once one
-  does. Verified live against a real Postgres/RabbitMQ/crm-server (not just `cargo build`):
-  hit `/health`, an unauthenticated route, an unknown entity, and an empty-payload `create` —
-  confirmed the access-log line and the `metap-crud`/`metap-permission` decision logs both
-  carry the same `request_id`/`trace_id` and nest inside the same span.
-- load tests for list/query/export — Not started.
-- backup/restore drill — Not started.
+- ~~Tích hợp secret manager~~ — Chưa bắt đầu. Chưa có production deployment topology nào
+  được document (`docs/architectures/11-risks.md`) để nói rõ nó sẽ tích hợp với secret
+  manager nào; config hiện tại là file `.env` (phù hợp cho dev, không phải tư thế production).
+- ~~CORS allowlist theo environment~~ — **Đã xong**, có trước khi phase này được track:
+  `CORS_ORIGINS` (`crates/metap-infra/src/config.rs`) là một env var theo từng environment,
+  phân tách bằng dấu phẩy, chỉ mặc định rỗng (permissive `CorsLayer::new()`) khi không được
+  set — xem doc comment của `metap_http::build_router` để biết ràng buộc `allow_credentials` +
+  explicit-origin-list mà nó enforce.
+- ~~Security header tương đương helmet~~ — **Đã xong (2026-08-09)**:
+  `crates/metap-http/src/security_headers.rs`, áp dụng toàn cục trong `build_router` (bao phủ
+  cả static SPA fallback của `apps/crm-server`, không chỉ `/api`/`/metadata`) —
+  Content-Security-Policy (mặc định dựa trên `'self'` của helmet, an toàn cho một SPA
+  same-origin), X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
+  Strict-Transport-Security, Cross-Origin-Opener/Resource-Policy, và phần còn lại của bộ mặc
+  định của helmet.
+- CSP — xem "Security header tương đương helmet" ở trên; gộp vào đó thay vì track riêng, vì
+  axum không có crate tương đương helmet để configure một CSP directive.
+- HTML sanitizer / File scanning hook — Chưa áp dụng được: đây là một API chỉ dùng JSON,
+  không render HTML và không có endpoint upload file. Xem lại nếu một trong hai được thêm vào.
+- ~~Rate limiting~~ (không phải mục tiêu gốc của Phase 8, thêm vào từ gap riêng của Rust ở
+  trên) — **Đã xong (2026-08-09)**: `tower_governor`, key theo peer IP, ~300 req/phút (một
+  xấp xỉ token-bucket của fixed-window mặc định cũ của `@fastify/rate-limit` — xem doc comment
+  của `build_router`), trả 429 với cùng shape error-body `too_many_requests` như mọi error
+  response khác. Cần binary phục vụ dùng
+  `into_make_service_with_connect_info::<SocketAddr>()` — cả `apps/crm-server/src/main.rs`
+  và e2e test của `metap-http` đều dùng.
+- ~~Lan truyền requestId/traceId~~ (gap còn lại riêng của Rust) — **Đã xong (2026-08-09)**:
+  `crates/metap-http/src/request_context.rs`, response header `x-request-id`/`x-trace-id`
+  trên mọi request, `x-trace-id` được echo lại khi caller gửi một id hợp lệ, và cả hai id
+  được inject vào mọi JSON error body 4xx/5xx một cách tập trung (không phải luồn qua ~30
+  call site riêng lẻ của `service_error_response`/`internal_error_response`).
+- ~~Docker image non-root~~ — **Đã xong (2026-08-09)**: `apps/crm-server/Dockerfile` —
+  Dockerfile đầu tiên trong repo, đặt cạnh example app mà nó đóng gói thay vì ở repo root
+  (cùng lý do như `keys/`/`.env` riêng của `apps/crm-server`: đây là Dockerfile riêng của
+  example app này, không phải "cái" Dockerfile của repo — một downstream project tự build
+  binary tương đương của riêng nó và tự viết Dockerfile tương tự cho nó, giống như tự viết
+  `main.rs` riêng thay vì import cái này). Build context vẫn là repo root
+  (`docker build -f apps/crm-server/Dockerfile .`) vì cả Cargo workspace lẫn pnpm workspace
+  đều sống ở đó. Multi-stage (`node:24-slim` để build static cho `apps/crm-fe`,
+  `rust:1-slim-bookworm` cho `crm-server --release`, `debian:bookworm-slim` làm runtime),
+  không bake secret nào vào image (đường dẫn DB/RabbitMQ/JWT key đều được đọc từ environment
+  lúc container start, giống convention `.env` local — bản thân JWT key được mount vào, không
+  copy vào image), chạy dưới một user non-root cố định `metap` (uid/gid 10001). Đã verify
+  bằng cách thực sự build image và chạy nó với một dev Postgres/RabbitMQ đang sống
+  (`docker run --entrypoint id` xác nhận `uid=10001(metap)`, `curl /health` trả về 200 kèm
+  đầy đủ mọi hardening header).
+- ~~CI checks~~ — **Đã xong (2026-08-09)**: `.github/workflows/ci.yml`, ba job — `rust`
+  (build + unit test + clippy, không cần DB), `rust-e2e` (service container Postgres/RabbitMQ
+  mirror lại credential của `docker-compose.yml`, `db-migrate` trên một DB mới tinh, rồi chạy
+  toàn bộ e2e suite `--ignored`), `frontend` (typecheck/lint/format:check/test). Đã verify
+  bằng cách thực sự chạy cùng chuỗi đó local trên các container Postgres/RabbitMQ dùng một
+  lần (migration trên DB mới + toàn bộ e2e suite pass) thay vì chỉ tin vào file YAML. Chưa
+  được enforce như một merge gate (chưa configure branch protection) và `clippy`/
+  `fmt --check` chưa strict kiểu `-D warnings` — codebase chưa sạch hoàn toàn dưới cả hai,
+  xem comment trong chính workflow.
+- ~~Structured logging / observability~~ (không phải mục tiêu gốc của Phase 8 — thêm vào
+  2026-08-09 sau khi một audit phát hiện các crate core gần như không có logging:
+  `metap-crud`, `metap-permission`, `metap-query`, `metap-workflow` không có gì cả, và nơi
+  duy nhất có log — 500 handler của `metap-http` — thậm chí còn không mang theo
+  `requestId`/`traceId` mà response body đã có sẵn, nên một id do client report không thể
+  grep khớp với log server) — **Đã xong (2026-08-09)**: `tracing` + `tracing-subscriber`
+  được wire qua `metap_infra::init_tracing()` (một init dùng chung, được gọi đầu tiên bởi mọi
+  binary — `crm-server`, `outbox-publisher`, `notification-worker`, `db-migrate` — đọc
+  `RUST_LOG`, mặc định `info`; `dev-tools` cố tình bị loại trừ, stdout của nó là CLI output —
+  một token vừa mint, một usage message — không phải log stream).
+  `crates/metap-http/src/request_id.rs` (mới, middleware ngoài cùng) sinh cặp
+  request/trace id một lần vào request extension; `tower_http::trace::TraceLayer` (cũng mới,
+  bọc quanh mọi layer khác) build một span cho mỗi request mang theo cả hai id cùng
+  method/path/status/latency, nên **bất kỳ** `tracing` event nào được log ở downstream — một
+  lần từ chối permission trong `metap-permission`, một lỗi validation trong `metap-crud`, một
+  filter bị reject trong `metap-query` — đều tự động được correlate với cùng id mà client
+  nhìn thấy, không cần luồn id qua chữ ký hàm của bất kỳ crate nào trong số đó.
+  `request_context.rs` giờ đọc cùng các id đó từ extension thay vì tự sinh id riêng. Đã
+  instrument các điểm quyết định trước đây im lặng: allow/deny permission
+  (`metap-permission`), filter/sort field bị reject/bỏ qua và cursor không hợp lệ
+  (`metap-query`), và trong `metap-crud::CrudService` — entity/record không tìm thấy, lỗi
+  validation (kèm tên field vi phạm), version conflict, và toàn bộ chuỗi transition-rejection
+  (không có workflow, không có transition định nghĩa, guard fail) cộng với log INFO-level cho
+  các lần create/update/transition/delete thành công. Cố tình *chưa* làm: chưa có JSON/OTLP
+  exporter (chỉ log ra stderr dạng plain text — chưa có aggregator nào để gửi tới, cùng gap
+  với "chưa document production deployment topology" của các mục tiêu Docker/CI); xem lại khi
+  có. Đã verify live trên một Postgres/RabbitMQ/crm-server thật (không chỉ `cargo build`): hit
+  `/health`, một route chưa auth, một entity không tồn tại, và một `create` payload rỗng — xác
+  nhận dòng access-log và các log quyết định của `metap-crud`/`metap-permission` đều mang
+  cùng `request_id`/`trace_id` và nằm lồng trong cùng một span.
+- load test cho list/query/export — Chưa bắt đầu.
+- backup/restore drill — Chưa bắt đầu.
 
 ## Phase 9: Multi-Service Evolution
 
-Unlike Phases 1-8, this phase is trigger-based, not sequential — it starts when its trigger condition happens, not when Phase 8 finishes. See `docs/architectures/04-strategy.md`'s "Future Evolution: Multi-Service Split" section for the full reasoning.
+Khác với Phase 1-8, phase này là trigger-based, không tuần tự — nó bắt đầu khi điều kiện trigger của nó xảy ra, không phải khi Phase 8 xong. Xem mục "Future Evolution: Multi-Service Split" của `docs/architectures/04-strategy.md` để biết toàn bộ lý do.
 
-**The repo/package structure itself is already done, ahead of its trigger.** The 2026-08-02 monorepo restructure pulled the pnpm-workspace split forward by explicit choice, not because the trigger condition fired: `packages/core` and `apps/crm` are already separate packages (`apps/crm` a thin Fastify app importing `packages/core` via `workspace:*`), matching the shape this trigger describes. What has *not* happened yet is the trigger's actual substance — there is still only one real module (`crm`); no second module has needed to be built as its own deployable unit. Treat the structural split as available infrastructure, not as evidence the underlying multi-service trigger has fired.
+**Bản thân cấu trúc repo/package đã xong, trước cả khi trigger xảy ra.** Việc restructure monorepo ngày 2026-08-02 đã kéo việc split pnpm-workspace lên sớm hơn, bằng một lựa chọn tường minh, không phải vì điều kiện trigger đã xảy ra: `packages/core` và `apps/crm` đã là các package riêng biệt (`apps/crm` là một Fastify app mỏng, import `packages/core` qua `workspace:*`), khớp với hình dạng mà trigger này mô tả. Điều *chưa* xảy ra là phần thực chất của trigger — vẫn chỉ có đúng một module thật (`crm`); chưa module thứ hai nào cần được xây như một deployable unit riêng. Hãy coi việc split cấu trúc này là hạ tầng sẵn có, không phải bằng chứng rằng trigger multi-service nền tảng đã xảy ra.
 
-Triggers and the transition each one unlocks:
+Các trigger và transition mà mỗi cái mở khóa:
 
-- **A second module (CRM, sales, inventory, accounting, ...) actually needs to be built as its own deployable unit** → done structurally (see above); the remaining work is building that second module itself — see Phase 7.
-- **A single frontend screen needs to aggregate data from ≥2 services** → build a GraphQL gateway as a BFF in front of the REST services. Not yet triggered — still only one module, so no cross-service aggregation need exists.
-- **The repo/package split above has actually happened** → evaluate gRPC for service-to-service calls where REST's overhead matters. The split is structurally done, but with only one running process there is no real service-to-service call to optimize yet — evaluate this once a second module is actually deployed independently (Phase 7), not from the structural split alone.
+- **Một module thứ hai (CRM, sales, inventory, accounting, ...) thực sự cần được xây như một deployable unit riêng** → đã xong về mặt cấu trúc (xem ở trên); phần việc còn lại là xây chính module thứ hai đó — xem Phase 7.
+- **Một màn hình frontend đơn cần aggregate dữ liệu từ ≥2 service** → xây một GraphQL gateway làm BFF phía trước các REST service. Chưa trigger — vẫn chỉ có một module, nên chưa có nhu cầu aggregate cross-service nào tồn tại.
+- **Việc split repo/package ở trên đã thực sự xảy ra** → đánh giá gRPC cho các lệnh gọi service-to-service ở nơi overhead của REST đáng kể. Việc split đã xong về mặt cấu trúc, nhưng với chỉ một process đang chạy thì chưa có lệnh gọi service-to-service thật nào để tối ưu — đánh giá việc này khi một module thứ hai thực sự được deploy độc lập (Phase 7), không phải chỉ dựa trên việc split cấu trúc.
 
-Until a trigger fires, its transition is not built. The one thing to do now, ahead of any trigger: keep every new entity module's name domain-namespaced (`<module>.<entity>`, e.g. `crm.customers`) and never let `QueryPlanner`/`CrudService` join across different entities' data in SQL — both are already true today and cost nothing to keep true.
+Cho đến khi một trigger xảy ra, transition của nó không được build. Việc duy nhất cần làm ngay bây giờ, trước mọi trigger: giữ tên mọi entity module mới theo domain-namespace (`<module>.<entity>`, ví dụ `crm.customers`) và không bao giờ để `QueryPlanner`/`CrudService` join dữ liệu giữa các entity khác nhau trong SQL — cả hai điều này đã đúng ngay hôm nay và không tốn gì để giữ đúng.
 
-## Success Criteria
+## Tiêu chí thành công
 
-Metap is successful if a developer can:
+Metap được coi là thành công nếu một developer có thể:
 
-1. Define an ERP entity with fields and workflow.
-2. Get CRUD/list/form metadata without writing boilerplate.
-3. Add policies without touching HTTP routes.
-4. Get reliable events without manual RabbitMQ publishing.
-5. Tune a slow list view through query/index metadata.
-6. Keep security enforcement on the server.
+1. Định nghĩa một ERP entity với field và workflow.
+2. Có được metadata CRUD/list/form mà không cần viết boilerplate.
+3. Thêm policy mà không cần đụng vào HTTP route.
+4. Có được event đáng tin cậy mà không cần publish RabbitMQ thủ công.
+5. Tune một list view chậm thông qua metadata query/index.
+6. Giữ việc enforce security ở phía server.
 
 ## Phase 10: Monorepo, npm publish
 
-**Status: Partially done.** Split the repo into a pnpm workspace and publish `packages/core` (today's `src/core` + shared `src/infra`) as an installable npm package, so a downstream project can depend on Metap's core instead of forking it. Overlaps Phase 9's repo/package-split trigger, but is scoped separately here because "publish an npm package other people install" is a distinct, additional commitment (semver, changelog, public API surface) beyond just splitting the repo for internal multi-service use.
+**Trạng thái: Làm một phần.** Split repo thành một pnpm workspace và publish `packages/core` (tương ứng `src/core` + `src/infra` dùng chung hiện tại) như một npm package cài được, để một downstream project có thể depend vào core của Metap thay vì fork nó. Overlap với trigger repo/package-split của Phase 9, nhưng được scope riêng ở đây vì "publish một npm package cho người khác cài" là một cam kết riêng, bổ sung (semver, changelog, public API surface) ngoài việc chỉ split repo cho mục đích multi-service nội bộ.
 
-Goals:
+Mục tiêu:
 
-- ~~Split into a pnpm workspace (`packages/core`, `apps/*`)~~ — **Done** 2026-08-02 (`packages/core`, `packages/platform-react`, `apps/crm`, `apps/crm-fe`). Pulled forward ahead of Phase 9's trigger, by explicit choice — see Phase 9 above. Superseded by the Rust migration (Phase 12) — `packages/core` no longer exists, its Rust equivalent is `crates/metap-*`.
-- Define and stabilize `packages/core`'s public API surface. — Not started for actual crates.io/npm publishing (both `packages/platform-react` and every `metap-*` crate are still unpublished, no external non-workspace consumer exists yet). Partial progress on the *downstream-consumption ergonomics* this goal is really after, done 2026-08-09 ahead of publishing itself: `crates/metap` (a facade crate re-exporting the `metap-*` sub-crates — one dependency, one `use metap::prelude::*` instead of memorizing which sub-crate each item lives in) and `templates/metap-app` (a `cargo generate` template wired to depend on `metap` via git, since crates.io publishing hasn't happened) — both dogfooded by migrating `apps/crm-server` itself onto the facade and by actually generating + compiling + running a project from the template against a real Postgres. Publishing itself (a git dependency still means "clone and compile from source" for every consumer) is unstarted.
-- Set up versioning/changelog and an npm publish pipeline (and, now, a crates.io one for `metap`/`metap-*`).
+- ~~Split thành một pnpm workspace (`packages/core`, `apps/*`)~~ — **Đã xong** 2026-08-02 (`packages/core`, `packages/platform-react`, `apps/crm`, `apps/crm-fe`). Được kéo lên sớm trước cả trigger của Phase 9, bằng một lựa chọn tường minh — xem Phase 9 ở trên. Đã bị Rust migration (Phase 12) thay thế — `packages/core` không còn tồn tại, phần tương đương bên Rust là `crates/metap-*`.
+- Định nghĩa và ổn định public API surface của `packages/core`. — Chưa bắt đầu cho việc publish thật lên crates.io/npm (cả `packages/platform-react` lẫn mọi crate `metap-*` đều vẫn chưa được publish, chưa có consumer ngoài workspace nào tồn tại). Có tiến triển một phần trên *downstream-consumption ergonomics* mà mục tiêu này thực sự nhắm tới, hoàn thành 2026-08-09 trước cả việc publish thật: `crates/metap` (một facade crate re-export các sub-crate `metap-*` — một dependency, một `use metap::prelude::*` thay vì phải nhớ item nào nằm ở sub-crate nào) và `templates/metap-app` (một template `cargo generate` được wire để depend vào `metap` qua git, vì việc publish lên crates.io chưa xảy ra) — cả hai đều được dogfood bằng cách migrate chính `apps/crm-server` sang dùng facade và bằng cách thực sự generate + compile + chạy một project từ template đó với một Postgres thật. Bản thân việc publish (một git dependency vẫn có nghĩa là "clone và compile từ source" cho mỗi consumer) chưa bắt đầu.
+- Thiết lập versioning/changelog và một pipeline publish npm (và, giờ đây, một pipeline crates.io cho `metap`/`metap-*`).
 
 ## Phase 11: Low-code Platform Backbone Architecture
 
-**Status: In progress.** Define the architecture for using Metap as the backbone of a low-code platform (ERP, CRM, and beyond), not just a single-purpose ERP core. This is a design/architecture phase, not an implementation one — its output is a spec, to be broken into further implementation phases once written.
+**Trạng thái: Đang làm.** Định nghĩa kiến trúc cho việc dùng Metap làm backbone của một low-code platform (ERP, CRM, và hơn thế), không chỉ là một ERP core đơn mục đích. Đây là một phase design/architecture, không phải implementation — output của nó là một spec, sẽ được chia nhỏ thành các implementation phase tiếp theo sau khi viết xong.
 
-Goals:
+Mục tiêu:
 
-- ~~Define what "low-code" means concretely for Metap~~ — **Done, at the directional level**, by `docs/vision.md` and `docs/low-code-platform-v1.md` (both 2026-08-02): who configures things (operators, via a metadata control plane, not source-code edits for the standard path), what's user-editable at runtime (metadata: entities/fields/list views/workflow/policies) vs. deploy-time (the execution engine itself — `packages/core`'s services stay code, only their metadata *inputs* become persisted).
-- Reconcile this with the metadata-driven design already in place (Phases 0-6) and the multi-service split (Phases 9-10). — `docs/low-code-platform-v1.md`'s "Architectural Constraint" section already states the reconciliation principle (evolve the authoring model, keep the execution engine); making it concrete is this phase's remaining work.
-- Produce a design spec before any implementation plan is written. — In progress. `docs/low-code-platform-v1.md` decomposes the work into 3 phases (A: Metadata Control Plane Foundation, B: Builder UI and Safe Runtime Rules, C: Platform Hardening); Phase A is further decomposed into 4 ordered sub-projects, the first of which has a written spec: `docs/low-code-metadata-storage-design.md` (persisted metadata storage + draft/published versioning — global, no workflow support yet, `crm.customers` stays code-authored for now). The remaining 3 Phase A sub-projects (runtime loader, publish validation pipeline, admin API) are named but not yet spec'd. That spec predates Phase 12 below (the Rust decision) and needs its implementation retargeted from TS to Rust when it's actually built — see its own status note.
+- ~~Định nghĩa cụ thể "low-code" nghĩa là gì với Metap~~ — **Đã xong, ở mức định hướng**, bởi `docs/vision.md` và `docs/low-code-platform-v1.md` (cả hai đều 2026-08-02): ai configure mọi thứ (operator, qua một metadata control plane, không sửa source code cho đường đi chuẩn), cái gì user-editable lúc runtime (metadata: entity/field/list view/workflow/policy) so với lúc deploy-time (chính execution engine — các service của `packages/core` vẫn là code, chỉ có metadata *input* của chúng mới được persist).
+- Reconcile điều này với thiết kế metadata-driven đã có sẵn (Phase 0-6) và việc split multi-service (Phase 9-10). — Mục "Ràng buộc kiến trúc" của `docs/low-code-platform-v1.md` đã nêu rõ nguyên tắc reconcile (tiến hóa authoring model, giữ nguyên execution engine); cụ thể hóa nó là phần việc còn lại của phase này.
+- Tạo ra một design spec trước khi viết bất kỳ implementation plan nào. — Đang làm. `docs/low-code-platform-v1.md` phân rã công việc thành 3 phase (A: Metadata Control Plane Foundation, B: Builder UI and Safe Runtime Rules, C: Platform Hardening); Phase A lại được phân rã tiếp thành 4 sub-project theo thứ tự, cái đầu tiên đã có spec viết sẵn: `docs/low-code-metadata-storage-design.md` (persisted metadata storage + draft/published versioning — global, chưa hỗ trợ workflow, `crm.customers` vẫn được author bằng code hiện tại). 3 sub-project còn lại của Phase A (runtime loader, publish validation pipeline, admin API) đã được đặt tên nhưng chưa có spec. Spec đó có trước Phase 12 bên dưới (quyết định Rust) và cần được retarget implementation từ TS sang Rust khi thực sự được build — xem ghi chú trạng thái riêng của nó.
 
 ## Phase 12: Rust Core Migration
 
-**Status: Decided, Migration Order complete, not yet deployed.** `packages/core` moves to
-Rust for every deployment profile — full decision record, spike results, and schema/codegen
-strategy in `docs/rust-core-viability.md`. Not a sub-item of any earlier phase: it recasts
-the *implementation language* of the execution engine every other phase above was built
-against, without changing what any of those phases actually deliver (metadata compiler,
-permission engine, query planner, workflow engine, CRUD, HTTP layer, peripherals — all
-re-implemented 1:1, not redesigned).
+**Trạng thái: Đã quyết định, Migration Order đã hoàn tất, chưa deploy.** `packages/core`
+chuyển hoàn toàn sang Rust cho mọi deployment profile — decision record đầy đủ, kết quả
+spike, và chiến lược schema/codegen nằm trong `docs/rust-core-viability.md`. Không phải một
+sub-item của phase nào trước đó: nó tái định hình *ngôn ngữ implementation* của execution
+engine mà mọi phase khác ở trên được xây dựng dựa vào, mà không thay đổi những gì các phase
+đó thực sự deliver (metadata compiler, permission engine, query planner, workflow engine,
+CRUD, HTTP layer, peripherals — tất cả được re-implement 1:1, không redesign).
 
-Goals:
+Mục tiêu:
 
-- ~~Decide whether to move `packages/core` to Rust~~ — **Done (2026-08-07)**, Option B (all
-  profiles), after a spike measured real footprint/throughput gains — see
+- ~~Quyết định có chuyển `packages/core` sang Rust hay không~~ — **Đã xong (2026-08-07)**,
+  Option B (mọi profile), sau khi một spike đo được lợi ích footprint/throughput thật — xem
   `docs/rust-core-viability.md`.
-- ~~Port the execution engine (Migration Order steps 1-9)~~ — **Done (2026-08-07)**:
-  `crates/` is a 9-crate Cargo workspace (`metap-infra`, `metap-metadata`,
+- ~~Port execution engine (Migration Order bước 1-9)~~ — **Đã xong (2026-08-07)**:
+  `crates/` là một Cargo workspace 9 crate (`metap-infra`, `metap-metadata`,
   `metap-permission`, `metap-query`, `metap-workflow`, `metap-crud`, `metap-http`,
-  `metap-peripherals`, plus the `outbox-publisher` binary) — 51 unit tests (no DB
-  dependency) + 19 e2e tests (real Postgres/RabbitMQ, one real HTTP server with a real
-  RS256 JWT) all passing, `cargo build --release --workspace` clean. Two real bugs were
-  caught only by e2e/live verification (a `data`/`status`-defaulting gap in `CrudService`,
-  a CORS-config panic only reachable with a non-empty origin list) — both fixed, both now
-  covered by tests.
-- ~~Prove the port against the real business entity, not just fixtures~~ — **Done
-  (2026-08-07)**: `apps/crm-server` (originally `crates/crm-server`, moved when `crates/`
-  was scoped to library crates + ops binaries only — see the Repo Structure note below), a
-  real `apps/crm`-equivalent binary running the actual `crm.customers` entity (ported from
-  `customer.entity.ts`), verified live over HTTP — `pnpm dev:rs` to run it.
-- ~~Delete `apps/crm`/`packages/core` once the port no longer needs them~~ — **Done
-  (2026-08-07)**. Closed three gaps first so nothing was silently stranded: JWT keys moved
-  to `crates/crm-server/keys/`, the three `packages/core/scripts/*.mjs` dev scripts became
-  `crates/dev-tools`'s subcommands, and Drizzle's migration SQL was copied to
-  `crates/migrations/` with `crates/db-migrate` (`sqlx::migrate!`) added to apply it — verified
-  by running the full e2e suite against a database migrated from scratch by that tool alone,
-  *before* deleting anything. See `docs/rust-core-viability.md`'s "TS Removal" section.
-  `packages/platform-react`/`apps/crm-fe` untouched (frontend was always HTTP-only). Known
-  gap this surfaced at the time: admin HTTP routes (policy CRUD, role grant/revoke) didn't
-  exist over HTTP, only as functions with e2e coverage — closed 2026-08-08, see
-  `crates/metap-http/src/routes/admin.rs` (`AdminContext` extractor requiring the `admin`
-  role; `/admin/users`, `/admin/users/{userId}/roles[/{role}]`, `/admin/policies[/{id}]`,
-  `/admin/policies/explain`), verified live against a real Postgres/RabbitMQ dev stack
-  (role assign/revoke/list, policy create/list/delete/explain, 401 unauthenticated, 403
-  non-admin).
-- Cut the Rust stack over to actually serving traffic. — **Not started.** No production
-  deployment topology exists for it yet (same gap Phase 8 Hardening already tracks for the
-  TS stack); this is a distinct, later decision, not implied by the port being finished.
-- Retarget Phase 11's in-flight TS-authored specs (starting with
-  `docs/low-code-metadata-storage-design.md`) to Rust before implementing them. — Not
-  started.
+  `metap-peripherals`, cộng binary `outbox-publisher`) — 51 unit test (không cần DB) + 19
+  e2e test (Postgres/RabbitMQ thật, một HTTP server thật với một JWT RS256 thật) đều pass,
+  `cargo build --release --workspace` sạch. Hai bug thật chỉ được bắt bởi e2e/live
+  verification (một gap defaulting `data`/`status` trong `CrudService`, một panic ở
+  CORS-config chỉ tái hiện được với một origin list không rỗng) — cả hai đã fix, cả hai giờ
+  đều có test bao phủ.
+- ~~Chứng minh việc port trên business entity thật, không chỉ fixture~~ — **Đã xong
+  (2026-08-07)**: `apps/crm-server` (ban đầu là `crates/crm-server`, chuyển đi khi `crates/`
+  được scope lại chỉ còn library crate + ops binary — xem ghi chú Repo Structure bên dưới),
+  một binary tương đương `apps/crm` thật, chạy đúng entity `crm.customers` (port từ
+  `customer.entity.ts`), đã verify live qua HTTP — chạy bằng `pnpm dev:rs`.
+- ~~Xóa `apps/crm`/`packages/core` một khi phần port không còn cần chúng nữa~~ — **Đã xong
+  (2026-08-07)**. Đóng ba gap trước để không có gì bị bỏ rơi âm thầm: JWT key chuyển sang
+  `crates/crm-server/keys/`, ba dev script `packages/core/scripts/*.mjs` trở thành các
+  subcommand của `crates/dev-tools`, và SQL migration của Drizzle được copy sang
+  `crates/migrations/` cùng `crates/db-migrate` (`sqlx::migrate!`) được thêm vào để apply
+  chúng — đã verify bằng cách chạy toàn bộ e2e suite trên một database được migrate từ đầu
+  chỉ bằng công cụ đó, *trước khi* xóa bất cứ thứ gì. Xem mục "TS Removal" của
+  `docs/rust-core-viability.md`. `packages/platform-react`/`apps/crm-fe` không bị đụng đến
+  (frontend vốn luôn chỉ giao tiếp qua HTTP). Gap đã biết được phát hiện lúc đó: các admin
+  HTTP route (policy CRUD, role grant/revoke) chưa tồn tại qua HTTP, chỉ tồn tại như các hàm
+  có e2e coverage — đã đóng 2026-08-08, xem `crates/metap-http/src/routes/admin.rs`
+  (extractor `AdminContext` yêu cầu role `admin`; `/admin/users`,
+  `/admin/users/{userId}/roles[/{role}]`, `/admin/policies[/{id}]`,
+  `/admin/policies/explain`), đã verify live trên một dev stack Postgres/RabbitMQ thật
+  (assign/revoke/list role, create/list/delete/explain policy, 401 khi chưa auth, 403 khi
+  không phải admin).
+- Cut stack Rust sang thực sự phục vụ traffic. — **Chưa bắt đầu.** Chưa tồn tại production
+  deployment topology cho việc này (cùng gap mà Phase 8 Hardening đã track cho stack TS);
+  đây là một quyết định riêng, sau này, không mặc nhiên kéo theo khi việc port hoàn tất.
+- Retarget các spec đang author bằng TS còn dang dở của Phase 11 (bắt đầu từ
+  `docs/low-code-metadata-storage-design.md`) sang Rust trước khi implement chúng. — Chưa
+  bắt đầu.
 
 ## Phase 13: Dynamic Cron Jobs
 
-**Status: Backend done (2026-08-09); no admin UI yet.** Metadata-driven scheduled jobs — an operator defines a recurring job (schedule + target action) through the admin API, the same way policies/roles are defined today, instead of a developer hand-wiring a new cron entry in code. "Dynamic" is the operative word: the set of jobs is data the platform reads at runtime, not a fixed list baked into a binary at compile time.
+**Trạng thái: Đã xong (2026-08-10) — backend và admin UI đều đã live.** Scheduled job metadata-driven — một operator định nghĩa một job định kỳ (schedule + target action) qua admin API, theo đúng cách policy/role được định nghĩa hiện nay, thay vì một developer tự hand-wire một cron entry mới trong code. "Dynamic" là từ khóa chính: tập hợp job là dữ liệu mà platform đọc lúc runtime, không phải một danh sách cố định bake vào binary lúc compile time.
 
-Implemented:
+Đã implement:
 
-- **Storage** (`crates/metap-cron`): `cron_jobs`/`cron_job_runs` tables (`crates/migrations/0006_cron_jobs.sql`) — platform/ops config, not an `EntityDefinition`/generic `records` row, same category as `policies`/`user_roles`. A job has `cronExpr` (standard 6-field `cron` crate syntax, e.g. `0 */5 * * * *`), an explicit IANA `timezone` (occurrences computed in that zone, not server-local time — `schedule::next_run_at`), and a `targetType` (`workflow_transition` | `bulk_query_action` | `webhook`) + `targetConfig` JSON blob.
-- **Dispatch, per-job reliable-vs-fire-and-forget** (`crates/cron-scheduler`, run with `pnpm worker:cron:rs`): a ticker polls `cron_jobs` for due entries (`SELECT ... FOR UPDATE SKIP LOCKED`, the same concurrency-safe claim `outbox-publisher::publish_pending` uses, so multiple scheduler replicas never double-fire a job), advances `next_run_at`, and inserts a `cron_job_runs` row — then branches on the job's `dispatchMode` (2026-08-09, added after review: not every job needs outbox-grade durability). `dispatchMode: "outbox"` (default) writes a `cron.job.due` outbox event in the same transaction, reusing the existing `outbox-publisher` to actually get it onto RabbitMQ (never publishing directly); an executor in the same `cron-scheduler` process subscribes to that routing key and runs the job — at-least-once, survives a `cron-scheduler` crash between claim and execution. `dispatchMode: "direct"` skips the outbox/RabbitMQ hop entirely: the ticker calls the exact same execution function in-process, in the same tick that claimed the job — lower latency (confirmed live: claim-to-webhook-call in ~16ms vs. the outbox path's ~1s poll-interval latency), but genuinely fire-and-forget — a crash mid-execution loses that firing, no redelivery. `metap_cron::DispatchMode`'s doc comment has the full tradeoff.
-- **Execution stays entity-agnostic**: `workflow_transition`/`bulk_query_action` targets call back into the owning `crm-server`'s own `/api/:entity/...` HTTP surface with a pre-minted service JWT (`CRON_SERVICE_JWT`) instead of `cron-scheduler` linking `metap-crud`/`metap-metadata` directly — reuses permission checks, field validation, optimistic-locking, and the workflow audit trail for free, and keeps the boundary CLAUDE.md's rules require (no `metap-*`/ops-binary business-entity knowledge). `webhook` targets call an arbitrary external URL instead. Known constraint: the service JWT's `tenantId` claim fixes which tenant's jobs an executor can actually run — a job whose `tenant_id` doesn't match fails at execution time (record/entity not found), not a security hole, but multi-tenant deployments need one `CRON_SERVICE_JWT`/executor per tenant for now.
-- **Admin API** (`crates/metap-http/src/routes/cron.rs`): `GET/POST /admin/cron-jobs`, `GET/PATCH/DELETE /admin/cron-jobs/{id}`, `GET /admin/cron-jobs/{id}/runs` — `AdminContext`-gated like `routes/admin.rs`, validates `cronExpr`/`timezone`/`targetType` at write time (`metap_cron::validate_schedule`) instead of failing silently the first time the ticker tries to schedule a bad job.
+- **Storage** (`crates/metap-cron`): bảng `cron_jobs`/`cron_job_runs` (`crates/migrations/0006_cron_jobs.sql`) — platform/ops config, không phải một `EntityDefinition`/row trong `records` generic, cùng loại với `policies`/`user_roles`. Một job có `cronExpr` (cú pháp 6-field chuẩn của crate `cron`, ví dụ `0 */5 * * * *`), một `timezone` IANA tường minh (occurrence được tính trong timezone đó, không phải giờ server-local — `schedule::next_run_at`), và một `targetType` (`workflow_transition` | `bulk_query_action` | `webhook`) + một blob JSON `targetConfig`.
+- **Dispatch, reliable-vs-fire-and-forget theo từng job** (`crates/cron-scheduler`, chạy bằng `pnpm worker:cron:rs`): một ticker poll `cron_jobs` tìm entry đến hạn (`SELECT ... FOR UPDATE SKIP LOCKED`, cùng cách claim an toàn về concurrency mà `outbox-publisher::publish_pending` dùng, để nhiều replica scheduler không bao giờ fire trùng một job), advance `next_run_at`, và insert một row `cron_job_runs` — rồi rẽ nhánh theo `dispatchMode` của job (2026-08-09, thêm vào sau review: không phải job nào cũng cần độ bền cấp outbox). `dispatchMode: "outbox"` (mặc định) ghi một outbox event `cron.job.due` trong cùng transaction, tái sử dụng `outbox-publisher` hiện có để thực sự đưa nó lên RabbitMQ (không bao giờ publish trực tiếp); một executor trong cùng process `cron-scheduler` subscribe routing key đó và chạy job — at-least-once, sống sót qua một lần `cron-scheduler` crash giữa lúc claim và lúc thực thi. `dispatchMode: "direct"` bỏ qua hoàn toàn hop outbox/RabbitMQ: ticker gọi thẳng đúng hàm thực thi đó in-process, trong cùng tick đã claim job — latency thấp hơn (đã xác nhận live: claim-đến-webhook-call ~16ms so với latency ~1s poll-interval của đường outbox), nhưng đúng nghĩa fire-and-forget — một crash giữa chừng thực thi sẽ mất lần fire đó, không có redelivery. Doc comment của `metap_cron::DispatchMode` có đầy đủ tradeoff.
+- **Việc thực thi vẫn entity-agnostic**: các target `workflow_transition`/`bulk_query_action` gọi ngược lại vào chính bề mặt `/api/:entity/...` HTTP của `crm-server` sở hữu chúng, với một JWT dịch vụ đã mint sẵn (`CRON_SERVICE_JWT`), thay vì để `cron-scheduler` link trực tiếp `metap-crud`/`metap-metadata` — tái sử dụng permission check, field validation, optimistic-locking, và workflow audit trail miễn phí, đồng thời giữ đúng boundary mà rule của CLAUDE.md yêu cầu (không `metap-*`/ops-binary nào được biết business-entity). Target `webhook` thì gọi một URL bên ngoài tùy ý. Ràng buộc đã biết: claim `tenantId` của service JWT cố định tenant nào mà một executor thực sự chạy job được — một job có `tenant_id` không khớp sẽ fail lúc thực thi (không tìm thấy record/entity), không phải lỗ hổng bảo mật, nhưng deployment multi-tenant hiện cần một `CRON_SERVICE_JWT`/executor cho mỗi tenant.
+- **Admin API** (`crates/metap-http/src/routes/cron.rs`): `GET/POST /admin/cron-jobs`, `GET/PATCH/DELETE /admin/cron-jobs/{id}`, `GET /admin/cron-jobs/{id}/runs` — được gate bởi `AdminContext` giống `routes/admin.rs`, validate `cronExpr`/`timezone`/`targetType` lúc ghi (`metap_cron::validate_schedule`) thay vì fail âm thầm lần đầu tiên ticker thử schedule một job hỏng.
+- **Admin UI của `packages/platform-react`** (`CronJobsAdminPage`, Phase 15, 2026-08-10): create/list/delete job, enable toggle, lịch sử run theo từng job — xem Phase 15 để biết phần còn lại của admin kit được ship kèm.
 
-Not done:
+Chưa làm:
 
-- **`packages/platform-react` admin UI** for cron job CRUD/run-history — the HTTP API exists, nothing consumes it from the frontend yet.
-- **Retry policy / alerting on repeated failure** — a failed run is recorded (`status = "failed"`, `error`) but nothing retries it or notifies anyone; ties into whatever the eventual real notification channel becomes (`crates/notification-worker` is stdout-only today).
-- **Multi-tenant executor routing** — see the `CRON_SERVICE_JWT` constraint above.
+- **Retry policy / alert khi fail lặp lại** — một run fail được ghi nhận (`status = "failed"`, `error`) nhưng không có gì retry nó hay báo cho ai; phụ thuộc vào việc kênh notification thật cuối cùng sẽ là gì (`crates/notification-worker` hiện chỉ stdout).
+- **Multi-tenant executor routing** — xem ràng buộc `CRON_SERVICE_JWT` ở trên.
 
 ## Phase 14: Multi-language (i18n)
 
-**Status: UI chrome done (2026-08-09); metadata-label translation not started.** Two separable concerns:
+**Trạng thái: UI chrome đã xong (2026-08-09); metadata-label translation chưa bắt đầu.** Hai mối quan tâm tách biệt nhau:
 
-- **Frontend UI chrome** (`packages/platform-react`, `apps/crm-fe`) — done. `react-i18next`/`i18next` wired into `platform-react` (`src/i18n/`: `resources.ts` holds the `en`/`vi` string tables, `i18n.ts` creates a dedicated i18next instance — not the module-level singleton, so an app embedding `platform-react` alongside its own i18next setup can't collide with it). `LocaleProvider` (must nest inside `AuthProvider`) loads the caller's locale from the new `GET /preferences` on mount and wraps `I18nextProvider`; `useLocale()`/`LocaleSwitcher` write it back via `PUT /preferences`. Every static chrome string in `GeneratedForm`/`GeneratedList`/`RecordDetail`/`WorkflowActionBar`/`ApiErrorMessage` and `crm-fe`'s `DevLoginPage`/`EntitiesPage`/`App.tsx` route guards now goes through `useTranslation()` — entity/field labels are untouched (see below, still single-locale from metadata).
-- **Backend locale storage** — done. `user_preferences` table (`crates/migrations/0007_user_preferences.sql`, `tenant_id`+`user_id` primary key) via `metap_peripherals::preferences` (`get_locale`/`set_locale`, mirrors `role_assignment.rs`'s plain-function style) and `GET/PUT /preferences` (`crates/metap-http/src/routes/preferences.rs`, `AuthContext`-gated self-service, not `/api/preferences` — would collide with `routes::records`' `/api/{entity}` wildcard). Locale validated against a small `SUPPORTED_LOCALES` allowlist (`en`, `vi` today — must stay in sync with `packages/platform-react/src/i18n/resources.ts`'s `SUPPORTED_LOCALES`, checked manually, no shared source of truth yet).
-- **Metadata-authored content (entity/field/list-view labels, workflow action names, validation messages)** — not started. Still hard-coded single-locale strings in `EntityDefinition`/`EntityField`/etc. (see `apps/crm-server/src/customer_entity.rs`). Making these translatable means either a `Record<locale, string>` shape on every label field (breaking change to `EntityField` and the OpenAPI-generated types in `crates/metap-metadata/src/openapi.rs`) or a separate translation-key indirection layer — needs a design decision before implementation, scoped alongside Phase 11's low-code metadata work rather than bolted on separately.
+- **Frontend UI chrome** (`packages/platform-react`, `apps/crm-fe`) — đã xong. `react-i18next`/`i18next` được wire vào `platform-react` (`src/i18n/`: `resources.ts` giữ bảng string `en`/`vi`, `i18n.ts` tạo một instance i18next riêng — không phải singleton cấp module, để một app embed `platform-react` cùng với setup i18next của riêng nó không bị đụng độ). `LocaleProvider` (phải nest bên trong `AuthProvider`) load locale của caller từ `GET /preferences` mới lúc mount và bọc `I18nextProvider`; `useLocale()`/`LocaleSwitcher` ghi ngược lại qua `PUT /preferences`. Mọi string chrome tĩnh trong `GeneratedForm`/`GeneratedList`/`RecordDetail`/`WorkflowActionBar`/`ApiErrorMessage` và các route guard `DevLoginPage`/`EntitiesPage`/`App.tsx` của `crm-fe` giờ đều đi qua `useTranslation()` — label entity/field không bị đụng đến (xem bên dưới, vẫn single-locale từ metadata).
+- **Backend locale storage** — đã xong. Bảng `user_preferences` (`crates/migrations/0007_user_preferences.sql`, primary key `tenant_id`+`user_id`) qua `metap_peripherals::preferences` (`get_locale`/`set_locale`, theo cùng phong cách plain-function của `role_assignment.rs`) và `GET/PUT /preferences` (`crates/metap-http/src/routes/preferences.rs`, self-service gated bởi `AuthContext`, không phải `/api/preferences` — sẽ đụng độ với wildcard `/api/{entity}` của `routes::records`). Locale được validate theo một allowlist nhỏ `SUPPORTED_LOCALES` (`en`, `vi` hiện nay — phải giữ đồng bộ với `SUPPORTED_LOCALES` của `packages/platform-react/src/i18n/resources.ts`, kiểm tra thủ công, chưa có single source of truth chung).
+- **Nội dung được author qua metadata (label entity/field/list-view, tên workflow action, validation message)** — chưa bắt đầu. Vẫn là string single-locale hard-code trong `EntityDefinition`/`EntityField`/v.v. (xem `apps/crm-server/src/customer_entity.rs`). Làm cho những cái này dịch được nghĩa là hoặc thêm một shape `Record<locale, string>` trên mọi label field (breaking change với `EntityField` và các type OpenAPI-generated trong `crates/metap-metadata/src/openapi.rs`) hoặc một lớp gián tiếp translation-key riêng — cần một quyết định thiết kế trước khi implement, scope cùng với công việc low-code metadata của Phase 11 thay vì gắn thêm riêng lẻ.
 
-Not done:
+Chưa làm:
 
-- Metadata-label translation shape (see above — blocks on Phase 11's metadata storage design, `docs/low-code-metadata-storage-design.md`).
-- Only two locales have translated resources (`en`/`vi`); adding a third means both a new `resources.ts` entry and adding it to the backend's `SUPPORTED_LOCALES`.
-- Record `data` (user-entered field values) and locale: out of scope by design — that's tenant business data, not platform-owned content — but worth stating explicitly so it isn't assumed later.
+- Shape của metadata-label translation (xem ở trên — block bởi metadata storage design của Phase 11, `docs/low-code-metadata-storage-design.md`).
+- Chỉ có hai locale có resource đã dịch (`en`/`vi`); thêm một locale thứ ba nghĩa là cần cả một entry mới trong `resources.ts` lẫn thêm vào `SUPPORTED_LOCALES` của backend.
+- `data` của record (giá trị field do user nhập) và locale: có chủ đích nằm ngoài scope — đó là dữ liệu business của tenant, không phải nội dung platform sở hữu — nhưng đáng nói rõ ra để không bị ai giả định sau này.
 
 ## Phase 15: Shared App Shell (UI kit, real login, permission-aware components)
 
-**Status: Real login done (2026-08-09); app shell, permission primitives, and admin UI kit not started — High priority.** `apps/crm-fe` already proves `packages/platform-react`'s generated CRUD screens (`GeneratedList`/`GeneratedForm`/`RecordDetail`/`WorkflowActionBar`) work generically across entities, but everything *around* those screens was still hand-rolled per app: login was a throwaway "paste a JWT" dev screen, there's no shared page shell (header/nav/locale-switcher placement — see `EntitiesPage.tsx` for the `Container`/`Group`/`Title` boilerplate every page currently repeats by hand), and there's no reusable primitive for permission-gated UI beyond what `CrudService`'s per-record `capabilities` (`writableFields`/`transitions`) already returns. A second downstream app today would still have to copy-paste the latter three rather than pull them from `platform-react`.
+**Trạng thái: Đã xong (2026-08-10) — real login, shared app shell, permission primitive, và admin UI kit đều đã live.** `apps/crm-fe` đã chứng minh các màn hình CRUD generated của `packages/platform-react` (`GeneratedList`/`GeneratedForm`/`RecordDetail`/`WorkflowActionBar`) hoạt động tổng quát trên mọi entity; phase này đóng gap ở mọi thứ *xung quanh* các màn hình đó — login, page chrome, UI gated theo permission, và các màn hình admin để quản lý policy/role/user/cron-job — vốn trước đây được hand-roll riêng lẻ theo từng app hoặc hoàn toàn chưa tồn tại.
 
-Implemented:
+Đã implement:
 
-- **Real login flow** (local username/password, decided over federated IdP for this phase — self-contained, no external dependency for a demo/kernel platform). `users` table (`crates/migrations/0009_users.sql`: `tenant_id`, `email` unique, `password_hash`) via `metap_peripherals::auth` — `create_user`/`verify_credentials` (argon2id; `verify_credentials` always pays the same argon2-verify cost on a nonexistent email via a precomputed dummy hash, so "email doesn't exist" and "wrong password" can't be told apart by timing) and `mint_jwt`, the **one** JWT-encoding implementation in the repo now — `POST /auth/login` (`crates/metap-http/src/routes/auth.rs`) and `dev-tools mint-token` both call it, so a CLI-minted token and a real-login one can't drift on claim shape. `crm-server` had been deliberately verify-only (only held the JWT *decoding* key); minting from a real login means it now also loads the *encoding* key at boot (`AUTH_JWT_PRIVATE_KEY_PATH`, required, same keypair `pnpm auth:dev-keys` already generates) — a real architecture shift, not just a new route.
-- **Provisioning**: `POST /admin/users` (email+password, optional `roles` to assign in the same call; `409 email_taken` on a duplicate email) and `dev-tools create-user <tenantId> <email> <password>` for dev-seeding — both call the same `create_user`.
-- **Frontend**: `LoginForm` in `packages/platform-react` (email+password, calls `POST /auth/login`, distinguishes `invalid_credentials` for a translated message vs. other failures), replacing `apps/crm-fe`'s `DevLoginPage` — renamed to `LoginPage` at route `/login` (was `/dev-login`, misleading now that it's a real login). `pnpm mint-token`/`pnpm seed:admin` still work unchanged for minting a token by hand without a real login.
-- Verified live: login with a bad password and a nonexistent email both return the identical `401 invalid_credentials`; a minted token works against a protected route; admin-provisioned user can immediately log in with the password the admin set.
+- **Flow login thật** (local username/password, được chọn thay vì federated IdP cho phase này — tự chứa, không phụ thuộc bên ngoài cho một demo/kernel platform). Bảng `users` (`crates/migrations/0009_users.sql`: `tenant_id`, `email` unique, `password_hash`) qua `metap_peripherals::auth` — `create_user`/`verify_credentials` (argon2id; `verify_credentials` luôn trả cùng chi phí argon2-verify trên một email không tồn tại bằng một dummy hash tính sẵn, để "email không tồn tại" và "sai mật khẩu" không thể phân biệt được qua timing) và `mint_jwt`, implementation JWT-encoding **duy nhất** trong repo hiện nay — `POST /auth/login` (`crates/metap-http/src/routes/auth.rs`) và `dev-tools mint-token` đều gọi nó, để một token mint từ CLI và một token từ real-login không thể lệch nhau về claim shape. `crm-server` trước đây có chủ đích chỉ verify-only (chỉ giữ key *decoding* của JWT); việc mint từ một real login nghĩa là giờ nó cũng load thêm key *encoding* lúc boot (`AUTH_JWT_PRIVATE_KEY_PATH`, bắt buộc, cùng keypair mà `pnpm auth:dev-keys` đã generate) — một dịch chuyển kiến trúc thật sự, không chỉ là một route mới.
+- **Provisioning**: `POST /admin/users` (email+password, `roles` tùy chọn để assign trong cùng lệnh gọi; `409 email_taken` khi email trùng) và `dev-tools create-user <tenantId> <email> <password>` cho dev-seeding — cả hai đều gọi cùng `create_user`.
+- **`GET /auth/me`** (`crates/metap-http/src/routes/auth.rs`): trả về `{userId, tenantId, roles}` cho token của chính caller qua `AuthContext` — được thêm riêng để frontend biết role của chính nó phục vụ UI gating, vì role có chủ đích không bao giờ được encode trên chính JWT (được tra cứu mới từ `user_roles` cho mỗi request, giống mọi route `AuthContext` khác).
+- **`LoginForm`** trong `packages/platform-react` (email+password, gọi `POST /auth/login`, phân biệt `invalid_credentials` để hiện message đã dịch so với các lỗi khác), thay thế `DevLoginPage` của `apps/crm-fe` — đổi tên thành `LoginPage` tại route `/login` (trước là `/dev-login`, gây hiểu lầm giờ khi nó đã là login thật). `pnpm mint-token`/`pnpm seed:admin` vẫn hoạt động không đổi để mint token thủ công mà không cần qua real login.
+- **Permission-aware UI primitive**: `useCurrentUser()` (query `GET /auth/me`) cộng `useHasRole()`/`<Can roles={[...]} fallback={...}>` (`packages/platform-react/src/auth/`) — chỉ gate ở phía UI (server vẫn re-check qua `AdminContext` bất kể frontend ẩn gì), dùng để filter nav link và gate ba admin route bên dưới.
+- **Shared app shell**: `AppShellLayout` (`packages/platform-react/src/shell/`) — một header `AppShell` của Mantine với brand/nav (nav item tùy chọn gate theo role qua `useHasRole`), `LocaleSwitcher`, badge role của current-user, và logout, thay thế boilerplate `Container`/`Group`/`Title` mà `EntitiesPage.tsx` từng hand-roll. `RequireAuth` của `apps/crm-fe` giờ bọc mọi route đã auth trong nó.
+- **Admin UI kit**: `packages/platform-react/src/admin/` — `adminApi.ts` (các hook cho users/policies/cron-jobs qua `/admin/*`) cộng `UsersAdminPage` (create user, list, assign/revoke role), `PoliciesAdminPage` (create/list/delete policy, editor raw-JSON cho `PolicyCondition`), `CronJobsAdminPage` (create/list/delete job, enable toggle, lịch sử run theo từng job) — đóng gap "chưa có admin UI" của Phase 13. Được wire vào `apps/crm-fe` tại `/admin/users`, `/admin/policies`, `/admin/cron-jobs`, mỗi cái được gate bởi `<Can roles={["admin"]}>`.
+- Đã verify live end-to-end (chạy bằng Playwright, `apps/crm-fe` + `crm-server` trên dev Postgres/RabbitMQ): login với mật khẩu sai và với một email không tồn tại đều trả về cùng `401 invalid_credentials`; user do admin provision có thể login ngay với mật khẩu admin đã đặt; nav link cho Users/Policies/Cron Jobs chỉ render với một token có role `admin`; round-trip create/list/delete đầy đủ trên cả ba trang admin kể cả lịch sử run của cron-job.
+- Hai bug thật được phát hiện và fix trong lần verify đó (không tồn tại trước phase này): (1) dev proxy của `apps/crm-fe/vite.config.ts` thiếu `/admin` (có `/api`/`/metadata`/`/health`/`/preferences`/`/auth` nhưng không có `/admin`), khiến mọi request của admin-kit trả 404 từ chính dev server của Vite thay vì đến được `crm-server`; (2) `apiFetch` trong `packages/platform-react/src/api/client.ts` luôn gọi `response.json()` vô điều kiện, thứ sẽ throw trên một body `204 No Content` — vô hình cho đến phase này vì mọi route DELETE của caller hiện có đều trả `200 {data}`, nhưng `/admin/policies/:id`, `/admin/users/:id/roles/:role`, và `/admin/cron-jobs/:id` đều trả `204` trần; `apiFetch` giờ short-circuit về `undefined` khi gặp 204.
 
-Not done:
+Chưa làm (gap đã biết, không nằm trong hàng đợi):
 
-- **Shared app shell in `packages/platform-react`**: header/nav chrome, a consistent page container, and a standard place to mount `LocaleSwitcher` — so a downstream app assembles a shell from `platform-react` instead of each one hand-rolling it (`apps/crm-fe`'s own pages are the current duplication example).
-- **Permission-aware UI primitives**: a `<Can .../>`-style component or `useCapability()` hook wrapping the per-record `capabilities` `CrudService` already computes, plus role-level gates (e.g. hide a nav link unless the token's roles include `admin`) — today this is duplicated ad hoc per component (`WorkflowActionBar` inlines its own `blocked` check from `capabilities.transitions`, `FieldInput`'s `disabled` prop is threaded manually by each caller).
-- **Admin UI kit**: `platform-react` has zero admin screens today — policy/role/user CRUD (`/admin/policies`, `/admin/users`) and cron-job CRUD (`/admin/cron-jobs`, Phase 13) exist only as raw HTTP APIs, nothing in the frontend consumes them. A reusable "admin table + form" kit here would also close Phase 13's "no admin UI yet" gap for free.
-- Token refresh/rotation, "forgot password", email verification, per-route login rate-limiting beyond the existing global per-IP limiter — none of these exist yet; flagged as known gaps for a real deployment, not queued.
+- Token refresh/rotation, "quên mật khẩu", xác minh email, rate-limiting login theo từng route ngoài limiter global per-IP hiện có.
+- Admin UI kit hoạt động được nhưng còn tối giản: chưa có pagination trên bất kỳ admin list nào, `PolicyCondition`/`targetConfig` của cron là textarea raw-JSON thay vì structured builder, chưa có bộ chuyển tenant (chỉ một dev tenant duy nhất).
 
-Relates to: Phase 13 (cron admin UI blocked on the admin kit specifically), Phase 11 (a shared shell is part of the platform surface, not a per-app concern).
+Liên quan đến: Phase 13 (admin UI cho cron — được đóng bởi admin kit của phase này), Phase 11 (shared shell là một phần của platform surface, không phải mối quan tâm riêng của từng app).
 
 

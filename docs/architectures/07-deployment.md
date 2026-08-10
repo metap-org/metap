@@ -1,6 +1,6 @@
 # 7. Deployment View
 
-Deployment topology for local development (`docker compose` + Rust processes run via `pnpm` script wrappers, or `cargo run` directly). Production isn't built out yet ([Phase 8: Hardening](../roadmap.md) is in progress — a non-root `Dockerfile` and CI exist, but no actual production deployment topology/orchestrator/secrets-manager does) — this reflects today's actual dev setup, not a target production topology. (Kruchten 4+1's Physical View.)
+Topology triển khai cho local development (`docker compose` + các process Rust chạy qua wrapper script của `pnpm`, hoặc `cargo run` trực tiếp). Production chưa được xây dựng ([Phase 8: Hardening](../roadmap.md) đang tiến hành — đã có `Dockerfile` non-root và CI, nhưng chưa có topology triển khai production/orchestrator/secrets-manager thực sự) — tài liệu này phản ánh setup dev thực tế hiện tại, không phải một topology production mục tiêu. (Physical View của Kruchten 4+1.)
 
 ```mermaid
 graph TB
@@ -25,9 +25,9 @@ graph TB
   Worker --> MQ
 ```
 
-## Notes
+## Ghi chú
 
-- API Server and Outbox Publisher are separate binaries/processes today, not separate containers — either can be containerized independently without code changes, since they already only communicate through PostgreSQL/RabbitMQ.
-- **Single-process alternative**: `pnpm start` builds `apps/crm-fe` and points `apps/crm-server`'s `STATIC_DIR` config at the build output, so the API server serves the frontend's static files itself, single-process/single-port. This is a deployment-convenience mode, not a replacement for the split dev workflow above (`pnpm dev:web` + `pnpm dev:rs`) — the Outbox Publisher is never folded into this, it stays a distinct process either way.
-- No production deployment topology is documented yet — no orchestrator (Kubernetes, ECS, etc.), no load balancer, no autoscaling, no secrets manager. This is real, tracked debt — see [11. Risks and Technical Debt](11-risks.md).
-- `docker compose` here is a local dev convenience, not a deployment target — `docker-compose.yml` only runs `postgres` and `rabbitmq`; the API/worker/frontend all run as plain processes on the host.
+- API Server và Outbox Publisher hiện là hai binary/process riêng biệt, chưa phải hai container riêng — mỗi cái đều có thể được đóng container độc lập mà không cần sửa code, vì chúng vốn đã chỉ giao tiếp qua PostgreSQL/RabbitMQ.
+- **Phương án chạy đơn process**: `pnpm start` build `apps/crm-fe` rồi trỏ config `STATIC_DIR` của `apps/crm-server` vào thư mục output build đó, để API server tự phục vụ luôn các static file của frontend, chạy đơn process/đơn port. Đây là một chế độ tiện lợi khi triển khai, không phải phương án thay thế cho workflow dev tách rời ở trên (`pnpm dev:web` + `pnpm dev:rs`) — Outbox Publisher không bao giờ bị gộp vào chế độ này, nó luôn là một process riêng biệt dù chạy theo cách nào.
+- Chưa có tài liệu mô tả topology triển khai production — chưa có orchestrator (Kubernetes, ECS, v.v.), chưa có load balancer, chưa có autoscaling, chưa có secrets manager. Đây là khoản nợ kỹ thuật có thật, đã được ghi nhận — xem [11. Risks and Technical Debt](11-risks.md).
+- `docker compose` ở đây chỉ là tiện ích cho local dev, không phải mục tiêu triển khai — `docker-compose.yml` chỉ chạy `postgres` và `rabbitmq`; API/worker/frontend đều chạy dưới dạng process thuần trên host.

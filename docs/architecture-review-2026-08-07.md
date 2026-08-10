@@ -2,68 +2,72 @@
 
 Status: exploratory (review only — no code changed, no phase status changed)
 
-**Superseded, 2026-08-07, same day:** this review's central recommendation (Part 1's Event
-finding / Part 2 / Part 4 — extract an `EventBus` interface as a small TS refactor) was
-overtaken by a much larger decision made later the same day: `packages/core` moves to Rust
-entirely (`docs/rust-core-viability.md`). That Rust port's Migration Order built
-`crates/metap-infra`'s `EventBus` trait as part of a full reimplementation, not as the
-standalone TS extraction this review proposed — so treat this document's *observations*
-about the TS codebase (still real, still accurate as a snapshot of what's actually
-deployed) as historical record, and its *recommendations* as superseded rather than a
-live TODO list. Part 3's deployment-profile question and Part 2's "don't build the other
-six SPIs without a trigger" reasoning are the two things from this review still actually
-open — see `docs/modular-spi-architecture.md` for where those landed.
+**Superseded, 2026-08-07, same day:** khuyến nghị trọng tâm của review này (Part 1's Event
+finding / Part 2 / Part 4 — trích xuất một `EventBus` interface như một refactor TS nhỏ) đã
+bị vượt qua bởi một quyết định lớn hơn nhiều được đưa ra cùng ngày hôm đó: `packages/core`
+chuyển hoàn toàn sang Rust (`docs/rust-core-viability.md`). Rust port đó, theo Migration
+Order của nó, đã xây dựng `crates/metap-infra`'s `EventBus` trait như một phần của việc
+triển khai lại toàn diện, chứ không phải như phần trích xuất TS độc lập mà review này đề
+xuất — vì vậy hãy coi các *quan sát* của tài liệu này về codebase TS (vẫn thực, vẫn chính
+xác như một snapshot của những gì thực sự đang được triển khai) là bản ghi lịch sử, còn các
+*khuyến nghị* của nó thì đã bị supersede chứ không còn là một TODO list còn hiệu lực. Câu
+hỏi về deployment-profile ở Part 3 và lập luận "đừng xây sáu SPI còn lại khi chưa có trigger"
+ở Part 2 là hai điều duy nhất từ review này vẫn còn thực sự mở — xem
+`docs/modular-spi-architecture.md` để biết chúng đã đi đến đâu.
 
 ## Purpose and Method
 
-This is a "lead architect" review of Metap's current architecture, written against the
-brief in the repo-root `READ.md`: understand what exists, identify strengths/bottlenecks/
-missing abstractions, and recommend *incremental* improvements — never a rewrite — each
-answering why it's needed, what problem it solves, whether it's backward compatible, and
-how much work it is.
+Đây là một review kiểu "lead architect" về kiến trúc hiện tại của Metap, được viết theo
+brief trong `READ.md` ở gốc repo: hiểu những gì đang tồn tại, chỉ ra các điểm mạnh/nút thắt/
+abstraction còn thiếu, và khuyến nghị các cải tiến *incremental* — không bao giờ là một cuộc
+viết lại — mỗi khuyến nghị đều trả lời tại sao nó cần thiết, nó giải quyết vấn đề gì, có
+backward compatible hay không, và tốn bao nhiêu công sức.
 
-It is written after re-reading the full `docs/architectures/` set (arc42 sections 1-12),
-`docs/roadmap.md`, `docs/why.md`, `docs/vision.md`, `docs/low-code-platform-v1.md`, and
-cross-checking the docs' claims against the actual source (`container.ts`, the permission/
-workflow/outbox services, the RabbitMQ publisher). Where a doc's claim and the code
-disagreed, the code wins, and the disagreement is called out below.
+Tài liệu này được viết sau khi đọc lại toàn bộ tập `docs/architectures/` (các mục arc42
+1-12), `docs/roadmap.md`, `docs/why.md`, `docs/vision.md`, `docs/low-code-platform-v1.md`, và
+đối chiếu các khẳng định trong docs với source code thực tế (`container.ts`, các service
+permission/workflow/outbox, RabbitMQ publisher). Khi khẳng định của một tài liệu và code mâu
+thuẫn nhau, code là bên đúng, và sự mâu thuẫn đó được nêu ra bên dưới.
 
-This document does not replace `docs/roadmap.md` as the source of truth for phase status —
-it is an input to it. Where a recommendation below implies new work, it should still be
-designed and recorded (in the relevant `docs/*.md` file and `docs/architectures/09-adr.md`)
-before anything is built.
+Tài liệu này không thay thế `docs/roadmap.md` với vai trò nguồn sự thật (source of truth) về
+tình trạng các phase — nó là một input cho roadmap đó. Khi một khuyến nghị bên dưới kéo theo
+công việc mới, công việc đó vẫn cần được thiết kế và ghi lại (trong file `docs/*.md` liên
+quan và trong `docs/architectures/09-adr.md`) trước khi bắt tay vào xây dựng bất cứ thứ gì.
 
 ## Executive Summary
 
-Metap's core is well-built and unusually disciplined about trigger-based evolution — most
-of what a generic "add abstraction layers" review would suggest has already been
-deliberately *not* built, for good, documented reasons (no `BaseRepository`, no report
-query path, no GraphQL gateway, no gRPC). That discipline should be preserved, not
-overridden by this review.
+Phần lõi của Metap được xây dựng tốt và có kỷ luật hiếm thấy về việc tiến hóa dựa trên
+trigger (trigger-based evolution) — phần lớn những gì một review "thêm các lớp abstraction"
+kiểu chung chung sẽ đề xuất thì đã được chủ động *không* xây dựng, vì những lý do chính đáng
+và đã được ghi lại (không có `BaseRepository`, không có report query path, không có GraphQL
+gateway, không có gRPC). Kỷ luật đó nên được giữ nguyên, không nên bị review này ghi đè.
 
-The one place where that discipline has a real, near-term cost is **event publishing**:
-every outbox-adjacent line of code depends on a concrete `RabbitPublisher` type, with zero
-interface boundary — unlike permission storage, which already has exactly this kind of
-seam (`PolicyStore`). This is the single highest-leverage recommendation in this review
-(Part 2).
+Nơi duy nhất mà kỷ luật đó gây ra một chi phí thực sự, trong ngắn hạn, là **event
+publishing**: mọi dòng code liên quan đến outbox đều phụ thuộc vào một kiểu cụ thể là
+`RabbitPublisher`, không có ranh giới interface nào cả — khác với việc lưu trữ permission,
+vốn đã có sẵn đúng loại seam này (`PolicyStore`). Đây là khuyến nghị có đòn bẩy cao nhất
+trong toàn bộ review này (Part 2).
 
-A second finding is a **documentation drift bug**: `CLAUDE.md`'s description of
-`WorkflowEngine` says transition/guard logic "is not yet implemented," but
-`docs/roadmap.md` (the authoritative phase tracker) marks Phase 5 (guard conditions,
-atomic transitions, optimistic locking) as **Done**, and `POST
-/api/:entity/:id/transitions/:action` exists and is tested. `CLAUDE.md` is the first file
-read by any future session (human or agent) — a stale line there risks someone re-building
-or avoiding already-shipped work. Fix is trivial (Part 4, item 1).
+Một phát hiện thứ hai là một **lỗi tài liệu bị lệch (documentation drift)**: phần mô tả
+`WorkflowEngine` trong `CLAUDE.md` nói rằng logic transition/guard "chưa được triển khai,"
+nhưng `docs/roadmap.md` (bộ theo dõi phase có thẩm quyền) lại đánh dấu Phase 5 (guard
+conditions, atomic transitions, optimistic locking) là **Done**, và `POST
+/api/:entity/:id/transitions/:action` đã tồn tại và đã được test. `CLAUDE.md` là tài liệu
+đầu tiên được đọc trong mọi phiên làm việc trong tương lai (dù là người hay agent) — một dòng
+đã lỗi thời ở đó có nguy cơ khiến ai đó xây lại logic guard đã được ship, hoặc né tránh không
+dùng nó vì tưởng nhầm là nó chưa tồn tại. Cách sửa rất đơn giản (Part 4, item 1).
 
-Everything else — Repository abstraction, WorkflowRuntime swapping, GraphQL, a Scheduler,
-CacheProvider — is correctly *not* built yet, and this review recommends **not** building
-it now either; each is covered below with the specific trigger that would justify it.
+Mọi thứ còn lại — Repository abstraction, việc hoán đổi WorkflowRuntime, GraphQL, một
+Scheduler, CacheProvider — đều đúng đắn khi *chưa* được xây dựng, và review này khuyến nghị
+**không** xây dựng chúng lúc này — mỗi mục được đề cập bên dưới kèm trigger cụ thể sẽ là lý
+do chính đáng để xây dựng nó.
 
-The one open question this review surfaces rather than answers is a **deployment-profile
-decision**: `docs/architectures/02-constraints.md` binds Postgres and RabbitMQ as the only
-datastore/broker. A "Tiny" (SQLite, single-binary) profile — the kind READ.md's prompt asks
-about — would require amending that binding constraint. That's a product decision, not an
-engineering gap, and this review deliberately stops short of making it (Part 3).
+Câu hỏi mở duy nhất mà review này nêu ra thay vì trả lời là một **quyết định về
+deployment-profile**: `docs/architectures/02-constraints.md` ràng buộc Postgres và RabbitMQ
+là datastore/broker duy nhất. Một profile "Tiny" (SQLite, single-binary) — kiểu mà prompt của
+READ.md hỏi đến — sẽ đòi hỏi phải sửa đổi ràng buộc (binding constraint) đó. Đó là một quyết
+định sản phẩm, không phải một lỗ hổng kỹ thuật, và review này chủ động dừng lại, không đưa ra
+quyết định đó (Part 3).
 
 ---
 
@@ -71,323 +75,337 @@ engineering gap, and this review deliberately stops short of making it (Part 3).
 
 ### Module
 
-**Observation:** `apps/<module>` per pnpm workspace member; `apps/crm` is the only one
-today; `packages/core` has zero business-entity knowledge (`buildApp(config, entities)`
-takes entities as a parameter). Entity names are already dot-namespaced (`crm.customers`)
-as the anchor for a future per-module service boundary.
+**Quan sát:** `apps/<module>` cho mỗi pnpm workspace member; `apps/crm` là module duy
+nhất hiện có; `packages/core` không có bất kỳ kiến thức nào về business-entity
+(`buildApp(config, entities)` nhận entities như một tham số). Tên entity đã được đặt theo
+kiểu dot-namespaced (`crm.customers`) như một điểm neo cho một ranh giới service theo
+module trong tương lai.
 
-**Problem:** None blocking. Phase 7 (Module Migration Strategy) hasn't started, so the
-`apps/<module>` pattern is untested with a second real module — unknown unknowns like
-shared cross-module frontend concerns (e.g. does `apps/demo`'s dev harness scale to
-multiple modules' entities cleanly?) won't surface until then.
+**Vấn đề:** Không có gì chặn. Phase 7 (Module Migration Strategy) chưa bắt đầu, nên pattern
+`apps/<module>` chưa được kiểm chứng với một module thứ hai thực sự — các unknown unknowns
+như các mối quan tâm frontend dùng chung giữa nhiều module (ví dụ: dev harness của
+`apps/demo` có scale gọn gàng lên nhiều module's entities hay không?) sẽ không lộ ra cho đến
+khi đó.
 
-**Recommendation:** No change now. When the second module (Phase 7) is built, watch for
-repeated boilerplate across `apps/<module>/{main.ts,.env.example,workers/}` — only
-introduce a generator/template once a *third* module confirms the pattern repeats
-(consistent with this project's trigger-based stance, not ahead of it).
+**Khuyến nghị:** Không thay đổi gì lúc này. Khi module thứ hai (Phase 7) được xây dựng,
+hãy để ý phần boilerplate lặp lại giữa các `apps/<module>/{main.ts,.env.example,workers/}` —
+chỉ nên đưa vào một generator/template khi một module *thứ ba* xác nhận pattern đó lặp lại
+(nhất quán với lập trường trigger-based của dự án này, không đi trước nó).
 
-**Impact:** None (deferred).
-**Compatibility:** N/A.
-**Future Evolution:** Directly prepares for Phase 9's multi-service split trigger.
+**Tác động:** Không (deferred).
+**Khả năng tương thích:** N/A.
+**Tiến hóa trong tương lai:** Chuẩn bị trực tiếp cho trigger tách multi-service của Phase 9.
 
 ---
 
 ### Entity
 
-**Observation:** `EntityDefinition` = Zod schema + fields + list views + workflow,
-code-authored in `*.entity.ts`, validated and hashed by `MetadataCompiler` at
-`MetadataRegistry.register()` time (boot-time failure, not first-request failure).
+**Quan sát:** `EntityDefinition` = Zod schema + fields + list views + workflow, được viết
+bằng code trong `*.entity.ts`, được validate và hash bởi `MetadataCompiler` tại thời điểm
+`MetadataRegistry.register()` (lỗi phát hiện lúc boot, không phải lúc request đầu tiên).
 
-**Problem:** 100% code-authored today — this *is* Phase 11's gap, not a bug. No other
-issue found.
+**Vấn đề:** 100% được viết bằng code ngày nay — đây *chính là* khoảng trống của Phase 11,
+không phải một bug. Không tìm thấy vấn đề nào khác.
 
-**Recommendation:** Proceed with Phase A sub-project 1 as already scoped in
-`docs/low-code-metadata-storage-design.md` (spec already
-written, no plan yet — see Part 4). Keep `crm.customers` code-authored; prove the
-DB-authored path on a new entity first, exactly as that spec already locks in.
+**Khuyến nghị:** Tiến hành Phase A sub-project 1 như đã được scope sẵn trong
+`docs/low-code-metadata-storage-design.md` (spec đã được viết, nhưng chưa có plan — xem Part
+4). Giữ `crm.customers` là code-authored; chứng minh đường đi DB-authored trên một entity mới
+trước, đúng như spec đó đã chốt sẵn.
 
-**Impact:** Medium — adds a new metadata source path; additive to `MetadataRegistry`, not
-a replacement of the code-authored path.
-**Compatibility:** Fully backward compatible by the spec's own design.
-**Future Evolution:** This is the on-ramp to the entire low-code control plane (Phase 11).
+**Tác động:** Trung bình — thêm một nguồn metadata mới; là bổ sung (additive) vào
+`MetadataRegistry`, không thay thế đường đi code-authored.
+**Khả năng tương thích:** Hoàn toàn backward compatible theo chính thiết kế của spec.
+**Tiến hóa trong tương lai:** Đây là con đường dẫn vào toàn bộ low-code control plane (Phase 11).
 
 ---
 
 ### Repository
 
-**Observation:** No `Repository`/`StorageProvider` interface anywhere. The Drizzle-backed
-`Database` type is injected directly, as a concrete type, into ~9 services (`CrudService`,
-`OutboxService`, `PostgresPolicyStore`, `QueryPlanner`/`condition-to-sql.ts`,
-`IndexReconciler`, `MetadataDriftService`, `HealthService`, `RoleAssignmentService`,
-`container.ts`). Phase 1 of the roadmap explicitly chose **not** to build a
-`BaseRepository`/`TransactionManager`, using Drizzle's own `db.client.transaction()`
-inline instead — a deliberate YAGNI call, not an oversight.
+**Quan sát:** Không có interface `Repository`/`StorageProvider` nào ở bất cứ đâu. Kiểu
+`Database` được backing bởi Drizzle được inject trực tiếp, như một kiểu cụ thể, vào ~9
+service (`CrudService`, `OutboxService`, `PostgresPolicyStore`,
+`QueryPlanner`/`condition-to-sql.ts`, `IndexReconciler`, `MetadataDriftService`,
+`HealthService`, `RoleAssignmentService`, `container.ts`). Phase 1 của roadmap đã chủ động
+chọn **không** xây dựng `BaseRepository`/`TransactionManager`, mà dùng thẳng
+`db.client.transaction()` của chính Drizzle — một quyết định YAGNI có chủ đích, không phải
+một thiếu sót.
 
-**Problem:** None *today*. This is only a real problem if either (a) a second datastore is
-actually needed, or (b) a Tiny/SQLite deployment profile becomes a real target (Part 3).
-Neither has fired.
+**Vấn đề:** Không có vấn đề gì *hiện tại*. Đây chỉ thực sự là vấn đề nếu (a) một datastore
+thứ hai thực sự cần thiết, hoặc (b) một deployment profile Tiny/SQLite trở thành mục tiêu
+thực sự (Part 3). Chưa điều nào trong hai điều đó xảy ra.
 
-**Recommendation:** Do **not** introduce a Repository/StorageProvider abstraction now —
-there is no trigger, and it would directly contradict the reasoning that already killed
-`BaseRepository` in Phase 1. If the Tiny-profile decision in Part 3 is ever made
-affirmatively, note that the real seam isn't "CRUD verbs" — it's `QueryPlanner`'s generated
-SQL, which is Postgres-dialect-specific in several places (`jsonb_extract_path_text`,
-`plainto_tsquery('simple', ...)`, and the keyset-pagination `WHERE` construction). A future
-`StorageProvider` abstraction should be scoped around that surface, not a generic
-per-entity repository interface.
+**Khuyến nghị:** **Không** nên đưa vào một abstraction Repository/StorageProvider lúc
+này — không có trigger nào, và làm vậy sẽ trực tiếp mâu thuẫn với lập luận đã từng loại bỏ
+`BaseRepository` ở Phase 1. Nếu quyết định về Tiny-profile ở Part 3 sau này được đưa ra theo
+hướng khẳng định, cần lưu ý rằng seam thực sự không phải là "các động từ CRUD" — mà là SQL
+được sinh ra bởi `QueryPlanner`, vốn mang tính đặc thù Postgres-dialect ở nhiều chỗ
+(`jsonb_extract_path_text`, `plainto_tsquery('simple', ...)`, và phần dựng `WHERE` cho
+keyset-pagination). Một abstraction `StorageProvider` trong tương lai nên được scope quanh
+bề mặt đó, không phải một interface repository theo từng entity kiểu chung chung.
 
-**Impact:** N/A unless triggered.
-**Compatibility:** N/A.
-**Future Evolution:** Tied to the Tiny-profile decision (Part 3), not independent of it.
+**Tác động:** N/A trừ khi có trigger.
+**Khả năng tương thích:** N/A.
+**Tiến hóa trong tương lai:** Gắn liền với quyết định Tiny-profile (Part 3), không tách rời khỏi nó.
 
 ---
 
 ### API
 
-**Observation:** REST via Fastify, one generic `/api/:entity` route family, generated
-OpenAPI at `/metadata/openapi.json`. No GraphQL.
+**Quan sát:** REST qua Fastify, một họ route generic duy nhất `/api/:entity`, OpenAPI
+được sinh tự động tại `/metadata/openapi.json`. Không có GraphQL.
 
-**Problem:** None. Single frontend (`apps/demo`), no cross-service data aggregation need
-exists yet.
+**Vấn đề:** Không có. Chỉ có một frontend duy nhất (`apps/demo`), chưa có nhu cầu tổng hợp
+dữ liệu xuyên service nào tồn tại.
 
-**Recommendation:** Keep REST. GraphQL BFF stays exactly as trigger-based as
-`docs/architectures/04-strategy.md` already states (≥2 modules whose data one frontend
-screen needs to aggregate) — this review found no reason to move that trigger earlier.
+**Khuyến nghị:** Giữ REST. GraphQL BFF vẫn giữ nguyên tính trigger-based như
+`docs/architectures/04-strategy.md` đã nêu (≥2 module mà dữ liệu của chúng cần được một màn
+hình frontend tổng hợp lại) — review này không tìm ra lý do gì để đẩy trigger đó sớm hơn.
 
-**Impact / Compatibility / Future Evolution:** Reaffirms the existing decision; no change
-recommended.
+**Tác động / Khả năng tương thích / Tiến hóa trong tương lai:** Tái khẳng định quyết định hiện có; không
+khuyến nghị thay đổi.
 
 ---
 
 ### Workflow
 
-**Observation:** `WorkflowEngine` is a metadata-driven state machine — state field, initial
-state, terminal states, transitions, TypeScript-predicate guards, atomic transitions with
-optimistic locking, an append-only `workflow_events` audit log, and a post-commit outbox
-event. `docs/roadmap.md` Phase 5 marks all of this **Done**, tested, and exposed at `POST
+**Quan sát:** `WorkflowEngine` là một state machine điều khiển bởi metadata — state
+field, initial state, terminal states, transitions, guard là predicate TypeScript, atomic
+transitions với optimistic locking, một audit log `workflow_events` chỉ-ghi-thêm
+(append-only), và một sự kiện outbox post-commit. `docs/roadmap.md` Phase 5 đánh dấu tất cả
+những điều này là **Done**, đã test, và được expose tại `POST
 /api/:entity/:id/transitions/:action`.
 
-**Problem (documentation drift — real finding):** `CLAUDE.md`'s "Core services and their
-fixed boundaries" section still describes `WorkflowEngine` as "Currently only assigns
-initial status and emits a `<entity>.record.created` outbox event on create; transition/
-guard logic is not yet implemented." That's stale relative to Phase 5's actual, tested,
-shipped state. Since `CLAUDE.md` is the first document loaded into every future session
-(human or agent), this drift risks someone either re-implementing already-shipped guard
-logic, or avoiding building on it out of a mistaken belief it doesn't exist.
+**Vấn đề (doc bị lệch so với thực tế — phát hiện có thật):** Phần "Core services and their fixed
+boundaries" trong `CLAUDE.md` vẫn mô tả `WorkflowEngine` là "hiện chỉ gán initial status và
+emit một sự kiện outbox `<entity>.record.created` khi create; logic transition/guard chưa
+được triển khai." Điều đó đã lỗi thời so với trạng thái thực tế, đã test, đã ship của Phase
+5. Vì `CLAUDE.md` là tài liệu đầu tiên được nạp vào mọi phiên làm việc trong tương lai (dù
+người hay agent), sự lệch pha này có nguy cơ khiến ai đó hoặc triển khai lại logic guard đã
+ship, hoặc né tránh xây dựng dựa trên nó vì tin nhầm rằng nó không tồn tại.
 
-**Problem (architectural, not urgent):** Guards are plain TypeScript predicate functions.
-Phase 11's Phase B (Builder UI + Safe Runtime Rules) needs a declarative condition model
-instead — "no arbitrary user code execution" is an explicit V1 constraint in
-`docs/low-code-platform-v1.md`. Not urgent: Phase B hasn't started.
+**Vấn đề (thuộc kiến trúc, không khẩn cấp):** Guard hiện là các hàm predicate TypeScript thuần.
+Phase B của Phase 11 (Builder UI + Safe Runtime Rules) cần một mô hình condition khai báo
+(declarative) thay vì vậy — "không thực thi mã tùy ý do user viết" là một ràng buộc V1 tường
+minh trong `docs/low-code-platform-v1.md`. Chưa cấp bách: Phase B chưa bắt đầu.
 
-**Recommendation:**
-1. Fix the `CLAUDE.md` line now (Part 4, item 1) — doc-only, no design needed.
-2. When Phase B starts, reuse `PolicyCondition` (`src/core/permission/policy-condition.ts`)
-   as the workflow guard's declarative shape instead of inventing a second condition
-   language. It already solves exactly this problem — "declarative condition, no
-   scripting" — for policies; a `guard: WorkflowGuardFn | PolicyCondition` union lets
-   plain-function guards keep working during migration, so this is additive, not a
-   breaking change, whenever it happens.
+**Khuyến nghị:**
+1. Sửa dòng đó trong `CLAUDE.md` ngay bây giờ (Part 4, item 1) — chỉ là sửa tài liệu, không
+   cần thiết kế gì thêm.
+2. Khi Phase B bắt đầu, tái sử dụng `PolicyCondition`
+   (`src/core/permission/policy-condition.ts`) làm hình dạng khai báo cho workflow guard
+   thay vì phát minh ra một ngôn ngữ condition thứ hai. Nó đã giải quyết đúng vấn đề này —
+   "condition khai báo, không scripting" — cho policies rồi; một union
+   `guard: WorkflowGuardFn | PolicyCondition` cho phép các guard dạng hàm thuần vẫn hoạt
+   động trong quá trình migrate, nên đây là bổ sung (additive), không phải một thay đổi phá
+   vỡ (breaking change), bất kể khi nào nó được thực hiện.
 
-**Impact:** Item 1 is trivial. Item 2 (deferred) would touch `WorkflowTransition`'s type
-and `WorkflowEngine.runGuard`, but only additively.
-**Compatibility:** Fully backward compatible on both.
-**Future Evolution:** Item 2 directly enables Phase B; reusing `PolicyCondition` also means
-`PolicyExplainer`-style guard debugging becomes possible almost for free later.
+**Tác động:** Item 1 là việc nhỏ. Item 2 (deferred) sẽ chạm vào type của `WorkflowTransition`
+và `WorkflowEngine.runGuard`, nhưng chỉ theo hướng bổ sung.
+**Khả năng tương thích:** Hoàn toàn backward compatible ở cả hai.
+**Tiến hóa trong tương lai:** Item 2 trực tiếp mở đường cho Phase B; việc tái sử dụng
+`PolicyCondition` cũng có nghĩa là khả năng debug guard theo kiểu `PolicyExplainer` gần như
+có sẵn miễn phí sau này.
 
 ---
 
 ### Permission
 
-**Observation:** RBAC + ABAC, dynamic DB-backed role assignment, field/record-level
-enforcement, `PolicyExplainer` for debugging. `PolicyStore` is a real interface
-implemented by `PostgresPolicyStore` — the **one existing seam** in the entire codebase
-that separates a service from its concrete storage.
+**Quan sát:** RBAC + ABAC, gán role động dựa trên DB, thực thi ở mức field/record,
+`PolicyExplainer` phục vụ debug. `PolicyStore` là một interface thực sự, được triển khai bởi
+`PostgresPolicyStore` — **seam duy nhất hiện có** trong toàn bộ codebase tách một service
+khỏi phần lưu trữ cụ thể của nó.
 
-**Problem:** None found. `PermissionService` itself is a concrete class, not behind an
-interface — but there is exactly one implementation and no plausible second one, so that's
-correctly not abstracted.
+**Vấn đề:** Không tìm thấy vấn đề gì. Bản thân `PermissionService` là một class cụ thể,
+không nằm sau một interface — nhưng chỉ có đúng một implementation và không có implementation
+thứ hai khả dĩ nào, nên việc không abstraction hóa nó là đúng đắn.
 
-**Recommendation:** No change. This component is the model to imitate elsewhere (see Part
-2), not something to modify itself.
+**Khuyến nghị:** Không thay đổi. Thành phần này là mô hình nên được noi theo ở nơi khác
+(xem Part 2), không phải thứ cần chỉnh sửa.
 
-**Impact / Compatibility / Future Evolution:** N/A — no change proposed.
+**Tác động / Khả năng tương thích / Tiến hóa trong tương lai:** N/A — không đề xuất thay đổi.
 
 ---
 
 ### Event (Outbox + RabbitMQ)
 
-**Observation:** `OutboxService` writes to `outbox_events` in the same transaction as the
-business write; the publisher worker polls every 1s, claims rows with `FOR UPDATE SKIP
-LOCKED` (already fixed to prevent double-publish), and publishes via a concrete
-`RabbitPublisher` (`packages/core/src/infra/messaging/rabbitmq.ts`, hardcoded exchange name
-`"metap.events"`, direct `amqp` import). `OutboxService`'s constructor takes
-`RabbitPublisher` by concrete type. No `EventBus`/`MessagePublisher` interface exists
-anywhere.
+**Quan sát:** `OutboxService` ghi vào `outbox_events` trong cùng transaction với business
+write; publisher worker poll mỗi 1s, claim các row bằng `FOR UPDATE SKIP LOCKED` (đã được
+sửa để tránh double-publish), và publish qua một `RabbitPublisher` cụ thể
+(`packages/core/src/infra/messaging/rabbitmq.ts`, tên exchange hardcode `"metap.events"`,
+import trực tiếp `amqp`). Constructor của `OutboxService` nhận `RabbitPublisher` theo kiểu
+cụ thể. Không có interface `EventBus`/`MessagePublisher` nào tồn tại ở bất cứ đâu.
 
-**Problem 1 (already tracked):** The outbox worker holds its DB transaction open for the
-entire RabbitMQ publish call — `docs/architectures/11-risks.md` already flags this,
-citing an external review's suggestion (claim-short-tx / publish-outside / lease-reclaim
-on failure) as not yet done, for lack of measured contention. This review has nothing to
-add beyond confirming it's real and correctly still untriggered.
+**Vấn đề 1 (đã được theo dõi):** Outbox worker giữ transaction DB của nó mở trong suốt cuộc
+gọi publish RabbitMQ — `docs/architectures/11-risks.md` đã nêu vấn đề này rồi, trích dẫn đề
+xuất của một review bên ngoài (claim-short-tx / publish-outside / lease-reclaim khi thất
+bại) là chưa được thực hiện, do chưa đo được contention thực tế. Review này không có gì thêm
+ngoài việc xác nhận vấn đề này là thực và đúng đắn khi vẫn chưa được kích hoạt (untriggered).
 
-**Problem 2 (new finding — the main recommendation of this review):** There is no
-`EventBus` interface anywhere, unlike `PolicyStore`. This matters specifically because
-Phase 9's multi-service trigger and any future broker change (e.g. Kafka once a second
-module exists and throughput actually matters) currently has *nothing* to build on — every
-call site would need to change, not just one injection point.
+**Problem 2 (phát hiện mới — khuyến nghị chính của review này):** Không có interface
+`EventBus` nào tồn tại, khác với `PolicyStore`. Điều này quan trọng cụ thể vì trigger
+multi-service của Phase 9 và bất kỳ thay đổi broker nào trong tương lai (ví dụ: Kafka một
+khi một module thứ hai tồn tại và throughput thực sự trở thành vấn đề) hiện *không có gì* để
+dựa vào — mọi call site sẽ phải thay đổi, chứ không chỉ một điểm inject duy nhất.
 
-**Recommendation:** Extract an `EventBus` interface now, following the `PolicyStore`
-precedent exactly: `RabbitPublisher`'s existing `publish(topic, payload)` shape is already
-correct — just promote its type to an interface (`EventBus`) and change
-`OutboxService`'s constructor parameter from `RabbitPublisher` to `EventBus`. This is a
-pure refactor: same runtime behavior, one call site (`container.ts`) wired to the same
-concrete `RabbitPublisher` implementation. It directly answers READ.md's ask — "the
-framework should expose stable interfaces so infrastructure providers can be swapped with
-minimal code changes" — with the cheapest possible version of that: do it while there is
-still exactly one call site, before Phase 9 multiplies them.
+**Khuyến nghị:** Trích xuất một interface `EventBus` ngay bây giờ, theo đúng tiền lệ của
+`PolicyStore`: hình dạng `publish(topic, payload)` hiện có của `RabbitPublisher` đã đúng
+rồi — chỉ cần nâng cấp kiểu của nó thành một interface (`EventBus`) và đổi tham số
+constructor của `OutboxService` từ `RabbitPublisher` sang `EventBus`. Đây là một refactor
+thuần túy: hành vi runtime giữ nguyên, một call site duy nhất (`container.ts`) được nối vào
+cùng một implementation `RabbitPublisher` cụ thể. Điều này trả lời trực tiếp yêu cầu của
+READ.md — "framework nên expose các interface ổn định để các nhà cung cấp hạ tầng có thể
+được hoán đổi với ít thay đổi code nhất" — bằng phiên bản rẻ nhất có thể của điều đó: làm
+việc này khi vẫn chỉ có đúng một call site, trước khi Phase 9 nhân nó lên nhiều lần.
 
-**Impact:** Low blast radius: a new interface file, `container.ts`, and
-`outbox-service.ts`'s constructor signature. No schema change, no migration, no API change,
-no behavior change.
-**Compatibility:** Fully backward compatible.
-**Future Evolution:** Makes a future Kafka/NATS/Redis-Streams swap (Phase 9, once a second
-module is actually deployed independently) a new `EventBus` implementation plus a
-`container.ts` wiring change — not a `CrudService`/`WorkflowEngine`/`OutboxService`
-rewrite.
+**Tác động:** Bán kính ảnh hưởng thấp: một file interface mới, `container.ts`, và signature
+constructor của `outbox-service.ts`. Không thay đổi schema, không migration, không thay đổi
+API, không thay đổi hành vi.
+**Khả năng tương thích:** Hoàn toàn backward compatible.
+**Tiến hóa trong tương lai:** Biến việc hoán đổi Kafka/NATS/Redis-Streams trong tương lai (Phase 9,
+một khi một module thứ hai thực sự được triển khai độc lập) thành việc thêm một
+implementation `EventBus` mới cộng với một thay đổi wiring trong `container.ts` — không
+phải một cuộc viết lại `CrudService`/`WorkflowEngine`/`OutboxService`.
 
 ---
 
 ### Metadata
 
-**Observation:** `MetadataRegistry` + `MetadataCompiler` — boot-time validation, dangling
-reference checks, deterministic hashing, drift detection, OpenAPI generation. This is the
-most solid, most reused component in the codebase.
+**Quan sát:** `MetadataRegistry` + `MetadataCompiler` — validate lúc boot, kiểm tra
+dangling reference, hashing tất định (deterministic), phát hiện drift, sinh OpenAPI. Đây là
+thành phần vững chắc nhất, được tái sử dụng nhiều nhất trong codebase.
 
-**Problem:** None found.
+**Vấn đề:** Không tìm thấy vấn đề gì.
 
-**Recommendation:** No change. This is exactly the foundation Phase A sub-project 2
-(runtime loader for persisted metadata) needs to build on — reuse it as-is rather than
-parallel-building a second compiler path for DB-authored metadata.
+**Khuyến nghị:** Không thay đổi. Đây chính xác là nền tảng mà Phase A sub-project 2
+(runtime loader cho metadata đã được persist) cần để xây dựng dựa trên — tái sử dụng nguyên
+trạng thay vì xây song song một compiler path thứ hai cho metadata DB-authored.
 
-**Impact / Compatibility / Future Evolution:** N/A — no change proposed.
+**Tác động / Khả năng tương thích / Tiến hóa trong tương lai:** N/A — không đề xuất thay đổi.
 
 ---
 
 ### Scheduler / GraphQL
 
-**Observation:** Neither exists. `docs/architectures/04-strategy.md` already states
-GraphQL's trigger (≥2 modules aggregated in one frontend screen); no doc or code anywhere
-references a scheduler/timer-driven workflow action, though `WorkflowEngine` conceptually
-could support a `Timer`-kind action later (per READ.md's own "Event / Command / Action /
-Timer" framing).
+**Quan sát:** Cả hai đều chưa tồn tại. `docs/architectures/04-strategy.md` đã nêu sẵn
+trigger của GraphQL (≥2 module có dữ liệu được tổng hợp trong một màn hình frontend); không
+có tài liệu hay code nào ở bất cứ đâu nhắc đến một workflow action điều khiển bởi
+scheduler/timer, dù `WorkflowEngine` về mặt khái niệm có thể hỗ trợ một action kiểu `Timer`
+sau này (theo chính khung "Event / Command / Action / Timer" của READ.md).
 
-**Recommendation:** Correctly deferred in both cases — no trigger for either exists today.
-No action.
+**Khuyến nghị:** Đúng đắn khi bị hoãn lại ở cả hai trường hợp — không có trigger nào cho
+cả hai tồn tại ngày nay. Không hành động.
 
 ---
 
 ## Part 2: Runtime Abstraction — What to Actually Build
 
-READ.md asks about `EventBus`, `WorkflowRuntime`, `PermissionProvider`, `StorageProvider`,
-`CacheProvider`. Reviewed against actual triggers, not hypothetically:
+READ.md đặt câu hỏi về `EventBus`, `WorkflowRuntime`, `PermissionProvider`,
+`StorageProvider`, `CacheProvider`. Được xem xét dựa trên các trigger thực tế, không phải
+giả định:
 
 | Interface | Recommend now? | Why |
 |---|---|---|
-| **EventBus** | **Yes** | Only interface with a near-term, cheap-now/expensive-later asymmetry. See Part 1's Event section. |
-| StorageProvider | No | No second datastore need exists; would contradict Phase 1's already-made `BaseRepository` decision. Revisit only if the Tiny-profile decision (Part 3) goes affirmative. |
-| WorkflowRuntime | No | No distributed-workflow requirement exists anywhere in the docs or roadmap. Recommend explicitly **against** evaluating Temporal/Camunda/BPMN engines for the foreseeable roadmap — they solve a distributed-orchestration problem this single-process system doesn't have, and would fight Phase B's stated direction (simple declarative guards, not a general workflow runtime swap). |
-| PermissionProvider | No | `PolicyStore` is already the correctly-sized seam (storage, not the service). Wrapping `PermissionService` itself adds a layer with no second implementation to justify it. |
-| CacheProvider | No | No measured latency problem exists. `PermissionSnapshot`'s per-call (not cross-request) design is a deliberate, already-documented choice — introducing Redis here solves a problem nobody has measured. |
+| **EventBus** | **Yes** | Interface duy nhất có sự bất đối xứng chi phí "rẻ-bây-giờ/đắt-về-sau" trong ngắn hạn. Xem phần Event của Part 1. |
+| StorageProvider | No | Không có nhu cầu datastore thứ hai; sẽ mâu thuẫn với quyết định `BaseRepository` đã được chốt ở Phase 1. Chỉ xem xét lại nếu quyết định Tiny-profile (Part 3) đi theo hướng khẳng định. |
+| WorkflowRuntime | No | Không có yêu cầu distributed-workflow nào tồn tại ở bất cứ đâu trong docs hay roadmap. Khuyến nghị tường minh **phản đối** việc đánh giá các engine Temporal/Camunda/BPMN trong tương lai gần — chúng giải quyết một bài toán distributed-orchestration mà hệ thống single-process này không có, và sẽ đi ngược với định hướng đã nêu của Phase B (guard khai báo đơn giản, không phải một cuộc hoán đổi workflow runtime tổng quát). |
+| PermissionProvider | No | `PolicyStore` đã là seam có kích thước đúng (lưu trữ, không phải service). Bọc thêm một lớp quanh chính `PermissionService` sẽ thêm một layer mà không có implementation thứ hai nào để biện minh cho nó. |
+| CacheProvider | No | Không có vấn đề độ trễ nào được đo lường thực tế. Thiết kế per-call (không phải cross-request) của `PermissionSnapshot` là một lựa chọn chủ động, đã được ghi lại — đưa Redis vào đây là giải quyết một vấn đề chưa ai đo lường được. |
 
 ---
 
 ## Part 3: Deployment Profiles — An Open Decision, Not a Recommendation
 
-`docs/architectures/07-deployment.md` documents only the local dev topology (docker
-compose, two bare processes, no orchestrator, no LB, no secrets manager — Phase 8
-Hardening, not started, owns that gap already). `docs/architectures/02-constraints.md`
-binds Postgres as "the only datastore" and RabbitMQ as "the only message broker" as
-**technical constraints**, not defaults.
+`docs/architectures/07-deployment.md` chỉ ghi lại topology dev cục bộ (docker compose, hai
+bare process, không có orchestrator, không có LB, không có secrets manager — khoảng trống đó
+đã thuộc về Phase 8 Hardening, chưa bắt đầu). `docs/architectures/02-constraints.md` ràng
+buộc Postgres là "datastore duy nhất" và RabbitMQ là "message broker duy nhất" như những
+**ràng buộc kỹ thuật (technical constraints)**, không phải các giá trị mặc định.
 
-READ.md's deployment-profile framing (Tiny / Business / Enterprise / Cloud, "a small
-customer should still run Single Binary + SQLite + Memory EventBus") directly implies
-amending that binding constraint. This review deliberately does not make that call — it's
-a product-scope decision (does Metap target self-hosted/on-prem low-code customers who
-can't run Postgres+RabbitMQ?), not an engineering gap to silently fix.
+Khung deployment-profile của READ.md (Tiny / Business / Enterprise / Cloud, "một khách hàng
+nhỏ vẫn nên chạy được Single Binary + SQLite + Memory EventBus") kéo theo trực tiếp việc phải
+sửa đổi ràng buộc binding đó. Review này chủ động không đưa ra quyết định đó — đây là một
+quyết định thuộc phạm vi sản phẩm (Metap có nhắm tới các khách hàng low-code self-hosted/
+on-prem không thể chạy Postgres+RabbitMQ hay không?), không phải một khoảng trống kỹ thuật
+cần âm thầm vá lại.
 
-**Option 1 — keep one deployment philosophy (recommended default):** Business/Enterprise/
-Cloud profiles differ by scale and HA (replica counts, secrets backend, autoscaling — all
-already-scoped under Phase 8 Hardening), never by swapping Postgres/RabbitMQ out. Zero new
-work beyond finishing Phase 8 as already planned.
+**Option 1 — giữ một triết lý deployment duy nhất (mặc định được khuyến nghị):** Các profile
+Business/Enterprise/Cloud khác nhau về scale và HA (số lượng replica, secrets backend,
+autoscaling — tất cả đã được scope sẵn dưới Phase 8 Hardening), không bao giờ khác nhau bằng
+cách hoán đổi Postgres/RabbitMQ. Không phát sinh công việc mới nào ngoài việc hoàn thành
+Phase 8 như đã lên kế hoạch.
 
-**Option 2 — add a real Tiny profile (SQLite + in-memory bus, single binary):** Requires,
-in order: (a) formally amending `02-constraints.md`'s binding language, (b) the `EventBus`
-interface from Part 2 (build anyway — it's recommended regardless) plus a cheap in-memory
-`EventBus` implementation, (c) a `QueryPlanner` dialect audit — this is the actually
-expensive part, since `jsonb_extract_path_text`, `plainto_tsquery('simple', ...)`, and the
-keyset-pagination SQL are all Postgres-specific, not just the driver, (d) the
-`StorageProvider` abstraction Part 2 just argued against building without a trigger.
+**Option 2 — thêm một profile Tiny thực sự (SQLite + in-memory bus, single binary):** Đòi
+hỏi, theo thứ tự: (a) sửa đổi chính thức ngôn ngữ ràng buộc trong `02-constraints.md`, (b)
+interface `EventBus` từ Part 2 (nên xây dù thế nào đi nữa — đã được khuyến nghị bất kể) cộng
+với một implementation `EventBus` in-memory rẻ tiền, (c) một cuộc kiểm toán dialect của
+`QueryPlanner` — đây là phần thực sự tốn kém, vì `jsonb_extract_path_text`,
+`plainto_tsquery('simple', ...)`, và SQL keyset-pagination đều đặc thù Postgres, không chỉ
+là driver, (d) abstraction `StorageProvider` mà Part 2 vừa lập luận phản đối việc xây dựng
+khi chưa có trigger.
 
-**Recommendation:** Option 1 for now. A Tiny profile is legitimate future product
-direction (useful once Phase 11's low-code platform has a concrete self-host customer
-scenario), but per this project's own trigger-based philosophy, it shouldn't be decided
-speculatively. If you do want to commit to it, sequence it as: EventBus interface (build
-regardless) → in-memory EventBus impl (cheap) → QueryPlanner dialect audit (the real cost,
-do this before touching storage) → StorageProvider → SQLite impl — each step shippable and
-valuable on its own, none of it wasted if the SQLite step never happens.
+**Khuyến nghị:** Option 1 cho lúc này. Một profile Tiny là một hướng đi sản phẩm hợp lý
+trong tương lai (hữu ích một khi low-code platform của Phase 11 có một kịch bản khách hàng
+self-host cụ thể), nhưng theo đúng triết lý trigger-based của chính dự án này, nó không nên
+được quyết định một cách suy đoán. Nếu muốn cam kết theo hướng này, hãy sắp xếp trình tự như
+sau: interface EventBus (xây dù thế nào đi nữa) → implementation EventBus in-memory (rẻ) →
+kiểm toán dialect của QueryPlanner (chi phí thực sự, làm việc này trước khi động vào phần
+storage) → StorageProvider → implementation SQLite — mỗi bước đều có thể ship riêng và có
+giá trị riêng, không có bước nào bị lãng phí nếu bước SQLite cuối cùng không bao giờ xảy ra.
 
 ---
 
 ## Part 4: Migration Strategy
 
-**Current state:** Concrete Postgres + RabbitMQ everywhere except `PolicyStore`. Phase 11
-(low-code control plane) has one spec'd, unimplemented sub-project.
+**Trạng thái hiện tại:** Postgres + RabbitMQ cụ thể ở khắp mọi nơi trừ `PolicyStore`. Phase 11
+(low-code control plane) có một sub-project đã được spec nhưng chưa triển khai.
 
 **Intermediate state (recommended next, all low-risk, all independently shippable):**
-1. Fix `CLAUDE.md`'s stale `WorkflowEngine` description (Part 1's Workflow finding).
-2. Extract the `EventBus` interface (Part 1's Event finding / Part 2).
-3. Write the implementation plan for Phase A sub-project 1 (already spec'd — needs
-   `writing-plans`, not a new design).
+1. Sửa mô tả đã lỗi thời về `WorkflowEngine` trong `CLAUDE.md` (phát hiện Workflow của Part
+   1).
+2. Trích xuất interface `EventBus` (phát hiện Event của Part 1 / Part 2).
+3. Viết implementation plan cho Phase A sub-project 1 (đã được spec sẵn — cần
+   `writing-plans`, không cần thiết kế mới).
 
-**Target state (where Phase 9 and Phase 11 converge):** A second module is actually
-deployed independently (Phase 7), firing Phase 9's real multi-service triggers for real;
-Phase 11's low-code control plane (sub-projects A through C) is complete; the
-deployment-profile decision (Part 3) has been made explicitly and recorded, not defaulted
-into by accident.
+**Target state (where Phase 9 and Phase 11 converge):** Một module thứ hai thực sự được
+triển khai độc lập (Phase 7), thực sự kích hoạt các trigger multi-service của Phase 9; toàn
+bộ low-code control plane của Phase 11 (các sub-project A đến C) hoàn thành; quyết định
+deployment-profile (Part 3) đã được đưa ra tường minh và ghi lại, chứ không phải bị mặc định
+theo một cách tình cờ.
 
 ---
 
 ## Part 5: Technology Recommendations
 
-Held to READ.md's own bar — recommend only where a real, current problem exists, not
-because something is popular:
+Được giữ theo đúng thước đo của chính READ.md: chỉ khuyến nghị khi có một vấn đề thực sự,
+hiện hữu, không phải vì thứ gì đó đang phổ biến:
 
-- **Reuse `PolicyCondition` for workflow guards** (Part 1, Workflow) — not new technology,
-  reuse of an already-built one. Highest value-per-effort item in this whole review besides
-  the `EventBus` extraction.
-- **No new message broker, no orchestrator, no GraphQL federation, no Temporal/Camunda, no
-  OpenFGA/Casbin.** The in-house RBAC/ABAC + `PolicyExplainer` already covers every
-  documented permission need; OpenFGA's relationship-graph model solves deep hierarchical/
-  relationship-based authorization, a problem this system hasn't encountered.
-- **One to watch, not act on:** if Part 3's Tiny profile is ever chosen, Drizzle already
-  ships a SQLite driver — reuse the existing ORM rather than introducing a second one. Not
-  a recommendation to act on now.
+- **Tái sử dụng `PolicyCondition` cho workflow guard** (Part 1, Workflow) — không phải công
+  nghệ mới, mà là tái sử dụng một thứ đã được xây dựng sẵn. Là mục có giá trị-trên-công-sức
+  cao nhất trong toàn bộ review này, chỉ sau việc trích xuất `EventBus`.
+- **Không có message broker mới, không có orchestrator, không có GraphQL federation, không
+  có Temporal/Camunda, không có OpenFGA/Casbin.** RBAC/ABAC tự xây dựng trong nhà kết hợp
+  với `PolicyExplainer` đã bao phủ mọi nhu cầu permission đã được ghi lại; mô hình
+  relationship-graph của OpenFGA giải quyết bài toán authorization dựa trên quan hệ/phân cấp
+  sâu, một vấn đề mà hệ thống này chưa gặp phải.
+- **Một điều cần theo dõi, không cần hành động:** nếu profile Tiny của Part 3 sau này được
+  chọn, Drizzle đã có sẵn một driver SQLite — nên tái sử dụng ORM hiện có thay vì đưa vào một
+  ORM thứ hai. Không phải là một khuyến nghị để hành động ngay bây giờ.
 
 ---
 
 ## Closing: Prioritized Action List
 
-In order, each independently valuable and small:
+Theo thứ tự, mỗi mục đều có giá trị độc lập và nhỏ gọn:
 
-1. Fix `CLAUDE.md`'s stale `WorkflowEngine` line to match `docs/roadmap.md` Phase 5's
-   actual (done) state. Doc-only.
-2. Extract an `EventBus` interface in front of `RabbitPublisher`, following the
-   `PolicyStore` precedent. Pure refactor, one call site today.
-3. Write the implementation plan for Phase A sub-project 1 (metadata storage &
-   versioning) — the spec already exists.
-4. Decide the deployment-profile direction (Part 3) explicitly, and record the decision
-   (as an ADR-style entry indexed from `docs/architectures/09-adr.md`) once made.
-5. Everything else surfaced in this review (Repository, WorkflowRuntime,
-   PermissionProvider, CacheProvider, GraphQL, Scheduler, Tiny profile itself) is correctly
-   not-yet-triggered — leave it alone until its stated trigger fires.
+1. Sửa dòng đã lỗi thời về `WorkflowEngine` trong `CLAUDE.md` cho khớp với trạng thái thực
+   tế (đã hoàn thành) của Phase 5 trong `docs/roadmap.md`. Chỉ sửa tài liệu.
+2. Trích xuất một interface `EventBus` đặt trước `RabbitPublisher`, theo đúng tiền lệ của
+   `PolicyStore`. Là một refactor thuần túy, hiện chỉ có một call site.
+3. Viết implementation plan cho Phase A sub-project 1 (metadata storage & versioning) — spec
+   đã tồn tại sẵn.
+4. Quyết định hướng đi cho deployment-profile (Part 3) một cách tường minh, và ghi lại quyết
+   định đó (dưới dạng một mục kiểu ADR được index từ `docs/architectures/09-adr.md`) một khi
+   đã quyết định.
+5. Mọi thứ khác được nêu ra trong review này (Repository, WorkflowRuntime,
+   PermissionProvider, CacheProvider, GraphQL, Scheduler, bản thân profile Tiny) đều đúng
+   đắn khi chưa-được-kích-hoạt — cứ để nguyên cho đến khi trigger đã nêu của nó xảy ra.

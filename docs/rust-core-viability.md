@@ -1,439 +1,469 @@
-# Rust for `packages/core` — Decision Record
+# Rust cho `packages/core` — Bản ghi quyết định
 
-Date: 2026-08-07
+Ngày: 2026-08-07
 
-Status: **Decided — Option B.** `packages/core` moves to Rust, for every deployment
-profile (not just a future Tiny-profile binary). This document is the record of how that
-was reached: the case made, the spike that grounded it in measurement, and the concrete
-follow-on questions (schema/codegen strategy, contributor accessibility) it raised. **All 9
-Migration Order steps below are done** as of 2026-08-07 — see each step's entry for what
-was built and how it was verified, and the closing note under step 9 for exactly what's
-still not done (no ported business entity, no real boot-sequence binary, Phase 8 Hardening
-concerns) so that isn't mistaken for oversight either.
+Trạng thái: **Đã quyết định — Phương án B.** `packages/core` sẽ chuyển sang Rust, cho mọi
+profile triển khai (không chỉ riêng một binary Tiny-profile trong tương lai). Tài liệu này
+ghi lại quá trình đi đến quyết định đó: lập luận được đưa ra, spike đo lường thực tế để
+kiểm chứng lập luận, và các câu hỏi phát sinh cụ thể (chiến lược schema/codegen, khả năng
+tiếp cận của contributor) mà nó đặt ra. **Cả 9 bước trong Migration Order bên dưới đều đã
+hoàn thành** tính đến 2026-08-07 — xem mục của từng bước để biết những gì đã được xây dựng
+và cách nó được xác minh, và ghi chú kết ở cuối bước 9 để biết chính xác những gì vẫn *chưa*
+làm (chưa port entity nghiệp vụ nào, chưa có binary boot-sequence thực sự, các vấn đề của
+Phase 8 Hardening) để không bị hiểu nhầm là thiếu sót.
 
-## Origin
+## Nguồn gốc
 
-Raised during the 2026-08-07 architecture review discussion, after
-`docs/architecture-review-2026-08-07.md` Part 5 recommended against a full rewrite of
-`packages/core` to Rust on a first pass (no measured performance trigger). The question was
-reopened with a more specific case (below), grounded with a real benchmark spike
-(`experiments/rust-outbox-poc/`), and decided.
+Vấn đề được nêu ra trong buổi thảo luận architecture review ngày 2026-08-07, sau khi
+`docs/architecture-review-2026-08-07.md` Part 5 khuyến nghị không nên viết lại toàn bộ
+`packages/core` sang Rust ngay từ lần đầu (chưa có trigger hiệu năng nào được đo đạc). Câu
+hỏi này sau đó được mở lại với một lập luận cụ thể hơn (bên dưới), được kiểm chứng bằng một
+spike benchmark thực tế (`experiments/rust-outbox-poc/`), và đã được quyết định.
 
-## The Case Made for Rust
+## Lập luận ủng hộ Rust
 
-Two reasons were raised, evaluated separately since they need different scrutiny.
+Có hai lý do được đưa ra, được đánh giá riêng biệt vì mỗi lý do cần một mức độ xem xét khác
+nhau.
 
-### 1. Minimum infra footprint + speed — confirmed by measurement
+### 1. Dấu chân hạ tầng tối thiểu + tốc độ — đã được xác nhận bằng đo lường
 
-If the goal is a genuinely minimal, fast deployment (low RAM, no GC pause, small
-distributable artifact), Rust wins over Node — not a close call, and no longer just an
-argument: the spike below measured it directly. Node's own single-executable options
-(`node --experimental-sea-config`, `bun build --compile`) still carry the V8 runtime and
-GC; they get "one file to distribute," not "minimal footprint."
+Nếu mục tiêu là một bản triển khai thực sự tối giản, nhanh (RAM thấp, không có GC pause,
+artifact phân phối nhỏ), Rust thắng Node — không phải một cuộc so kè sát nút, và cũng không
+còn chỉ là lập luận suông nữa: spike bên dưới đã đo lường điều này trực tiếp. Các tùy chọn
+single-executable của chính Node (`node --experimental-sea-config`, `bun build --compile`)
+vẫn mang theo toàn bộ runtime V8 và GC; chúng cho ta "một file duy nhất để phân phối", chứ
+không phải "dấu chân tối thiểu".
 
-### 2. Contributor draw — real dynamic, real risk, named rather than dismissed
+### 2. Sức hút với contributor — một động lực có thật, một rủi ro có thật, cần được nêu rõ chứ không nên gạt bỏ
 
-A trending language draws contributors, but two costs come with it: contributors drawn by
-a trend don't reliably stay once it cools, and metap's real difficulty is domain-shaped
-(entity/workflow/permission modeling), not language-shaped. More concretely, a Rust core
-next to business-module authoring changes *who* can touch what — see "Contributor /
-Outsource Accessibility" below for how this decision mitigates it rather than ignoring it.
+Một ngôn ngữ đang thịnh hành thu hút contributor, nhưng đi kèm với đó là hai cái giá phải
+trả: contributor đến vì trend không chắc sẽ ở lại khi trend hạ nhiệt, và cái khó thực sự của
+metap nằm ở domain (mô hình hóa entity/workflow/permission), không nằm ở ngôn ngữ. Cụ thể
+hơn, việc có một core viết bằng Rust song song với việc tác giả các business-module thay đổi
+*ai* có thể động vào phần nào — xem mục "Khả năng tiếp cận cho Contributor / Outsource" bên
+dưới để biết quyết định này giảm thiểu rủi ro đó như thế nào thay vì phớt lờ nó.
 
-## Spike: Rust Outbox-Publisher Benchmark
+## Spike: Benchmark Rust Outbox-Publisher
 
-**What was built:** a Rust reimplementation of `apps/crm/src/workers/outbox-publisher.ts`
-(poll `outbox_events` with `FOR UPDATE SKIP LOCKED`, publish to RabbitMQ, mark
-`published_at`), benchmarked against a matching standalone Node implementation. Chosen
-because it's fully separable from Zod/OpenAPI/frontend codegen — proof the spike couldn't
-accidentally become a full core rewrite before there was evidence to justify one. Full
-methodology in `experiments/rust-outbox-poc/README.md`.
+**Đã xây dựng gì:** một bản triển khai lại bằng Rust của
+`apps/crm/src/workers/outbox-publisher.ts` (poll `outbox_events` với
+`FOR UPDATE SKIP LOCKED`, publish lên RabbitMQ, đánh dấu `published_at`), được benchmark đối
+chứng với một bản triển khai Node độc lập tương ứng. Chọn phần này vì nó tách biệt hoàn toàn
+khỏi Zod/OpenAPI/codegen frontend — bằng chứng cho thấy spike không thể vô tình biến thành
+một cuộc viết lại toàn bộ core trước khi có đủ bằng chứng để biện minh cho việc đó. Phương
+pháp luận đầy đủ nằm trong `experiments/rust-outbox-poc/README.md`.
 
-### Results (2026-08-07, against the repo's real dev Postgres/RabbitMQ)
+### Kết quả (2026-08-07, đo trên Postgres/RabbitMQ dev thật của repo)
 
-| Metric | Rust | Node | Verdict |
+| Chỉ số | Rust | Node | Kết luận |
 |---|---|---|---|
-| Release binary size | 3.1 MB, self-contained | needs the 118 MB Node runtime + `node_modules` | Rust wins decisively |
-| Cold start | 31–38 ms | 147–151 ms | Rust ~4–5x faster |
-| Idle RSS | 13.0–13.5 MB | 64.9–65.1 MB | Rust ~5x lower |
-| Drain throughput (5 runs each, 500 fixture rows) | 738–800 events/sec (mean ≈ 785) | 737–740 events/sec (mean ≈ 738) | **Rust ~6–8% higher**, consistent across runs |
+| Kích thước binary bản release | 3.1 MB, tự chứa (self-contained) | cần runtime Node 118 MB + `node_modules` | Rust thắng áp đảo |
+| Cold start | 31–38 ms | 147–151 ms | Rust nhanh hơn ~4–5 lần |
+| Idle RSS | 13.0–13.5 MB | 64.9–65.1 MB | Rust thấp hơn ~5 lần |
+| Throughput drain (5 lần chạy mỗi bên, 500 dòng fixture) | 738–800 events/sec (trung bình ≈ 785) | 737–740 events/sec (trung bình ≈ 738) | **Rust cao hơn ~6–8%**, nhất quán qua các lần chạy |
 
-All four measured metrics favor Rust. The throughput result needed five runs each to say
-that with confidence — the first two-run comparison showed them statistically tied, and a
-buggy early version (awaiting an unused RabbitMQ publisher-confirm future not present in
-the Node fire-and-forget path) briefly showed Rust 7x *slower*, which was an implementation
-bug in the spike, not a real result. Worth keeping on record as the concrete failure mode a
-real port needs to avoid: naively "idiomatic" async code that doesn't match existing
-publish semantics can silently regress throughput.
+Cả bốn chỉ số đo được đều nghiêng về Rust. Riêng kết quả throughput cần tới năm lần chạy mỗi
+bên mới đủ để kết luận với độ tin cậy — lần so sánh hai-lần-chạy đầu tiên cho thấy hai bên
+ngang nhau về mặt thống kê, và một phiên bản sớm có bug (chờ một future publisher-confirm
+của RabbitMQ không hề được dùng đến, trong khi phía Node theo kiểu fire-and-forget không có
+bước này) đã có lúc cho thấy Rust chậm hơn 7 lần — đây là một bug trong cách triển khai của
+spike, không phải kết quả thật. Đáng ghi lại như một kiểu lỗi cụ thể mà một lần port thật sự
+cần tránh: code async viết theo kiểu "idiomatic" một cách ngây thơ, không khớp với ngữ nghĩa
+publish hiện có, có thể âm thầm làm giảm throughput.
 
-Why a same-order-of-magnitude but real (~6–8%) throughput edge, on a workload dominated by
-Postgres/RabbitMQ round-trip time rather than compute: the network round trip is the same
-for both languages, but each language's driver/runtime still adds its own fixed
-per-operation overhead (serialization, promise/task scheduling) on top of that round trip.
-Over 500 sequential operations, Rust's lower per-operation overhead adds up to a small,
-consistent edge even though neither implementation is CPU-bound. This also means the
-percentage gap would likely *grow*, not shrink, against faster infrastructure (lower
-network RTT leaves proportionally more room for the fixed per-op overhead difference to
-show), and would likely be larger still under real concurrency (multiple in-flight
-publishes) rather than this benchmark's one-at-a-time sequential pattern.
+Lý do có một khoảng chênh throughput cùng bậc độ lớn nhưng thực chất (~6–8%), trên một
+workload mà thời gian round-trip tới Postgres/RabbitMQ chiếm ưu thế hơn là tính toán: round
+trip mạng là như nhau cho cả hai ngôn ngữ, nhưng driver/runtime của mỗi ngôn ngữ vẫn cộng
+thêm overhead cố định cho mỗi thao tác (serialization, lập lịch promise/task) lên trên round
+trip đó. Qua 500 thao tác tuần tự, overhead trên mỗi thao tác thấp hơn của Rust cộng dồn lại
+thành một khoảng chênh nhỏ nhưng nhất quán, dù cả hai cách triển khai đều không bị giới hạn
+bởi CPU. Điều này cũng có nghĩa là khoảng chênh phần trăm nhiều khả năng sẽ *tăng* lên chứ
+không giảm đi khi chạy trên hạ tầng nhanh hơn (RTT mạng thấp hơn để lại tỷ lệ không gian lớn
+hơn cho phần chênh lệch overhead cố định trên mỗi thao tác thể hiện ra), và nhiều khả năng
+còn lớn hơn nữa dưới điều kiện concurrency thực sự (nhiều lượt publish cùng bay song song)
+thay vì kiểu tuần tự từng-cái-một của benchmark này.
 
-## Decision
+## Quyết định
 
-**Option B — Rust for all of `packages/core`, every deployment profile.** Not scoped to a
-future Tiny-profile binary alone (Option A); this is a full replacement of the TS/Zod
-execution engine.
+**Phương án B — Rust cho toàn bộ `packages/core`, ở mọi profile triển khai.** Không chỉ giới
+hạn ở một binary Tiny-profile tương lai (Phương án A); đây là một cuộc thay thế toàn bộ
+execution engine TS/Zod.
 
-This raised two concrete follow-on questions, resolved below: how schema/type generation
-survives the language change, and how to avoid narrowing the contributor pool the decision
-itself named as a risk.
+Quyết định này làm phát sinh hai câu hỏi tiếp theo cụ thể, được giải quyết bên dưới: việc
+sinh schema/type sẽ tồn tại ra sao qua lần đổi ngôn ngữ này, và làm sao để tránh thu hẹp tập
+contributor — chính rủi ro mà quyết định này đã nêu tên.
 
-## Schema & Codegen Strategy
+## Chiến lược Schema & Codegen
 
-The frontend type-generation chain turns out to already be more language-agnostic than the
-original framing of this document assumed — worth correcting explicitly, since it changes
-how much this decision actually costs.
+Hóa ra chuỗi sinh type cho frontend đã trung lập về ngôn ngữ hơn nhiều so với giả định ban
+đầu của tài liệu này — đáng để đính chính rõ ràng, vì điều đó thay đổi mức chi phí thực tế mà
+quyết định này gây ra.
 
-**What actually happens today:** `packages/platform-react`'s `generate:types` script runs
-`openapi-typescript http://localhost:3000/metadata/openapi.json` — it consumes a JSON
-OpenAPI document over HTTP, not TypeScript/Zod source directly. And
-`packages/core/src/core/metadata/openapi-generator.ts`'s `generateOpenApiDocument()` is
-itself a plain function from `EntitySummary`/`EntityField[]` (a generic, serializable data
-shape: field name, kind, required, enum values) to a JSON Schema fragment — it doesn't
-touch Zod's types at all, just the same field-metadata shape `MetadataCompiler` already
-treats as the wire contract.
+**Những gì thực sự đang diễn ra hôm nay:** script `generate:types` của `packages/platform-react`
+chạy `openapi-typescript http://localhost:3000/metadata/openapi.json` — nó tiêu thụ một tài
+liệu OpenAPI dạng JSON qua HTTP, chứ không đọc trực tiếp source TypeScript/Zod. Và
+`generateOpenApiDocument()` trong `packages/core/src/core/metadata/openapi-generator.ts` tự
+nó chỉ là một hàm thuần túy biến đổi `EntitySummary`/`EntityField[]` (một cấu trúc dữ liệu
+generic, có thể serialize: tên field, kind, required, enum values) thành một mảnh JSON
+Schema — nó hoàn toàn không đụng tới type của Zod, chỉ dùng đúng cấu trúc field-metadata mà
+`MetadataCompiler` vốn đã coi là wire contract.
 
-**What this means for Rust:** the interchange contract was already OpenAPI JSON, not Zod.
-A Rust `packages/core` needs to serve an equivalent `/metadata/openapi.json` — built the
-same way, as a plain function from entity field metadata to JSON Schema (`serde_json::json!`
-is sufficient; no derive-macro OpenAPI crate like `utoipa` is needed, since this project's
-metadata is already dynamic data, not per-entity Rust structs). `packages/platform-react`'s
-`generate:types` command **does not change** — it has no idea what language served the
-document it's consuming.
+**Điều này có ý nghĩa gì với Rust:** hợp đồng trao đổi dữ liệu (interchange contract) vốn đã
+là OpenAPI JSON, không phải Zod. Một `packages/core` viết bằng Rust chỉ cần phục vụ một
+`/metadata/openapi.json` tương đương — xây dựng theo cùng cách, như một hàm thuần túy biến
+đổi từ entity field metadata sang JSON Schema (`serde_json::json!` là đủ; không cần một crate
+OpenAPI dùng derive-macro như `utoipa`, vì metadata của dự án này vốn đã là dữ liệu động, chứ
+không phải struct Rust riêng cho từng entity). Lệnh `generate:types` của
+`packages/platform-react` **không cần thay đổi gì** — nó không hề biết tài liệu nó đang tiêu
+thụ được phục vụ bởi ngôn ngữ nào.
 
-**What's actually lost:** Zod's role as the *runtime validator* for create/update payloads
-— that's a real, separate concern from OpenAPI generation, and needs a Rust equivalent.
-Recommended shape: a **generic validator built directly from `EntityField[]`** (kind,
-required, enum values) rather than a hand-authored per-entity schema (a `validator`/`garde`
-derive struct, or Zod's `schema` field today). This is not just parity — it's an
-improvement over the current design, which requires a developer to keep a hand-authored
-Zod `schema` in sync with the `fields` array by hand (an existing, TS-specific duplication
-risk, not something Rust introduces). It also directly matches the shape Phase 11's
-low-code control plane needs anyway: once entities are DB-authored rather than
-code-authored, there is no per-entity source file to hand-write a schema in, in either
-language — only a generic metadata interpreter. Building that generic interpreter now, in
-Rust, is straight-line work toward Phase 11, not a detour from it.
+**Cái thực sự bị mất:** vai trò của Zod như một *runtime validator* cho payload create/update
+— đây là một mối quan tâm thật sự, tách biệt với việc sinh OpenAPI, và cần một phương án
+tương đương bằng Rust. Hình dạng được khuyến nghị: một **validator generic được xây dựng
+trực tiếp từ `EntityField[]`** (kind, required, enum values) thay vì một schema viết tay
+riêng cho từng entity (một struct derive theo `validator`/`garde`, hay field `schema` của Zod
+hiện nay). Đây không chỉ là để đạt sự tương đương — nó còn là một cải tiến so với thiết kế
+hiện tại, vốn đòi hỏi developer phải tự tay giữ cho `schema` Zod viết tay đồng bộ với mảng
+`fields` (một rủi ro trùng lặp vốn đã tồn tại, đặc thù của TS, không phải do Rust tạo ra). Nó
+cũng khớp thẳng với hình dạng mà control plane low-code của Phase 11 cần: một khi entity được
+tác giả trực tiếp trong DB thay vì trong code, sẽ không còn file source riêng cho từng entity
+để viết tay schema, ở bất kỳ ngôn ngữ nào — chỉ còn một bộ diễn giải metadata generic. Xây
+dựng bộ diễn giải generic đó ngay từ bây giờ, bằng Rust, là bước đi thẳng hướng tới Phase 11,
+không phải một đường vòng.
 
-## Migration Order
+## Thứ tự Migration (Migration Order)
 
-Strangler approach: `apps/crm`'s Node API keeps serving real traffic throughout. Each step
-ports one deployable unit, independently reversible (`v0.1.0` tags the pre-Rust TS/Node
-baseline on `master`, pushed to `origin`, if any step needs to be abandoned) because every
-step reads/writes the same Postgres schema and RabbitMQ contract regardless of which
-language wrote it.
+Cách tiếp cận strangler: API Node của `apps/crm` tiếp tục phục vụ traffic thật xuyên suốt
+quá trình. Mỗi bước port một đơn vị triển khai (deployable unit), có thể đảo ngược độc lập
+(tag `v0.1.0` đánh dấu baseline TS/Node trước-Rust trên `master`, đã push lên `origin`,
+phòng khi cần bỏ dở một bước nào đó) vì mọi bước đều đọc/ghi cùng một schema Postgres và
+cùng một contract RabbitMQ, bất kể được viết bằng ngôn ngữ nào.
 
-1. **Outbox-publisher worker — done (2026-08-07).** Real crate at
-   `crates/outbox-publisher/` (Cargo workspace member, binary `outbox-publisher`; the workspace
-   root `Cargo.toml` was later hoisted to the repo root — see "Repo Structure" note below),
-   superseding the `experiments/rust-outbox-poc/` spike. Retry/backoff parity with
-   `OutboxService.publishPending` (per-row `attempts`/`last_error` on failure, batch left
-   for the next poll cycle) and with `runOutboxPublisherLoop`'s crash-on-unhandled-error
-   contract (an unrecoverable batch failure propagates and exits non-zero — a process
-   manager is expected to restart it, exactly like the Node worker today, not silently
-   retried in place). Real config loading via `dotenvy::dotenv()` from the current working
-   directory, matching `packages/core`'s `import "dotenv/config"` resolution exactly,
-   including the `OUTBOX_DATABASE_URL` override falling back to `DATABASE_URL`. Wired as
-   `pnpm worker:outbox:rs` (root `package.json`) alongside the untouched `pnpm worker:outbox`
-   — both exist; which one a deployment actually runs is a config/ops choice, not a code
-   change, per the strangler principle above. Verified against the repo's real dev
-   Postgres/RabbitMQ: connects, polls, shuts down cleanly on SIGTERM. Zero HTTP risk —
-   separate process; rollback is just running `pnpm worker:outbox` instead.
-2. **Shared infra — done (2026-08-07).** `crates/metap-infra/`: `EventBus` trait +
-   `RabbitEventBus` impl (the interface `docs/architecture-review-2026-08-07.md` Part 2
-   recommended, following the `PolicyStore` precedent), a `connect_db` Postgres pool
-   wrapper, and `load_config`/`AppConfig` mirroring `packages/core/src/server/config.ts`
-   field-for-field (same env vars, same `OUTBOX_DATABASE_URL` fallback). `outbox-publisher`
-   refactored onto it — rebuilt, retested against real dev Postgres/RabbitMQ, still clean.
-3. **Metadata layer — done (2026-08-07).** `crates/metap-metadata/`: entity types
-   (`entity.rs`, deliberately no `schema` field — see its doc comment), `MetadataCompiler`
-   (`compiler.rs`: hash + validate, same issue messages, same stable-JSON-over-sorted-keys
-   hashing approach), `MetadataRegistry` (`registry.rs`), and the OpenAPI generator
-   (`openapi.rs`, hand-written `EntitySummary` JSON Schema mirroring
-   `entity-wire-schema.ts` since there's no Zod-equivalent reflection step in Rust).
-   14 unit tests, covering every case the original `metadata-compiler.test.ts`/
-   `metadata-registry.test.ts` do (duplicate fields, unknown listView/defaultSort fields,
-   implicit system fields, unknown `refEntity`, unknown `refDisplayField`, hash
-   determinism/sensitivity). All passing.
-4. **Permission service — done (2026-08-07).** `crates/metap-permission/`: `PolicyCondition`
-   (`eq`/`neq`/`in`/`notIn`, `all`/`any`, `fromContext`/`literal`, deserializes the same
-   wire JSON shape the TS policies table already stores), `PolicyStore` trait +
-   `PostgresPolicyStore` (hand-written SQL, not an ORM — verified against the repo's real
-   dev Postgres, not just compiled: create/list/delete round-trip and JSONB `condition`
-   round-trip both pass as live integration tests), `PermissionSnapshot`
-   (field/record-level read-mask, write-gate, admin bypass — same logic, same admin
-   short-circuit at every entry point as the TS version), `PermissionService`
-   (`scopedTenant`'s fail-loud-on-empty-tenant behavior preserved), and `PolicyExplainer`.
-   10 unit tests on the pure condition/role-gate logic + 2 live-DB integration tests, all
-   passing.
-5. **QueryPlanner — done (2026-08-07).** `crates/metap-query/`: `cursor.rs`
-   (encode/decode, same UUID-shape check), `condition_to_sql.rs` (`recordPolicyWhereClause`
-   + `conditionToSql`, same admin-bypass fix as the TS ADR entry — with one deliberate
-   deviation, flagged in its module doc comment: per-column-typed, fallible parameter
-   binding instead of relying on node-postgres's implicit text-parameter coercion, since
-   sqlx's `Encode`-based binding doesn't replicate that inference), and `query_planner.rs`
-   (`planList`: tenant/entity/soft-delete scoping, substring/FTS/exact filters, sortable-field
-   resolution with `defaultSort` fallback, limit clamping, keyset cursor validation +
-   pagination). 11 unit tests plus **8 integration tests executing real generated SQL
-   against the repo's dev Postgres** (`tests/query_planner_postgres.rs`) — tenant scoping,
-   soft-delete exclusion, ILIKE substring matching, exact-match filtering, default-sort +
-   limit-clamp, ascending sort on a declared-sortable field, fallback when the requested
-   sort field isn't sortable, two-page keyset pagination with disjoint results, and
-   cursor/sort-mismatch rejection. All passing. This satisfies the Migration Order's original
-   commitment to verify this module against real query results, not just unit-test the
-   pure logic in isolation.
+1. **Worker outbox-publisher — hoàn thành (2026-08-07).** Crate thật tại
+   `crates/outbox-publisher/` (thành viên Cargo workspace, binary `outbox-publisher`; workspace
+   root `Cargo.toml` sau đó được nâng lên repo root — xem ghi chú "Repo Structure" bên dưới),
+   thay thế cho spike `experiments/rust-outbox-poc/`. Đảm bảo tương đương về retry/backoff với
+   `OutboxService.publishPending` (ghi `attempts`/`last_error` theo từng dòng khi thất bại,
+   batch được để lại cho chu kỳ poll tiếp theo) và với hợp đồng crash-khi-lỗi-không-xử-lý-được
+   của `runOutboxPublisherLoop` (một lỗi batch không thể phục hồi sẽ lan truyền và khiến tiến
+   trình thoát với mã khác 0 — một process manager được kỳ vọng sẽ khởi động lại nó, đúng như
+   worker Node hiện nay, không âm thầm retry tại chỗ). Nạp config thật qua `dotenvy::dotenv()`
+   từ current working directory, khớp chính xác cách `packages/core` resolve
+   `import "dotenv/config"`, bao gồm cả việc override `OUTBOX_DATABASE_URL` rơi về
+   `DATABASE_URL` khi không có. Được nối vào script `pnpm worker:outbox:rs` (`package.json` ở
+   root) song song với `pnpm worker:outbox` cũ vẫn giữ nguyên — cả hai đều tồn tại; chọn chạy
+   cái nào trong một lần triển khai là quyết định thuộc về config/ops, không phải thay đổi
+   code, theo đúng nguyên tắc strangler nêu trên. Đã xác minh trên Postgres/RabbitMQ dev thật
+   của repo: kết nối được, poll được, tắt sạch sẽ khi nhận SIGTERM. Rủi ro về HTTP bằng không —
+   đây là một process riêng biệt; rollback chỉ đơn giản là chạy `pnpm worker:outbox` trở lại.
+2. **Hạ tầng dùng chung (Shared infra) — hoàn thành (2026-08-07).** `crates/metap-infra/`:
+   trait `EventBus` + implementation `RabbitEventBus` (interface mà
+   `docs/architecture-review-2026-08-07.md` Part 2 đã khuyến nghị, theo đúng tiền lệ của
+   `PolicyStore`), một wrapper `connect_db` cho pool Postgres, và `load_config`/`AppConfig`
+   phản chiếu `packages/core/src/server/config.ts` từng field một (cùng các env var, cùng
+   fallback `OUTBOX_DATABASE_URL`). `outbox-publisher` được refactor để dùng lại phần này —
+   build lại, test lại trên Postgres/RabbitMQ dev thật, vẫn sạch.
+3. **Lớp Metadata — hoàn thành (2026-08-07).** `crates/metap-metadata/`: các entity type
+   (`entity.rs`, cố ý không có field `schema` — xem doc comment của nó), `MetadataCompiler`
+   (`compiler.rs`: hash + validate, cùng các thông báo lỗi, cùng cách tiếp cận hash dựa trên
+   stable-JSON-over-sorted-keys), `MetadataRegistry` (`registry.rs`), và bộ sinh OpenAPI
+   (`openapi.rs`, JSON Schema `EntitySummary` viết tay phản chiếu `entity-wire-schema.ts` vì
+   Rust không có bước reflection tương đương Zod). 14 unit test, bao phủ mọi case mà
+   `metadata-compiler.test.ts`/`metadata-registry.test.ts` gốc từng bao phủ (field trùng lặp,
+   field listView/defaultSort không tồn tại, các system field ngầm định, `refEntity` không
+   tồn tại, `refDisplayField` không tồn tại, tính xác định/độ nhạy của hash). Tất cả đều pass.
+4. **Permission service — hoàn thành (2026-08-07).** `crates/metap-permission/`:
+   `PolicyCondition` (`eq`/`neq`/`in`/`notIn`, `all`/`any`, `fromContext`/`literal`,
+   deserialize đúng hình dạng JSON wire mà bảng policies bên TS vốn đã lưu), trait
+   `PolicyStore` + `PostgresPolicyStore` (SQL viết tay, không dùng ORM — đã xác minh trên
+   Postgres dev thật của repo, không chỉ compile được: round-trip create/list/delete và
+   round-trip JSONB `condition` đều pass dưới dạng integration test chạy thật),
+   `PermissionSnapshot` (read-mask, write-gate ở cấp field/record, admin bypass — cùng logic,
+   cùng cơ chế short-circuit cho admin tại mọi entry point như bản TS), `PermissionService`
+   (giữ nguyên hành vi fail-loud-khi-tenant-rỗng của `scopedTenant`), và `PolicyExplainer`.
+   10 unit test cho logic condition/role-gate thuần túy + 2 integration test chạy trên DB
+   thật, tất cả đều pass.
+5. **QueryPlanner — hoàn thành (2026-08-07).** `crates/metap-query/`: `cursor.rs`
+   (encode/decode, cùng kiểm tra hình dạng UUID), `condition_to_sql.rs`
+   (`recordPolicyWhereClause` + `conditionToSql`, cùng bản fix admin-bypass như mục ADR bên
+   TS — với một sai khác cố ý, được ghi rõ trong doc comment của module: bind tham số theo
+   kiểu-cho-từng-cột, có thể fail (fallible), thay vì dựa vào cơ chế ép kiểu text-parameter
+   ngầm định của node-postgres, vì cơ chế binding dựa trên `Encode` của sqlx không tái tạo
+   lại được kiểu suy luận đó), và `query_planner.rs` (`planList`: giới hạn phạm vi theo
+   tenant/entity/soft-delete, các bộ lọc substring/FTS/exact, phân giải sortable-field với
+   fallback về `defaultSort`, giới hạn (clamp) limit, kiểm tra + phân trang keyset cursor).
+   11 unit test cộng thêm **8 integration test thực thi SQL sinh ra thật trên Postgres dev
+   của repo** (`tests/query_planner_postgres.rs`) — giới hạn theo tenant, loại trừ bản ghi
+   soft-delete, khớp substring bằng ILIKE, lọc exact-match, default-sort + clamp limit, sắp
+   xếp tăng dần trên một field được khai báo sortable, fallback khi field sort được yêu cầu
+   không sortable, phân trang keyset hai trang với kết quả rời nhau (disjoint), và từ chối
+   khi cursor/sort không khớp nhau. Tất cả đều pass. Điều này đáp ứng đúng cam kết ban đầu
+   của Migration Order là phải xác minh module này trên kết quả query thật, chứ không chỉ
+   unit test logic thuần túy một cách cô lập.
 
-   **Testing convention, fixed from this step onward:** unit tests (pure logic, no I/O) live
-   in each crate's `src/*.rs` under `#[cfg(test)]` and run on a plain `cargo test` with no
-   external dependency, ever. DB-touching tests are a separate concern — e2e, not unit —
-   and live in each crate's `tests/*.rs`, `#[ignore]`d so `cargo test`/`cargo test
-   --workspace` never opens a database connection by default; run them explicitly with
-   `cargo test -- --ignored` once the dev DB is up. Verified both ways: a plain `cargo test
-   --workspace` with `DATABASE_URL` unset passes 35/35 unit tests and reports the DB tests
-   as `ignored` (never attempted, not skipped-at-runtime); `cargo test --workspace --
-   --ignored` with the dev DB up passes all 10.
-6. **WorkflowEngine — done (2026-08-07).** `crates/metap-workflow/`: no `WorkflowEngine`
-   struct (the TS class holds no real state — its one dependency, `OutboxService`, is only
-   ever used to reach `enqueue`, which itself ignores `this`), so this is a plain function
-   module — `get_initial_status`, `find_transition`, `run_guard`, `record_event` (the
-   append-only `workflow_events` audit write), and `emit_transitioned`/`emit_created`/
-   `emit_deleted`/`emit_updated` (outbox enqueues). `WorkflowTransition::guard` is now a
-   `metap_permission::PolicyCondition` (see `entity.rs`'s doc comment) — the declarative
-   shape `docs/rust-core-viability.md`'s original Workflow finding recommended, live from
-   this step rather than deferred, since Rust has no equivalent to a TS function-guard to
-   port in the first place. Also added `metap-infra::outbox::enqueue` (the write half of
-   `OutboxService` — the read/publish half was already `crates/outbox-publisher/`, step 1).
-   6 unit tests (initial-status resolution, transition lookup, guard-less and guarded
-   evaluation) + 2 e2e tests writing real rows to the dev Postgres (audit log row shape,
-   outbox row topics and payload shape for two consecutive emits). All passing.
-7. **CrudService — done (2026-08-07).** `crates/metap-crud/`: `list`/`get`/`create`/
-   `update`/`transition`/`delete`, plus `validate_payload` (the generic, `EntityField`-driven
-   validator replacing per-entity Zod — see `validation.rs`'s doc comment for its one known
-   simplification: JSON-type checking, not per-field string formats like email/UUID shape,
-   since `EntityField` metadata has no format concept to drive that from) and
-   `mask_record_for_read`/`compute_capabilities` (the `code`/`status` mirrored-column
-   masking and per-transition guard-availability logic). 7 unit tests on the validator +
-   **3 e2e tests running the full lifecycle against the dev Postgres**: create → get
-   (capabilities/guard-availability correct) → update (stale-version 409, then success,
-   state field provably unchanged) → transition (guard pass, then invalid-from-state 409)
-   → soft-delete → post-delete 404, plus asserting the exact `workflow_events` count and
-   `outbox_events` topic sequence; a second test for tenant-scoped `list`; a third
-   exercising a real non-admin field-write policy end-to-end through `PostgresPolicyStore`.
+   **Quy ước testing, cố định từ bước này trở đi:** unit test (logic thuần túy, không I/O)
+   nằm trong `src/*.rs` của mỗi crate dưới `#[cfg(test)]` và chạy được bằng một lệnh
+   `cargo test` trần, không bao giờ cần dependency bên ngoài. Test có chạm DB là một mối
+   quan tâm riêng — e2e, không phải unit — và nằm trong `tests/*.rs` của mỗi crate, được đánh
+   dấu `#[ignore]` để `cargo test`/`cargo test --workspace` không bao giờ mở kết nối database
+   theo mặc định; chạy chúng một cách tường minh bằng `cargo test -- --ignored` khi DB dev đã
+   sẵn sàng. Đã xác minh cả hai chiều: một lệnh `cargo test --workspace` trần với
+   `DATABASE_URL` chưa được set thì pass 35/35 unit test và báo cáo các test đụng DB là
+   `ignored` (chưa từng được thử, không phải bị skip lúc chạy); `cargo test --workspace --
+   --ignored` khi DB dev đã bật thì pass cả 10 test.
+6. **WorkflowEngine — hoàn thành (2026-08-07).** `crates/metap-workflow/`: không có struct
+   `WorkflowEngine` (class bên TS không giữ state thật sự nào cả — dependency duy nhất của
+   nó, `OutboxService`, chỉ được dùng để gọi tới `enqueue`, mà bản thân hàm đó cũng bỏ qua
+   `this`), nên đây chỉ là một module gồm các hàm thuần túy — `get_initial_status`,
+   `find_transition`, `run_guard`, `record_event` (ghi audit dạng append-only vào
+   `workflow_events`), và `emit_transitioned`/`emit_created`/`emit_deleted`/`emit_updated`
+   (các lần enqueue vào outbox). `WorkflowTransition::guard` giờ là một
+   `metap_permission::PolicyCondition` (xem doc comment của `entity.rs`) — đúng hình dạng
+   khai báo mà phát hiện Workflow ban đầu của `docs/rust-core-viability.md` đã khuyến nghị,
+   được áp dụng ngay từ bước này thay vì hoãn lại, vì Rust ngay từ đầu đã không có khái niệm
+   tương đương một function-guard bên TS để mà port. Cũng đã thêm
+   `metap-infra::outbox::enqueue` (nửa-ghi của `OutboxService` — nửa đọc/publish thì đã có ở
+   `crates/outbox-publisher/`, bước 1). 6 unit test (phân giải initial-status, tra cứu
+   transition, đánh giá guard-less và có-guard) + 2 e2e test ghi dòng thật vào Postgres dev
+   (hình dạng dòng audit log, topic và hình dạng payload của dòng outbox cho hai lần emit
+   liên tiếp). Tất cả đều pass.
+7. **CrudService — hoàn thành (2026-08-07).** `crates/metap-crud/`: `list`/`get`/`create`/
+   `update`/`transition`/`delete`, cộng thêm `validate_payload` (validator generic, dẫn dắt
+   bởi `EntityField`, thay thế Zod riêng cho từng entity — xem doc comment của
+   `validation.rs` để biết điểm đơn giản hóa duy nhất đã biết: chỉ kiểm tra kiểu JSON, không
+   kiểm tra định dạng string theo từng field như email/hình dạng UUID, vì metadata
+   `EntityField` không có khái niệm format để dẫn dắt việc đó) và
+   `mask_record_for_read`/`compute_capabilities` (logic masking cột `code`/`status` phản
+   chiếu và logic guard-availability theo từng transition). 7 unit test cho validator +
+   **3 e2e test chạy toàn bộ vòng đời trên Postgres dev**: create → get
+   (capabilities/guard-availability chính xác) → update (409 do stale-version, sau đó thành
+   công, chứng minh được state field không đổi) → transition (guard pass, sau đó 409 do
+   invalid-from-state) → soft-delete → 404 sau khi delete, cộng thêm khẳng định chính xác số
+   lượng `workflow_events` và chuỗi topic của `outbox_events`; test thứ hai cho `list` giới
+   hạn theo tenant; test thứ ba thực thi một policy field-write non-admin thật, end-to-end,
+   thông qua `PostgresPolicyStore`.
 
-   **A real bug was caught by the e2e test, not the unit tests**, worth recording as the
-   concrete case for why this crate's own testing convention insists on both: `create`'s
-   initial-status value was landing in the top-level `status` column but not inside the
-   `data` JSONB blob, because TS's per-entity Zod schemas commonly default the state field
-   (`status: z.enum([...]).default("draft")`), silently pre-filling `data.status` before
-   `getInitialStatus` ever runs — a behavior this crate's simpler, non-defaulting validator
-   doesn't replicate. Fixed by having `create` write the resolved initial status into `data`
-   itself when absent, which is more explicit than depending on a per-entity schema default
-   line to exist and agree with `workflow.initialState`.
-8. **HTTP layer — done (2026-08-07), scope narrowed as noted below.** `crates/metap-http/`:
-   `axum` routes mirroring `records.ts`/`metadata.ts`/`health.ts` (list/get/create/update/
-   delete/transition, `/metadata/openapi.json` + `/metadata/entities(/:entity)`, `/health`),
-   a `AuthContext` extractor (RS256 JWT verification via `jsonwebtoken` + a live
-   `user_roles` lookup per request — the read half of `RoleAssignmentService`, pulled
-   forward from step 9 because no route can authenticate without it), and an error-response
-   shape mirroring `error-handler.ts`'s `SERVICE_ERROR_MESSAGES` table. **Not** in this
-   step's scope, deliberately: `helmet`/rate-limiting (Phase 8 Hardening, not this step's
-   "thin wiring" goal), the admin routes (policy CRUD, `RoleAssignmentService`'s write
-   side, `IndexReconciler`, `MetadataDriftService` — genuine step 9 Peripherals), and
-   `requestId`/`traceId` in error bodies (a minor, deliberate simplification — see
-   `error.rs`'s doc comment). 1 e2e test — a **real axum server bound to a real socket,
-   a real RS256 JWT minted and verified, real Postgres** — exercising the entire stack in
-   one HTTP-driven pass: public `/health` and `/metadata/openapi.json`, 401 without a
-   token, create (201), get (200, with capabilities/guard-availability correctly computed
-   through the whole stack), transition (200), stale-version update (409 with the exact
-   error-body shape), delete (200), post-delete get (404). All passing. This is
-   `packages/core`'s Rust equivalent — `apps/crm`'s Rust equivalent (a thin binary
-   registering real business entities and calling `metap_http::build_router`) is not part
-   of this Migration Order; no Rust-authored business entity exists yet.
-9. **Peripherals — done (2026-08-07).** `crates/metap-peripherals/`: `index_reconciler.rs`
-   (per-entity partial expression indexes — `idx_`/`uniq_`/`gin_` — via `CREATE INDEX
-   CONCURRENTLY IF NOT EXISTS`, checked against `pg_indexes` first so a re-run only pays for
-   a build when something actually changed; same graceful-degradation-on-DB-hiccup stance
-   as `metadata_drift.rs`), `metadata_drift.rs` (first-boot/drift logging +
-   `metadata_versions` upsert), and `role_assignment.rs` (`get_roles_for_user`/
-   `assign_role`/`revoke_role`/`list_users` — the write side `metap-http`'s `AuthContext`
-   extractor didn't need in step 8; that extractor now calls this crate's
-   `get_roles_for_user` instead of the inline copy it started with, so there's one
-   implementation, not two that could drift). `HealthService` and JWT verification were
-   already done in steps 2/8 respectively, listed here in the original plan but not
-   duplicated. 3 unit tests (index-name construction, SQL-literal/identifier escaping) + 3
-   e2e tests against the dev Postgres: role assignment round-trip (including the
-   ON-CONFLICT-DO-NOTHING double-assign case), drift detection across two `check()` calls
-   with different hashes, and — matching the original TS test suite's own rigor, not just
-   "the index exists" — an `EXPLAIN` assertion that Postgres's planner actually **selects**
-   the created index for `QueryPlanner`'s exact `jsonb_extract_path_text` expression form.
-   All passing.
+   **Một bug thật sự đã bị bắt bởi e2e test, không phải unit test**, đáng ghi lại như một
+   trường hợp cụ thể cho lý do vì sao quy ước testing của crate này nhất quyết đòi cả hai:
+   giá trị initial-status của `create` đang rơi đúng vào cột `status` ở top-level nhưng
+   không rơi vào bên trong blob JSONB `data`, vì các schema Zod riêng theo từng entity bên
+   TS thường đặt default cho state field (`status: z.enum([...]).default("draft")`), âm
+   thầm điền sẵn `data.status` trước cả khi `getInitialStatus` chạy — một hành vi mà
+   validator đơn giản hơn, không-default, của crate này không tái tạo lại. Đã fix bằng cách
+   để `create` tự ghi initial status đã được phân giải vào `data` khi nó vắng mặt, cách này
+   tường minh hơn là phụ thuộc vào việc một dòng default trong schema riêng của entity phải
+   tồn tại và phải khớp với `workflow.initialState`.
+8. **Lớp HTTP — hoàn thành (2026-08-07), phạm vi được thu hẹp như ghi chú bên dưới.**
+   `crates/metap-http/`: các route `axum` phản chiếu `records.ts`/`metadata.ts`/`health.ts`
+   (list/get/create/update/delete/transition, `/metadata/openapi.json` +
+   `/metadata/entities(/:entity)`, `/health`), một extractor `AuthContext` (xác minh JWT
+   RS256 qua `jsonwebtoken` + một lượt tra cứu `user_roles` sống theo từng request — nửa-đọc
+   của `RoleAssignmentService`, được kéo lên trước từ bước 9 vì không route nào xác thực
+   được nếu thiếu nó), và một hình dạng error-response phản chiếu bảng
+   `SERVICE_ERROR_MESSAGES` của `error-handler.ts`. **Không** nằm trong phạm vi bước này,
+   một cách cố ý: `helmet`/rate-limiting (thuộc Phase 8 Hardening, không phải mục tiêu "nối
+   dây mỏng" của bước này), các route admin (policy CRUD, phần ghi của
+   `RoleAssignmentService`, `IndexReconciler`, `MetadataDriftService` — thuộc đúng nghĩa
+   Peripherals của bước 9), và `requestId`/`traceId` trong body lỗi (một đơn giản hóa nhỏ,
+   cố ý — xem doc comment của `error.rs`). 1 e2e test — một **server axum thật, bind vào một
+   socket thật, một JWT RS256 thật được mint và verify, Postgres thật** — chạy qua toàn bộ
+   stack trong một lượt HTTP-driven duy nhất: `/health` và `/metadata/openapi.json` công
+   khai, 401 khi không có token, create (201), get (200, với capabilities/guard-availability
+   được tính đúng xuyên suốt toàn bộ stack), transition (200), update với stale-version (409
+   đúng hình dạng error-body), delete (200), get sau khi delete (404). Tất cả đều pass. Đây
+   là phần tương đương bằng Rust của `packages/core` — phần tương đương bằng Rust của
+   `apps/crm` (một binary mỏng đăng ký các business entity thật và gọi
+   `metap_http::build_router`) không nằm trong Migration Order này; chưa có business entity
+   nào được viết bằng Rust vào thời điểm này.
+9. **Peripherals — hoàn thành (2026-08-07).** `crates/metap-peripherals/`:
+   `index_reconciler.rs` (các partial expression index riêng cho từng entity —
+   `idx_`/`uniq_`/`gin_` — thông qua `CREATE INDEX CONCURRENTLY IF NOT EXISTS`, được kiểm
+   tra trước với `pg_indexes` để mỗi lần chạy lại chỉ tốn công build khi thực sự có gì đó
+   thay đổi; cùng lập trường graceful-degradation-khi-DB-trục-trặc như `metadata_drift.rs`),
+   `metadata_drift.rs` (log first-boot/drift + upsert `metadata_versions`), và
+   `role_assignment.rs` (`get_roles_for_user`/`assign_role`/`revoke_role`/`list_users` —
+   phần ghi mà extractor `AuthContext` của `metap-http` không cần đến ở bước 8; extractor đó
+   giờ gọi `get_roles_for_user` của crate này thay vì bản copy inline nó bắt đầu với, nên
+   giờ chỉ còn một implementation, không còn hai bản có thể lệch nhau). `HealthService` và
+   xác minh JWT đã được làm xong ở các bước 2/8 tương ứng, được liệt kê lại ở đây theo kế
+   hoạch gốc nhưng không bị làm lại lần hai. 3 unit test (dựng tên index, escape
+   SQL-literal/identifier) + 3 e2e test trên Postgres dev: round-trip gán role (bao gồm cả
+   case gán trùng hai lần với ON-CONFLICT-DO-NOTHING), phát hiện drift qua hai lần gọi
+   `check()` với hash khác nhau, và — khớp với đúng mức độ khắt khe của bộ test TS gốc,
+   không chỉ dừng ở "index có tồn tại hay không" — một khẳng định `EXPLAIN` rằng planner của
+   Postgres thực sự **chọn** index vừa tạo cho đúng hình dạng biểu thức
+   `jsonb_extract_path_text` mà `QueryPlanner` dùng. Tất cả đều pass.
 
-   **All 9 Migration Order steps are now done.** `crates/` is a 9-crate Cargo workspace
-   (`metap-infra`, `metap-metadata`, `metap-permission`, `metap-query`, `metap-workflow`,
-   `metap-crud`, `metap-http`, `metap-peripherals`, plus the `outbox-publisher` binary),
-   51 unit tests (zero DB dependency, verified by running with `DATABASE_URL` unset) and
-   19 e2e tests (real Postgres, real RabbitMQ where relevant, one real HTTP server bound to
-   a real socket with a real RS256 JWT) all passing, `cargo build --release --workspace`
-   clean. Porting the real `crm.customers` entity and deleting `apps/crm`/`packages/core`
-   entirely were both explicitly out of this Migration Order's original scope — both
-   happened anyway, the same day, once the "Live Demo" section below proved the port
-   complete; see that section and `docs/roadmap.md` Phase 12 for what changed. Phase 8
-   Hardening's concerns (helmet-equivalent headers, rate limiting, `requestId`/`traceId`
-   propagation) remained explicitly deferred, not silently dropped — closed 2026-08-09, see
-   `docs/roadmap.md` Phase 8.
+   **Cả 9 bước của Migration Order giờ đã hoàn thành.** `crates/` là một Cargo workspace gồm
+   9 crate (`metap-infra`, `metap-metadata`, `metap-permission`, `metap-query`,
+   `metap-workflow`, `metap-crud`, `metap-http`, `metap-peripherals`, cộng thêm binary
+   `outbox-publisher`), 51 unit test (không phụ thuộc DB, đã xác minh bằng cách chạy với
+   `DATABASE_URL` chưa được set) và 19 e2e test (Postgres thật, RabbitMQ thật ở những chỗ
+   liên quan, một server HTTP thật bind vào socket thật với JWT RS256 thật) đều pass,
+   `cargo build --release --workspace` sạch. Việc port entity `crm.customers` thật và xóa
+   hẳn `apps/crm`/`packages/core` cả hai đều nằm ngoài phạm vi ban đầu của Migration Order
+   này — cả hai đều đã diễn ra dù vậy, ngay trong cùng ngày, một khi mục "Live Demo" bên dưới
+   chứng minh việc port đã hoàn tất; xem mục đó và `docs/roadmap.md` Phase 12 để biết những
+   gì đã thay đổi. Các mối quan tâm của Phase 8 Hardening (header tương đương helmet, rate
+   limiting, lan truyền `requestId`/`traceId`) vẫn được hoãn lại một cách tường minh, không
+   bị âm thầm bỏ qua — đã đóng vào 2026-08-09, xem `docs/roadmap.md` Phase 8.
 
-`packages/platform-react`/`apps/demo` needed no changes throughout — the `/metadata/openapi.json`
-contract (see "Schema & Codegen Strategy" above) stayed stable across every step.
+`packages/platform-react`/`apps/demo` không cần thay đổi gì xuyên suốt quá trình — contract
+`/metadata/openapi.json` (xem "Chiến lược Schema & Codegen" ở trên) giữ nguyên ổn định qua
+mọi bước.
 
 ## Live Demo: `crates/crm-server`
 
-Built immediately after the Migration Order to answer "does this actually work" directly,
-not just via test suites — a real `apps/crm`-equivalent binary (`crates/crm-server/`) wiring
-`metap-http`'s router to a real boot sequence (register `crm.customers`, `validate_references`,
-`metadata_drift::check`, `index_reconciler::reconcile`, serve), matching `app.ts`'s
-`buildApp`. It runs the **real** `crm.customers` entity (`src/customer_entity.rs`, a direct
-port of `apps/crm/src/modules/crm/customer.entity.ts`), not a `test.*` fixture — the same
-entity the TS app serves, against the same `records` table.
+Được xây ngay sau Migration Order để trả lời trực tiếp câu hỏi "cái này có thật sự chạy
+được không", chứ không chỉ qua bộ test suite — một binary tương đương `apps/crm` thật sự
+(`crates/crm-server/`) nối router của `metap-http` với một boot sequence thật (đăng ký
+`crm.customers`, `validate_references`, `metadata_drift::check`, `index_reconciler::reconcile`,
+serve), khớp với `buildApp` của `app.ts`. Nó chạy entity `crm.customers` **thật**
+(`src/customer_entity.rs`, được port trực tiếp từ
+`apps/crm/src/modules/crm/customer.entity.ts`), không phải một fixture `test.*` — đúng
+entity mà app TS từng phục vụ, trên cùng một bảng `records`.
 
-**Run it:** `pnpm dev:rs` from the repo root (builds + runs from `crates/crm-server/`, its own
-self-contained `.env`/`keys/`). Mint a token with `pnpm mint-token`. Both `apps/crm` and
-`packages/core` — including their `.env`/`keys/`/dev scripts — were deleted once this stack
-was proven complete; see `docs/roadmap.md` Phase 12 and `crates/dev-tools`/`crates/db-migrate`
-(replacing `packages/core/scripts/*.mjs` and Drizzle's `db:generate`/`db:migrate`) and
-`crates/migrations/` (the same `.sql` Drizzle originally generated, copied over verbatim and
-verified by re-running the full e2e suite against a freshly `db-migrate`'d database before
-anything was deleted).
+**Chạy nó:** `pnpm dev:rs` từ repo root (build + chạy từ `crates/crm-server/`, với
+`.env`/`keys/` tự chứa riêng của nó). Mint một token bằng `pnpm mint-token`. Cả `apps/crm`
+lẫn `packages/core` — bao gồm cả `.env`/`keys/`/dev script của chúng — đều đã bị xóa một khi
+stack này được chứng minh hoàn chỉnh; xem `docs/roadmap.md` Phase 12 và
+`crates/dev-tools`/`crates/db-migrate` (thay thế `packages/core/scripts/*.mjs` và
+`db:generate`/`db:migrate` của Drizzle) cùng `crates/migrations/` (đúng các file `.sql` mà
+Drizzle từng sinh ra, được copy nguyên văn và xác minh bằng cách chạy lại toàn bộ e2e suite
+trên một database vừa `db-migrate` xong, trước khi xóa bất cứ thứ gì).
 
-**Verified live** (2026-08-07), full CRUD over real HTTP against the running binary:
+**Đã xác minh live** (2026-08-07), CRUD đầy đủ qua HTTP thật trên binary đang chạy:
 `POST /api/crm.customers` (create), `GET /api/crm.customers/:id` (capabilities/transitions
-computed correctly), `GET /api/crm.customers` (list, real data), `POST
-/api/crm.customers/:id/transitions/activate` (guard-checked transition, `draft` → `active`)
-— all against the actual dev database, not a throwaway fixture.
+được tính đúng), `GET /api/crm.customers` (list, dữ liệu thật), `POST
+/api/crm.customers/:id/transitions/activate` (transition có kiểm tra guard, `draft` →
+`active`) — tất cả đều chạy trên database dev thật, không phải fixture dùng-rồi-bỏ.
 
-**A second real bug, caught only by actually running the binary** (neither the unit nor the
-e2e test suites exercise this): `build_router`'s CORS layer panicked at startup —
-`allow_credentials(true)` combined with `allow_headers(Any)` is invalid per the CORS spec,
-and `tower-http` enforces this as a hard panic, not a compile error. The `metap-http` e2e
-test always passed an empty `cors_origins`, which takes a different, untested branch.
-Fixed by using an explicit header allowlist (`Authorization`, `Content-Type`, `Accept`)
-instead of a wildcard, and the e2e test now passes a real origin list so this branch stays
-covered. Worth naming as the second data point (after step 7's `data`/status defaulting
-bug) for why this port kept insisting on live verification over trusting compiled/unit-green
-as sufficient — some failure modes only exist at runtime, under real configuration.
+**Một bug thật thứ hai, chỉ bị bắt được khi thực sự chạy binary** (không bộ unit test lẫn
+e2e test nào chạm tới nó): lớp CORS trong `build_router` panic ngay lúc khởi động —
+`allow_credentials(true)` kết hợp với `allow_headers(Any)` là không hợp lệ theo đặc tả CORS,
+và `tower-http` cưỡng chế điều này bằng một hard panic, không phải lỗi compile. e2e test của
+`metap-http` luôn truyền vào một `cors_origins` rỗng, nên đi theo một nhánh khác, chưa từng
+được test. Đã fix bằng cách dùng một allowlist header tường minh (`Authorization`,
+`Content-Type`, `Accept`) thay vì wildcard, và giờ e2e test truyền vào một danh sách origin
+thật để nhánh này luôn được bao phủ. Đáng nêu tên như dữ liệu thứ hai (sau bug default
+`data`/status ở bước 7) cho lý do vì sao lần port này liên tục nhấn mạnh việc xác minh live
+thay vì tin rằng compile-được/unit-test-xanh là đủ — một số kiểu lỗi chỉ tồn tại lúc runtime,
+dưới cấu hình thật.
 
-## TS Removal: `apps/crm` and `packages/core` Deleted (2026-08-07)
+## Gỡ bỏ TS: Xóa `apps/crm` và `packages/core` (2026-08-07)
 
-Once the live demo above proved the Rust stack complete against the real business entity,
-`apps/crm` and `packages/core` were deleted outright — `master` and the `v0.1.0` tag both
-still have the full TS history if this ever needs reverting. Before deleting, three gaps
-the Rust stack hadn't needed until this point were closed, so deleting the TS side didn't
-strand anything the Rust side was silently still depending on:
+Một khi live demo ở trên chứng minh stack Rust đã hoàn chỉnh trên entity nghiệp vụ thật,
+`apps/crm` và `packages/core` bị xóa hẳn — `master` và tag `v0.1.0` cả hai vẫn còn đầy đủ
+lịch sử TS nếu sau này cần revert lại. Trước khi xóa, ba khoảng trống mà stack Rust chưa cần
+đến tính tới thời điểm này đã được lấp đầy, để việc xóa phía TS không để lại thứ gì mà phía
+Rust vẫn đang âm thầm phụ thuộc:
 
-- **JWT keys** — `apps/crm/keys/`'s public key and `packages/core/keys/`'s private key
-  (the Node app split them across two directories; the public halves were identical, so
-  they were safe to consolidate) moved to `crates/crm-server/keys/`, gitignored like the
-  originals.
-- **Dev tooling** — `packages/core/scripts/{generate-dev-jwt-keypair,mint-dev-token,
-  seed-admin}.mjs` (three tiny scripts) became `crates/dev-tools`'s `gen-keys`/`mint-token`/
-  `seed-admin` subcommands — `seed-admin` calls the same `metap_peripherals::assign_role`
-  its own e2e tests already verify, not a new hand-rolled query.
-- **Schema migrations** — Drizzle's `db:generate`/`db:migrate` had no Rust equivalent.
-  `packages/core/src/infra/db/migrations/*.sql` (the actual generated SQL, not
-  `schema.ts`, which had no reason to be ported — nothing reads a schema *definition* file
-  at runtime, only the SQL it already produced) copied verbatim into `crates/migrations/`,
-  with `crates/db-migrate` (`sqlx::migrate!`) added to apply them. **Verified before
-  deleting anything**: ran `db-migrate` against a brand-new scratch database, confirmed all
-  6 tables appeared, then ran the *entire* e2e suite (all 19 tests) against that
-  from-scratch database — passed, proving the Rust stack no longer needs `packages/core` to
-  exist for a new environment to stand up the schema. New migrations from here on are
-  hand-written `.sql` files in `crates/migrations/`, no diffing tool.
+- **Khóa JWT** — public key của `apps/crm/keys/` và private key của `packages/core/keys/`
+  (app Node chia chúng ra hai thư mục riêng; hai nửa public giống hệt nhau, nên gộp lại là
+  an toàn) được chuyển sang `crates/crm-server/keys/`, gitignore giống như bản gốc.
+- **Công cụ dev** — `packages/core/scripts/{generate-dev-jwt-keypair,mint-dev-token,
+  seed-admin}.mjs` (ba script nhỏ) trở thành các subcommand `gen-keys`/`mint-token`/
+  `seed-admin` của `crates/dev-tools` — `seed-admin` gọi đúng
+  `metap_peripherals::assign_role` mà bộ e2e test của chính nó đã xác minh, không phải một
+  query viết tay mới.
+- **Migration schema** — `db:generate`/`db:migrate` của Drizzle không có phiên bản Rust
+  tương đương. `packages/core/src/infra/db/migrations/*.sql` (SQL thật đã được sinh ra,
+  không phải `schema.ts` — thứ không có lý do gì để port, vì không có gì đọc file *định
+  nghĩa* schema lúc runtime cả, chỉ có SQL mà nó từng sinh ra) được copy nguyên văn vào
+  `crates/migrations/`, cùng với `crates/db-migrate` (`sqlx::migrate!`) được thêm vào để áp
+  dụng chúng. **Đã xác minh trước khi xóa bất cứ thứ gì**: chạy `db-migrate` trên một
+  database scratch hoàn toàn mới, xác nhận cả 6 bảng đều xuất hiện, sau đó chạy *toàn bộ* bộ
+  e2e suite (cả 19 test) trên chính database từ-đầu đó — pass, chứng minh stack Rust không
+  còn cần `packages/core` tồn tại để một môi trường mới có thể dựng lên schema. Từ đây trở
+  đi, migration mới là các file `.sql` viết tay trong `crates/migrations/`, không có công cụ
+  diff nào cả.
 
-`package.json`'s scripts and `CLAUDE.md` were updated to match (new commands, new file
-paths, the stack description itself). `packages/platform-react`/`apps/demo` were untouched
-— confirmed via grep that neither referenced `packages/core`/`apps/crm` by path (the
-frontend was always HTTP-only, never a direct import), then `pnpm install` regenerated the
-lockfile to drop the two removed workspace members cleanly.
+Các script trong `package.json` và `CLAUDE.md` đã được cập nhật cho khớp (lệnh mới, đường
+dẫn file mới, cả phần mô tả stack). `packages/platform-react`/`apps/demo` không hề bị đụng
+tới — đã xác nhận bằng grep rằng không nơi nào tham chiếu `packages/core`/`apps/crm` theo
+đường dẫn (frontend vốn luôn chỉ giao tiếp qua HTTP, chưa bao giờ import trực tiếp), sau đó
+`pnpm install` sinh lại lockfile để loại bỏ sạch hai workspace member đã bị xóa.
 
-**What didn't exist yet at this point, named plainly:** admin HTTP routes (policy CRUD, role
-grant/revoke over HTTP — `metap_peripherals::assign_role`/`revoke_role`/`list_users` existed
-as functions and were covered by e2e tests, but nothing in `metap-http` exposed them as
-endpoints yet) and Phase 8 Hardening's application-layer concerns (see above). Both were
-already-known gaps before this deletion, not new ones created by it, and both have since
-been closed — admin routes 2026-08-08 (`crates/metap-http/src/routes/admin.rs`), Hardening's
-app-layer piece 2026-08-09 (see `docs/roadmap.md` Phase 8).
+**Những gì vẫn chưa tồn tại tại thời điểm này, nêu rõ ràng:** các route HTTP admin (policy
+CRUD, cấp/thu hồi role qua HTTP — `metap_peripherals::assign_role`/`revoke_role`/`list_users`
+đã tồn tại dưới dạng hàm và đã được bao phủ bởi e2e test, nhưng chưa có gì trong `metap-http`
+expose chúng thành endpoint cả) và các mối quan tâm ở tầng application của Phase 8 Hardening
+(xem ở trên). Cả hai đều là khoảng trống đã biết từ trước lần xóa này, không phải khoảng
+trống mới phát sinh do nó, và cả hai từ đó đến nay đều đã được đóng lại — route admin vào
+2026-08-08 (`crates/metap-http/src/routes/admin.rs`), phần tầng application của Hardening
+vào 2026-08-09 (xem `docs/roadmap.md` Phase 8).
 
-Per "Contributor / Outsource Accessibility" below: steps 1–3 are the right scope for a
-small team to validate real Rust proficiency on before anyone touches `CrudService`/the
-HTTP surface (steps 7–8), where a mistake has the most blast radius.
+Theo mục "Khả năng tiếp cận cho Contributor / Outsource" bên dưới: các bước 1–3 là phạm vi
+hợp lý để một đội nhỏ kiểm chứng năng lực Rust thực sự trước khi bất kỳ ai động vào
+`CrudService`/bề mặt HTTP (bước 7–8), nơi một sai sót có phạm vi ảnh hưởng lớn nhất.
 
-## Contributor / Outsource Accessibility
+## Khả năng tiếp cận cho Contributor / Outsource
 
-The real, named risk from "Contributor draw" above, addressed directly rather than argued
-away: keep entity/workflow/permission **authoring** (what an outsourced contributor or
-business-module author touches) declarative and data-shaped — a list of fields, a workflow
-transition table — not idiomatic Rust code. Concentrate the Rust expertise the engine
-itself needs (`CrudService`, `QueryPlanner`, `WorkflowEngine`, the eventual `EventBus`
-SPI from `docs/architecture-review-2026-08-07.md` Part 2) in a smaller core team. This is
-close to today's actual shape already — `*.entity.ts` files are simple declarative objects
-even though the engine underneath is more complex TypeScript — the decision changes the
-engine's language, not the shape of what a module author writes day to day.
+Rủi ro có thật, đã được nêu tên, từ mục "Sức hút với contributor" ở trên, được xử lý trực
+tiếp thay vì biện minh cho qua: giữ cho việc **tác giả** entity/workflow/permission (phần mà
+một contributor thuê ngoài hay một tác giả business-module động vào) mang tính khai báo và
+dạng dữ liệu — một danh sách field, một bảng transition workflow — chứ không phải code Rust
+idiomatic. Tập trung phần chuyên môn Rust mà bản thân engine cần (`CrudService`,
+`QueryPlanner`, `WorkflowEngine`, SPI `EventBus` sau này theo
+`docs/architecture-review-2026-08-07.md` Part 2) vào một đội core nhỏ hơn. Điều này vốn đã
+gần với hình dạng thực tế hiện nay — các file `*.entity.ts` là những object khai báo đơn
+giản dù engine bên dưới là TypeScript phức tạp hơn nhiều — quyết định này chỉ thay đổi ngôn
+ngữ của engine, không thay đổi hình dạng những gì một tác giả module viết ra hàng ngày.
 
-## Repo Structure: Cargo.toml Hoist + `rust/` → `crates/` Rename (2026-08-08)
+## Cấu trúc Repo: Nâng Cargo.toml lên root + Đổi tên `rust/` → `crates/` (2026-08-08)
 
-Two structural follow-ups, both scoped narrowly after evaluating (and declining) a broader
-`justfile`/`Makefile` command-orchestration proposal as premature per this project's own
-trigger-based/YAGNI stance — with only two ecosystems (Cargo, pnpm) and `package.json`
-already working as the orchestrator, a third layer had no concrete trigger.
+Hai việc dọn dẹp cấu trúc tiếp theo, cả hai đều được giới hạn phạm vi hẹp sau khi cân nhắc
+(và từ chối) một đề xuất rộng hơn về công cụ điều phối lệnh kiểu `justfile`/`Makefile`, coi
+đó là còn quá sớm theo đúng lập trường trigger-based/YAGNI của dự án này — chỉ với hai hệ
+sinh thái (Cargo, pnpm) và `package.json` đã đóng vai trò điều phối viên, một tầng thứ ba
+không có trigger cụ thể nào để biện minh.
 
-- **Cargo workspace root hoisted.** `[workspace]` moved from a nested `Cargo.toml` to a
-  repo-root `Cargo.toml`, matching pnpm's existing root-level ergonomics — `cargo
-  build`/`test`/`clippy` now work from the repo root with no `--manifest-path`. `Cargo.lock`
-  moved with it. `resolver = "2"` kept (not `"3"`, which needs edition 2024; the workspace is
-  still edition 2021).
-- **`rust/` renamed to `crates/`.** Purely a directory rename, no code changes — every crate
-  path (`crates/metap-*`, `crates/crm-server`, etc.) updated in root `Cargo.toml`'s `members`,
-  root `package.json`'s scripts, and every doc/source-comment path reference across the repo.
+- **Nâng root của Cargo workspace lên.** `[workspace]` được chuyển từ một `Cargo.toml` lồng
+  bên trong lên `Cargo.toml` ở repo root, khớp với sự tiện lợi ở cấp root mà pnpm vốn đã có
+  — `cargo build`/`test`/`clippy` giờ chạy được từ repo root mà không cần `--manifest-path`.
+  `Cargo.lock` cũng chuyển theo. Giữ nguyên `resolver = "2"` (không phải `"3"`, thứ cần
+  edition 2024; workspace vẫn đang ở edition 2021).
+- **Đổi tên `rust/` thành `crates/`.** Thuần túy là đổi tên thư mục, không có thay đổi code
+  nào — mọi đường dẫn crate (`crates/metap-*`, `crates/crm-server`, v.v.) được cập nhật
+  trong `members` của `Cargo.toml` ở root, trong các script của `package.json` ở root, và
+  trong mọi tham chiếu đường dẫn ở doc/source-comment xuyên suốt repo.
 
-Both verified after the change, not just compiled: `cargo build --release --workspace` (12
-crates, clean), 51 unit tests (hermetic, `DATABASE_URL` unset), the full e2e suite against
-the real dev Postgres, and a live `pnpm dev:rs` + `pnpm mint-token` round-trip (health check,
-authenticated `GET /api/crm.customers` → 200) against the new paths.
+Cả hai đều được xác minh sau khi thay đổi, không chỉ compile được: `cargo build --release
+--workspace` (12 crate, sạch), 51 unit test (hermetic, `DATABASE_URL` chưa set), toàn bộ
+e2e suite chạy trên Postgres dev thật, và một vòng `pnpm dev:rs` + `pnpm mint-token` chạy
+live (health check, `GET /api/crm.customers` đã xác thực → 200) trên các đường dẫn mới.
 
-**A third, unrelated bug was caught during this verification pass**, worth recording
-alongside the two in the Migration Order above: `crates/metap-crud/tests/crud_service_postgres.rs`'s
-`cleanup()` helper deleted `outbox_events` by `aggregate_type = 'test.orders'` — unscoped by
-tenant — so under `cargo test --workspace -- --ignored`'s default parallelism, one test's
-cleanup could delete another concurrently-running test's still-in-flight outbox rows. Passed
-every time run in isolation (`--test-threads=1`), failed intermittently under full-workspace
-parallel execution — the same "only real, concurrent execution finds this" pattern as the
-CORS panic above. Fixed by scoping the delete to `aggregate_id IN (SELECT id FROM records
-WHERE tenant_id = $1)`; reran the full e2e suite 3 times after the fix, all green (19 e2e
-tests each run — see the note below on the Migration Order's test count).
+**Một bug thứ ba, không liên quan, bị bắt được trong lượt xác minh này**, đáng ghi lại bên
+cạnh hai bug trong Migration Order ở trên: helper `cleanup()` của
+`crates/metap-crud/tests/crud_service_postgres.rs` xóa `outbox_events` theo
+`aggregate_type = 'test.orders'` — không giới hạn theo tenant — nên dưới chế độ chạy song
+song mặc định của `cargo test --workspace -- --ignored`, bước cleanup của một test có thể
+xóa mất các dòng outbox còn đang bay của một test khác đang chạy đồng thời. Chạy riêng lẻ
+(`--test-threads=1`) thì lần nào cũng pass, nhưng fail không đều đặn khi chạy song song toàn
+workspace — cùng kiểu mẫu "chỉ khi chạy thật, chạy đồng thời mới phát hiện ra" như panic CORS
+ở trên. Đã fix bằng cách giới hạn phạm vi xóa vào
+`aggregate_id IN (SELECT id FROM records WHERE tenant_id = $1)`; chạy lại toàn bộ e2e suite 3
+lần sau khi fix, đều xanh (19 e2e test mỗi lần chạy — xem ghi chú bên dưới về số lượng test
+của Migration Order).
 
-**Test-count correction:** the Migration Order (step 9's closing note) and `docs/roadmap.md`
-Phase 12 both state "20 e2e tests" in one place and "19" in another — an inconsistency
-present before this rename. Recounting directly (`grep -rc '#\[ignore' crates/*/tests/*.rs`
-over-counts by one per file, since each file's own doc comment mentions `` `#[ignore]`d ``
-in prose): the correct figure is **19**, confirmed by three consecutive full green
-`cargo test --workspace -- --ignored` runs after the fix above. The "20" figures in both
-docs are stale and should read 19.
+**Đính chính số lượng test:** Migration Order (ghi chú kết ở bước 9) và `docs/roadmap.md`
+Phase 12 cùng ghi "20 e2e test" ở một chỗ và "19" ở chỗ khác — một sự không nhất quán đã tồn
+tại từ trước lần đổi tên này. Đếm lại trực tiếp (`grep -rc '#\[ignore' crates/*/tests/*.rs`
+đếm dư một cho mỗi file, vì doc comment riêng của mỗi file đều nhắc tới `` `#[ignore]`d ``
+trong phần văn xuôi): con số chính xác là **19**, được xác nhận bằng ba lần chạy liên tiếp
+`cargo test --workspace -- --ignored` toàn bộ đều xanh sau khi fix ở trên. Con số "20" ở cả
+hai tài liệu đã lỗi thời và cần sửa lại thành 19.
 
-## Relationship to Other Docs
+## Liên hệ với các tài liệu khác
 
-- `docs/modular-spi-architecture.md`'s Capability SPI pattern (Level 1/2/3) was framed as
-  language-agnostic when written. With `packages/core` now committed to Rust, a future
-  `EventBus`/`Storage` SPI (if and when its own trigger fires — see that document's Part 2/
-  sequencing, unchanged by this decision) would naturally be a Rust trait rather than a
-  TypeScript interface, matching the original proposal's own `trait EventBus { ... }`
-  sketch. That document's SPI-count/trigger discipline is otherwise unaffected: this
-  decision is about `packages/core`'s implementation language, not a reason to build the
-  other six SPIs ahead of their triggers.
-- Logged in `docs/architectures/09-adr.md`'s "Notable decisions not covered by a dedicated
-  spec" section.
+- Mẫu hình Capability SPI (Level 1/2/3) trong `docs/modular-spi-architecture.md` được đóng
+  khung như trung lập về ngôn ngữ khi được viết ra. Với `packages/core` giờ đã cam kết dùng
+  Rust, một SPI `EventBus`/`Storage` trong tương lai (nếu và khi trigger riêng của nó xảy ra
+  — xem Part 2/thứ tự triển khai của tài liệu đó, không đổi vì quyết định này) sẽ tự nhiên
+  là một trait Rust thay vì một interface TypeScript, khớp với chính bản phác thảo
+  `trait EventBus { ... }` trong đề xuất gốc. Kỷ luật về số lượng SPI/trigger của tài liệu đó
+  không bị ảnh hưởng ở các khía cạnh khác: quyết định này chỉ liên quan đến ngôn ngữ triển
+  khai của `packages/core`, không phải lý do để xây sáu SPI còn lại trước khi trigger của
+  chúng xảy ra.
+- Được ghi lại trong mục "Các quyết định đáng chú ý không có spec riêng" của
+  `docs/architectures/09-adr.md`.

@@ -1,85 +1,85 @@
-# Vision
+# Tầm nhìn
 
-Date: 2026-08-02
+Ngày: 2026-08-02
 
-Status: directional — not an as-built description. For what's actually shipped, see [`docs/architectures/01-introduction.md`](architectures/01-introduction.md) (arc42 Section 1), whose short "Vision" paragraph is the terse, as-built companion to this fuller statement.
+Trạng thái: directional (định hướng) — không phải một mô tả as-built. Để biết những gì thực sự đã được triển khai, xem [`docs/architectures/01-introduction.md`](architectures/01-introduction.md) (arc42 Section 1), có đoạn "Tầm nhìn" ngắn gọn là phiên bản as-built súc tích đi kèm với phát biểu đầy đủ hơn này.
 
-## Core Idea
+## Ý tưởng cốt lõi
 
-Metap is not meant to stop at being a single business application, or even just a metadata-driven CRM core.
+Metap không có ý định dừng lại ở việc chỉ là một business application đơn lẻ, hay thậm chí chỉ là một metadata-driven CRM core.
 
-Its direction is:
+Định hướng của nó là:
 
-> a reusable platform core for building business applications, with low-code as the higher destination.
+> một platform core có thể tái sử dụng để xây dựng các business application, với low-code là đích đến cao hơn.
 
-In practical terms, that means two nested goals:
+Về mặt thực tế, điều đó có nghĩa là hai mục tiêu lồng nhau:
 
-1. build a strong metadata-driven execution core
-2. evolve that core into a real low-code platform over time
+1. xây dựng một execution core metadata-driven vững chắc
+2. phát triển core đó thành một low-code platform thực sự theo thời gian
 
-## What Exists Today
+## Những gì đã tồn tại
 
-Metap already has the foundation of a platform, not just a single app:
+Metap đã có nền tảng của một platform, chứ không chỉ là một app đơn lẻ:
 
-- metadata-defined entities, compiled and validated as a runtime artifact (not passive config)
-- generic CRUD, metadata-constrained query planning, and metadata-driven workflow
-- policy-driven, server-enforced permissions
-- reusable frontend rendering primitives (`packages/platform-react`)
-- clean boundaries between the reusable core and each business module (`crates/metap-*` + `apps/<module>`, e.g. `apps/crm-server`), and between the reusable frontend and its demo consumer (`packages/platform-react` + `apps/crm-fe`) — a workspace shape chosen specifically to keep this direction cheap, not a generic engineering preference (the core moved from TypeScript to Rust 2026-08-07, see `docs/rust-core-viability.md`; the boundary shape itself is unchanged)
-- a generated (not hand-maintained) contract between backend and frontend for entity metadata, so the two can't silently drift the way described below in "What This Means For Decisions Now"
+- các Entity được định nghĩa bằng metadata, được compile và validate như một runtime artifact (không phải config thụ động)
+- CRUD tổng quát, query planning bị ràng buộc bởi metadata, và Workflow điều khiển bởi metadata
+- permission được điều khiển bởi policy và thực thi phía server
+- các frontend rendering primitive có thể tái sử dụng (`packages/platform-react`)
+- ranh giới rõ ràng giữa reusable core và từng business module (`crates/metap-*` + `apps/<module>`, ví dụ `apps/crm-server`), và giữa reusable frontend với demo consumer của nó (`packages/platform-react` + `apps/crm-fe`) — một cấu trúc workspace được chọn riêng để giữ định hướng này ít tốn kém, không phải một sở thích kỹ thuật chung chung (core đã chuyển từ TypeScript sang Rust vào 2026-08-07, xem `docs/rust-core-viability.md`; bản thân cấu trúc ranh giới không đổi)
+- một contract được generate (không phải duy trì thủ công) giữa backend và frontend cho entity metadata, để hai bên không thể âm thầm lệch nhau theo cách được mô tả bên dưới trong phần "Điều này có ý nghĩa gì cho các quyết định hiện tại"
 
-This is already larger than a single CRM app, but it is still primarily a developer-authored platform core: metadata lives in code (entity-definition Rust modules, e.g. `apps/crm-server/src/customer_entity.rs`), not in a database a non-developer could edit.
+Điều này đã lớn hơn một CRM app đơn lẻ, nhưng về cơ bản vẫn là một platform core được author bởi developer: metadata sống trong code (các Rust module định nghĩa Entity, ví dụ `apps/crm-server/src/customer_entity.rs`), không phải trong một database mà người không phải developer có thể chỉnh sửa.
 
-## Higher Destination
+## Đích đến cao hơn
 
-The higher destination is not just "more modules" or "more CRUD."
+Đích đến cao hơn không chỉ là "thêm module" hay "thêm CRUD."
 
-It is:
+Đó là:
 
-> a low-code platform where operators or advanced admins can define, publish, and govern business applications from metadata, without depending on source-code edits for the standard path.
+> một low-code platform nơi operator hoặc admin nâng cao có thể định nghĩa, publish, và quản trị (govern) các business application từ metadata, mà không phụ thuộc vào việc chỉnh sửa source code cho luồng chuẩn (standard path).
 
-That future system must preserve the backend guarantees Metap already has today:
+Hệ thống tương lai đó phải giữ được các đảm bảo (guarantee) phía backend mà Metap đã có ngày nay:
 
-- server-side tenant isolation
-- server-side permission enforcement
+- tenant isolation phía server
+- permission enforcement phía server
 - optimistic locking
-- workflow integrity
-- reliable business-event delivery
+- tính toàn vẹn của Workflow
+- việc truyền business event một cách đáng tin cậy
 
-See [`docs/low-code-platform-v1.md`](low-code-platform-v1.md) for a concrete, phased path toward a first real low-code platform version — what's missing, what order to build it in, and what to deliberately not build too early.
+Xem [`docs/low-code-platform-v1.md`](low-code-platform-v1.md) để biết một lộ trình cụ thể, theo từng phase, hướng tới phiên bản low-code platform thực sự đầu tiên — những gì còn thiếu, thứ tự xây dựng, và những gì cố ý chưa xây dựng quá sớm.
 
-## Architectural Direction
+## Định hướng kiến trúc
 
-Metap should get there by evolving the *authoring and control-plane model*, not by replacing the runtime engine.
+Metap nên đạt được điều đó bằng cách phát triển *mô hình authoring và control-plane*, chứ không phải bằng cách thay thế runtime engine.
 
-The intended progression:
+Lộ trình dự kiến:
 
-- **current state** — code-authored metadata on top of a reusable runtime core
-- **next state** — persisted, versioned metadata with validation and publish control
-- **higher state** — low-code application design and governance on top of the same execution core
+- **trạng thái hiện tại** — metadata được author bằng code trên nền một reusable runtime core
+- **trạng thái tiếp theo** — metadata được lưu trữ (persisted), có versioning, kèm validation và publish control
+- **trạng thái cao hơn** — thiết kế và quản trị (governance) low-code application trên cùng một execution core
 
-## What This Means For Decisions Now
+## Điều này có ý nghĩa gì cho các quyết định hiện tại
 
-When making architecture choices in the current project, prefer decisions that keep this path open:
+Khi đưa ra các lựa chọn kiến trúc trong dự án hiện tại, hãy ưu tiên những quyết định giữ cho lộ trình này luôn mở:
 
-- clean package and service boundaries
-- shared, generated (not hand-copied) public contracts between packages that can't otherwise see each other's source
-- metadata validation and versioning
-- runtime safety over ad hoc flexibility
-- explicit governance for schema, workflow, and permission changes
+- ranh giới package và service rõ ràng
+- các public contract dùng chung, được generate (không copy thủ công) giữa các package không thể thấy source code của nhau
+- validation và versioning cho metadata
+- ưu tiên runtime safety hơn là sự linh hoạt ad hoc
+- governance rõ ràng cho các thay đổi schema, workflow, và permission
 
-Avoid decisions that would make a future low-code control plane harder to add:
+Tránh những quyết định khiến việc bổ sung một low-code control plane trong tương lai trở nên khó khăn hơn:
 
-- coupling business behavior directly to app-specific code paths
-- bypassing the server-side metadata runtime
-- introducing uncontrolled user scripting too early
+- gắn chặt (coupling) business behavior trực tiếp vào các code path đặc thù của app
+- bỏ qua (bypass) metadata runtime phía server
+- đưa vào user scripting không kiểm soát quá sớm
 
-## Relationship To Other Docs
+## Quan hệ với các tài liệu khác
 
-- [`docs/architectures/01-introduction.md`](architectures/01-introduction.md) is the terse, as-built vision statement, inside the arc42 documentation set that describes the architecture as it exists today — not a target that hasn't shipped.
-- [`docs/roadmap.md`](roadmap.md) tracks the official, phased implementation roadmap for the current project scope.
-- [`docs/low-code-platform-v1.md`](low-code-platform-v1.md) describes a practical, phased path from today's architecture toward a first real low-code platform version.
+- [`docs/architectures/01-introduction.md`](architectures/01-introduction.md) là phát biểu vision súc tích, as-built, nằm trong bộ tài liệu arc42 mô tả kiến trúc như nó tồn tại ngày nay — không phải một mục tiêu chưa được triển khai.
+- [`docs/roadmap.md`](roadmap.md) theo dõi roadmap triển khai chính thức, theo từng phase, cho phạm vi dự án hiện tại.
+- [`docs/low-code-platform-v1.md`](low-code-platform-v1.md) mô tả một lộ trình thực tế, theo từng phase, từ kiến trúc hiện tại hướng tới phiên bản low-code platform thực sự đầu tiên.
 
-This document is intentionally shorter than the other two. Its job is only to state the direction clearly:
+Tài liệu này cố ý ngắn hơn hai tài liệu kia. Nhiệm vụ của nó chỉ là phát biểu định hướng một cách rõ ràng:
 
-> Metap's higher destination is low-code, built on top of the metadata-driven core that exists today.
+> Đích đến cao hơn của Metap là low-code, được xây dựng trên nền metadata-driven core hiện đã tồn tại.

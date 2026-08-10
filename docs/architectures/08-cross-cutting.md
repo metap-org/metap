@@ -1,40 +1,40 @@
 # 8. Cross-cutting Concepts
 
-Patterns and principles that apply across many building blocks, not owned by any single one.
+Các pattern và nguyên tắc áp dụng xuyên suốt nhiều building block, không thuộc sở hữu riêng của bất kỳ khối nào.
 
 ## Metadata-Driven Development
 
-Every entity's fields, list views, validation schema, workflow, and index/search hints are declared once (`EntityDefinition`) and compiled/validated as a runtime artifact (`MetadataCompiler`) rather than treated as passive config. See [05. Building Block View](05-building-blocks.md).
+Field, list view, validation schema, workflow, và index/search hint của mọi entity đều được khai báo một lần duy nhất (`EntityDefinition`) rồi được biên dịch/kiểm tra hợp lệ như một artifact runtime (`MetadataCompiler`), thay vì được xem như config thụ động. Xem [05. Building Block View](05-building-blocks.md).
 
 ## Transactional Outbox
 
-A business write and the event(s) it produces commit in the same PostgreSQL transaction; a separate publisher process (`outbox-publisher`) drains and delivers them to RabbitMQ through the `EventBus` trait (`metap-infra`). This is the only mechanism through which side effects reach RabbitMQ — no service publishes directly. See [06. Runtime View](06-runtime.md).
+Một business write và (các) event nó sinh ra được commit trong cùng một transaction PostgreSQL; một process publisher riêng biệt (`outbox-publisher`) drain và gửi chúng tới RabbitMQ thông qua `EventBus` trait (`metap-infra`). Đây là cơ chế duy nhất để side effect chạm tới RabbitMQ — không có service nào publish trực tiếp. Xem [06. Runtime View](06-runtime.md).
 
 ## Multi-Tenancy
 
-Every business table carries `tenant_id`; every `QueryPlanner`/`CrudService` call is scoped by it (`PermissionService::scoped_tenant`). There is no cross-tenant query path anywhere in the codebase. `scoped_tenant` takes a full `RequestContext` and errors rather than silently falling back to a default tenant if `tenant_id` is ever empty — an empty tenant at this point means a real bug upstream (the auth extractor always derives a real `tenant_id` from a verified JWT before any query-planning code runs), and a silent default would turn that bug into wrong-but-quiet cross-tenant-looking query results instead of a clear, loud failure. Originally fixed in the TS codebase (2026-08-02) after an external architecture review flagged the old silent-fallback behavior, and reimplemented the same way in the Rust port — see [09. Architecture Decisions](09-adr.md).
+Mọi bảng nghiệp vụ đều mang `tenant_id`; mọi lời gọi `QueryPlanner`/`CrudService` đều được scope theo nó (`PermissionService::scoped_tenant`). Không tồn tại đường query xuyên tenant nào trong toàn bộ codebase. `scoped_tenant` nhận vào một `RequestContext` đầy đủ và báo lỗi thay vì âm thầm fallback về một tenant mặc định nếu `tenant_id` từng rỗng — một tenant rỗng tại điểm này chỉ có thể là một bug thật sự ở phía trên (auth extractor luôn suy ra một `tenant_id` thật từ một JWT đã verify trước khi bất kỳ đoạn code query-planning nào chạy), và một giá trị mặc định âm thầm sẽ biến bug đó thành kết quả query sai-nhưng-im-lặng trông giống như xuyên tenant, thay vì một lỗi rõ ràng, ồn ào. Ban đầu được sửa trong codebase TS (2026-08-02) sau khi một đợt review kiến trúc từ bên ngoài chỉ ra hành vi silent-fallback cũ, và được triển khai lại theo đúng cách đó trong bản port Rust — xem [09. Architecture Decisions](09-adr.md).
 
 ## Permission Enforcement
 
-RBAC (role allow-lists) combined with optional ABAC (attribute conditions), evaluated server-side, at three levels: entity-level (can this role touch this entity at all), field-level (which fields can be read/written), record-level (which specific rows can be read/written, translated into a SQL `WHERE` clause). See [05. Building Block View](05-building-blocks.md#permission-service).
+RBAC (danh sách role được phép) kết hợp với ABAC tùy chọn (điều kiện thuộc tính), được đánh giá phía server, ở ba mức: mức entity (role này có được đụng vào entity này không), mức field (field nào được đọc/ghi), mức record (row cụ thể nào được đọc/ghi, được dịch thành mệnh đề SQL `WHERE`). Xem [05. Building Block View](05-building-blocks.md#permission-service).
 
 ## Security Principles
 
-- Default business routes require auth.
-- Tenant scope is mandatory.
-- Permission is enforced server-side.
-- CORS is allowlisted.
-- Rich HTML must be sanitized before rendering.
-- Secrets never live in repository.
-- Containers should run non-root in production.
-- Audit log must be append-only for sensitive actions.
+- Route nghiệp vụ mặc định yêu cầu auth.
+- Tenant scope là bắt buộc.
+- Permission được enforce ở phía server.
+- CORS dùng allowlist.
+- HTML rich text phải được sanitize trước khi render.
+- Secret không bao giờ nằm trong repository.
+- Container nên chạy non-root trong production.
+- Audit log cho các hành động nhạy cảm phải append-only.
 
 ## Performance Principles
 
-- Hard max page size. (Done.)
-- Keyset pagination for high-volume records. (Done — see [05. Building Block View](05-building-blocks.md#query-planner).)
-- Background jobs for export/print/report. (Deferred, trigger-based — see [11. Risks and Technical Debt](11-risks.md).)
-- Query contracts per list view. (Done.)
-- Metadata and permission snapshot cache. (Done — `PermissionSnapshot`, per-call, deliberately not cross-request/TTL.)
-- Indexes declared close to metadata. (Done — `EntityField.indexed`/`unique`/`searchMode`, reconciled by `IndexReconciler`.)
-- Reporting workload separated from OLTP workload when needed. (Deferred, trigger-based — same item as above.)
+- Giới hạn cứng cho page size. (Đã xong.)
+- Keyset pagination cho record khối lượng lớn. (Đã xong — xem [05. Building Block View](05-building-blocks.md#query-planner).)
+- Background job cho export/print/report. (Hoãn lại, dựa trên trigger — xem [11. Risks and Technical Debt](11-risks.md).)
+- Query contract cho từng list view. (Đã xong.)
+- Cache snapshot metadata và permission. (Đã xong — `PermissionSnapshot`, theo từng lời gọi, chủ ý không cache theo TTL/cross-request.)
+- Index được khai báo sát với metadata. (Đã xong — `EntityField.indexed`/`unique`/`searchMode`, được `IndexReconciler` reconcile.)
+- Tách workload reporting khỏi workload OLTP khi cần thiết. (Hoãn lại, dựa trên trigger — cùng mục với trên.)

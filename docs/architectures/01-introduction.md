@@ -1,34 +1,34 @@
-# 1. Introduction and Goals
+# 1. Giới thiệu và Mục tiêu
 
-Metap keeps a fast metadata-driven development model: declare metadata once, then get CRUD, list, workflow, audit, export, and UI metadata consistently.
+Metap duy trì một mô hình phát triển metadata-driven nhanh: khai báo metadata một lần, sau đó nhận được CRUD, list, workflow, audit, export, và UI metadata một cách nhất quán.
 
-The difference is that helpers are a facade, not the architecture. The platform is split into explicit services, each with a fixed boundary — see [05. Building Block View](05-building-blocks.md).
+Điểm khác biệt là các helper chỉ là một facade, không phải là kiến trúc. Nền tảng được chia thành các service tường minh, mỗi service có một ranh giới cố định — xem [05. Building Block View](05-building-blocks.md).
 
-## Vision
+## Tầm nhìn
 
-Metap is meant to be the backbone of a low-code platform usable to build ERP, CRM, and more — not a single-purpose ERP app. `crates/metap-*` (metadata, permission, query planner, workflow, outbox infra) is the reusable core platform — a Cargo workspace of library crates, entity-agnostic; each business subsystem is its own consumer binary (`apps/crm-server` today, sales/inventory/accounting later), depending on `crates/metap-*` and registering only its own entities (see [04. Solution Strategy](04-strategy.md) and [07. Deployment View](07-deployment.md)).
+Metap được thiết kế để trở thành backbone của một nền tảng low-code có thể dùng để xây dựng ERP, CRM, và nhiều hơn nữa — chứ không phải một ứng dụng ERP đơn mục đích. `crates/metap-*` (metadata, permission, query planner, workflow, outbox infra) là core platform tái sử dụng được — một Cargo workspace gồm các library crate, entity-agnostic (không biết gì về entity cụ thể); mỗi phân hệ nghiệp vụ là một consumer binary riêng (`apps/crm-server` hiện tại, sales/inventory/accounting sau này), phụ thuộc vào `crates/metap-*` và chỉ đăng ký các entity của chính nó (xem [04. Solution Strategy](04-strategy.md) và [07. Deployment View](07-deployment.md)).
 
-This is the terse, as-built version of that statement — for the fuller directional picture (why low-code is the higher destination, what that implies for decisions made now) see `docs/vision.md`; for a concrete phased path toward a first low-code platform version, see `docs/low-code-platform-v1.md`. Both are deliberately outside this arc42 set, since they describe a target, not what has shipped.
+Đây là phiên bản ngắn gọn, "as-built" của tuyên bố đó — để có bức tranh định hướng đầy đủ hơn (tại sao low-code là đích đến cao hơn, điều đó có ý nghĩa gì với các quyết định được đưa ra bây giờ) xem `docs/vision.md`; để có một lộ trình theo pha cụ thể hướng tới phiên bản low-code đầu tiên, xem `docs/low-code-platform-v1.md`. Cả hai đều cố ý nằm ngoài bộ tài liệu arc42 này, vì chúng mô tả một đích đến, không phải những gì đã được triển khai.
 
-## Requirements Overview
+## Tổng quan Yêu cầu
 
-- Declare an entity once (fields, list views, workflow) and get generic CRUD, list/filter/sort, permission enforcement, and workflow behavior for it — no per-entity route/handler/repository boilerplate.
-- Every business record is tenant-scoped; no query, read, or write can cross a tenant boundary.
-- Field- and record-level access control is metadata/policy-driven, not hardcoded per entity.
-- Reliable event delivery for downstream consumers (workflow transitions, record changes) without losing events when the message broker is briefly unavailable.
-- `docs/roadmap.md` tracks the phased build-out in detail; this document describes the architecture of what's actually built, not a target that hasn't shipped yet.
+- Khai báo một entity một lần (fields, list views, workflow) và có được CRUD, list/filter/sort, permission enforcement, và workflow behavior cho nó — không cần boilerplate route/handler/repository theo từng entity.
+- Mọi business record đều được tenant-scoped; không một query, read, hay write nào có thể vượt qua ranh giới tenant.
+- Kiểm soát truy cập ở cấp field và record được điều khiển bởi metadata/policy, không hardcode theo từng entity.
+- Đảm bảo event delivery đáng tin cậy cho các consumer phía sau (workflow transitions, record changes) mà không mất event khi message broker tạm thời không khả dụng.
+- `docs/roadmap.md` theo dõi chi tiết quá trình xây dựng theo từng pha; tài liệu này mô tả kiến trúc của những gì đã thực sự được xây dựng, không phải một mục tiêu chưa được triển khai.
 
-## Stakeholders
+## Các bên liên quan
 
-| Role | Concern |
+| Vai trò | Mối quan tâm |
 |---|---|
-| End User | Uses a business app (CRM today) built on Metap — records, lists, workflow actions |
-| Admin | Manages role assignments and permission policies for their tenant |
-| Entity Author (developer) | Adds a new business entity by writing one entity-definition Rust module (see `apps/crm-server/src/customer_entity.rs` for the pattern) — needs the metadata contract to be predictable and validated at boot |
-| Operator | Runs the API server (`apps/crm-server`), the outbox publisher worker (`outbox-publisher`), PostgreSQL, and RabbitMQ — needs graceful degradation on partial outages |
+| End User | Sử dụng một business app (CRM hiện tại) được xây dựng trên Metap — records, lists, workflow actions |
+| Admin | Quản lý việc gán role và các permission policy cho tenant của mình |
+| Entity Author (developer) | Thêm một business entity mới bằng cách viết một entity-definition Rust module (xem `apps/crm-server/src/customer_entity.rs` để biết pattern) — cần metadata contract dễ dự đoán và được validate lúc boot |
+| Operator | Vận hành API server (`apps/crm-server`), outbox publisher worker (`outbox-publisher`), PostgreSQL, và RabbitMQ — cần khả năng graceful degradation khi xảy ra sự cố một phần |
 
-## Quality Goals (top 3, detail in [10. Quality Requirements](10-quality.md))
+## Mục tiêu Chất lượng (3 mục tiêu hàng đầu, chi tiết tại [10. Quality Requirements](10-quality.md))
 
-1. **Correctness / data integrity** — optimistic locking on every write, transactional outbox so a business change and its event never diverge.
-2. **Security** — tenant scope and permission enforcement happen server-side, always; nothing is trusted from the client beyond what metadata explicitly allows.
-3. **Maintainability** — metadata is validated as a first-class runtime artifact (fails at boot, not the first request), and every core service has a boundary fixed from day one, even while its internals were still a scaffold.
+1. **Tính đúng đắn / toàn vẹn dữ liệu (Correctness / data integrity)** — optimistic locking trên mọi write, transactional outbox để một business change và event của nó không bao giờ lệch nhau.
+2. **Bảo mật (Security)** — tenant scope và permission enforcement luôn diễn ra ở phía server; không có gì được tin tưởng từ client ngoài những gì metadata cho phép tường minh.
+3. **Khả năng bảo trì (Maintainability)** — metadata được validate như một runtime artifact hạng nhất (fail lúc boot, không phải ở request đầu tiên), và mọi core service đều có một ranh giới được cố định ngay từ ngày đầu, ngay cả khi phần bên trong của nó vẫn còn là scaffold.
