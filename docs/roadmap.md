@@ -15,7 +15,7 @@ và `docs/agile-process.md`.
 | 4. Query Planner V1 | Đã xong |
 | 5. Workflow Engine V1 | Đã xong |
 | 6. Frontend Core | Đã xong (chưa verify trên browser) |
-| 7. Module Migration Strategy | Chưa bắt đầu |
+| 7. Module Migration Strategy | Đã xong — 4/4 module (crm.customers, sales.orders, inventory.movements, accounting.journal) |
 | 8. Hardening | Đang làm |
 | 9. Multi-Service Evolution | Trigger-based (chưa trigger nào xảy ra) |
 | 10. Monorepo, npm publish | Làm một phần |
@@ -263,21 +263,36 @@ Deliverables:
 
 ## Phase 7: Module Migration Strategy
 
-**Trạng thái: Chưa bắt đầu.**
+**Trạng thái: Đã xong (2026-08-10).** Mục tiêu: chứng minh pattern metadata-driven generalize
+được qua nhiều module khác nhau (field kind khác, workflow shape khác, list view khác), không
+chỉ đúng cho `crm.customers`. Cả 4 module đăng ký cùng process trong `apps/crm-server` — tách
+thành binary/service riêng là trigger của Phase 9, không phải Phase 7.
 
 Mục tiêu:
 
-- Port một module master-data đơn giản.
-- Port một module transaction.
-- Port một module nặng về workflow.
-- Port một flow report/export.
+- ~~Port một module master-data đơn giản~~ — **Đã xong**: `crm.customers`
+  (`apps/crm-server/src/entities/customer_entity.rs`), có từ bản port Rust.
+- ~~Port một module transaction~~ — **Đã xong (2026-08-10)**: `sales.orders`
+  (`apps/crm-server/src/entities/sales_order_entity.rs`) — field kind mới (`Reference` tới
+  `crm.customers`, `Money`, `Date`), workflow 4 state (draft/confirmed/shipped/cancelled). Chi
+  tiết + tiêu chí chấp nhận đã verify live ở `docs/features/demo/01-sales-order-entity.md`.
+- ~~Port một module nặng về workflow~~ — **Đã xong (2026-08-10)**: `inventory.movements`
+  (`apps/crm-server/src/entities/inventory_movement_entity.rs`) — 6 state, nhánh rẽ approve/reject, và
+  một transition (`reverse`) đi ra khỏi state không phải initial; guard trên field `Number`.
+  Chi tiết + tiêu chí chấp nhận đã verify live ở
+  `docs/features/demo/02-inventory-movement-entity.md`.
+- ~~Port một flow report/export~~ — **Đã xong (2026-08-10)**: `accounting.journal`
+  (`apps/crm-server/src/entities/journal_entry_entity.rs`) — 2 list view trên cùng entity (`default`,
+  `ledger`) chứng minh "report" là một list view khai báo qua metadata, không phải backend
+  mới (nền tảng chưa có đường query report/analytics riêng, xem `11-risks.md` — cố tình chưa
+  xây); guard đầu tiên dùng `PolicyCondition::Any`. Chi tiết + tiêu chí chấp nhận đã verify
+  live ở `docs/features/demo/03-journal-entry-entity.md`.
 
-Thứ tự đề xuất:
-
-1. CRM customer/vendor master data.
-2. Sales order hoặc purchase order.
-3. Inventory movement.
-4. Accounting journal/report.
+**Kết luận Phase 7:** pattern metadata-driven (field kind, workflow — kể cả nhánh rẽ và
+transition ngược, list view kép, guard đơn/`Any`) generalize tốt qua 4 entity khác nhau mà
+không cần đổi gì ở `crates/metap-*`. Không phát sinh nhu cầu cross-module workflow thật trong
+lúc làm — củng cố (chưa phải xác nhận dứt khoát) hướng "chưa có trigger" đã ghi ở
+`docs/team-charter.md` cho ý tưởng workflow hai chế độ.
 
 ## Phase 8: Hardening
 
@@ -494,7 +509,7 @@ Chưa làm:
 
 - **Frontend UI chrome** (`packages/platform-react`, `apps/crm-fe`) — đã xong. `react-i18next`/`i18next` được wire vào `platform-react` (`src/i18n/`: `resources.ts` giữ bảng string `en`/`vi`, `i18n.ts` tạo một instance i18next riêng — không phải singleton cấp module, để một app embed `platform-react` cùng với setup i18next của riêng nó không bị đụng độ). `LocaleProvider` (phải nest bên trong `AuthProvider`) load locale của caller từ `GET /preferences` mới lúc mount và bọc `I18nextProvider`; `useLocale()`/`LocaleSwitcher` ghi ngược lại qua `PUT /preferences`. Mọi string chrome tĩnh trong `GeneratedForm`/`GeneratedList`/`RecordDetail`/`WorkflowActionBar`/`ApiErrorMessage` và các route guard `DevLoginPage`/`EntitiesPage`/`App.tsx` của `crm-fe` giờ đều đi qua `useTranslation()` — label entity/field không bị đụng đến (xem bên dưới, vẫn single-locale từ metadata).
 - **Backend locale storage** — đã xong. Bảng `user_preferences` (`crates/migrations/0007_user_preferences.sql`, primary key `tenant_id`+`user_id`) qua `metap_peripherals::preferences` (`get_locale`/`set_locale`, theo cùng phong cách plain-function của `role_assignment.rs`) và `GET/PUT /preferences` (`crates/metap-http/src/routes/preferences.rs`, self-service gated bởi `AuthContext`, không phải `/api/preferences` — sẽ đụng độ với wildcard `/api/{entity}` của `routes::records`). Locale được validate theo một allowlist nhỏ `SUPPORTED_LOCALES` (`en`, `vi` hiện nay — phải giữ đồng bộ với `SUPPORTED_LOCALES` của `packages/platform-react/src/i18n/resources.ts`, kiểm tra thủ công, chưa có single source of truth chung).
-- **Nội dung được author qua metadata (label entity/field/list-view, tên workflow action, validation message)** — chưa bắt đầu. Vẫn là string single-locale hard-code trong `EntityDefinition`/`EntityField`/v.v. (xem `apps/crm-server/src/customer_entity.rs`). Làm cho những cái này dịch được nghĩa là hoặc thêm một shape `Record<locale, string>` trên mọi label field (breaking change với `EntityField` và các type OpenAPI-generated trong `crates/metap-metadata/src/openapi.rs`) hoặc một lớp gián tiếp translation-key riêng — cần một quyết định thiết kế trước khi implement, scope cùng với công việc low-code metadata của Phase 11 thay vì gắn thêm riêng lẻ.
+- **Nội dung được author qua metadata (label entity/field/list-view, tên workflow action, validation message)** — chưa bắt đầu. Vẫn là string single-locale hard-code trong `EntityDefinition`/`EntityField`/v.v. (xem `apps/crm-server/src/entities/customer_entity.rs`). Làm cho những cái này dịch được nghĩa là hoặc thêm một shape `Record<locale, string>` trên mọi label field (breaking change với `EntityField` và các type OpenAPI-generated trong `crates/metap-metadata/src/openapi.rs`) hoặc một lớp gián tiếp translation-key riêng — cần một quyết định thiết kế trước khi implement, scope cùng với công việc low-code metadata của Phase 11 thay vì gắn thêm riêng lẻ.
 
 Chưa làm:
 
@@ -524,5 +539,14 @@ Chưa làm (gap đã biết, không nằm trong hàng đợi):
 - Admin UI kit hoạt động được nhưng còn tối giản: chưa có pagination trên bất kỳ admin list nào, `PolicyCondition`/`targetConfig` của cron là textarea raw-JSON thay vì structured builder, chưa có bộ chuyển tenant (chỉ một dev tenant duy nhất).
 
 Liên quan đến: Phase 13 (admin UI cho cron — được đóng bởi admin kit của phase này), Phase 11 (shared shell là một phần của platform surface, không phải mối quan tâm riêng của từng app).
+
+## Định hướng chưa lên phase (chưa có trigger)
+
+Bốn ý nảy sinh từ thảo luận kiến trúc, hợp lý về sản phẩm nhưng chưa có trigger cụ thể nên chưa
+được lên thành phase: workflow hai chế độ (in-process + cross-module), workflow
+visualize/hướng BPM nhẹ, Tiny deployment profile (single binary, không RabbitMQ), migration
+path generic-table-sang-bảng-riêng. Chi tiết và lý do chưa lên phase ở
+`docs/team-charter.md`'s "Định hướng đang ghi nhận, chưa có trigger". Không bắt đầu việc nào
+trong số này mà chưa có feature brief (`docs/features/`) nêu trigger cụ thể.
 
 

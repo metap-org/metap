@@ -2,7 +2,7 @@
 
 | Term | Meaning |
 |---|---|
-| **Entity** | Một kiểu đối tượng nghiệp vụ được khai báo một lần dưới dạng `EntityDefinition` (một module Rust, ví dụ `apps/crm-server/src/customer_entity.rs`) — field, list view, workflow. Không có bảng database riêng; được lưu trong bảng `records` chung. |
+| **Entity** | Một kiểu đối tượng nghiệp vụ được khai báo một lần dưới dạng `EntityDefinition` (một module Rust, ví dụ `apps/crm-server/src/entities/customer_entity.rs`) — field, list view, workflow. Không có bảng database riêng; được lưu trong bảng `records` chung. |
 | **`records` table** | Bảng chung duy nhất mà dữ liệu của mọi entity nằm trong đó — các cột tenant/entity/status/code cùng một cột `data jsonb` cho các field do metadata quyết định. |
 | **Tenant** | Một ranh giới cô lập; mọi row nghiệp vụ, mọi query, mọi permission check đều được scope theo `tenant_id`. |
 | **Outbox pattern** | Ghi một event vào một bảng DB trong cùng transaction với thay đổi nghiệp vụ, rồi drain nó sang RabbitMQ (qua trait `EventBus`) từ một process riêng biệt (`outbox-publisher`) — tránh mất event khi broker bị down. |

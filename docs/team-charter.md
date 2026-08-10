@@ -98,13 +98,10 @@ entity mới nên đồng bộ trước khi thay đổi schema của stream này
 
 ### Stream B — Module Migration (track App/Entity)
 
-Phase 7: port thêm các module nghiệp vụ lên metadata model hiện tại. Thứ tự gợi ý đã có sẵn trong
-`docs/roadmap.md` (master data → module giao dịch → module nhiều workflow → luồng report/export;
-vd: sales/purchase order, dịch chuyển kho, sổ kế toán).
-
-**Bắt đầu ngay được**, độc lập với Stream A — bề mặt `EntityDefinition`/`CrudService` hiện tại đã
-ổn định. Chỉ cần dừng đồng bộ với Stream A nếu thay đổi schema của Stream A sắp được merge giữa
-chừng.
+**Đã xong (2026-08-10).** Phase 7 đóng đủ 4/4 module (`crm.customers`, `sales.orders`,
+`inventory.movements`, `accounting.journal`) — chi tiết ở `docs/features/demo/`. Pattern
+metadata-driven generalize tốt qua field kind/workflow shape/list view khác nhau mà không cần
+đổi `crates/metap-*`. Không phát sinh nhu cầu cross-module workflow thật trong lúc làm.
 
 ### Stream C — Production Readiness (track Ops/Infra)
 
@@ -122,9 +119,35 @@ không nên bắt đầu trước, để tránh harden theo một topology mà s
 
 ```
 Stream A (Backend Core)   ──viết spec──▶ implement control plane ──▶ mở khóa Phase 14
-Stream B (App/Entity)     ──bắt đầu ngay, đồng bộ với A trước khi schema của A được merge
+Stream B (App/Entity)     ──đã xong (4/4 module, 2026-08-10)
 Stream C (Ops/Infra)      ──ADR chọn topology trước──▶ rồi Phase 8 + Phase 12 song song với A/B
 ```
 
 A, B, C có thể chạy với ba người bắt đầu cùng tuần. Trong một stream, các bước con vẫn phải tuần
 tự (spec của Stream A trước khi implement; ADR của Stream C trước khi làm hardening).
+
+## Định hướng đang ghi nhận, chưa có trigger — không phải stream, chưa nên bắt đầu
+
+Nảy sinh từ các buổi thảo luận kiến trúc, hợp lý về mặt sản phẩm nhưng đi trước trigger-based
+discipline hiện tại (`docs/architectures/02-constraints.md`'s "Tiến hóa theo trigger"). Ghi lại
+ở đây để không quên, không phải để bắt đầu code — mỗi mục cần một feature brief trong
+`docs/features/` (trạng thái `proposed`) nêu rõ trigger cụ thể trước khi ai đó bắt tay vào:
+
+- **Workflow hai chế độ** (in-process trong một module, cross-module qua command/event) mà
+  cùng một logical model chạy được ở cả hai, không rewrite khi deployment đổi. Đối lập trực
+  tiếp với kết luận hiện tại trong `docs/architectures/09-adr.md`: `WorkflowRuntime` là một
+  trong các Capability SPI **chưa có trigger**, chưa nên xây. Cần một trigger cụ thể (một
+  module thứ hai thật sự cần cross-module workflow — Phase 7/Phase 9) trước khi đảo lại.
+- **Workflow visualize được / hướng BPM nhẹ** — chưa có ở đâu trong roadmap hay entity nào hiện
+  tại yêu cầu điều này. Giá trị sản phẩm hợp lý cho low-code, nhưng là yêu cầu mới, chưa phải
+  kiến trúc đã quyết.
+- **Tiny deployment profile** (single binary, SQLite, in-memory EventBus, không cần RabbitMQ)
+  — đã được đặt tên trong `docs/modular-spi-architecture.md`'s Deployment Profiles, nhưng chính
+  tài liệu đó khuyến nghị "Option 1: giữ một triết lý deployment duy nhất" cho hiện tại. Chọn
+  Tiny nghĩa là sửa `docs/architectures/02-constraints.md`'s ràng buộc Postgres/RabbitMQ-duy-
+  nhất và kiểm toán dialect Postgres-specific của `QueryPlanner` — một quyết định sản phẩm
+  (có nhắm khách self-host không?), không phải gap kỹ thuật.
+- **Migration path từ generic `records` table sang bảng riêng cho một entity** — chưa viết ở
+  đâu. Chỉ nên viết thành spec khi Data Model Strategy Step 3
+  (`docs/architectures/05-building-blocks.md`) thực sự được kích hoạt bởi một nhu cầu hiệu năng
+  đo được của một entity cụ thể, không phải chuẩn bị sẵn trước.

@@ -5,8 +5,15 @@
 //! instead of naming each sub-crate). Run from this crate's own directory
 //! (`apps/crm-server/`) so `.env`/`keys/` resolution works — `pnpm dev:rs` does this via
 //! `cd`; see `metap-infra/src/config.rs` for the `.env` resolution itself.
+//!
+//! `apps/crm-server`/`apps/crm-fe` together are the demo/test app for this whole project, not
+//! a real product — see `docs/features/README.md`. `src/entities/` holds every entity this
+//! demo app registers, kept in one folder since none of them are a real business module (see
+//! each entity's own `docs/features/*.md` brief for what it was built to prove).
 
-mod customer_entity;
+mod entities;
+
+use entities::{customer_entity, inventory_movement_entity, journal_entry_entity, sales_order_entity};
 
 use std::sync::Arc;
 
@@ -25,6 +32,9 @@ async fn main() -> anyhow::Result<()> {
 
     let mut registry = MetadataRegistry::new();
     registry.register(customer_entity::customer_entity())?;
+    registry.register(sales_order_entity::sales_order_entity())?;
+    registry.register(inventory_movement_entity::inventory_movement_entity())?;
+    registry.register(journal_entry_entity::journal_entry_entity())?;
     registry.validate_references()?;
 
     let entities = registry.list_entities();
