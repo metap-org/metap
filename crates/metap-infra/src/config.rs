@@ -36,9 +36,9 @@ pub struct AppConfig {
 
 impl AppConfig {
     /// The URL a worker's outbox/event-publishing DB connection should use — the
-    /// `OUTBOX_DATABASE_URL` override if set, otherwise `DATABASE_URL`. Matches every
-    /// existing Rust and TS call site's `OUTBOX_DATABASE_URL`-falls-back-to-`DATABASE_URL`
-    /// convention (see `docs/architectures/09-adr.md`'s outbox-per-service-db entry).
+    /// `OUTBOX_DATABASE_URL` override if set, otherwise `DATABASE_URL` — lets an outbox
+    /// worker use a separate DB connection/credentials per service if ever needed, without
+    /// requiring one.
     pub fn outbox_database_url(&self) -> &str {
         self.outbox_database_url.as_deref().unwrap_or(&self.database_url)
     }

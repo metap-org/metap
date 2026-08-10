@@ -1,8 +1,8 @@
 //! Mirrors `packages/core/src/core/query/query-planner.ts`. Per
-//! `docs/architecture-review-2026-08-07.md` Part 1's Repository finding, `QueryPlanner` is
+//! `docs/architectures/09-adr.md`, `QueryPlanner` is
 //! the actual Postgres-dialect seam in this codebase (`jsonb_extract_path_text`, keyset
-//! pagination, FTS) — the highest-precision-risk module in the whole port, per
-//! `docs/rust-core-viability.md`'s Migration Order. Verified against the real dev Postgres
+//! pagination, FTS) — the highest-precision-risk module in the whole Rust port. Verified
+//! against the real dev Postgres
 //! in `tests/query_planner_postgres.rs`, not just unit-tested in isolation.
 
 use std::collections::HashSet;

@@ -1,6 +1,5 @@
-//! `EventBus` — the interface `docs/architecture-review-2026-08-07.md` Part 2 recommended
-//! extracting in front of `RabbitPublisher`, following the `PolicyStore` precedent (the one
-//! existing seam in the TS codebase). `RabbitEventBus` is its only implementation today;
+//! `EventBus` — a trait in front of `RabbitPublisher` rather than a concrete type (see
+//! `docs/architectures/09-adr.md`). `RabbitEventBus` is its only implementation today;
 //! the point of the trait is that a second one (Kafka/NATS, or an in-memory bus for tests)
 //! is a new `impl EventBus`, not a rewrite of every call site — see
 //! `docs/modular-spi-architecture.md` for the target this generalizes toward.
@@ -81,8 +80,8 @@ pub trait EventBus: Send + Sync {
 
 /// Mirrors `packages/core/src/infra/messaging/rabbitmq.ts`'s `createRabbitPublisher`:
 /// same exchange name/kind, same durable+persistent delivery, same fire-and-forget publish
-/// (channel is never put into confirm mode — see `docs/rust-core-viability.md`'s spike
-/// results for why awaiting a confirm here would be a pure, measured regression).
+/// (channel is never put into confirm mode — a measured throughput regression, not a
+/// correctness requirement here).
 pub struct RabbitEventBus {
     connection: Connection,
     channel: lapin::Channel,

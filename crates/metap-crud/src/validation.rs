@@ -1,8 +1,6 @@
-//! Where the TS `CrudService` calls `entity.schema.safeParse(rawData)` — a per-entity,
-//! hand-authored Zod schema kept in sync with `entity.fields` by hand — this validates
-//! directly from `EntityField[]` (kind/required/enumValues). Per
-//! `docs/rust-core-viability.md`'s Schema & Codegen Strategy: not just parity, an
-//! improvement, since there's no second schema to drift from `fields`, and it's exactly
+//! Validates directly from `EntityField[]` (kind/required/enumValues) rather than a
+//! per-entity, hand-authored schema — not just simpler, an improvement, since there's no
+//! second schema to drift from `fields`, and it's exactly
 //! the shape Phase 11's DB-authored metadata will need regardless (no per-entity source
 //! file to hand-write a schema in once entities aren't code-authored).
 //!

@@ -3,7 +3,7 @@
 //! its own `_sqlx_migrations` table. `crates/migrations/` is the sole source of truth for
 //! schema now (the original 0000-0005 files are the same SQL Drizzle once generated from
 //! `packages/core/src/infra/db/schema.ts`, copied here verbatim when `packages/core` was
-//! removed — see `docs/rust-core-viability.md` — and `_sqlx_migrations` was backfilled to
+//! removed, and `_sqlx_migrations` was backfilled to
 //! match once schema changes started landing here instead, 2026-08-09). No schema changes go
 //! through Drizzle anymore; add new numbered `.sql` files here directly.
 //!

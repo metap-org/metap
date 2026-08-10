@@ -1,8 +1,8 @@
 //! Postgres-backed CRUD for `cron_jobs`/`cron_job_runs`, plus `claim_due_jobs` — the ticker's
 //! whole job (see that function's doc comment). Plain `&PgPool` functions, not a trait —
 //! matches `metap_peripherals::role_assignment`'s style, not `PolicyStore`'s: there's no
-//! pluggable-storage requirement here the way `docs/architecture-review-2026-08-07.md`
-//! motivated for policies.
+//! pluggable-storage requirement here the way there was for policies (see
+//! `docs/architectures/09-adr.md`).
 
 use chrono::{DateTime, Utc};
 use metap_infra::{enqueue_outbox_event, OutboxEvent};

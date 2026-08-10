@@ -1,8 +1,6 @@
 //! Rust port of `apps/crm/src/modules/crm/customer.entity.ts` — a demo of the full stack
 //! (`crates/metap-*`) serving the repo's actual real business entity, not a synthetic
-//! `test.*` fixture. Not part of `docs/rust-core-viability.md`'s Migration Order (that
-//! document names porting a real entity as explicitly out of scope); this exists to
-//! demonstrate the finished stack end to end.
+//! `test.*` fixture — this exists to demonstrate the stack end to end on a real entity.
 //!
 //! `activate`'s guard (TS: `typeof data.email === "string" && data.email.length > 0`) has
 //! no exact equivalent in `PolicyCondition`'s operator set (eq/neq/in/notIn, no "non-empty

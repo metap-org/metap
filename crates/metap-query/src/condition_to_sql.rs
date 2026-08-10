@@ -139,8 +139,7 @@ pub fn condition_to_sql(
 /// Every other permission-decision entry point in this codebase bypasses policy evaluation
 /// for admin (see `PermissionSnapshot`'s `filter_readable_fields`/`assert_writable_fields`/
 /// `can_update_record_condition`) — this is the one that builds record-level read policies
-/// into SQL, so it needs the same bypass (the admin-bypass bug this fixed is logged in
-/// `docs/architectures/09-adr.md`).
+/// into SQL, so it needs the same bypass.
 pub fn record_policy_where_clause(
     rows: &[PolicyRow],
     context: &RequestContext,

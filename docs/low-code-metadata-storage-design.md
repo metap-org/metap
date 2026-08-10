@@ -5,12 +5,11 @@ Status: được viết ngày 2026-08-02, vẫn là spec duy nhất cho Phase 11
 ship, nên nội dung của nó được giữ lại ở đây thay vì bị bỏ đi.
 
 **Có trước quyết định ngày 2026-08-07 về việc chuyển `packages/core` sang Rust**
-(`docs/rust-core-viability.md`). Thiết kế bên dưới (data model, service contract của
+(xem [09. Architecture Decisions](architectures/09-adr.md)). Thiết kế bên dưới (data model, service contract của
 draft/publish/rollback, ba quyết định phạm vi đã chốt) vẫn còn hiệu lực — về bản chất không
 có phần nào trong đó gắn riêng với TypeScript. Các đường dẫn file cụ thể và mẫu code Zod
 trong mục "Data model"/"Service" là từ layout TS cũ và cần được nhắm lại (re-target) sang
-Rust (theo Migration Order của `docs/rust-core-viability.md` — sub-project này thuộc về sau
-bước 3, Metadata layer) khi công việc này thực sự được lên kế hoạch và xây dựng, không nên
+Rust khi công việc này thực sự được lên kế hoạch và xây dựng, không nên
 coi là các đường dẫn file cần tạo ra theo đúng nghĩa đen.
 
 ---

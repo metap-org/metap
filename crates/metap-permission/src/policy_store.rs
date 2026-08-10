@@ -1,8 +1,6 @@
-//! Mirrors `packages/core/src/core/permission/policy-store.ts`. `PolicyStore` is the one
-//! seam this whole permission model already had in TS (see
-//! `docs/architecture-review-2026-08-07.md` Part 2's `EventBus` recommendation, which
-//! generalizes this exact precedent) — kept as a trait here for the same reason: swapping
-//! storage without touching `PermissionSnapshot`/`PermissionService`.
+//! `PolicyStore` is a trait, not a concrete type, for the same reason `EventBus` is (see
+//! `docs/architectures/09-adr.md`): swapping storage without touching
+//! `PermissionSnapshot`/`PermissionService`.
 
 use async_trait::async_trait;
 use sqlx::types::Json;

@@ -7,7 +7,7 @@ axum routes (crates/metap-http/src/routes/*)
   -> application service (crates/metap-crud/src/crud_service.rs)
     -> platform core (metap-metadata / metap-permission / metap-query / metap-workflow)
       -> PostgreSQL (sqlx::PgPool, injected directly — no repository abstraction; see
-         docs/architecture-review-2026-08-07.md Part 1's Repository finding for why)
+         docs/architectures/09-adr.md for why)
       -> outbox (metap-infra::outbox::enqueue) -> RabbitMQ (metap-infra::EventBus)
 ```
 
@@ -235,7 +235,7 @@ Transitions là các thao tác atomic có optimistic locking (một write bị l
 
 ### Outbox + EventBus
 
-Các transaction của API ghi outbox row vào PostgreSQL (`metap-infra::outbox::enqueue`, cùng transaction với business write). Một publisher (`outbox-publisher`, một binary riêng) drain các row này và publish sang RabbitMQ thông qua trait `EventBus` (`metap-infra::EventBus`; `RabbitEventBus` là implementation duy nhất hiện nay) — việc publish đã nằm sau một interface ngay từ đầu trong bản port Rust, khác với codebase TS gốc nơi đây từng là một khoảng trống đã được ghi nhận (xem phát hiện Event trong `docs/architecture-review-2026-08-07.md`, nay đã được thay thế/khắc phục bởi thiết kế này).
+Các transaction của API ghi outbox row vào PostgreSQL (`metap-infra::outbox::enqueue`, cùng transaction với business write). Một publisher (`outbox-publisher`, một binary riêng) drain các row này và publish sang RabbitMQ thông qua trait `EventBus` (`metap-infra::EventBus`; `RabbitEventBus` là implementation duy nhất hiện nay) — việc publish nằm sau một interface (xem [09. Architecture Decisions](09-adr.md)).
 
 Điều này bảo vệ hệ thống khỏi mất business event khi RabbitMQ tạm thời không khả dụng.
 

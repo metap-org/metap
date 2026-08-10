@@ -70,7 +70,7 @@ Deliverables:
 
 ## Phase 2: Metadata Compiler
 
-**Trạng thái: Đã xong** (xem `docs/architectures/09-adr.md` để biết decision record).
+**Trạng thái: Đã xong.**
 
 - `MetadataCompiler.validate` — validate lúc startup cho từng entity: duplicate field names, dangling listView field/filter/defaultSort reference, enum field không có `enumValues`, workflow shape sai định dạng, duplicate transition. Chạy bên trong `MetadataRegistry.register()`, nên một entity module lỗi sẽ fail ngay lúc boot, không đợi đến request đầu tiên.
 - `MetadataRegistry.validateReferences()` — kiểm tra cross-entity rằng mọi field kiểu `reference` có `refEntity` trỏ đến một entity đã đăng ký; chạy một lần sau khi mọi entity đã được đăng ký (tách ra khỏi `container.ts` — xem ghi chú về entity-registration bên dưới).
@@ -101,9 +101,9 @@ Deliverables:
 
 ## Phase 3: Permission Engine
 
-**Trạng thái: Đã xong**, được ship thành một initiative 4 phần (xem `docs/architectures/09-adr.md`
-để biết decision record), đi xa hơn so với "modest RBAC+ABAC scaffold" ban đầu trong roadmap
-bằng cách khiến chính role assignment trở nên dynamic:
+**Trạng thái: Đã xong**, được ship thành một initiative 4 phần, đi xa hơn so với "modest
+RBAC+ABAC scaffold" ban đầu trong roadmap bằng cách khiến chính role assignment trở nên
+dynamic:
 
 1. **Dynamic role assignment** — role sống trong DB theo `(tenantId, userId)`,
    được grant/revoke lúc runtime qua một admin API (`RoleAssignmentService`,
@@ -170,8 +170,7 @@ Deliverables:
 
 ## Phase 4: Query Planner V1
 
-**Trạng thái: Đã xong**, được ship thành 3 sub-project (xem `docs/architectures/09-adr.md` để
-biết decision record), theo thứ tự sau:
+**Trạng thái: Đã xong**, được ship thành 3 sub-project, theo thứ tự sau:
 
 1. **Chiến lược index cho hot field** — `EntityField.indexed`/`unique`
    (trước đây được khai báo nhưng chưa được đọc) giờ dẫn động
@@ -221,7 +220,7 @@ Mục tiêu ban đầu, để tham khảo:
 
 ## Phase 5: Workflow Engine V1
 
-**Trạng thái: Đã xong.** Atomic transition, optimistic locking, guard condition (các predicate TypeScript trên `WorkflowTransition`), một audit log `workflow_events` append-only, và outbox side effect được implement qua `WorkflowEngine` + `CrudService.transition`, expose tại `POST /api/:entity/:id/transitions/:action` (xem `docs/architectures/09-adr.md` để biết decision record). "Notification integration" ban đầu được ship dưới dạng một outbox topic publish-only, dạng stub (`<entity>.workflow.transitioned`) không có consumer. 2026-08-09: `EventBus` có thêm phía `subscribe` (`crates/metap-infra/src/event_bus.rs` — bind một durable queue vào một routing key của topic-exchange, ack/nack) và `crates/notification-worker` là consumer thật đầu tiên, log mọi transition. Cố tình để tối giản (chỉ stdout, không email/SMS/webhook) vì chưa có kênh notification thật nào được yêu cầu; nó có thể chạy như một process riêng (`pnpm worker:notification:rs`, mặc định, cùng kiểu với `outbox-publisher`) hoặc inline bên trong `crm-server` qua `NOTIFICATION_WORKER_INLINE=true` cho các deployment single-process — cả hai đều gọi cùng `notification_worker::run`. Delivery semantics, cùng ngày: at-least-once (durable queue, manual ack), một DLQ theo từng queue (`<queue>.dlq`, wire qua `x-dead-letter-exchange`/`x-dead-letter-routing-key` — một message bị nack sẽ rơi vào đó thay vì biến mất, đã verify live trên một broker thật) và `basic_qos` prefetch (20) để backpressure; `notification_worker::run` giờ propagate lỗi (thay vì exit sạch) khi event stream đóng bất ngờ (bus disconnect) để process manager phân biệt được điều đó với một tín hiệu shutdown thật, khớp với contract "propagate and let the process manager restart" của `outbox-publisher`. Cố tình *chưa* build: retry-with-backoff — chưa có call site nào nack với `requeue: true` (không có gì trong `notify()` có thể fail), nên một chuỗi delay-queue/attempt-counter sẽ là hạ tầng suy đoán trước khi có trigger thật; doc comment của `EventBus::subscribe` đánh dấu đây là gap đã biết cho consumer tương lai nào cần bounded retry.
+**Trạng thái: Đã xong.** Atomic transition, optimistic locking, guard condition (các predicate TypeScript trên `WorkflowTransition`), một audit log `workflow_events` append-only, và outbox side effect được implement qua `WorkflowEngine` + `CrudService.transition`, expose tại `POST /api/:entity/:id/transitions/:action`. "Notification integration" ban đầu được ship dưới dạng một outbox topic publish-only, dạng stub (`<entity>.workflow.transitioned`) không có consumer. 2026-08-09: `EventBus` có thêm phía `subscribe` (`crates/metap-infra/src/event_bus.rs` — bind một durable queue vào một routing key của topic-exchange, ack/nack) và `crates/notification-worker` là consumer thật đầu tiên, log mọi transition. Cố tình để tối giản (chỉ stdout, không email/SMS/webhook) vì chưa có kênh notification thật nào được yêu cầu; nó có thể chạy như một process riêng (`pnpm worker:notification:rs`, mặc định, cùng kiểu với `outbox-publisher`) hoặc inline bên trong `crm-server` qua `NOTIFICATION_WORKER_INLINE=true` cho các deployment single-process — cả hai đều gọi cùng `notification_worker::run`. Delivery semantics, cùng ngày: at-least-once (durable queue, manual ack), một DLQ theo từng queue (`<queue>.dlq`, wire qua `x-dead-letter-exchange`/`x-dead-letter-routing-key` — một message bị nack sẽ rơi vào đó thay vì biến mất, đã verify live trên một broker thật) và `basic_qos` prefetch (20) để backpressure; `notification_worker::run` giờ propagate lỗi (thay vì exit sạch) khi event stream đóng bất ngờ (bus disconnect) để process manager phân biệt được điều đó với một tín hiệu shutdown thật, khớp với contract "propagate and let the process manager restart" của `outbox-publisher`. Cố tình *chưa* build: retry-with-backoff — chưa có call site nào nack với `requeue: true` (không có gì trong `notify()` có thể fail), nên một chuỗi delay-queue/attempt-counter sẽ là hạ tầng suy đoán trước khi có trigger thật; doc comment của `EventBus::subscribe` đánh dấu đây là gap đã biết cho consumer tương lai nào cần bounded retry.
 
 Mục tiêu:
 
@@ -241,7 +240,7 @@ Deliverables:
 
 ## Phase 6: Frontend Core
 
-**Trạng thái: Đã xong.** React + TypeScript app shell, TanStack Query API client (`packages/platform-react/src/api`), metadata client, `GeneratedList` (kèm cursor-based infinite-scroll pagination và row windowing bằng `@tanstack/react-virtual`), và `FieldRenderer` (cả hai nửa — `FieldValue`/`fieldKindConfig` cho read, `FieldInput` cho write) đều đã xong. `GeneratedForm` đã xong. `WorkflowActionBar` đã xong. Permission-aware UI state đã xong — `CrudService.get()` giờ trả về `capabilities` chủ động (writable field, `canUpdate` ở record-level, kết quả guard thật cho từng transition) mà `GeneratedForm`/`WorkflowActionBar`/`FieldValue` dùng để disable/đánh dấu trước những gì sẽ fail, trước khi user thử. Điều hướng danh sách và delete được thêm vào như một gap-fix follow-up sau khi verify thủ công phát hiện `GeneratedList` không có cách nào thực sự đến được route create của `GeneratedForm` hay `RecordDetail`, và delete thì chưa tồn tại ở đâu cả: `GeneratedList` giờ có nút "New" và một cột action View/Delete theo từng dòng, `RecordDetail` có nút Delete, và backend có thêm hỗ trợ soft-delete (`EntityAction` mở rộng thêm `"delete"`, `PermissionService.canDeleteEntity`, `CrudService.delete()`, `DELETE /api/:entity/:id`, `WorkflowEngine.emitDeleted`). Tất cả những cái này đã pass typecheck/lint/bộ test backend và đã được commit; vẫn chưa được verify trên browser trong sandbox này (không có headless Chromium chạy được — thiếu system library, không có `sudo`, không có phương án cache thay thế). Frontend giờ nằm trong `packages/platform-react` + `apps/crm-fe` (đổi tên từ `web/`) như một phần của việc restructure monorepo ngày 2026-08-02 — xem mục "Frontend Platform Package" của [Architecture](docs/architectures/04-strategy.md). Sự phụ thuộc còn lại của `packages/platform-react` vào `react-router-dom` (`ApiErrorMessage`/`GeneratedList`/`RecordDetail` gọi trực tiếp `Link`/`useNavigate`) cũng đã được fix: một `NavigationAdapter` được inject qua React Context thay thế cả 3 chỗ import trực tiếp, và `apps/crm-fe` cung cấp implementation thật duy nhất (xem `docs/architectures/09-adr.md` để biết decision record). Đã pass typecheck/build/lint/toàn bộ bộ test backend; chưa verify trên browser vì cùng lý do sandbox như trên.
+**Trạng thái: Đã xong.** React + TypeScript app shell, TanStack Query API client (`packages/platform-react/src/api`), metadata client, `GeneratedList` (kèm cursor-based infinite-scroll pagination và row windowing bằng `@tanstack/react-virtual`), và `FieldRenderer` (cả hai nửa — `FieldValue`/`fieldKindConfig` cho read, `FieldInput` cho write) đều đã xong. `GeneratedForm` đã xong. `WorkflowActionBar` đã xong. Permission-aware UI state đã xong — `CrudService.get()` giờ trả về `capabilities` chủ động (writable field, `canUpdate` ở record-level, kết quả guard thật cho từng transition) mà `GeneratedForm`/`WorkflowActionBar`/`FieldValue` dùng để disable/đánh dấu trước những gì sẽ fail, trước khi user thử. Điều hướng danh sách và delete được thêm vào như một gap-fix follow-up sau khi verify thủ công phát hiện `GeneratedList` không có cách nào thực sự đến được route create của `GeneratedForm` hay `RecordDetail`, và delete thì chưa tồn tại ở đâu cả: `GeneratedList` giờ có nút "New" và một cột action View/Delete theo từng dòng, `RecordDetail` có nút Delete, và backend có thêm hỗ trợ soft-delete (`EntityAction` mở rộng thêm `"delete"`, `PermissionService.canDeleteEntity`, `CrudService.delete()`, `DELETE /api/:entity/:id`, `WorkflowEngine.emitDeleted`). Tất cả những cái này đã pass typecheck/lint/bộ test backend và đã được commit; vẫn chưa được verify trên browser trong sandbox này (không có headless Chromium chạy được — thiếu system library, không có `sudo`, không có phương án cache thay thế). Frontend giờ nằm trong `packages/platform-react` + `apps/crm-fe` (đổi tên từ `web/`) như một phần của việc restructure monorepo ngày 2026-08-02 — xem mục "Frontend Platform Package" của [Architecture](docs/architectures/04-strategy.md). Sự phụ thuộc còn lại của `packages/platform-react` vào `react-router-dom` (`ApiErrorMessage`/`GeneratedList`/`RecordDetail` gọi trực tiếp `Link`/`useNavigate`) cũng đã được fix: một `NavigationAdapter` được inject qua React Context thay thế cả 3 chỗ import trực tiếp, và `apps/crm-fe` cung cấp implementation thật duy nhất. Đã pass typecheck/build/lint/toàn bộ bộ test backend; chưa verify trên browser vì cùng lý do sandbox như trên.
 
 Mục tiêu:
 
@@ -282,9 +281,9 @@ Thứ tự đề xuất:
 
 ## Phase 8: Hardening
 
-**Trạng thái: Đang làm** — bắt đầu 2026-08-09. Ghi chú ở bước 8 của Migration Order trong
-`docs/rust-core-viability.md` đã có chủ đích deferred toàn bộ gap phía Rust của phase này
-(header tương đương helmet, rate limiting, requestId/traceId) ra khỏi lần port HTTP ban đầu;
+**Trạng thái: Đang làm** — bắt đầu 2026-08-09. Bản port HTTP layer ban đầu đã có chủ đích
+deferred toàn bộ gap phía Rust của phase này (header tương đương helmet, rate limiting,
+requestId/traceId) ra khỏi phạm vi của nó;
 gap đó là thứ được đóng lại đầu tiên, tiếp theo là các mục tiêu hạ tầng Docker/CI bên dưới.
 
 Mục tiêu:
@@ -425,8 +424,8 @@ Mục tiêu:
 ## Phase 12: Rust Core Migration
 
 **Trạng thái: Đã quyết định, Migration Order đã hoàn tất, chưa deploy.** `packages/core`
-chuyển hoàn toàn sang Rust cho mọi deployment profile — decision record đầy đủ, kết quả
-spike, và chiến lược schema/codegen nằm trong `docs/rust-core-viability.md`. Không phải một
+chuyển hoàn toàn sang Rust cho mọi deployment profile — xem
+[09. Architecture Decisions](architectures/09-adr.md). Không phải một
 sub-item của phase nào trước đó: nó tái định hình *ngôn ngữ implementation* của execution
 engine mà mọi phase khác ở trên được xây dựng dựa vào, mà không thay đổi những gì các phase
 đó thực sự deliver (metadata compiler, permission engine, query planner, workflow engine,
@@ -435,8 +434,7 @@ CRUD, HTTP layer, peripherals — tất cả được re-implement 1:1, không r
 Mục tiêu:
 
 - ~~Quyết định có chuyển `packages/core` sang Rust hay không~~ — **Đã xong (2026-08-07)**,
-  Option B (mọi profile), sau khi một spike đo được lợi ích footprint/throughput thật — xem
-  `docs/rust-core-viability.md`.
+  Option B (mọi profile), sau khi một spike đo được lợi ích footprint/throughput thật.
 - ~~Port execution engine (Migration Order bước 1-9)~~ — **Đã xong (2026-08-07)**:
   `crates/` là một Cargo workspace 9 crate (`metap-infra`, `metap-metadata`,
   `metap-permission`, `metap-query`, `metap-workflow`, `metap-crud`, `metap-http`,
@@ -457,8 +455,7 @@ Mục tiêu:
   subcommand của `crates/dev-tools`, và SQL migration của Drizzle được copy sang
   `crates/migrations/` cùng `crates/db-migrate` (`sqlx::migrate!`) được thêm vào để apply
   chúng — đã verify bằng cách chạy toàn bộ e2e suite trên một database được migrate từ đầu
-  chỉ bằng công cụ đó, *trước khi* xóa bất cứ thứ gì. Xem mục "TS Removal" của
-  `docs/rust-core-viability.md`. `packages/platform-react`/`apps/crm-fe` không bị đụng đến
+  chỉ bằng công cụ đó, *trước khi* xóa bất cứ thứ gì. `packages/platform-react`/`apps/crm-fe` không bị đụng đến
   (frontend vốn luôn chỉ giao tiếp qua HTTP). Gap đã biết được phát hiện lúc đó: các admin
   HTTP route (policy CRUD, role grant/revoke) chưa tồn tại qua HTTP, chỉ tồn tại như các hàm
   có e2e coverage — đã đóng 2026-08-08, xem `crates/metap-http/src/routes/admin.rs`

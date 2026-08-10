@@ -1,8 +1,6 @@
-//! Mirrors `packages/core/src/core/metadata/openapi-generator.ts`. Same paths, same
-//! field-kind → JSON Schema mapping, so `packages/platform-react`'s `generate:types`
-//! (`openapi-typescript` against this document's JSON, unchanged — see
-//! `docs/rust-core-viability.md`'s Schema & Codegen Strategy) needs no changes to keep
-//! working against a Rust-served `/metadata/openapi.json`.
+//! `packages/platform-react`'s `generate:types` (`openapi-typescript` against this
+//! document's JSON) consumes `/metadata/openapi.json` over HTTP, not backend source — the
+//! generator here just needs to keep producing the same field-kind → JSON Schema mapping.
 //!
 //! The `components.schemas.EntitySummary` entry is hand-written here (mirroring
 //! `entity-wire-schema.ts`'s `EntitySummarySchema` field-for-field) rather than derived

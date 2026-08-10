@@ -1,7 +1,7 @@
 //! E2E tests running real generated SQL against the repo's real dev Postgres (see
-//! `CLAUDE.md`'s Commands section). This is the verification `docs/rust-core-viability.md`'s
-//! Migration Order commits to for `QueryPlanner` specifically — "highest-precision-risk
-//! module... test by comparing query results ... before trusting it." `#[ignore]`d so a
+//! `CLAUDE.md`'s Commands section). `QueryPlanner` is the highest-precision-risk module in
+//! this codebase (see `docs/architectures/09-adr.md`), so it's verified by comparing real
+//! query results, not just unit-tested in isolation. `#[ignore]`d so a
 //! plain `cargo test` (unit tests only) never touches a database — run these explicitly
 //! with `cargo test -- --ignored` once the dev DB is up. Unit tests (pure logic, no DB) live
 //! in `src/*.rs`; this file is the DB-dependent counterpart, kept structurally and

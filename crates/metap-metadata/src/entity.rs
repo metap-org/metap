@@ -1,15 +1,12 @@
-//! Mirrors `packages/core/src/core/metadata/entity.ts` field-for-field. JSON field names
-//! (camelCase) and `FieldKind`'s wire values match `entity-wire-schema.ts` exactly, since
-//! this is what a Rust-served `/metadata/openapi.json` and `/metadata/entities` response
-//! need to produce for `packages/platform-react`'s `openapi-typescript` codegen to keep
-//! working unchanged (see `docs/rust-core-viability.md`'s Schema & Codegen Strategy).
+//! JSON field names (camelCase) and `FieldKind`'s wire values are what a served
+//! `/metadata/openapi.json` and `/metadata/entities` response need to produce for
+//! `packages/platform-react`'s `openapi-typescript` codegen to keep working.
 //!
-//! Deliberately has no `schema` field the way `EntityDefinition<TInput>` does in TS —
-//! that Zod schema's only job was request-payload validation, which
-//! `docs/rust-core-viability.md` scopes as a validator generated directly from `fields`
-//! (kind/required/enumValues) rather than a hand-authored, separately-maintained schema.
-//! That validator is CrudService-layer work (Migration Order step 7), not part of the
-//! metadata shape itself.
+//! Deliberately has no `schema` field — request-payload validation is a validator
+//! generated directly from `fields` (kind/required/enumValues, see
+//! `crates/metap-crud/src/validation.rs`) rather than a hand-authored, separately-maintained
+//! schema. That validator is `CrudService`-layer work, not part of the metadata shape
+//! itself.
 
 use serde::{Deserialize, Serialize};
 
@@ -69,13 +66,9 @@ pub struct EntityListView {
 
 /// `guard` is `#[serde(skip)]` — it never crosses the wire (matches
 /// `entity-wire-schema.ts`'s exclusion, and `MetadataCompiler::hash`'s exclusion, since
-/// `#[serde(skip)]` also drops it from the JSON `compiler::hash` serializes). Where TS
-/// modeled a guard as a server-side predicate *function*, this is a `PolicyCondition` — the
-/// declarative shape `docs/rust-core-viability.md`'s Workflow finding recommended reusing
-/// (from `metap-permission`, the same type policies already use) rather than porting a
-/// function-guard model Rust has no equivalent representation for. This is why this crate
-/// depends on `metap-permission` — mirroring `entity.ts`'s existing (TS) dependency on
-/// `permission-service.ts` for the same reason, not a new layering decision.
+/// `#[serde(skip)]` also drops it from the JSON `compiler::hash` serializes). `guard` is a
+/// `PolicyCondition` (`metap-permission`, the same declarative type policies use) rather than
+/// a server-side predicate function — this is why this crate depends on `metap-permission`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowTransition {

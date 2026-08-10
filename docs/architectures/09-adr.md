@@ -1,60 +1,33 @@
 # 9. Architecture Decisions
 
-Cho đến 2026-08-02, mọi thay đổi không tầm thường đều có một design spec (Motivation → Design → Out
-of scope) được viết và duyệt *trước khi* có implementation plan hay code, dưới
-`docs/superpowers/{specs,plans}/`, được đánh index bởi bảng bên dưới. **Thư mục đó đã bị xóa
-vào 2026-08-07** — tại thời điểm đó nó chỉ còn giữ lịch sử thiết kế cho các phần việc đã ship
-xong (33 trên 34 spec; hạng mục còn dang dở duy nhất, thiết kế metadata-storage của Phase 11,
-đã được chuyển sang `docs/low-code-metadata-storage-design.md` trước khi xóa, không bị mất) —
-nhằm cắt bớt phần thủ tục và chi phí context của quy trình spec → plan → implementation tách
-rời cho các bước tiếp theo. Cột đường dẫn file trong bảng giờ chỉ mang tính lịch sử: các file
-được link không còn tồn tại nữa, nhưng phần tóm tắt một dòng của mỗi hàng là bản ghi lâu dài.
-Các quyết định kể từ đây được ghi trực tiếp vào file này hoặc tài liệu `docs/*.md` liên quan,
-không còn dùng file spec/plan riêng nữa.
+Ghi lại các quyết định kiến trúc **đang có hiệu lực** — lý do *tại sao*, không phải một nhật
+ký thay đổi qua từng phase. Dự án hiện ở giai đoạn thiết kế + thử nghiệm: nội dung dưới đây là
+trạng thái mới nhất, quyết định cũ bị thay thế thì bị xóa thẳng chứ không giữ lại làm lịch sử.
+Từ v1.0.0 trở đi, thay đổi tiếp theo sẽ được ghi kèm ngày/lý do đổi cụ thể hơn; trước mốc đó,
+việc đó là thừa.
 
-| Date | Decision | Spec (deleted 2026-08-07 — see note above) |
-|---|---|---|
-| 2026-07-28 | Kernel cho Auth + RequestContext + structured errors | `docs/superpowers/specs/2026-07-28-auth-context-kernel-design.md` |
-| 2026-07-28 | `CrudService.update` + optimistic locking | `docs/superpowers/specs/2026-07-28-crud-update-optimistic-locking-design.md` |
-| 2026-07-29 | Kiến trúc mục tiêu: Metap làm core platform cho một ERP đa dịch vụ | `docs/superpowers/specs/2026-07-29-multi-service-target-architecture-design.md` |
-| 2026-07-29 | `PermissionService`: RBAC mức entity (Phase 0 scaffold) | `docs/superpowers/specs/2026-07-29-permission-service-rbac-design.md` |
-| 2026-07-29 | Gia cố `QueryPlanner`: filter ràng buộc bởi metadata + sort thực sự | `docs/superpowers/specs/2026-07-29-query-planner-hardening-design.md` |
-| 2026-07-29 | Frontend slice #1: scaffold + dev-login + API/metadata client | `docs/superpowers/specs/2026-07-29-fe-scaffold-design.md` |
-| 2026-07-30 | Frontend slice #2: `GeneratedList` | `docs/superpowers/specs/2026-07-30-generated-list-design.md` |
-| 2026-07-31 | Gán role động (role lưu ở DB, không mang trong JWT) | `docs/superpowers/specs/2026-07-31-dynamic-role-assignment-design.md` |
-| 2026-07-31 | Tính atomic của transaction outbox | `docs/superpowers/specs/2026-07-31-outbox-transaction-atomicity-design.md` |
-| 2026-07-31 | Workflow Engine V1 | `docs/superpowers/specs/2026-07-31-workflow-engine-v1-design.md` |
-| 2026-08-01 | Metadata Compiler (validate lúc khởi động, hash/version, sinh OpenAPI) | `docs/superpowers/specs/2026-08-01-metadata-compiler-design.md` |
-| 2026-08-01 | Lưu trữ policy + bộ đánh giá RBAC/ABAC | `docs/superpowers/specs/2026-08-01-policy-storage-rbac-abac-design.md` |
-| 2026-08-01 | Enforce permission ở mức field + mức record | `docs/superpowers/specs/2026-08-01-field-record-enforcement-design.md` |
-| 2026-08-01 | `PolicyExplainer` + cache `PermissionSnapshot` | `docs/superpowers/specs/2026-08-01-policy-explainer-snapshot-cache-design.md` |
-| 2026-08-01 | Tách DB test + audit dependency | `docs/superpowers/specs/2026-08-01-test-db-separation-dependency-audit-design.md` |
-| 2026-08-01 | Chiến lược index cho hot field (expression index dẫn dắt bởi metadata) | `docs/superpowers/specs/2026-08-01-hot-field-index-strategy-design.md` |
-| 2026-08-02 | Chiến lược full-text search (`tsvector`/GIN opt-in theo từng field) | `docs/superpowers/specs/2026-08-02-full-text-search-strategy-design.md` |
-| 2026-08-02 | Keyset pagination (cursor mờ opaque trên sort đã resolve) | `docs/superpowers/specs/2026-08-02-keyset-pagination-design.md` |
-| 2026-08-02 | List pagination + virtualization cho `GeneratedList` | `docs/superpowers/specs/2026-08-02-list-pagination-design.md` |
-| 2026-08-02 | UI state nhận biết permission (record capabilities chủ động) | `docs/superpowers/specs/2026-08-02-permission-aware-ui-design.md` |
-| 2026-08-02 | Điều hướng list + xóa record (soft-delete) | `docs/superpowers/specs/2026-08-02-list-navigation-delete-design.md` |
-| 2026-08-02 | Tái cấu trúc monorepo: `packages/core` (pnpm workspace, tách backend) | `docs/superpowers/specs/2026-08-02-monorepo-packages-core-design.md` |
-| 2026-08-02 | Tái cấu trúc monorepo: `packages/platform-react` + `apps/demo` | `docs/superpowers/specs/2026-08-02-monorepo-platform-react-design.md` |
-| 2026-08-02 | Tái cấu trúc monorepo: `apps/crm` (tách module thật, kéo lên sớm) | `docs/superpowers/specs/2026-08-02-monorepo-apps-crm-design.md` |
-| 2026-08-02 | Row locking cho outbox (`FOR UPDATE SKIP LOCKED`) | `docs/superpowers/specs/2026-08-02-outbox-row-locking-design.md` |
-| 2026-08-02 | Seam lưu trữ permission (interface `PolicyStore`) | `docs/superpowers/specs/2026-08-02-permission-storage-seam-design.md` |
-| 2026-08-02 | Cấu hình DB riêng cho outbox theo từng service | `docs/superpowers/specs/2026-08-02-outbox-per-service-db-design.md` |
-| 2026-08-02 | Hiển thị trạng thái boot DB + kiểm tra schema fail-fast | `docs/superpowers/specs/2026-08-02-db-boot-visibility-design.md` |
-| 2026-08-02 | Sinh type metadata frontend từ OpenAPI của backend | `docs/superpowers/specs/2026-08-02-fe-metadata-codegen-design.md` |
-
-Tất cả các mục trên đều ở trạng thái **Accepted** và đã được triển khai (xem `docs/roadmap.md` để biết trạng thái theo từng phase).
-
-## Các quyết định đáng chú ý không có spec riêng
-
-- **Layering `core->modules`**: `packages/core` không bao giờ được import một business entity cụ thể — việc đăng ký entity là mối quan tâm ở tầng application, thuộc về từng `apps/<module>` (ví dụ `apps/crm/src/modules/registry.ts`, được gọi sau khi `createContainer()`/`buildApp()` trả về). Ban đầu được cố định thành convention trong giai đoạn làm Metadata Compiler; giờ còn là một ranh giới package cứng (`packages/core` không có đường dependency nào tới bất kỳ package `apps/*` nào) kể từ đợt tái cấu trúc monorepo 2026-08-02.
-- **Expression của index phải khớp chính xác với expression của query**: một index do `IndexReconciler` build trên `data->>'field'` *không bao giờ* được Postgres chọn cho một query viết dưới dạng `jsonb_extract_path_text(data, 'field')`, dù về mặt ngữ nghĩa chúng tương đương — việc khớp expression-index của Postgres là khớp cú pháp, không phải ngữ nghĩa. Mọi index mà codebase này build đều dùng `jsonb_extract_path_text`, khớp với chính expression filter/sort của `QueryPlanner`. Được phát hiện và sửa trong quá trình làm Hot Field Index Strategy.
-- **DDL của Postgres không chấp nhận bind parameter nào cả** (không chỉ riêng dưới `CONCURRENTLY`) — `IndexReconciler` inline tên entity/field dưới dạng SQL literal đã escape, chỉ an toàn vì chúng chỉ đến từ metadata do server tự viết, đã được `MetadataCompiler` validate, không bao giờ đến từ request input.
-- **`PermissionService.scopedTenant` báo lỗi ồn ào thay vì mặc định một tenant bị thiếu**: nó từng fallback về một tenant UUID hardcode khi `context.tenantId` rỗng (và nhận `Partial<RequestContext>`, yếu hơn mức cần thiết — mọi call site thực tế đều đã có sẵn một `RequestContext` đầy đủ). Được một đợt review kiến trúc bên ngoài chỉ ra (2026-08-02); sửa bằng cách siết kiểu tham số về `RequestContext` và throw nếu `tenantId` rỗng, vì trường hợp đó chỉ có thể là bug ở phía trên — xem [08. Cross-cutting Concepts](08-cross-cutting.md#multi-tenancy).
-- **Nỗ lực kiểm chứng FE Playwright/E2E được lên phạm vi rồi bị bỏ (2026-08-07)**: hướng đi manual-verification và bộ E2E test được commit (spec/plan/finding đề ngày 2026-08-02–2026-08-03) đã được thiết kế và lên kế hoạch một phần, sau đó bị hủy rõ ràng trước khi bất kỳ dòng code Playwright nào được viết — chưa có test infrastructure nào được thêm vào repo. Các tài liệu spec/plan/finding đã bị xóa thay vì để mục nát dần. Nếu sau này muốn có coverage E2E được commit trở lại, hãy coi đó là một quyết định mới, không phải tiếp tục quyết định này.
-- **Đã tiến hành review kiến trúc; interface `EventBus` được xác định là hành động khả thi duy nhất trong ngắn hạn (2026-08-07)**: `docs/architecture-review-2026-08-07.md` review từng core component dựa trên trigger thực tế của nó (không phải giả định) và phát hiện codebase có đúng một tiền lệ infra-seam sẵn có, `PolicyStore` (`packages/core/src/core/permission/policy-store.ts`). Đề xuất mở rộng cùng pattern đó sang việc publish event — nâng type của `RabbitPublisher` thành interface `EventBus`, đổi constructor của `OutboxService` để phụ thuộc vào interface đó — như là abstraction duy nhất đang có trigger hiện tại; **chưa được triển khai tại thời điểm đó**. Cũng phát hiện thêm, cần sửa riêng: mô tả của `CLAUDE.md` về `WorkflowEngine` ("transition/guard logic chưa được triển khai") đã lỗi thời so với trạng thái thực tế, đã hoàn thành và đã test của Phase 5 trong `docs/roadmap.md`.
-- **Đặt tên mục tiêu Modular-first Capability SPI, chưa áp dụng (2026-08-07)**: `docs/modular-spi-architecture.md` ghi lại một hình dạng mục tiêu được đề xuất — Level 1 Programming Model / Level 2 Capability SPI (`Storage`/`EventBus`/`Scheduler`/`Identity`/`Cache`/`Search`/`WorkflowRuntime`) / Level 3 Providers — cùng các deployment profile (Tiny/Business/Enterprise/Cloud) và một switch config `deployment: remote` theo từng module, nhằm cho phép cùng một nguồn code chạy như một binary đơn hoặc một hệ thống phân tán. Rõ ràng **không phải** một cam kết xây dựng cho 6 SPI ngoài `EventBus`, và **không phải** một thay đổi đối với ràng buộc chỉ-Postgres/RabbitMQ hiện tại của `docs/architectures/02-constraints.md` — được ghi lại như một đích đến có tên gọi để các quyết định gần hạn nhắm tới một cách nhất quán, mà không kéo phần còn lại lên sớm trước khi có trigger của chúng.
-- **`packages/core` chuyển sang Rust — đã quyết định, Option B (2026-08-07)**: bài viết đầy đủ ở `docs/rust-core-viability.md`. Bị bác bỏ như một cuộc viết lại toàn bộ core ở lần xem xét đầu tiên (chưa có trigger hiệu năng đo được), được mở lại với một luận điểm sắc bén hơn (triển khai footprint tối thiểu, cộng với sức hút với contributor), được củng cố bằng một spike (viết lại outbox-publisher worker bằng Rust, `experiments/rust-outbox-poc/`, benchmark so với một implementation Node tương đương): Rust thắng ở cả 4 chỉ số đo được — kích thước binary (3.1 MB so với runtime Node 118 MB), cold start (nhanh hơn ~4–5 lần), idle RSS (thấp hơn ~5 lần), và throughput (cao hơn ~6–8% qua 5 lần chạy mỗi bên, sau khi một bug spike ban đầu — thiếu chờ RabbitMQ publisher-confirm — được sửa). Quyết định: **Option B, Rust cho toàn bộ `packages/core`, mọi deployment profile**, không giới hạn ở một binary riêng cho Tiny profile. Codegen type của frontend không bị ảnh hưởng — `generate:types` của `packages/platform-react` vốn đã tiêu thụ `/metadata/openapi.json` qua HTTP, không phải trực tiếp từ source TypeScript/Zod, nên một tài liệu tương đương do Rust phục vụ không đòi hỏi thay đổi gì ở frontend. Vai trò runtime-validation của Zod được thay bằng một validator sinh trực tiếp từ metadata `EntityField[]` (không có schema viết tay theo từng entity), điều này cũng khớp với những gì dữ liệu metadata do DB làm chủ ở Phase 11 sẽ cần. Rủi ro chia tách contributor-pool được giải quyết bằng cách giữ việc *authoring* entity/workflow/permission ở dạng khai báo, dạng dữ liệu, tập trung chuyên môn Rust vào một đội core-engine nhỏ hơn.
-- **Hoàn tất port Rust, xóa TS stack, tái cấu trúc repo (2026-08-07 đến 2026-08-08)**: `crates/metap-*` (Cargo workspace 9 crate) + `apps/crm-server` thay thế hoàn toàn `packages/core`/`apps/crm`, vốn đã bị xóa sau khi xác thực end-to-end stack mới trên một database được migrate từ đầu chỉ bằng `db-migrate` — xem mục Migration Order và "TS Removal" trong `docs/rust-core-viability.md` để biết đầy đủ, bao gồm hai bug thật (một khoảng hở trong việc default hóa `data`/`status`, một panic trong config CORS) và một bug cô lập test (dọn dẹp `outbox_events` không được scope trong một lần chạy test song song) chỉ bị phát hiện qua kiểm chứng live/e2e, tất cả đều đã được sửa. Root của Cargo workspace sau đó được nâng từ một `Cargo.toml` lồng nhau lên repo root và `rust/` được đổi tên thành `crates/`, khớp với ergonomics ở root vốn có sẵn của pnpm. `EventBus` (khuyến nghị ngắn hạn ở Part 2 của `docs/architecture-review-2026-08-07.md`, được thay thế — không còn là một refactor TS độc lập — bởi cuộc viết lại Rust toàn diện) tồn tại trong bản port Rust ngay từ đầu dưới dạng một trait `metap-infra::EventBus`, không phải được thêm sau như một bước riêng. **Khoảng hở đã biết tại thời điểm đó, đã đóng vào 2026-08-08** (xem mục tiếp theo): các route HTTP admin (CRUD policy, cấp/thu hồi role) chưa tồn tại qua HTTP.
-- **`docs/architectures/*.md` được làm mới để mô tả trực tiếp bản triển khai Rust; thêm route HTTP admin (2026-08-08)**: các mục 01-08 (trước đó mô tả đúng cho TS stack đã xóa: Fastify/Zod/Drizzle, `packages/core`/`apps/crm`, một container DI kiểu `container.ts`) được viết lại để nêu đúng tên crate/type/đường dẫn file Rust thật (axum, sqlx, `metap-crud::CrudService`, việc wiring inline trong `apps/crm-server/src/main.rs`, v.v.), đóng lại một khoảng hở document-drift cùng loại mà `docs/architecture-review-2026-08-07.md` từng chỉ ra cho `CLAUDE.md` (nay cũng đã được sửa). `docs/why.md`/`docs/low-code-*.md` được chủ ý giữ nguyên (mỗi tài liệu đã hoặc giải thích lý do *không đổi* từ trước khi có Rust, hoặc đã tự mang ghi chú "có trước quyết định Rust, retarget khi được triển khai", khớp với hạng mục roadmap của Phase 11 là retarget các tài liệu đó cụ thể khi chúng thực sự được triển khai, không làm trước); `docs/vision.md`/`docs/modular-spi-architecture.md` chỉ được sửa vài đường dẫn lỗi thời nhỏ, không viết lại. Cùng đợt này đã thêm mặt HTTP admin đóng khoảng hở nêu trên: `crates/metap-http/src/routes/admin.rs` (`/admin/users`, `/admin/users/{userId}/roles[/{role}]`, `/admin/policies[/{id}]`, `/admin/policies/explain`), được gác cổng bởi một extractor `AdminContext` mới (`auth.rs`) yêu cầu role `admin`, được wire vào `AppState` (nay cũng giữ trực tiếp `permissions: Arc<PermissionService>`, không chỉ nằm bên trong `CrudService`) — đã được xác thực live trên một dev stack Postgres/RabbitMQ thật, không chỉ bằng `cargo test`.
+- **Backend: Rust (axum + sqlx) + PostgreSQL + RabbitMQ, outbox pattern.** Chọn vì dấu chân hạ
+  tầng tối thiểu, tốc độ, và event publishing đáng tin cậy qua transactional outbox. Chi tiết ở
+  [02. Architecture Constraints](02-constraints.md).
+- **Không có abstraction Repository/StorageProvider.** `sqlx::PgPool` được inject trực tiếp,
+  kiểu cụ thể, vào mọi core service — YAGNI có chủ đích, chưa có trigger (chưa cần datastore
+  thứ hai, chưa có deployment profile Tiny/SQLite). Nếu trigger đó xảy ra, seam đúng chỗ là bề
+  mặt SQL do `QueryPlanner` sinh ra (`jsonb_extract_path_text`, `plainto_tsquery`,
+  keyset-pagination `WHERE`), không phải các động từ CRUD theo từng entity.
+- **`EventBus` là một trait** (`metap-infra::EventBus`, `RabbitEventBus` implementation duy
+  nhất). Swap broker sau này (Kafka/NATS) là thêm một implementation mới, không phải viết lại
+  call site.
+- **Layering `crates/metap-* -> apps/<consumer>`, một chiều.** Không crate thư viện nào được
+  biết business-entity cụ thể — đăng ký entity là việc của binary tiêu thụ (`apps/crm-server`).
+- **Expression của index phải khớp chính xác với expression của query.** Postgres khớp
+  expression-index theo cú pháp, không theo ngữ nghĩa — `IndexReconciler` build index và
+  `QueryPlanner` sinh filter/sort đều thống nhất dùng `jsonb_extract_path_text`.
+- **`IndexReconciler` inline SQL literal đã escape** (Postgres DDL không chấp nhận bind
+  parameter). An toàn vì literal chỉ đến từ metadata do server tự viết, đã qua
+  `MetadataCompiler` validate — không bao giờ từ request input.
+- **`PermissionService.scopedTenant` throw khi `tenantId` rỗng**, không fallback về một tenant
+  mặc định — trường hợp đó chỉ có thể là bug ở phía trên. Xem
+  [08. Cross-cutting Concepts](08-cross-cutting.md#multi-tenancy).
+- **Capability SPI (`docs/modular-spi-architecture.md`) là một đích đến có tên gọi, chưa phải
+  cam kết xây dựng.** Ngoài `EventBus`, không SPI nào khác (Storage/Scheduler/Identity/Cache/
+  Search/WorkflowRuntime) có trigger hiện tại — không xây trước khi có.

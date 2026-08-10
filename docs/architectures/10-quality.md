@@ -25,4 +25,4 @@ Chạy unit test (không cần DB) bằng `pnpm test:rs` (`cargo test --workspac
 ## Ghi chú
 
 - Chưa có load/performance testing — quality scenario 4 (Performance) ở trên được kiểm chứng bằng thiết kế (regression test kiểm tra việc dùng index bằng `EXPLAIN`) chứ chưa bằng throughput/latency đo được dưới tải thực tế. Được ghi nhận ở [11. Risks and Technical Debt](11-risks.md).
-- Phạm vi test trong codebase này chủ ý ở mức tối thiểu và có mục tiêu rõ ràng (một số case quan trọng cho mỗi feature), không phải một ma trận toàn diện — xem [09. Architecture Decisions](09-adr.md) và `docs/rust-core-viability.md` để biết số lượng test của bản port Rust (51 unit + 19 e2e tính đến 2026-08-08).
+- Phạm vi test trong codebase này chủ ý ở mức tối thiểu và có mục tiêu rõ ràng (một số case quan trọng cho mỗi feature), không phải một ma trận toàn diện — xem `docs/roadmap.md` Phase 12 để biết số lượng test hiện tại.

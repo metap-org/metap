@@ -12,13 +12,13 @@
 
 | Mối quan tâm | Lựa chọn | Lý do (ngắn gọn) |
 |---|---|---|
-| HTTP framework | axum | Tokio-native, ít ceremony, typed extractors — xem `docs/rust-core-viability.md` |
+| HTTP framework | axum | Tokio-native, ít ceremony, typed extractors — xem [09. Architecture Decisions](09-adr.md) |
 | Validation | Validator dựa trên field-metadata (`metap-crud/src/validation.rs`) | Được derive trực tiếp từ `EntityField[]`, không cần schema viết tay cho từng entity — thay thế vai trò của Zod mà không có một runtime-reflection tương đương trong Rust |
 | DB access | sqlx | SQL được check ở compile-time, async, không cần generated client nặng nề — thay thế Drizzle |
 | Datastore | PostgreSQL | Transaction, constraint, JSONB cho payload metadata-driven, index thật |
 | Messaging | RabbitMQ + outbox | Integration event đáng tin cậy, không bị mất khi broker downtime |
 
-Lý do đầy đủ cho các lựa chọn có từ trước khi migrate sang Rust (PostgreSQL, RabbitMQ, outbox pattern) nằm trong `docs/why.md`; quyết định chuyển bản thân lớp framework/validation/DB-access từ Fastify/Zod/Drizzle sang axum/metadata validator/sqlx nằm trong `docs/rust-core-viability.md` — không nhắc lại ở đây.
+Lý do đầy đủ cho các lựa chọn có từ trước khi migrate sang Rust (PostgreSQL, RabbitMQ, outbox pattern) nằm trong `docs/why.md`; quyết định chuyển bản thân lớp framework/validation/DB-access từ Fastify/Zod/Drizzle sang axum/metadata validator/sqlx nằm trong [09. Architecture Decisions](09-adr.md) — không nhắc lại ở đây.
 
 ## Đạt được các Mục tiêu Chất lượng Hàng đầu (xem [10. Quality Requirements](10-quality.md) để có danh sách đầy đủ)
 
@@ -30,7 +30,7 @@ Lý do đầy đủ cho các lựa chọn có từ trước khi migrate sang Rus
 
 Metap là backbone của một nền tảng low-code, không phải một ứng dụng ERP đơn mục đích. `crates/metap-*` (metadata, permission, query planner, workflow, outbox infra) là core platform tái sử dụng được. Mỗi phân hệ nghiệp vụ — CRM, sales, inventory, accounting, v.v. — được kỳ vọng cuối cùng sẽ trở thành một service có thể deploy độc lập, được xây trên cùng core đó, chứ không phải một bản copy của nó.
 
-**Repo/crate layout — đã xong, sớm hơn trigger đã lên kế hoạch ban đầu.** Một Cargo workspace với `crates/metap-*` (các library crate entity-agnostic: `metap-infra`, `metap-metadata`, `metap-permission`, `metap-query`, `metap-workflow`, `metap-crud`, `metap-http`, `metap-peripherals`, cộng thêm các ops binary `outbox-publisher`/`db-migrate`/`dev-tools`) và `apps/crm-server` (một binary crate, phụ thuộc vào `metap-*` và chỉ đăng ký entity của chính nó — `apps/crm-server/src/customer_entity.rs`, `src/main.rs`). Việc này ban đầu được lên kế hoạch chờ đến "lần đầu tiên một second module thực sự tách biệt cần tồn tại như một deployable unit riêng" — user đã chủ động chọn đẩy việc này lên sớm vào ngày 2026-08-02 (khi đó vẫn còn ở codebase TS) để đưa code vào đúng hình dạng mục tiêu ngay từ bây giờ thay vì để sau (xem `docs/architectures/09-adr.md`), và hình dạng đó được bản port sang Rust ngày 2026-08-07 tái tạo lại 1:1 chứ không redesign.
+**Repo/crate layout — đã xong, sớm hơn trigger đã lên kế hoạch ban đầu.** Một Cargo workspace với `crates/metap-*` (các library crate entity-agnostic: `metap-infra`, `metap-metadata`, `metap-permission`, `metap-query`, `metap-workflow`, `metap-crud`, `metap-http`, `metap-peripherals`, cộng thêm các ops binary `outbox-publisher`/`db-migrate`/`dev-tools`) và `apps/crm-server` (một binary crate, phụ thuộc vào `metap-*` và chỉ đăng ký entity của chính nó — `apps/crm-server/src/customer_entity.rs`, `src/main.rs`). Việc này ban đầu được lên kế hoạch chờ đến "lần đầu tiên một second module thực sự tách biệt cần tồn tại như một deployable unit riêng" — được đẩy lên sớm hơn để đưa code vào đúng hình dạng mục tiêu ngay từ bây giờ thay vì để sau.
 
 **Anchor đã có sẵn:** `EntityDefinition.name` đã được namespace theo dấu chấm dựa trên domain (`crm.customers`). Phần tiền tố trước dấu chấm, trên thực tế, chính là tên service. Một second business module có nghĩa là một binary crate mới bên cạnh `apps/crm-server`, mỗi cái có entity riêng và entry point mỏng (thin entry point) của riêng nó — không phải một module bên trong một `metap-*` crate nào.
 
@@ -52,4 +52,4 @@ Cùng một hình dạng "reusable core, nhiều consumer độc lập" từ m�
 
 - Không có global, app-wide client state store (Redux hay gì khác) được bake vào `platform-react`. Server state ở trong React Query (mỗi consumer mang `QueryClient` riêng của mình, khai báo như một `peerDependency` để chỉ có đúng một instance); mọi thứ khác ở lại component-local state hoặc một Context có phạm vi hẹp (như `AuthContext`), không bao giờ là một singleton store mà mọi consumer bị buộc phải chia sẻ hoặc phải né tránh.
 - Nếu một downstream app cụ thể muốn dùng Redux, Zustand, hay bất cứ thứ gì khác cho app-level state *của riêng nó*, đó là quyết định của app đó, được đưa ra trong shell riêng của nó (thứ tương đương của `apps/crm-fe`) — không phải thứ mà `platform-react` áp đặt lên nó.
-- **Hạn chế đã biết, không được sửa bởi lần tách này:** `packages/platform-react` ban đầu có một hard dependency vào `react-router-dom` (`WorkflowActionBar`/`RecordDetail`/`GeneratedForm` gọi trực tiếp `Link`/`useNavigate`) — đã được sửa từ đó bằng một `NavigationAdapter` (React Context) được inject vào, xem [09. Architecture Decisions](09-adr.md).
+- `packages/platform-react` không phụ thuộc cứng vào `react-router-dom` — `WorkflowActionBar`/`RecordDetail`/`GeneratedForm` gọi điều hướng qua một `NavigationAdapter` (React Context) được inject vào, không gọi trực tiếp `Link`/`useNavigate`.

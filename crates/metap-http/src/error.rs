@@ -1,5 +1,6 @@
-//! Mirrors the shape (not the full richness — no `requestId`/`traceId`; see this module's
-//! note in `docs/rust-core-viability.md`'s Migration Order) of
+//! Mirrors the shape (not the full richness — no `requestId`/`traceId` here, a deliberate
+//! simplification; both are injected centrally into every error response, see
+//! `crates/metap-http/src/request_id.rs`) of
 //! `packages/core/src/server/error-handler.ts`'s error body and
 //! `SERVICE_ERROR_MESSAGES` default-message table.
 

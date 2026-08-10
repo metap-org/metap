@@ -8,10 +8,11 @@ phần "Relationship to Current Architecture" bên dưới để biết điều 
 ## Mục đích
 
 Tài liệu này không phải là roadmap sản phẩm chính. `docs/roadmap.md` theo dõi tiến độ
-xây dựng hiện tại của core platform và trạng thái phase chính thức; `docs/architecture-review-2026-08-07.md`
-là một review từng thành phần một về những gì đang tồn tại ngày nay. Tài liệu này ghi lại một
-câu hỏi riêng biệt, đặt ra trực tiếp dựa trên Part 2 (Runtime Abstraction) và
-Part 3 (Deployment Profiles) của review đó:
+xây dựng hiện tại của core platform và trạng thái phase chính thức; một architecture review
+(2026-08-07, nay chỉ còn lưu tóm tắt ở [09. Architecture Decisions](architectures/09-adr.md))
+đã rà từng thành phần một về những gì đang tồn tại tại thời điểm đó. Tài liệu này ghi lại một
+câu hỏi riêng biệt, đặt ra trực tiếp dựa trên phần Runtime Abstraction và
+Deployment Profiles của review đó:
 
 > Nếu Metap muốn phục vụ mọi thứ từ một khách hàng SME tự host cho đến một triển khai
 > enterprise phân tán, xuất phát từ cùng *một* nguồn mã, thì boundary hạ tầng cần có hình
@@ -70,7 +71,7 @@ chưa có seam này.
 
 Capability SPI pattern của tài liệu này không phụ thuộc ngôn ngữ theo thiết kế; việc nó
 được triển khai bằng TypeScript hay Rust ban đầu được đặt ra như một câu hỏi tách biệt khỏi
-bản thân pattern. Câu hỏi đó đã được quyết định trong `docs/rust-core-viability.md`:
+bản thân pattern. Câu hỏi đó đã được quyết định (xem [09. Architecture Decisions](architectures/09-adr.md)):
 `packages/core` đang chuyển sang Rust (Option B, tất cả các profile), và Migration Order
 được ghi lại ở đó giờ đã **hoàn thành** — trait `EventBus` của `crates/metap-infra`
 (`trait EventBus { async fn publish(...); async fn close(...); }`) là thật, đã được xây
@@ -79,9 +80,9 @@ dựng, đã được test (unit + e2e), và chính là thứ mà `crates/metap-
 của đề xuất gốc. Điều này vẫn không thay đổi số lượng SPI trong *sáu SPI còn lại* đáng để
 xây dựng (vẫn là không cái nào — riêng `Storage` cố tình không được tách thành một trait
 chính thức; mọi crate Rust chạm vào DB đều dùng trực tiếp `sqlx::PgPool`, theo đúng lý lẽ
-gốc của Part 2 trong `docs/architecture-review-2026-08-07.md`, mà quá trình port sang Rust
-đã tuân theo chứ không đảo ngược) hay quyết định về deployment-profile ở Part 3 của review
-đó, vốn vẫn còn để ngỏ theo đúng nghĩa của nó.
+gốc của review đó (xem [09. Architecture Decisions](architectures/09-adr.md)), mà quá trình port sang Rust
+đã tuân theo chứ không đảo ngược) hay quyết định về deployment-profile ở phần Deployment
+Profiles của review đó, vốn vẫn còn để ngỏ theo đúng nghĩa của nó.
 
 ## Deployment Profiles
 
@@ -167,7 +168,8 @@ Cơ chế này chỉ trở nên cụ thể một khi Step 3 thực sự được
 
 **Tài liệu này không phải là:**
 - **Không phải một cam kết xây dựng sáu Capability SPI còn lại** (Storage, Scheduler,
-  Identity, Cache, Search, WorkflowRuntime). Part 2 của `docs/architecture-review-2026-08-07.md`
+  Identity, Cache, Search, WorkflowRuntime). Review kiến trúc 2026-08-07 (tóm tắt ở
+  [09. Architecture Decisions](architectures/09-adr.md))
   đã đánh giá từng cái dựa trên một trigger thực tế và không tìm thấy trigger nào ngoài
   `EventBus`. Kết luận đó không đổi bởi tài liệu này. Xây cả bảy SPI ngay bây giờ sẽ đúng
   là kiểu build-ahead-of-trigger mà dự án này đã nhiều lần và dứt khoát từ chối làm (Phase 1
@@ -177,7 +179,7 @@ Cơ chế này chỉ trở nên cụ thể một khi Step 3 thực sự được
   đang ràng buộc Postgres và RabbitMQ là datastore/broker *duy nhất* — dòng SQLite/Memory
   của profile Tiny trong bảng trên trực tiếp mâu thuẫn với ngôn ngữ ràng buộc đó. Chấp nhận
   Tiny như một mục tiêu thật đòi hỏi một quyết định riêng, tường minh để sửa đổi constraint
-  đó (đây chính xác là "Option 2" của Part 3 trong architecture review) — tài liệu này chỉ
+  đó (đây chính xác là "Option 2" của phần Deployment Profiles trong review kiến trúc 2026-08-07) — tài liệu này chỉ
   đặt tên cho hình dạng mục tiêu mà quyết định đó sẽ tạo ra, chứ không tự đưa ra quyết định
   đó.
 - **Không phải bằng chứng để bắt đầu Phase 9 sớm.** Các trigger của Phase 9 (một module
@@ -197,14 +199,13 @@ tự bên dưới.
 ## Sequencing
 
 Không phải một roadmap phase mới — ánh xạ vào Phase 9 (Multi-Service Evolution) và quyết
-định deployment-profile còn để ngỏ được nêu trong Part 3 của
-`docs/architecture-review-2026-08-07.md`. Mỗi bước dưới đây có giá trị độc lập; không bước
-nào ràng buộc phải làm bước tiếp theo.
+định deployment-profile còn để ngỏ được nêu trong phần Deployment Profiles của review kiến
+trúc 2026-08-07 (xem [09. Architecture Decisions](architectures/09-adr.md)). Mỗi bước dưới
+đây có giá trị độc lập; không bước nào ràng buộc phải làm bước tiếp theo.
 
 1. **`EventBus` SPI — đã xong.** Được xây dựng thành trait `EventBus` của
    `crates/metap-infra` + implementation `RabbitEventBus`, như một phần của toàn bộ Rust
-   Migration Order (`docs/rust-core-viability.md`), không phải như một lần tách riêng lẻ
-   trên nền TS.
+   Migration Order, không phải như một lần tách riêng lẻ trên nền TS.
 2. **Ghi lại `deployment: remote`** trong mục Future Evolution của
    `docs/architectures/04-strategy.md` — không có code, chỉ đặt tên cho cơ chế mà Phase 9
    sẽ dùng.
