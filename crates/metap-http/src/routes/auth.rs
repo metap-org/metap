@@ -4,11 +4,12 @@
 
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::auth::AuthContext;
 use crate::error::{internal_error_response, service_error_response};
 use crate::state::AppState;
 
@@ -46,6 +47,21 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Re
     }
 }
 
+/// Identity + roles for the caller's own token — the frontend's only way to know "am I an
+/// admin" for UI gating, since roles are deliberately never encoded on the JWT itself (see
+/// `crate::auth`'s doc comment): they're looked up fresh here the same way every other
+/// `AuthContext` route does.
+async fn me(State(_state): State<AppState>, AuthContext(context): AuthContext) -> Response {
+    Json(json!({
+        "data": {
+            "userId": context.user_id,
+            "tenantId": context.tenant_id,
+            "roles": context.roles.unwrap_or_default(),
+        }
+    }))
+    .into_response()
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new().route("/auth/login", post(login))
+    Router::new().route("/auth/login", post(login)).route("/auth/me", get(me))
 }

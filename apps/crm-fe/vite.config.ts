@@ -10,6 +10,7 @@ export default defineConfig({
       "/health": "http://localhost:3000",
       "/preferences": "http://localhost:3000",
       "/auth": "http://localhost:3000",
+      "/admin": "http://localhost:3000",
     },
   },
 });

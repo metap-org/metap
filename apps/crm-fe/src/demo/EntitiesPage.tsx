@@ -1,7 +1,7 @@
-import { Anchor, Container, Group, List, Title } from "@mantine/core";
+import { Container, Anchor, List, Title } from "@mantine/core";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { useEntities, ApiErrorMessage, LocaleSwitcher, getEntityLabel, useLocale } from "@metap/platform-react";
+import { useEntities, ApiErrorMessage, getEntityLabel, useLocale } from "@metap/platform-react";
 
 export function EntitiesPage() {
   const { t } = useTranslation();
@@ -13,10 +13,9 @@ export function EntitiesPage() {
 
   return (
     <Container py="xl">
-      <Group justify="space-between" mb="md">
-        <Title order={2}>{t("entities.title")}</Title>
-        <LocaleSwitcher />
-      </Group>
+      <Title order={2} mb="md">
+        {t("entities.title")}
+      </Title>
       <List>
         {data?.map((entity) => (
           <List.Item key={entity.name}>

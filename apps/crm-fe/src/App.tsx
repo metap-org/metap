@@ -2,24 +2,50 @@ import type { ReactNode } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
+  AppShellLayout,
   AuthProvider,
+  Can,
   LocaleProvider,
   useAuth,
   RecordDetail,
   GeneratedForm,
   GeneratedList,
+  UsersAdminPage,
+  PoliciesAdminPage,
+  CronJobsAdminPage,
 } from "@metap/platform-react";
+import type { ShellNavItem } from "@metap/platform-react";
 import { LoginPage } from "./demo/LoginPage";
 import { EntitiesPage } from "./demo/EntitiesPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const { token } = useAuth();
 
   if (!token) {
     return <Navigate to="/login" replace />;
   }
 
-  return <>{children}</>;
+  const navItems: ShellNavItem[] = [
+    { to: "/", label: t("shell.navEntities") },
+    { to: "/admin/users", label: t("shell.navUsers"), roles: ["admin"] },
+    { to: "/admin/policies", label: t("shell.navPolicies"), roles: ["admin"] },
+    { to: "/admin/cron-jobs", label: t("shell.navCronJobs"), roles: ["admin"] },
+  ];
+
+  return (
+    <AppShellLayout brand="Metap" navItems={navItems}>
+      {children}
+    </AppShellLayout>
+  );
+}
+
+function RequireAdmin({ children }: { children: ReactNode }) {
+  return (
+    <Can roles={["admin"]} fallback={<Navigate to="/" replace />}>
+      {children}
+    </Can>
+  );
 }
 
 function RecordsRoute() {
@@ -119,6 +145,36 @@ export default function App() {
             element={
               <RequireAuth>
                 <EditRecordRoute />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <RequireAuth>
+                <RequireAdmin>
+                  <UsersAdminPage />
+                </RequireAdmin>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/policies"
+            element={
+              <RequireAuth>
+                <RequireAdmin>
+                  <PoliciesAdminPage />
+                </RequireAdmin>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/cron-jobs"
+            element={
+              <RequireAuth>
+                <RequireAdmin>
+                  <CronJobsAdminPage />
+                </RequireAdmin>
               </RequireAuth>
             }
           />
