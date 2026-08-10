@@ -267,7 +267,7 @@ Step 3-4 chưa được xây dựng và chưa có trigger nào kích hoạt — 
 
 ### Database Design (ER diagram)
 
-Sáu bảng (`crates/migrations/*.sql`, được apply qua `sqlx::migrate!` của `db-migrate`), không có ràng buộc foreign key liên bảng — `tenant_id`/`entity`/`aggregate_id`/`record_id` chỉ là các cột thường mà mối quan hệ của chúng được thực thi bởi application code (`QueryPlanner`, `CrudService`), không phải bởi database schema. Đây là chủ ý: `records` là một bảng tổng quát, entity-agnostic duy nhất, nên một FK thật từ ví dụ `workflow_events.record_id` sang `records.id` tuy hoạt động được ở hiện tại nhưng sẽ phải bị bỏ đi ngay khi có một entity bất kỳ được tách ra thành bảng riêng của nó (Step 3 ở trên) — không nên thêm vào trước khi trigger đó xảy ra.
+Các bảng platform/ops (`crates/migrations/*.sql`, được apply qua `sqlx::migrate!` của `db-migrate`) — hầu hết không có ràng buộc foreign key liên bảng: `tenant_id`/`entity`/`aggregate_id`/`record_id` chỉ là các cột thường mà mối quan hệ của chúng được thực thi bởi application code (`QueryPlanner`, `CrudService`), không phải bởi database schema. Đây là chủ ý: `records` là một bảng tổng quát, entity-agnostic duy nhất, nên một FK thật từ ví dụ `workflow_events.record_id` sang `records.id` tuy hoạt động được ở hiện tại nhưng sẽ phải bị bỏ đi ngay khi có một entity bất kỳ được tách ra thành bảng riêng của nó (Step 3 ở trên) — không nên thêm vào trước khi trigger đó xảy ra. Ngoại lệ duy nhất: `cron_job_runs.job_id` có FK thật tới `cron_jobs.id` (`ON DELETE CASCADE`) — hai bảng này là cấu hình platform/ops thuần túy (giống `policies`/`user_roles`, không phải business entity), không nằm dưới ràng buộc "không FK" ở trên.
 
 ```mermaid
 erDiagram
@@ -332,12 +332,56 @@ erDiagram
     varchar hash
     timestamptz updated_at
   }
+  USERS {
+    uuid id PK
+    uuid tenant_id
+    varchar email UK
+    text password_hash
+    timestamptz created_at
+    timestamptz updated_at
+  }
+  USER_PREFERENCES {
+    uuid tenant_id PK
+    uuid user_id PK
+    varchar locale
+    timestamptz updated_at
+  }
+  CRON_JOBS {
+    uuid id PK
+    uuid tenant_id
+    varchar name
+    boolean enabled
+    varchar cron_expr
+    varchar timezone
+    varchar target_type
+    jsonb target_config
+    varchar dispatch_mode
+    timestamptz next_run_at
+    timestamptz last_run_at
+    timestamptz created_at
+    uuid created_by
+  }
+  CRON_JOB_RUNS {
+    uuid id PK
+    uuid tenant_id
+    uuid job_id FK
+    varchar status
+    timestamptz scheduled_for
+    timestamptz started_at
+    timestamptz finished_at
+    text error
+    jsonb response_summary
+    timestamptz created_at
+  }
 
   RECORDS ||--o{ OUTBOX_EVENTS : "aggregate_id (app-enforced)"
   RECORDS ||--o{ WORKFLOW_EVENTS : "record_id (app-enforced)"
   RECORDS }o--|| METADATA_VERSIONS : "entity (app-enforced)"
   POLICIES }o--|| METADATA_VERSIONS : "entity (app-enforced)"
   USER_ROLES }o--o{ POLICIES : "roles (JSONB array, matched at query time)"
+  USERS ||--o{ USER_ROLES : "user_id (app-enforced)"
+  USERS ||--o| USER_PREFERENCES : "user_id (app-enforced)"
+  CRON_JOBS ||--o{ CRON_JOB_RUNS : "job_id (real FK, ON DELETE CASCADE)"
 ```
 
 Ghi chú:
@@ -345,6 +389,7 @@ Ghi chú:
 - `records.data` là payload dẫn xuất từ metadata; `code`/`status` là các cột top-level denormalized phản chiếu hai field bên trong `data` (`code` luôn luôn, `status` phản chiếu giá trị của `entity.workflow.stateField`) chỉ nhằm mục đích để chúng có thể được index/query như các cột thật.
 - `outbox_events`/`workflow_events` tham chiếu tới các row của `records` theo id (`aggregate_id`/`record_id`) nhưng trên *toàn bộ* bảng tổng quát, không phải theo từng bảng riêng cho mỗi entity — một bảng outbox duy nhất phục vụ mọi entity.
 - `policies.roles` là một mảng JSONB được đối chiếu với role của caller tại thời điểm đánh giá (`role_gate_passed`), không phải một relational join tới `user_roles`.
+- `users` (Phase 15, local login) chỉ giữ danh tính (email + `password_hash` argon2id) — **không** giữ role. Role luôn nằm ở `user_roles`, tra mới cho mỗi request, không bao giờ cache trên JWT (xem sequence diagram "Tạo user, đăng nhập, kiểm tra quyền" ở [06. Runtime View](06-runtime.md)).
 - Các index thật ngoài các primary key nêu trên được đề cập trong phần "Hot field indexes"/"Full-text search" ở trên — đó là các partial expression index theo từng entity được sinh ra từ metadata, không phải một phần của schema cố định này.
 
 ## Service Boundaries

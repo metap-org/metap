@@ -16,7 +16,7 @@ Mọi bảng nghiệp vụ đều mang `tenant_id`; mọi lời gọi `QueryPlan
 
 ## Permission Enforcement
 
-RBAC (danh sách role được phép) kết hợp với ABAC tùy chọn (điều kiện thuộc tính), được đánh giá phía server, ở ba mức: mức entity (role này có được đụng vào entity này không), mức field (field nào được đọc/ghi), mức record (row cụ thể nào được đọc/ghi, được dịch thành mệnh đề SQL `WHERE`). Xem [05. Building Block View](05-building-blocks.md#permission-service).
+RBAC (danh sách role được phép) kết hợp với ABAC tùy chọn (điều kiện thuộc tính), được đánh giá phía server, ở ba mức: mức entity (role này có được đụng vào entity này không), mức field (field nào được đọc/ghi), mức record (row cụ thể nào được đọc/ghi, được dịch thành mệnh đề SQL `WHERE`). **Opt-in restriction, không phải default-deny**: chưa có policy nào cho một `(entity, action)` thì ai cũng được phép, tạo policy mới là hành động giới hạn lại — role `admin` luôn bypass. Role được tra mới từ `user_roles` cho mỗi request, không bao giờ cache trên JWT. Sequence diagram đầy đủ (tạo user → đăng nhập → kiểm tra quyền) ở [06. Runtime View](06-runtime.md)'s mục "Tạo user, đăng nhập, và kiểm tra quyền"; building block ở [05. Building Block View](05-building-blocks.md#permission-service).
 
 ## Security Principles
 

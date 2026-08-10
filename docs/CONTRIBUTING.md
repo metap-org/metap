@@ -54,6 +54,18 @@ qua dev stack thật (`pnpm dev:rs` + `pnpm dev:web`) — typecheck/lint/unit te
 kiểu thiếu proxy entry trong Vite hay crash chỉ lộ ra khi click qua một luồng thao tác thật. Dự án
 này đã từng gặp cả hai loại lỗi trên; xem ghi chú các phase gần đây trong `docs/roadmap.md`.
 
+Với thay đổi ở tầng backend chạm tới một trong 4 entity demo (`apps/crm-server/src/entities/`),
+`apps/crm-server/scripts/smoke.sh` chạy curl thủ công qua toàn bộ CRUD + workflow (kể cả nhánh
+guard-fail) của cả 4 entity trên một dev stack thật — không phải test suite được commit, chỉ là
+script lặp lại được để poke server bằng tay (`./apps/crm-server/scripts/smoke.sh` sau khi
+`pnpm dev:rs` đã chạy).
+
+Với thay đổi ở `crates/metap-permission`/`metap-http`'s admin routes,
+`apps/crm-server/scripts/permission-smoke.sh` chạy tương tự nhưng cho model RBAC/ABAC: admin
+route gating (401/403), context-level role restriction, field-level read/write gating,
+record-level row filtering, và `PolicyExplainer` — tự dọn mọi policy/role nó tạo nên chạy lại
+nhiều lần không tích tụ state.
+
 ## Ranh giới reviewer phải kiểm soát
 
 Đây là quy ước bắt buộc của dự án (từ `CLAUDE.md`, nhắc lại ở

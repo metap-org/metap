@@ -38,6 +38,81 @@ sequenceDiagram
 
 Nếu RabbitMQ bị down, vòng lặp trên chỉ tiếp tục fail và retry — request `create()` đã commit và trả về xong trước khi vòng lặp đó chạy, nên tính khả dụng của API không bao giờ phụ thuộc vào việc RabbitMQ có đang chạy hay không.
 
+## Tạo user, đăng nhập, và kiểm tra quyền
+
+Ba việc thường bị nhầm là một, nhưng là ba cơ chế tách biệt: **tạo user** (danh tính), **đăng
+nhập** (mint JWT), và **kiểm tra quyền** (chạy lại ở server cho *mỗi* request, không đọc từ
+JWT). Sequence dưới đây gộp cả ba để thấy rõ chúng nối với nhau ở đâu:
+
+```mermaid
+sequenceDiagram
+  participant Admin as Admin (UI/curl)
+  participant AdminRoute as axum /admin/users
+  participant Peripherals as metap_peripherals
+  participant DB as PostgreSQL
+  participant EndUser as End user
+  participant AuthRoute as axum /auth/login
+  participant ApiRoute as axum /api/:entity
+  participant Perm as PermissionService
+
+  Note over Admin,DB: 1. Tạo user + gán role - admin-driven, dev-tools create-user/seed-admin đi cùng đường này
+  Admin->>AdminRoute: POST /admin/users {email, password, roles?}
+  AdminRoute->>Peripherals: create_user(pool, tenantId, email, password)
+  Peripherals->>DB: INSERT users (password_hash = argon2id)
+  loop mỗi role trong roles
+    AdminRoute->>Peripherals: assign_role(pool, tenantId, userId, role)
+    Peripherals->>DB: INSERT user_roles
+  end
+  AdminRoute-->>Admin: 201 {userId, roles}
+
+  Note over EndUser,DB: 2. Đăng nhập — JWT chỉ là bằng chứng danh tính, KHÔNG chứa role
+  EndUser->>AuthRoute: POST /auth/login {email, password}
+  AuthRoute->>Peripherals: verify_credentials(pool, email, password)
+  Peripherals->>DB: SELECT users WHERE email
+  Note right of Peripherals: email không tồn tại vẫn chạy argon2-verify<br/>với dummy hash — timing giống hệt sai mật khẩu
+  Peripherals-->>AuthRoute: user hoặc lỗi invalid_credentials
+  AuthRoute->>Peripherals: mint_jwt(userId, tenantId)
+  AuthRoute-->>EndUser: 200 {token}
+
+  Note over EndUser,Perm: 3. Mọi request sau đó — role tra mới từ DB, không bao giờ đọc từ JWT
+  EndUser->>ApiRoute: GET /api/sales.orders (Authorization: Bearer token)
+  ApiRoute->>ApiRoute: AuthContext: verify JWT (RS256) -> userId, tenantId
+  ApiRoute->>Peripherals: get_roles_for_user(pool, tenantId, userId)
+  Peripherals->>DB: SELECT role FROM user_roles WHERE tenant_id, user_id
+  Peripherals-->>ApiRoute: roles[]
+  ApiRoute->>Perm: can_read_entity(context{roles}, "sales.orders")
+  alt context.is_admin()
+    Perm-->>ApiRoute: allowed (bypass, không query policies)
+  else không phải admin
+    Perm->>DB: SELECT policies WHERE tenant_id, entity, action
+    alt không có policy nào khớp (entity, action)
+      Perm-->>ApiRoute: allowed — "opt-in restriction": không có policy = ai cũng được phép
+    else có ít nhất một policy
+      Perm->>Perm: role_gate_passed(policy.roles, context.roles) AND evaluate(condition)
+      Perm-->>ApiRoute: allowed nếu ít nhất một policy pass, ngược lại forbidden
+    end
+  end
+```
+
+Ghi chú:
+
+- **Mô hình phân quyền là "opt-in restriction", không phải "default-deny"**: chưa tạo policy
+  nào cho một `(entity, action)` thì ai cũng được phép — tạo policy là hành động *giới hạn* lại,
+  không phải hành động *cấp* quyền. `admin` luôn bypass toàn bộ bước này. Chi tiết ở
+  [08. Cross-cutting Concepts](08-cross-cutting.md#permission-enforcement).
+- Có 3 tầng policy, phân biệt bằng cột `field`/`subject` của bảng `policies` (xem ER diagram ở
+  [05. Building Block View](05-building-blocks.md#database-design-er-diagram)): **context-level**
+  (`field`/`subject` đều rỗng — gác toàn bộ action trên entity), **field-level** (`field` có giá
+  trị, `action` là `"read"` để mask lúc đọc hoặc `"write"` để chặn lúc ghi), **record-level**
+  (`subject: "record"` — dịch thành mệnh đề SQL `WHERE` trong `QueryPlanner`, lọc row nào hiện ra
+  trong `list()`).
+- `users` và `user_roles` là hai bảng tách biệt có chủ đích (xem ghi chú ở ER diagram) — một user
+  có thể tồn tại (đăng nhập được) mà chưa có role nào, hoặc có nhiều role cùng lúc.
+- **Cách kiểm chứng cả luồng này** — `apps/crm-server/scripts/permission-smoke.sh` chạy qua HTTP
+  thật, đủ cả 3 tầng policy + admin route gating (401/403) + `PolicyExplainer`, tự dọn state sau
+  mỗi lần chạy. Không phải test suite được commit, chỉ là script lặp lại được cho việc poke thủ
+  công — xem `docs/CONTRIBUTING.md`.
+
 ## Scenarios
 
 Các scenario dùng để kiểm chứng những building block ở trên, làm cơ sở cho các e2e test chạy trên DB thật của codebase này (`cargo test --workspace -- --ignored`, cần `DATABASE_URL` + một Postgres/RabbitMQ dev đang chạy). (Phần "+1" của Kruchten 4+1 — các scenario dùng để xác thực những view còn lại.)

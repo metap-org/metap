@@ -12,11 +12,42 @@ Metap được thiết kế để trở thành backbone của một nền tảng
 
 ## Tổng quan Yêu cầu
 
-- Khai báo một entity một lần (fields, list views, workflow) và có được CRUD, list/filter/sort, permission enforcement, và workflow behavior cho nó — không cần boilerplate route/handler/repository theo từng entity.
-- Mọi business record đều được tenant-scoped; không một query, read, hay write nào có thể vượt qua ranh giới tenant.
-- Kiểm soát truy cập ở cấp field và record được điều khiển bởi metadata/policy, không hardcode theo từng entity.
-- Đảm bảo event delivery đáng tin cậy cho các consumer phía sau (workflow transitions, record changes) mà không mất event khi message broker tạm thời không khả dụng.
-- `docs/roadmap.md` theo dõi chi tiết quá trình xây dựng theo từng pha; tài liệu này mô tả kiến trúc của những gì đã thực sự được xây dựng, không phải một mục tiêu chưa được triển khai.
+Nhóm theo stakeholder (bảng "Các bên liên quan" bên dưới) — mỗi gạch đầu dòng là một yêu cầu
+chức năng **đã thực sự được đáp ứng** bởi kiến trúc hiện tại, không phải một backlog hay mục
+tiêu tương lai (đó là việc của `docs/roadmap.md`/`docs/vision.md`).
+
+**Entity Author (developer)**
+- Khai báo một entity một lần (fields, list views, workflow) trong một Rust module duy nhất —
+  không viết route/handler/repository riêng cho từng entity.
+- Metadata sai (field trùng tên, list view tham chiếu field không tồn tại, workflow shape hỏng)
+  phải bị chặn ngay lúc boot, không phải khi request đầu tiên chạm vào entity đó.
+
+**End User**
+- List/filter/sort/full-text-search trên mọi entity, giới hạn đúng bằng field mà entity đó khai
+  báo là filterable/sortable/searchable trong metadata — không phải toán tử SQL tuỳ ý từ client.
+- Thực hiện workflow transition có guard — chỉ thấy transition nào thật sự khả dụng ở state hiện
+  tại (`capabilities.transitions`), không phải đoán/thử rồi nhận lỗi.
+- Optimistic locking trên mọi update — không bao giờ bị ghi đè âm thầm bởi một write đồng thời
+  khác (`409 version_conflict` thay vì mất dữ liệu trong im lặng).
+
+**Admin**
+- Gán/thu hồi role cho user trong tenant của mình, có hiệu lực ngay ở request tiếp theo (role
+  luôn được tra mới, không cache trên JWT).
+- Tạo policy RBAC/ABAC ở 3 mức (entity/field/record) qua API, không cần deploy lại code.
+- Lên lịch job định kỳ (cron) gọi ngược vào chính platform hoặc một webhook ngoài, qua metadata
+  chứ không phải một cron entry hard-code trong binary.
+
+**Operator**
+- Event (workflow transition, record thay đổi) phải tới được consumer phía sau kể cả khi
+  RabbitMQ tạm thời down — không mất event, không chặn API availability.
+- Server phải graceful-degrade (log cảnh báo, tiếp tục chạy) khi một phần hạ tầng gặp sự cố lúc
+  boot (vd: DB không sẵn sàng cho index reconcile/drift check), không crash toàn bộ tiến trình.
+
+Yêu cầu phi chức năng (non-functional) không lặp lại ở đây để tránh hai nguồn sự thật — xem
+[10. Quality Requirements](10-quality.md) (quality scenario cụ thể, kiểm chứng được) và
+[02. Architecture Constraints](02-constraints.md) (ràng buộc kỹ thuật/tổ chức). `docs/roadmap.md`
+theo dõi chi tiết quá trình xây dựng theo từng pha; tài liệu này mô tả kiến trúc của những gì đã
+thực sự được xây dựng.
 
 ## Các bên liên quan
 
@@ -24,7 +55,7 @@ Metap được thiết kế để trở thành backbone của một nền tảng
 |---|---|
 | End User | Sử dụng một business app được xây dựng trên Metap — records, lists, workflow actions |
 | Admin | Quản lý việc gán role và các permission policy cho tenant của mình |
-| Entity Author (developer) | Thêm một business entity mới bằng cách viết một entity-definition Rust module (xem `apps/crm-server/src/customer_entity.rs` để biết pattern) — cần metadata contract dễ dự đoán và được validate lúc boot |
+| Entity Author (developer) | Thêm một business entity mới bằng cách viết một entity-definition Rust module (xem `apps/crm-server/src/entities/customer_entity.rs` để biết pattern) — cần metadata contract dễ dự đoán và được validate lúc boot |
 | Operator | Vận hành API server (`apps/crm-server`), outbox publisher worker (`outbox-publisher`), PostgreSQL, và RabbitMQ — cần khả năng graceful degradation khi xảy ra sự cố một phần |
 
 ## Mục tiêu Chất lượng (3 mục tiêu hàng đầu, chi tiết tại [10. Quality Requirements](10-quality.md))
