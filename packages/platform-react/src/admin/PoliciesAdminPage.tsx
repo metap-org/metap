@@ -16,18 +16,29 @@ import {
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../api/client";
 import { ApiErrorMessage } from "../api/ApiErrorMessage";
+import { useEntities } from "../metadata/useEntities";
+import { useEntity } from "../metadata/useEntity";
 import { useAdminPolicies, useCreateAdminPolicy, useDeleteAdminPolicy } from "./adminApi";
+
+const ACTIONS = ["read", "create", "update", "delete", "write"];
+const NO_FIELD = "";
 
 export function PoliciesAdminPage() {
   const { t } = useTranslation();
   const { data: policies, isLoading, error, refetch } = useAdminPolicies();
+  const { data: entities } = useEntities();
   const createPolicy = useCreateAdminPolicy();
   const deletePolicy = useDeleteAdminPolicy();
 
   const [entity, setEntity] = useState("");
-  const [action, setAction] = useState("");
+  const [action, setAction] = useState<string>(ACTIONS[0]!);
   const [roles, setRoles] = useState("");
-  const [field, setField] = useState("");
+  const [field, setField] = useState(NO_FIELD);
+  const { data: selectedEntity } = useEntity(entity);
+  const fieldOptions = [
+    { value: NO_FIELD, label: t("admin.policies.fieldNone") },
+    ...(selectedEntity?.fields.map((f) => ({ value: f.name, label: f.label })) ?? []),
+  ];
   const [subject, setSubject] = useState<string>("context");
   const [conditionText, setConditionText] = useState("");
   const [conditionError, setConditionError] = useState<string | null>(null);
@@ -58,9 +69,9 @@ export function PoliciesAdminPage() {
         condition,
       });
       setEntity("");
-      setAction("");
+      setAction(ACTIONS[0]!);
       setRoles("");
-      setField("");
+      setField(NO_FIELD);
       setConditionText("");
       await refetch();
     } catch {
@@ -95,15 +106,23 @@ export function PoliciesAdminPage() {
               : t("common.somethingWentWrong")}
           </Alert>
         ) : null}
-        <TextInput
+        <Select
           label={t("admin.policies.entity")}
-          value={entity}
-          onChange={(event) => setEntity(event.currentTarget.value)}
+          data={(entities ?? []).map((e) => ({ value: e.name, label: e.label }))}
+          value={entity || null}
+          onChange={(value) => {
+            setEntity(value ?? "");
+            setField(NO_FIELD);
+          }}
+          searchable
+          placeholder={t("admin.policies.entityPlaceholder")}
         />
-        <TextInput
+        <Select
           label={t("admin.policies.action")}
+          data={ACTIONS}
           value={action}
-          onChange={(event) => setAction(event.currentTarget.value)}
+          onChange={(value) => setAction(value ?? ACTIONS[0]!)}
+          allowDeselect={false}
         />
         <TextInput
           label={t("admin.users.rolesLabel")}
@@ -111,11 +130,14 @@ export function PoliciesAdminPage() {
           value={roles}
           onChange={(event) => setRoles(event.currentTarget.value)}
         />
-        <TextInput
+        <Select
           label={t("admin.policies.field")}
           description={t("admin.policies.fieldDescription")}
+          data={fieldOptions}
           value={field}
-          onChange={(event) => setField(event.currentTarget.value)}
+          disabled={entity.length === 0}
+          onChange={(value) => setField(value ?? NO_FIELD)}
+          allowDeselect={false}
         />
         <Select
           label={t("admin.policies.subject")}
