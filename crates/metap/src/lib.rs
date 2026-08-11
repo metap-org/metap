@@ -12,6 +12,7 @@ pub use metap_crud as crud;
 pub use metap_http as http;
 pub use metap_infra as infra;
 pub use metap_lowcode as lowcode;
+pub use metap_lowcode_http as lowcode_http;
 pub use metap_metadata as metadata;
 pub use metap_peripherals as peripherals;
 pub use metap_permission as permission;

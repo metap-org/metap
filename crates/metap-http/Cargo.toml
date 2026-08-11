@@ -7,7 +7,6 @@ edition.workspace = true
 metap-cron = { path = "../metap-cron" }
 metap-crud = { path = "../metap-crud" }
 metap-infra = { path = "../metap-infra" }
-metap-lowcode = { path = "../metap-lowcode" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-metadata = { path = "../metap-metadata" }
 metap-permission = { path = "../metap-permission" }

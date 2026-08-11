@@ -42,7 +42,15 @@ use request_id::RequestIds;
 pub use auth::{AdminContext, AuthContext};
 pub use state::AppState;
 
-pub fn build_router(state: AppState, cors_origins: &[String]) -> Router {
+/// `extra_routes` is the extension point for optional platform capabilities that are not
+/// core — `metap-lowcode-http`'s admin API is the first (only) one today, merged in by
+/// `apps/crm-server/src/main.rs` as `metap_lowcode_http::router()`, never by this crate
+/// itself: `metap-http` has zero dependency on `metap-lowcode`/`metap-lowcode-http`, so a
+/// binary that doesn't want the low-code control plane can pass `Router::new()` here and
+/// never compile that crate in. Merged *before* the layers below so `extra_routes` gets the
+/// exact same CORS/rate-limit/tracing/security-header treatment as every core route — a
+/// caller merging it in *after* `build_router` returns would bypass all of that.
+pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Router<AppState>) -> Router {
     let cors = if cors_origins.is_empty() {
         CorsLayer::new()
     } else {
@@ -131,8 +139,8 @@ pub fn build_router(state: AppState, cors_origins: &[String]) -> Router {
         .merge(routes::admin::router())
         .merge(routes::auth::router())
         .merge(routes::cron::router())
-        .merge(routes::lowcode::router())
         .merge(routes::preferences::router())
+        .merge(extra_routes)
         .layer(cors)
         .layer(rate_limit)
         .layer(middleware::from_fn(request_context::request_context))
