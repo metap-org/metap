@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useApiMutation } from "../api/useApiMutation";
 import { useApiQuery } from "../api/useApiQuery";
 import { useAuth } from "../auth/AuthContext";
-import { apiFetch } from "../api/client";
+import { apiFetch, ApiError } from "../api/client";
 
 export type AdminUser = { userId: string; roles: string[] };
 
@@ -46,6 +46,32 @@ export type CronJobRun = {
   error: string | null;
   responseSummary: unknown;
   createdAt: string;
+};
+
+/** Matches `crates/metap-metadata/src/entity.rs`'s `EntityField`/`EntityListView` wire shape
+ * loosely (`unknown[]`, not a typed mirror) — the low-code admin page edits these as raw JSON,
+ * same as `PoliciesAdminPage`'s `PolicyCondition` textarea, so this crate doesn't need to keep
+ * a second copy of the field-shape type in sync by hand. */
+export type LowCodeEntityDefinition = {
+  name: string;
+  label: string;
+  fields: unknown[];
+  listViews: unknown[];
+};
+
+export type LowCodeEntitiesList = { published: string[]; drafts: string[] };
+
+export type LowCodePublishedVersion = {
+  versionNumber: number;
+  definition: LowCodeEntityDefinition;
+  publishedAt: string;
+  restoredFromVersion: number | null;
+};
+
+export type LowCodeVersionSummary = {
+  versionNumber: number;
+  publishedAt: string;
+  restoredFromVersion: number | null;
 };
 
 // --- Users ---
@@ -177,4 +203,81 @@ export function useAdminCronJobActions() {
   }
 
   return { toggleEnabled, deleteJob };
+}
+
+// --- Low-code entities (`docs/roadmap.md` Phase 11 / Phase A) ---
+
+export function useLowCodeEntities() {
+  return useApiQuery<{ data: LowCodeEntitiesList }, LowCodeEntitiesList>(
+    ["admin", "lowcode", "entities"],
+    "/admin/lowcode/entities",
+    (response) => response.data,
+  );
+}
+
+export function useLowCodeVersions(name: string | null) {
+  return useApiQuery<{ data: LowCodeVersionSummary[] }, LowCodeVersionSummary[]>(
+    ["admin", "lowcode", name, "versions"],
+    `/admin/lowcode/entities/${name}/versions`,
+    (response) => response.data,
+    name !== null,
+  );
+}
+
+/** Every low-code action is scoped to a specific entity name — none of them fit
+ * `useApiMutation`'s fixed-path shape, same reasoning as `useAdminRoleActions`/
+ * `useAdminCronJobActions`. */
+export function useLowCodeActions() {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+
+  async function getDraft(name: string): Promise<LowCodeEntityDefinition | null> {
+    try {
+      const result = await apiFetch<{ data: LowCodeEntityDefinition }>(
+        `/admin/lowcode/entities/${name}/draft`,
+        token,
+      );
+      return result.data;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async function saveDraft(
+    name: string,
+    body: { label: string; fields: unknown[]; listViews: unknown[] },
+  ) {
+    const result = await apiFetch<{ data: LowCodeEntityDefinition }>(
+      `/admin/lowcode/entities/${name}/draft`,
+      token,
+      { method: "PUT", body: JSON.stringify(body) },
+    );
+    await queryClient.invalidateQueries({ queryKey: ["admin", "lowcode", "entities"] });
+    return result.data;
+  }
+
+  async function publish(name: string) {
+    const result = await apiFetch<{ data: { versionNumber: number } }>(
+      `/admin/lowcode/entities/${name}/publish`,
+      token,
+      { method: "POST" },
+    );
+    await queryClient.invalidateQueries({ queryKey: ["admin", "lowcode"] });
+    return result.data;
+  }
+
+  async function rollback(name: string, toVersionNumber: number) {
+    const result = await apiFetch<{ data: { versionNumber: number } }>(
+      `/admin/lowcode/entities/${name}/rollback`,
+      token,
+      { method: "POST", body: JSON.stringify({ toVersionNumber }) },
+    );
+    await queryClient.invalidateQueries({ queryKey: ["admin", "lowcode"] });
+    return result.data;
+  }
+
+  return { getDraft, saveDraft, publish, rollback };
 }
