@@ -151,3 +151,31 @@ discipline hiện tại (`docs/architectures/02-constraints.md`'s "Tiến hóa t
   đâu. Chỉ nên viết thành spec khi Data Model Strategy Step 3
   (`docs/architectures/05-building-blocks.md`) thực sự được kích hoạt bởi một nhu cầu hiệu năng
   đo được của một entity cụ thể, không phải chuẩn bị sẵn trước.
+- **Computed/derived field** (field tính từ field khác *cùng một record*, ví dụ
+  `display_name = first_name + " " + last_name`) — mở rộng tự nhiên từ `searchable`/`sortable`
+  đã có sẵn trên `EntityField` (`crates/metap-metadata/src/entity.rs`): rule đề xuất là field
+  computed mặc định không searchable/sortable trừ khi được materialize. Hai điểm cần chốt
+  trước khi viết spec: (1) recompute phải chạy trong pipeline có sẵn của `CrudService`
+  (validate → recompute → write), không phải một layer riêng, để REST/webhook/cron không tính
+  ra kết quả khác nhau; (2) `depends_on` nên giới hạn trong cùng record — cho phép phụ thuộc
+  record khác biến việc này thành bài toán materialized view/CQRS, không còn đơn giản là
+  "recompute on write" nữa. Trigger: một entity thật sự cần field dạng này để search/sort.
+- **Schema versioning cho entity** (metadata và record cùng mang `schema_version`, physical
+  mapping field → JSONB path đổi theo version, ví dụ `v2: data->>'total'` vs.
+  `v3: data->'pricing'->>'total'`) — đối lập trực tiếp với cách `QueryPlanner` hoạt động hôm
+  nay: `field_expression()`/`sort_field_expression()`
+  (`crates/metap-query/src/condition_to_sql.rs`, `crates/metap-query/src/query_planner.rs`)
+  map thẳng một `field_name` sang một path JSONB cố định duy nhất, không biết đến version. Cần
+  quyết định trước cách filter/sort xử lý khi nhiều record cùng entity nhưng khác
+  `schema_version` nằm trong cùng một query. Cũng cần đặt tên khác cột `version` đã có sẵn
+  trong `records` (`crates/migrations/0000_*.sql`, đang dùng cho optimistic locking) để tránh
+  đụng độ tên. Trigger: một entity thật sự cần đổi field shape mà không muốn migrate toàn bộ
+  record cũ ngay lập tức.
+- **Entity variant kiểu polymorphic/discriminated-union** (một entity logic chứa nhiều "hình
+  dạng" record khác nhau trong cùng một logical collection, kiểu MongoDB) — rủi ro cao nhất
+  trong ba ý mới này, vì `EntityDefinition.fields` hôm nay là một danh sách phẳng dùng chung
+  cho validation, `list_views`/filters, OpenAPI generator, và codegen type phía FE
+  (`packages/platform-react/src/metadata/generated-types.ts`); thêm variant nghĩa là lồng thêm
+  một tầng `variant → fields` ở tất cả các chỗ đó, không chỉ thêm một cột `variant` vào
+  `records`. Trigger: một entity thật sự cần nhiều schema khác nhau trong cùng logical
+  collection — chưa entity nào trong repo hôm nay cần điều này.

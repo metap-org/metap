@@ -8,6 +8,7 @@ members = [
   "crates/metap",
   "crates/metap-cron",
   "crates/metap-crud",
+  "crates/metap-lowcode",
   "crates/metap-http",
   "crates/metap-infra",
   "crates/metap-metadata",

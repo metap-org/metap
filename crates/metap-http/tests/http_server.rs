@@ -7,6 +7,7 @@
 use std::process::Command;
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use jsonwebtoken::{encode, DecodingKey, EncodingKey, Header};
 use metap_http::{build_router, AppState};
 use metap_metadata::{
@@ -149,11 +150,13 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
 
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
+    let registry = Arc::new(registry);
     let permissions = PermissionService::new(Box::new(metap_permission::PostgresPolicyStore::new(pool.clone())));
     let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
     let state = AppState::new(
         pool.clone(),
-        Arc::new(registry),
+        registry.clone(),
+        Arc::new(ArcSwap::new(registry)),
         Arc::new(permissions),
         decoding_key,
         private_pem.clone(),
@@ -295,11 +298,19 @@ async fn rate_limit_returns_429_once_the_burst_is_exhausted() {
 
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
+    let registry = Arc::new(registry);
     let permissions = PermissionService::new(Box::new(metap_permission::PostgresPolicyStore::new(pool.clone())));
     let keydir = tempdir();
     let (private_pem, public_pem) = openssl_genrsa(keydir.path());
     let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
-    let state = AppState::new(pool, Arc::new(registry), Arc::new(permissions), decoding_key, private_pem);
+    let state = AppState::new(
+        pool,
+        registry.clone(),
+        Arc::new(ArcSwap::new(registry)),
+        Arc::new(permissions),
+        decoding_key,
+        private_pem,
+    );
     let router = build_router(state, &[]);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

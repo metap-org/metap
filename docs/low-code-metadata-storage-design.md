@@ -1,8 +1,15 @@
-Status: được viết ngày 2026-08-02, vẫn là spec duy nhất cho Phase 11 / Phase A sub-project 1
-(`docs/roadmap.md`), chưa được triển khai (không có plan, không có code). Được chuyển từ
+Status: được viết ngày 2026-08-02. **Đã triển khai (2026-08-11), retarget sang Rust** — xem
+`docs/roadmap.md` Phase 11 cho tình trạng thật/live-verify, và
+`crates/metap-lowcode` (data model + service) cùng
+`crates/metap-http/src/routes/lowcode.rs` (admin API, sub-project 4) cho code thật. Ba quyết
+định phạm vi đã chốt bên dưới đều được giữ nguyên trong bản Rust; điểm khác duy nhất so với
+spec: sub-project 2 (runtime loader) đi xa hơn — hot-reload thật qua `ArcSwap`, không chỉ
+load lúc boot — và sub-project 3 (publish validation) được gộp thẳng vào
+`metap_lowcode::publish`/`rollback` thay vì tách riêng. File này giữ nguyên làm tài liệu lịch
+sử/tham khảo thiết kế gốc, không cập nhật theo code nữa. Được chuyển từ
 `docs/superpowers/specs/` vào ngày 2026-08-07 khi thư mục đó bị xóa (xem
 `docs/architectures/09-adr.md`) — đây là mục duy nhất trong `docs/superpowers/` chưa được
-ship, nên nội dung của nó được giữ lại ở đây thay vì bị bỏ đi.
+ship tại thời điểm đó, nên nội dung của nó được giữ lại ở đây thay vì bị bỏ đi.
 
 **Có trước quyết định ngày 2026-08-07 về việc chuyển `packages/core` sang Rust**
 (xem [09. Architecture Decisions](architectures/09-adr.md)). Thiết kế bên dưới (data model, service contract của

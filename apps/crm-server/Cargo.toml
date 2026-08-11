@@ -11,6 +11,7 @@ path = "src/main.rs"
 metap = { path = "../../crates/metap" }
 notification-worker = { package = "metap-notification-worker", path = "../../crates/notification-worker" }
 anyhow = "1"
+arc-swap = "1"
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tower-http = { version = "0.6", features = ["fs"] }

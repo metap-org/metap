@@ -135,7 +135,7 @@ async fn full_lifecycle_create_get_update_transition_delete() {
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
     let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
-    let crud = CrudService::new(pool.clone(), std::sync::Arc::new(registry), std::sync::Arc::new(permissions));
+    let crud = CrudService::new(pool.clone(), std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))), std::sync::Arc::new(permissions));
 
     // create
     let mut payload = JsonObject::new();
@@ -271,7 +271,7 @@ async fn list_returns_created_records_scoped_to_tenant() {
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
     let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
-    let crud = CrudService::new(pool.clone(), std::sync::Arc::new(registry), std::sync::Arc::new(permissions));
+    let crud = CrudService::new(pool.clone(), std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))), std::sync::Arc::new(permissions));
 
     for name in ["a", "b", "c"] {
         let mut payload = JsonObject::new();
@@ -320,7 +320,7 @@ async fn non_admin_field_write_policy_is_enforced_through_create() {
         .unwrap();
 
     let permissions = PermissionService::new(Box::new(store));
-    let crud = CrudService::new(pool.clone(), std::sync::Arc::new(registry), std::sync::Arc::new(permissions));
+    let crud = CrudService::new(pool.clone(), std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))), std::sync::Arc::new(permissions));
 
     let ctx = RequestContext {
         tenant_id: tenant_id.to_string(),
