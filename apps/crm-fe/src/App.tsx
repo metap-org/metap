@@ -13,6 +13,7 @@ import {
   UsersAdminPage,
   PoliciesAdminPage,
   CronJobsAdminPage,
+  LowCodeEntitiesAdminPage,
 } from "@metap/platform-react";
 import type { ShellNavItem } from "@metap/platform-react";
 import { LoginPage } from "./demo/LoginPage";
@@ -31,6 +32,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
     { to: "/admin/users", label: t("shell.navUsers"), roles: ["admin"] },
     { to: "/admin/policies", label: t("shell.navPolicies"), roles: ["admin"] },
     { to: "/admin/cron-jobs", label: t("shell.navCronJobs"), roles: ["admin"] },
+    { to: "/admin/lowcode", label: t("shell.navLowCode"), roles: ["admin"] },
   ];
 
   return (
@@ -174,6 +176,16 @@ export default function App() {
               <RequireAuth>
                 <RequireAdmin>
                   <CronJobsAdminPage />
+                </RequireAdmin>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/lowcode"
+            element={
+              <RequireAuth>
+                <RequireAdmin>
+                  <LowCodeEntitiesAdminPage />
                 </RequireAdmin>
               </RequireAuth>
             }

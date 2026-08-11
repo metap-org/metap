@@ -1,5 +1,6 @@
 export * from "./admin/adminApi";
 export * from "./admin/CronJobsAdminPage";
+export * from "./admin/LowCodeEntitiesAdminPage";
 export * from "./admin/PoliciesAdminPage";
 export * from "./admin/UsersAdminPage";
 export * from "./api/client";
