@@ -131,6 +131,7 @@ pub fn build_router(state: AppState, cors_origins: &[String]) -> Router {
         .merge(routes::admin::router())
         .merge(routes::auth::router())
         .merge(routes::cron::router())
+        .merge(routes::lowcode::router())
         .merge(routes::preferences::router())
         .layer(cors)
         .layer(rate_limit)

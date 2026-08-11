@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use metap_metadata::{EntityDefinition, MetadataRegistry};
 use metap_permission::{EntityAction, PermissionDecision, PermissionService, PermissionSnapshot, RequestContext};
 use metap_query::{apply_params, encode_cursor, plan_list, Cursor, InvalidCursorError, ListInput, SortDir};
@@ -29,19 +30,30 @@ const RECORD_COLUMNS: &str = "id, entity, code, status, data, version, created_a
 /// 8) needs to share the same registry/permission service across route handlers (direct
 /// `/metadata/*` routes, the auth extractor's role lookups) without cloning them, and
 /// `Arc<T>: Clone + Send + Sync` is exactly what a multi-handler async server needs.
+///
+/// `metadata` is an `ArcSwap`, not a plain `Arc<MetadataRegistry>` (`docs/roadmap.md` Phase
+/// 11 / Phase A sub-project 2) — a DB-authored entity publish/rollback swaps in a new merged
+/// registry while the server keeps running, no restart. Every method here loads a snapshot
+/// once, synchronously, near the top (via `get_entity`, or directly in `list`) and uses that
+/// same snapshot for the rest of the call — a request is never torn between two registry
+/// versions even if a publish happens mid-request.
 pub struct CrudService {
     pool: PgPool,
-    metadata: Arc<MetadataRegistry>,
+    metadata: Arc<ArcSwap<MetadataRegistry>>,
     permissions: Arc<PermissionService>,
 }
 
 impl CrudService {
-    pub fn new(pool: PgPool, metadata: Arc<MetadataRegistry>, permissions: Arc<PermissionService>) -> Self {
+    pub fn new(
+        pool: PgPool,
+        metadata: Arc<ArcSwap<MetadataRegistry>>,
+        permissions: Arc<PermissionService>,
+    ) -> Self {
         Self { pool, metadata, permissions }
     }
 
     fn get_entity(&self, entity_name: &str) -> Option<EntityDefinition> {
-        self.metadata.get_entity(entity_name).cloned()
+        self.metadata.load().get_entity(entity_name).cloned()
     }
 
     pub async fn list(
@@ -64,7 +76,8 @@ impl CrudService {
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
         let record_policies = snapshot.get_record_policies(EntityAction::Read);
 
-        let planned = match plan_list(&self.metadata, &self.permissions, &entity.name, input, context, record_policies) {
+        let metadata = self.metadata.load();
+        let planned = match plan_list(&metadata, &self.permissions, &entity.name, input, context, record_policies) {
             Ok(p) => p,
             Err(e) => {
                 if e.downcast_ref::<InvalidCursorError>().is_some() {

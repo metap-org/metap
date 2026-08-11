@@ -7,6 +7,7 @@ edition.workspace = true
 metap-crud = { path = "../metap-crud" }
 metap-http = { path = "../metap-http" }
 metap-infra = { path = "../metap-infra" }
+metap-lowcode = { path = "../metap-lowcode" }
 metap-metadata = { path = "../metap-metadata" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-permission = { path = "../metap-permission" }

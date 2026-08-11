@@ -17,6 +17,7 @@ use entities::{customer_entity, inventory_movement_entity, journal_entry_entity,
 
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
 use metap::infra::{EventBus, RabbitEventBus};
 use metap::prelude::*;
@@ -30,17 +31,35 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("connecting to postgres...");
     let pool = connect_db(&config.database_url).await?;
 
-    let mut registry = MetadataRegistry::new();
-    registry.register(customer_entity::customer_entity())?;
-    registry.register(sales_order_entity::sales_order_entity())?;
-    registry.register(inventory_movement_entity::inventory_movement_entity())?;
-    registry.register(journal_entry_entity::journal_entry_entity())?;
-    registry.validate_references()?;
+    // Code-authored entities only — fixed for the process lifetime, never touched by a
+    // DB-authored publish/rollback (`docs/roadmap.md` Phase 11 / Phase A). Kept separate
+    // from the merged runtime registry below so `metap-http`'s admin routes can reject a
+    // DB-authored draft whose name collides with one of these, without themselves knowing
+    // any entity name.
+    let mut code_registry = MetadataRegistry::new();
+    code_registry.register(customer_entity::customer_entity())?;
+    code_registry.register(sales_order_entity::sales_order_entity())?;
+    code_registry.register(inventory_movement_entity::inventory_movement_entity())?;
+    code_registry.register(journal_entry_entity::journal_entry_entity())?;
+    code_registry.validate_references()?;
+    let metadata_base = Arc::new(code_registry);
 
-    let entities = registry.list_entities();
+    // DB-authored entities (`metap-lowcode`, Phase A sub-project 1/2) — every entity that
+    // has been published at least once, merged on top of the code-authored base. Empty on a
+    // fresh install; `routes/lowcode.rs`'s publish/rollback handlers rebuild and swap this
+    // same way at runtime, so a restart is never required to pick up a new publish.
+    let db_entities: Vec<_> = metap::lowcode::list_all_published(&pool)
+        .await?
+        .into_iter()
+        .map(|(_, def)| def.to_entity_definition())
+        .collect();
+    let runtime_registry = metadata_base.merge_with(db_entities)?;
+
+    let entities = runtime_registry.list_entities();
     check_metadata_drift(&pool, &entities).await;
     reconcile_indexes(&pool, &entities).await;
 
+    let metadata = Arc::new(ArcSwap::new(Arc::new(runtime_registry)));
     let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
 
     let public_key_pem = std::fs::read(&config.auth_jwt_public_key_path)
@@ -55,7 +74,8 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState::new(
         pool,
-        Arc::new(registry),
+        metadata_base,
+        metadata,
         Arc::new(permissions),
         decoding_key,
         private_key_pem,

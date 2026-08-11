@@ -44,7 +44,7 @@ impl From<MetadataValidationError> for RegistryError {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MetadataRegistry {
     entities: HashMap<String, EntityDefinition>,
 }
@@ -65,6 +65,19 @@ impl MetadataRegistry {
 
     pub fn get_entity(&self, name: &str) -> Option<&EntityDefinition> {
         self.entities.get(name)
+    }
+
+    /// Clones this registry and registers `extra` on top of it — used to merge a
+    /// code-authored base registry with entities loaded from another source (`metap-lowcode`'s
+    /// DB-authored entities) without either source knowing about the other. Fails the same way
+    /// `register` does: a duplicate name (against `self` or within `extra`) or a shape
+    /// validation failure aborts the whole merge rather than partially applying it.
+    pub fn merge_with(&self, extra: Vec<EntityDefinition>) -> Result<MetadataRegistry, RegistryError> {
+        let mut merged = MetadataRegistry { entities: self.entities.clone() };
+        for entity in extra {
+            merged.register(entity)?;
+        }
+        Ok(merged)
     }
 
     pub fn validate_references(&self) -> Result<(), MetadataValidationError> {
@@ -207,6 +220,30 @@ mod tests {
         registry.register(entity("test.widgets", vec![f])).unwrap();
         let err = registry.validate_references().unwrap_err();
         assert!(err.issues.iter().any(|i| i.contains("refDisplayField \"nickname\"")));
+    }
+
+    #[test]
+    fn merge_with_combines_entities_from_both_sources() {
+        let mut base = MetadataRegistry::new();
+        base.register(entity("crm.customers", vec![field("name", FieldKind::String)])).unwrap();
+
+        let merged = base
+            .merge_with(vec![entity("lowcode.demo", vec![field("title", FieldKind::String)])])
+            .unwrap();
+
+        assert!(merged.get_entity("crm.customers").is_some());
+        assert!(merged.get_entity("lowcode.demo").is_some());
+        // The base registry itself is untouched by the merge.
+        assert!(base.get_entity("lowcode.demo").is_none());
+    }
+
+    #[test]
+    fn merge_with_rejects_name_collision_with_base() {
+        let mut base = MetadataRegistry::new();
+        base.register(entity("crm.customers", vec![])).unwrap();
+
+        let err = base.merge_with(vec![entity("crm.customers", vec![])]).unwrap_err();
+        assert!(matches!(err, RegistryError::AlreadyRegistered(_)));
     }
 
     #[test]

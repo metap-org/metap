@@ -14,12 +14,12 @@ use crate::error::service_error_response;
 use crate::state::AppState;
 
 async fn openapi_json(State(state): State<AppState>) -> Response {
-    let entities = state.metadata.list_entities();
+    let entities = state.metadata.load().list_entities();
     Json(metap_metadata::generate_openapi_document(&entities)).into_response()
 }
 
 async fn list_entities(State(state): State<AppState>, AuthContext(_context): AuthContext) -> Response {
-    Json(json!({ "data": state.metadata.list_entities() })).into_response()
+    Json(json!({ "data": state.metadata.load().list_entities() })).into_response()
 }
 
 async fn get_entity(
@@ -27,7 +27,7 @@ async fn get_entity(
     Path(entity): Path<String>,
     AuthContext(_context): AuthContext,
 ) -> Response {
-    match state.metadata.get_entity_metadata(&entity) {
+    match state.metadata.load().get_entity_metadata(&entity) {
         Some(summary) => Json(json!({ "data": summary })).into_response(),
         None => service_error_response(404, "entity_not_found", None, None),
     }

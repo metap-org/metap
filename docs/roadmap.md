@@ -428,13 +428,20 @@ Mục tiêu:
 
 ## Phase 11: Low-code Platform Backbone Architecture
 
-**Trạng thái: Đang làm.** Định nghĩa kiến trúc cho việc dùng Metap làm backbone của một low-code platform (ERP, CRM, và hơn thế), không chỉ là một ERP core đơn mục đích. Đây là một phase design/architecture, không phải implementation — output của nó là một spec, sẽ được chia nhỏ thành các implementation phase tiếp theo sau khi viết xong.
+**Trạng thái: Phase A (Metadata Control Plane Foundation) đã xong, retarget sang Rust — Phase B/C chưa bắt đầu.** Định nghĩa kiến trúc cho việc dùng Metap làm backbone của một low-code platform (ERP, CRM, và hơn thế), không chỉ là một ERP core đơn mục đích.
 
 Mục tiêu:
 
 - ~~Định nghĩa cụ thể "low-code" nghĩa là gì với Metap~~ — **Đã xong, ở mức định hướng**, bởi `docs/vision.md` và `docs/low-code-platform-v1.md` (cả hai đều 2026-08-02): ai configure mọi thứ (operator, qua một metadata control plane, không sửa source code cho đường đi chuẩn), cái gì user-editable lúc runtime (metadata: entity/field/list view/workflow/policy) so với lúc deploy-time (chính execution engine — các service của `packages/core` vẫn là code, chỉ có metadata *input* của chúng mới được persist).
-- Reconcile điều này với thiết kế metadata-driven đã có sẵn (Phase 0-6) và việc split multi-service (Phase 9-10). — Mục "Ràng buộc kiến trúc" của `docs/low-code-platform-v1.md` đã nêu rõ nguyên tắc reconcile (tiến hóa authoring model, giữ nguyên execution engine); cụ thể hóa nó là phần việc còn lại của phase này.
-- Tạo ra một design spec trước khi viết bất kỳ implementation plan nào. — Đang làm. `docs/low-code-platform-v1.md` phân rã công việc thành 3 phase (A: Metadata Control Plane Foundation, B: Builder UI and Safe Runtime Rules, C: Platform Hardening); Phase A lại được phân rã tiếp thành 4 sub-project theo thứ tự, cái đầu tiên đã có spec viết sẵn: `docs/low-code-metadata-storage-design.md` (persisted metadata storage + draft/published versioning — global, chưa hỗ trợ workflow, `crm.customers` vẫn được author bằng code hiện tại). 3 sub-project còn lại của Phase A (runtime loader, publish validation pipeline, admin API) đã được đặt tên nhưng chưa có spec. Spec đó có trước Phase 12 bên dưới (quyết định Rust) và cần được retarget implementation từ TS sang Rust khi thực sự được build — xem ghi chú trạng thái riêng của nó.
+- Reconcile điều này với thiết kế metadata-driven đã có sẵn (Phase 0-6) và việc split multi-service (Phase 9-10). — Mục "Ràng buộc kiến trúc" của `docs/low-code-platform-v1.md` đã nêu rõ nguyên tắc reconcile (tiến hóa authoring model, giữ nguyên execution engine); Phase A dưới đây tuân theo đúng nguyên tắc đó (execution engine — `CrudService`/`QueryPlanner`/`PermissionService` — không đổi, chỉ nguồn metadata đổi).
+- ~~Tạo ra một design spec trước khi viết bất kỳ implementation plan nào~~ — **Đã xong** bởi `docs/low-code-metadata-storage-design.md` (viết cho TS, trước quyết định Rust).
+- **Phase A: Metadata Control Plane Foundation — Đã xong (2026-08-11), retarget từ spec TS sang Rust, cả 4 sub-project theo đúng thứ tự đã định:**
+  1. *Persisted metadata storage (draft/publish/rollback)* — crate mới `crates/metap-lowcode` (`LowCodeEntityDefinition` tái dùng `EntityField`/`EntityListView`/`compiler::validate` của `metap-metadata` thay vì một Zod schema song song), migration `crates/migrations/0010_low_code_entities.sql` (`low_code_entity_drafts`/`low_code_entity_versions`, đúng data model đã chốt trong spec). 10 test e2e trên Postgres thật (`crates/metap-lowcode/tests/store.rs`).
+  2. *Runtime loader* — **đi xa hơn spec gốc**: không chỉ load lúc boot mà hot-reload thật lúc runtime, không cần restart. `MetadataRegistry::merge_with` (mới, `crates/metap-metadata/src/registry.rs`) gộp một base code-authored với các entity DB-authored; `AppState`/`CrudService` giữ registry trong một `ArcSwap` (`arc-swap` crate) thay vì `Arc<MetadataRegistry>` bất biến — mỗi request chụp một snapshot nhất quán, publish/rollback swap registry mới vào ngay khi request đó trả về.
+  3. *Publish validation pipeline* — gộp vào `metap_lowcode::publish`/`rollback` luôn (không tách riêng): chặn tên trùng với entity code-authored (điểm bị hoãn tường minh trong spec gốc vì thiếu registry access — giờ có, vì `metap-lowcode` phụ thuộc `metap-metadata`), và tái dùng `MetadataRegistry::validate_references()` có sẵn để bắt `refEntity` treo.
+  4. *Metadata admin API* — `crates/metap-http/src/routes/lowcode.rs`, `/admin/lowcode/entities/{name}/{draft,publish,rollback,published,versions}` + `GET /admin/lowcode/entities`, gate bởi `AdminContext`, global (không theo tenant, đúng quyết định đã chốt).
+  
+  Đã verify live trên Postgres/RabbitMQ thật, không chỉ `cargo test`: draft → publish → `GET /metadata/entities/lowcode.demo` trả về đúng ngay trên **cùng một server đang chạy, không restart** → `POST /api/lowcode.demo` tạo record thật qua đúng `CrudService`/`QueryPlanner` như một entity code-authored → publish v2 → rollback về v1 tạo version 3 (append-only, đúng thiết kế) → registry phản ánh lại ngay → thử publish tên `crm.customers` bị chặn `409 lowcode_name_reserved`. Chưa làm (ngoài scope Phase A, thuộc Phase B): Builder UI, `crm.customers` vẫn code-authored (đúng quyết định — DB-authored chỉ chứng minh trên entity mới).
 
 ## Phase 12: Rust Core Migration
 
@@ -542,10 +549,11 @@ Liên quan đến: Phase 13 (admin UI cho cron — được đóng bởi admin k
 
 ## Định hướng chưa lên phase (chưa có trigger)
 
-Bốn ý nảy sinh từ thảo luận kiến trúc, hợp lý về sản phẩm nhưng chưa có trigger cụ thể nên chưa
+Bảy ý nảy sinh từ thảo luận kiến trúc, hợp lý về sản phẩm nhưng chưa có trigger cụ thể nên chưa
 được lên thành phase: workflow hai chế độ (in-process + cross-module), workflow
 visualize/hướng BPM nhẹ, Tiny deployment profile (single binary, không RabbitMQ), migration
-path generic-table-sang-bảng-riêng. Chi tiết và lý do chưa lên phase ở
+path generic-table-sang-bảng-riêng, computed/derived field, schema versioning cho entity, và
+entity variant kiểu polymorphic/discriminated-union. Chi tiết và lý do chưa lên phase ở
 `docs/team-charter.md`'s "Định hướng đang ghi nhận, chưa có trigger". Không bắt đầu việc nào
 trong số này mà chưa có feature brief (`docs/features/`) nêu trigger cụ thể.
 
