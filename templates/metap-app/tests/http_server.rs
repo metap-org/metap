@@ -9,6 +9,8 @@
 use std::process::Command;
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
+use axum::Router;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use metap::prelude::*;
 use serde::Serialize;
@@ -109,10 +111,18 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
 
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
+    let registry = Arc::new(registry);
     let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
     let decoding_key = jsonwebtoken::DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
-    let state = AppState::new(pool.clone(), Arc::new(registry), Arc::new(permissions), decoding_key);
-    let router = build_router(state, &[]);
+    let state = AppState::new(
+        pool.clone(),
+        registry.clone(),
+        Arc::new(ArcSwap::new(registry)),
+        Arc::new(permissions),
+        decoding_key,
+        private_pem.clone(),
+    );
+    let router = build_router(state, &[], Router::new());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

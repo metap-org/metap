@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-import { Fragment, memo, useCallback, useMemo, useState } from "react";
+import { Fragment, memo, useCallback, useMemo, useRef, useState } from "react";
 import {
   ActionIcon,
   Alert,
@@ -12,7 +12,9 @@ import {
   NumberInput,
   Select,
   Stack,
+  Switch,
   Table,
+  TagsInput,
   Text,
   TextInput,
   Title,
@@ -48,7 +50,12 @@ type FieldRow = {
   required: boolean;
   searchable: boolean;
   sortable: boolean;
-  enumValues: string; // comma-separated — only meaningful when kind === "enum"
+  // A real string[], not a comma-joined string — only meaningful when kind === "enum". A
+  // comma-joined representation would silently corrupt any enum value that itself contains a
+  // comma the next time it round-trips through save/load (split(",") can't tell "a value with
+  // a comma" apart from two separate values); `TagsInput` below edits this array directly, no
+  // join/split needed.
+  enumValues: string[];
   refEntity: string; // only meaningful when kind === "reference"
 };
 
@@ -60,7 +67,7 @@ function emptyFieldRow(): FieldRow {
     required: false,
     searchable: false,
     sortable: false,
-    enumValues: "",
+    enumValues: [],
     refEntity: "",
   };
 }
@@ -79,10 +86,7 @@ function fieldRowToWire(row: FieldRow): Record<string, unknown> {
   if (row.searchable) wire.searchable = true;
   if (row.sortable) wire.sortable = true;
   if (row.kind === "enum") {
-    wire.enumValues = row.enumValues
-      .split(",")
-      .map((v) => v.trim())
-      .filter(Boolean);
+    wire.enumValues = row.enumValues;
   }
   if (row.kind === "reference" && row.refEntity.trim().length > 0) {
     wire.refEntity = row.refEntity.trim();
@@ -99,7 +103,9 @@ function wireToFieldRow(field: unknown): FieldRow {
     required: f.required === true,
     searchable: f.searchable === true,
     sortable: f.sortable === true,
-    enumValues: Array.isArray(f.enumValues) ? f.enumValues.join(", ") : "",
+    enumValues: Array.isArray(f.enumValues)
+      ? f.enumValues.filter((v): v is string => typeof v === "string")
+      : [],
     refEntity: typeof f.refEntity === "string" ? f.refEntity : "",
   };
 }
@@ -170,11 +176,11 @@ const FieldRowEditor = memo(function FieldRowEditor({
       </Table.Td>
       <Table.Td>
         {row.kind === "enum" ? (
-          <TextInput
+          <TagsInput
             size="xs"
             placeholder={t("admin.lowcode.enumValuesPlaceholder")}
             value={row.enumValues}
-            onChange={(e) => onUpdate(index, { enumValues: e.currentTarget.value })}
+            onChange={(value) => onUpdate(index, { enumValues: value })}
           />
         ) : row.kind === "reference" ? (
           <TextInput
@@ -553,16 +559,22 @@ function LowCodeVersionHistory({
 export function LowCodeEntitiesAdminPage() {
   const { t } = useTranslation();
   const { data: entities, isLoading, error, refetch } = useLowCodeEntities();
-  const { getDraft, saveDraft, publish, rollback } = useLowCodeActions();
+  const { getDraft, saveDraft, publish, rollback, setEnabled } = useLowCodeActions();
 
   const [name, setName] = useState("");
   const [label, setLabel] = useState("");
   const [fields, setFields] = useState<FieldRow[]>([]);
   const [listViews, setListViews] = useState<ListViewRow[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
+  const [cleanupNote, setCleanupNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [rowError, setRowError] = useState<string | null>(null);
   const [expandedName, setExpandedName] = useState<string | null>(null);
+  // Bumped on every handleLoad call, checked when its getDraft() resolves — clicking Edit on
+  // two different entities in quick succession fires two overlapping requests, and without
+  // this a slower, stale response could land *after* a faster, newer one and silently
+  // overwrite the form with the wrong entity's data.
+  const loadRequestId = useRef(0);
 
   function resetForm() {
     setName("");
@@ -576,9 +588,13 @@ export function LowCodeEntitiesAdminPage() {
     if (targetName.trim().length === 0) {
       return;
     }
+    const requestId = ++loadRequestId.current;
     setFormError(null);
     try {
       const draft = await getDraft(targetName.trim());
+      if (requestId !== loadRequestId.current) {
+        return; // a newer handleLoad call has since started — this response is stale
+      }
       if (draft) {
         setLabel(draft.label);
         setFields(draft.fields.map(wireToFieldRow));
@@ -589,12 +605,16 @@ export function LowCodeEntitiesAdminPage() {
         setListViews([]);
       }
     } catch (err) {
+      if (requestId !== loadRequestId.current) {
+        return;
+      }
       setFormError(err instanceof ApiError ? err.message : t("common.somethingWentWrong"));
     }
   }
 
   async function handleSaveDraft() {
     setFormError(null);
+    setCleanupNote(null);
 
     if (fields.some((f) => f.name.trim().length === 0 || f.label.trim().length === 0)) {
       setFormError(t("admin.lowcode.fieldNameLabelRequired"));
@@ -605,12 +625,44 @@ export function LowCodeEntitiesAdminPage() {
       return;
     }
 
+    // Renaming a field (or removing it) can leave a list view's fields/filters/sortField
+    // still pointing at the old name — `fieldNames` only tracks *current* field names, it
+    // doesn't get reconciled into `listViews` live. Sanitize right before save so the
+    // payload never references a field that no longer exists (the server would otherwise
+    // silently persist a broken list view), and update the form + tell the operator so the
+    // cleanup isn't invisible.
+    const validFieldNames = new Set(fieldNames);
+    let danglingReferencesRemoved = false;
+    const sanitizedListViews = listViews.map((v) => {
+      const cleanedFields = v.fields.filter((f) => validFieldNames.has(f));
+      const cleanedFilters = v.filters.filter((f) => validFieldNames.has(f));
+      const sortStillValid = v.sortField.trim().length === 0 || validFieldNames.has(v.sortField);
+      if (
+        cleanedFields.length !== v.fields.length ||
+        cleanedFilters.length !== v.filters.length ||
+        !sortStillValid
+      ) {
+        danglingReferencesRemoved = true;
+      }
+      return {
+        ...v,
+        fields: cleanedFields,
+        filters: cleanedFilters,
+        sortField: sortStillValid ? v.sortField : "",
+        sortDesc: sortStillValid ? v.sortDesc : false,
+      };
+    });
+    if (danglingReferencesRemoved) {
+      setListViews(sanitizedListViews);
+      setCleanupNote(t("admin.lowcode.listViewCleanupNote"));
+    }
+
     setSaving(true);
     try {
       await saveDraft(name.trim(), {
         label,
         fields: fields.map(fieldRowToWire),
-        listViews: listViews.map(listViewRowToWire),
+        listViews: sanitizedListViews.map(listViewRowToWire),
       });
       await refetch();
     } catch (err) {
@@ -650,9 +702,22 @@ export function LowCodeEntitiesAdminPage() {
     }
   }
 
-  const allNames = Array.from(
-    new Set([...(entities?.published ?? []), ...(entities?.drafts ?? [])]),
-  ).sort();
+  const entityRows = [...(entities?.entities ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  // Entity name is the storage key for both `low_code_entity_drafts` and
+  // `low_code_entity_versions` — there's no rename operation, changing it just creates a
+  // second, unrelated entity. Lock it once it matches something that already has a draft or a
+  // published version, so an operator editing an existing entity can't accidentally fork it
+  // by typing over the name field; "New" (resetForm) is the only way back to an editable name.
+  const nameIsLocked = entityRows.some((e) => e.name === name.trim());
+
+  async function handleToggleEnabled(entityName: string, enabled: boolean) {
+    setRowError(null);
+    try {
+      await setEnabled(entityName, enabled);
+    } catch (err) {
+      setRowError(err instanceof ApiError ? err.message : t("common.somethingWentWrong"));
+    }
+  }
 
   return (
     <Container py="xl">
@@ -663,12 +728,18 @@ export function LowCodeEntitiesAdminPage() {
       <Stack mb="xl" maw={860}>
         <Title order={4}>{t("admin.lowcode.editTitle")}</Title>
         {formError ? <Alert color="red">{formError}</Alert> : null}
+        {cleanupNote ? <Alert color="yellow">{cleanupNote}</Alert> : null}
         <Group align="flex-end">
           <TextInput
             style={{ flex: 1 }}
             label={t("admin.lowcode.entityName")}
-            description={t("admin.lowcode.entityNameDescription")}
+            description={
+              nameIsLocked
+                ? t("admin.lowcode.entityNameLockedDescription")
+                : t("admin.lowcode.entityNameDescription")
+            }
             value={name}
+            disabled={nameIsLocked}
             onChange={(event) => setName(event.currentTarget.value)}
           />
           <Button
@@ -716,25 +787,37 @@ export function LowCodeEntitiesAdminPage() {
             <Table.Tr>
               <Table.Th>{t("admin.lowcode.entityName")}</Table.Th>
               <Table.Th>{t("admin.lowcode.status")}</Table.Th>
+              <Table.Th>{t("admin.lowcode.enabled")}</Table.Th>
               <Table.Th>{t("common.actions")}</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {allNames.length === 0 ? (
+            {entityRows.length === 0 ? (
               <Table.Tr>
-                <Table.Td colSpan={3}>{t("common.noRecords")}</Table.Td>
+                <Table.Td colSpan={4}>{t("common.noRecords")}</Table.Td>
               </Table.Tr>
             ) : (
-              allNames.map((entityName) => {
-                const published = (entities?.published ?? []).includes(entityName);
+              entityRows.map((entityRow) => {
+                const entityName = entityRow.name;
                 return (
                   <Fragment key={entityName}>
                     <Table.Tr>
                       <Table.Td>{entityName}</Table.Td>
                       <Table.Td>
-                        <Badge color={published ? "green" : "gray"}>
-                          {published ? t("admin.lowcode.published") : t("admin.lowcode.draftOnly")}
+                        <Badge color={entityRow.published ? "green" : "gray"}>
+                          {entityRow.published
+                            ? t("admin.lowcode.published")
+                            : t("admin.lowcode.draftOnly")}
                         </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Switch
+                          checked={entityRow.enabled}
+                          disabled={!entityRow.published}
+                          onChange={(e) =>
+                            void handleToggleEnabled(entityName, e.currentTarget.checked)
+                          }
+                        />
                       </Table.Td>
                       <Table.Td>
                         <Group gap="xs" wrap="nowrap">
@@ -773,7 +856,7 @@ export function LowCodeEntitiesAdminPage() {
                     </Table.Tr>
                     {expandedName === entityName ? (
                       <Table.Tr>
-                        <Table.Td colSpan={3}>
+                        <Table.Td colSpan={4}>
                           <LowCodeVersionHistory
                             name={entityName}
                             onRollback={(versionNumber) =>

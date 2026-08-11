@@ -16,11 +16,11 @@
 //! depend on `metap-http`/`metap-crud`/`metap-metadata` and skip this crate entirely.
 //!
 //! `publish`/`rollback` are the only handlers that mutate `state.metadata` — both call
-//! [`reload_metadata`] after `metap_lowcode` writes a new version, which rebuilds the merged
-//! registry from `state.metadata_base` (code-authored) plus every currently-published
-//! DB-authored entity and swaps it into `state.metadata`'s `ArcSwap` before the handler
-//! responds. No restart required (Phase A sub-project 2) — any request after the response
-//! comes back is guaranteed to see the new registry.
+//! [`apply_registry`] after `metap_lowcode` writes a new version, swapping the already-
+//! validated registry `metap_lowcode::publish`/`rollback` returns straight into
+//! `state.metadata`'s `ArcSwap` before the handler responds. No restart required (Phase A
+//! sub-project 2) — any request after the response comes back is guaranteed to see the new
+//! registry.
 
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ use metap_http::auth::AdminContext;
 use metap_http::error::{internal_error_response, service_error_response};
 use metap_http::AppState;
 use metap_lowcode::{LowCodeEntityDefinition, PublishError};
-use metap_metadata::{EntityField, EntityListView};
+use metap_metadata::{EntityField, EntityListView, MetadataRegistry};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -69,36 +69,80 @@ fn publish_error_response(err: PublishError) -> Response {
     }
 }
 
-/// Rebuilds the merged runtime registry (`state.metadata_base` + every currently-published
-/// DB-authored entity, read fresh from the DB) and swaps it into `state.metadata`, then
-/// reconciles indexes for the new entity list — reused from `apps/crm-server`'s own boot
-/// sequence (`metap_peripherals::reconcile_indexes`), not reimplemented here. Does *not*
-/// re-run `check_metadata_drift`: that check only concerns code-authored entities, which
-/// never change at runtime.
-pub async fn reload_metadata(state: &AppState) -> anyhow::Result<()> {
-    let db_entities: Vec<_> = metap_lowcode::list_all_published(&state.pool)
-        .await?
-        .into_iter()
-        .map(|(_, def)| def.to_entity_definition())
-        .collect();
-    let merged = state.metadata_base.merge_with(db_entities)?;
-    let entities = merged.list_entities();
-    state.metadata.store(Arc::new(merged));
+/// Swaps `registry` into `state.metadata`'s live `ArcSwap`, then reconciles indexes for the
+/// new entity list — reused from `apps/crm-server`'s own boot sequence
+/// (`metap_peripherals::reconcile_indexes`), not reimplemented here. Does *not* re-run
+/// `check_metadata_drift`: that check only concerns code-authored entities, which never
+/// change at runtime.
+///
+/// Takes the registry as a parameter — the caller passes `PublishOutcome::registry`, the
+/// exact same already-validated merge `metap_lowcode::publish`/`rollback` just built to check
+/// the write it made, rather than this function re-querying `list_all_published` and
+/// re-running `merge_with` from scratch. That used to mean every publish/rollback paid for
+/// the same DB query and registry build twice, and (worse) meant this function could itself
+/// fail *after* the version row was already durably committed, leaving Postgres and the live
+/// registry disagreeing with no way to retry just the reload half. Reusing the registry here
+/// makes this function infallible (`store`/`reconcile_indexes` can't fail outwardly), so that
+/// failure mode no longer exists.
+pub async fn apply_registry(state: &AppState, registry: MetadataRegistry) {
+    let entities = registry.list_entities();
+    state.metadata.store(Arc::new(registry));
     metap_peripherals::reconcile_indexes(&state.pool, &entities).await;
-    Ok(())
 }
 
 async fn list_entities(State(state): State<AppState>, AdminContext(_context): AdminContext) -> Response {
+    // `list_all_published` here is deliberately the *unfiltered* one (includes disabled
+    // entities) — this listing is what tells an operator an entity has been published at
+    // all, regardless of its current enabled state; `list_enabled_published` would make a
+    // disabled-but-published entity look indistinguishable from one that was never published.
     let published = match metap_lowcode::list_all_published(&state.pool).await {
         Ok(p) => p,
         Err(e) => return internal_error_response(e),
     };
-    let drafts = match metap_lowcode::list_draft_names(&state.pool).await {
-        Ok(d) => d,
+    let statuses = match metap_lowcode::list_draft_statuses(&state.pool).await {
+        Ok(s) => s,
         Err(e) => return internal_error_response(e),
     };
-    let published_names: Vec<&str> = published.iter().map(|(name, _)| name.as_str()).collect();
-    Json(json!({ "data": { "published": published_names, "drafts": drafts } })).into_response()
+    let published_names: std::collections::HashSet<&str> =
+        published.iter().map(|(name, _)| name.as_str()).collect();
+    let entities: Vec<_> = statuses
+        .into_iter()
+        .map(|(name, enabled)| {
+            let is_published = published_names.contains(name.as_str());
+            json!({ "name": name, "published": is_published, "enabled": enabled })
+        })
+        .collect();
+    Json(json!({ "data": { "entities": entities } })).into_response()
+}
+
+#[derive(Deserialize)]
+struct SetEnabledBody {
+    enabled: bool,
+}
+
+/// Toggles an entity's enabled flag and immediately rebuilds + swaps the live registry (same
+/// as `publish`/`rollback`) so a disable takes effect without a restart — a disabled entity
+/// disappears from `GET /metadata/entities` and `/api/:entity` starts 404ing on it right
+/// away, and re-enabling brings it straight back with no republish needed.
+async fn set_enabled(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    AdminContext(_context): AdminContext,
+    Json(body): Json<SetEnabledBody>,
+) -> Response {
+    if let Err(e) = metap_lowcode::set_enabled(&state.pool, &name, body.enabled).await {
+        return internal_error_response(e);
+    }
+    let db_entities: Vec<_> = match metap_lowcode::list_enabled_published(&state.pool).await {
+        Ok(entities) => entities.into_iter().map(|(_, def)| def.to_entity_definition()).collect(),
+        Err(e) => return internal_error_response(e),
+    };
+    let registry = match state.metadata_base.merge_with(db_entities) {
+        Ok(r) => r,
+        Err(e) => return internal_error_response(e.into()),
+    };
+    apply_registry(&state, registry).await;
+    Json(json!({ "data": { "name": name, "enabled": body.enabled } })).into_response()
 }
 
 async fn save_draft(
@@ -137,10 +181,11 @@ async fn publish(
     AdminContext(_context): AdminContext,
 ) -> Response {
     match metap_lowcode::publish(&state.pool, &name, &state.metadata_base).await {
-        Ok(outcome) => match reload_metadata(&state).await {
-            Ok(()) => Json(json!({ "data": { "versionNumber": outcome.version_number } })).into_response(),
-            Err(e) => internal_error_response(e),
-        },
+        Ok(outcome) => {
+            let version_number = outcome.version_number;
+            apply_registry(&state, outcome.registry).await;
+            Json(json!({ "data": { "versionNumber": version_number } })).into_response()
+        }
         Err(e) => publish_error_response(e),
     }
 }
@@ -158,10 +203,11 @@ async fn rollback(
     Json(body): Json<RollbackBody>,
 ) -> Response {
     match metap_lowcode::rollback(&state.pool, &name, body.to_version_number, &state.metadata_base).await {
-        Ok(outcome) => match reload_metadata(&state).await {
-            Ok(()) => Json(json!({ "data": { "versionNumber": outcome.version_number } })).into_response(),
-            Err(e) => internal_error_response(e),
-        },
+        Ok(outcome) => {
+            let version_number = outcome.version_number;
+            apply_registry(&state, outcome.registry).await;
+            Json(json!({ "data": { "versionNumber": version_number } })).into_response()
+        }
         Err(e) => publish_error_response(e),
     }
 }
@@ -214,6 +260,7 @@ async fn list_versions(
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/admin/lowcode/entities", get(list_entities))
+        .route("/admin/lowcode/entities/{name}", axum::routing::patch(set_enabled))
         .route("/admin/lowcode/entities/{name}/draft", get(get_draft).put(save_draft))
         .route("/admin/lowcode/entities/{name}/publish", axum::routing::post(publish))
         .route("/admin/lowcode/entities/{name}/rollback", axum::routing::post(rollback))

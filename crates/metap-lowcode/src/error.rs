@@ -1,7 +1,7 @@
 //! Same shape as `metap_metadata::registry::RegistryError` — a small closed enum for the
 //! domain-shaped rejections `publish`/`rollback`/`save_draft` can produce, plus a catch-all
 //! for genuine infrastructure failure (DB errors) so callers use a single `Result` type
-//! instead of a nested one. `crates/metap-http/src/routes/lowcode.rs` maps each variant to an
+//! instead of a nested one. `crates/metap-lowcode-http/src/lib.rs` maps each variant to an
 //! HTTP status, the same way `routes/cron.rs`/`routes/admin.rs` map their own domain errors.
 
 use metap_metadata::MetadataValidationError;

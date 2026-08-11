@@ -59,7 +59,8 @@ export type LowCodeEntityDefinition = {
   listViews: unknown[];
 };
 
-export type LowCodeEntitiesList = { published: string[]; drafts: string[] };
+export type LowCodeEntitySummary = { name: string; published: boolean; enabled: boolean };
+export type LowCodeEntitiesList = { entities: LowCodeEntitySummary[] };
 
 export type LowCodePublishedVersion = {
   versionNumber: number;
@@ -279,5 +280,13 @@ export function useLowCodeActions() {
     return result.data;
   }
 
-  return { getDraft, saveDraft, publish, rollback };
+  async function setEnabled(name: string, enabled: boolean) {
+    await apiFetch(`/admin/lowcode/entities/${name}`, token, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    });
+    await queryClient.invalidateQueries({ queryKey: ["admin", "lowcode", "entities"] });
+  }
+
+  return { getDraft, saveDraft, publish, rollback, setEnabled };
 }

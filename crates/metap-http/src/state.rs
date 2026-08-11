@@ -19,7 +19,7 @@ pub struct AppState {
     /// published DB-authored entity (`metap_lowcode`). An `ArcSwap`, not a plain
     /// `Arc<MetadataRegistry>`, so a publish/rollback can swap in a freshly merged registry
     /// while the server keeps running — no restart (Phase A sub-project 2). See
-    /// `routes/lowcode.rs`'s `reload_metadata` for the only place that calls `.store()`.
+    /// `metap-lowcode-http`'s `apply_registry` for the only place that calls `.store()`.
     pub metadata: Arc<ArcSwap<MetadataRegistry>>,
     pub permissions: Arc<PermissionService>,
     pub crud: Arc<CrudService>,

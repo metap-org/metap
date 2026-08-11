@@ -119,6 +119,8 @@ const en = {
       entityName: "Entity name",
       entityNameDescription:
         "Domain-namespaced (e.g. crm.widgets). Cannot reuse a code-authored entity's name.",
+      entityNameLockedDescription:
+        'Locked — this entity already has a draft or a published version. Click "New" to author a different entity.',
       load: "Load",
       label: "Label",
       fields: "Fields",
@@ -129,7 +131,7 @@ const en = {
       fieldSearchable: "Searchable",
       fieldSortable: "Sortable",
       fieldExtra: "Enum values / Ref entity",
-      enumValuesPlaceholder: "value1, value2, ...",
+      enumValuesPlaceholder: "Type a value, press Enter",
       refEntityPlaceholder: "e.g. crm.customers",
       addField: "Add field",
       noFields: "No fields yet — add one below.",
@@ -146,8 +148,11 @@ const en = {
       listViewMaxLimit: "Max limit",
       addListView: "Add list view",
       listViewNameLabelRequired: "Every list view needs a name and a label.",
+      listViewCleanupNote:
+        "One or more list views referenced a field that was renamed or removed — those references were cleared. Review before publishing.",
       saveDraft: "Save draft",
       status: "Status",
+      enabled: "Enabled",
       published: "Published",
       draftOnly: "Draft only",
       publish: "Publish",
@@ -272,6 +277,8 @@ const vi = {
       entityName: "Tên entity",
       entityNameDescription:
         "Có domain-namespace (vd: crm.widgets). Không được trùng tên entity code-authored.",
+      entityNameLockedDescription:
+        'Đã khoá — entity này đã có draft hoặc đã publish. Bấm "Thêm mới" để tạo entity khác.',
       load: "Tải",
       label: "Label",
       fields: "Fields",
@@ -282,7 +289,7 @@ const vi = {
       fieldSearchable: "Searchable",
       fieldSortable: "Sortable",
       fieldExtra: "Enum values / Ref entity",
-      enumValuesPlaceholder: "value1, value2, ...",
+      enumValuesPlaceholder: "Gõ giá trị rồi Enter",
       refEntityPlaceholder: "vd: crm.customers",
       addField: "Thêm field",
       noFields: "Chưa có field nào — thêm ở bên dưới.",
@@ -299,8 +306,11 @@ const vi = {
       listViewMaxLimit: "Max limit",
       addListView: "Thêm list view",
       listViewNameLabelRequired: "Mỗi list view cần có tên và label.",
+      listViewCleanupNote:
+        "Một số list view đang tham chiếu field đã đổi tên hoặc bị xoá — các tham chiếu đó đã được dọn. Kiểm tra lại trước khi publish.",
       saveDraft: "Lưu draft",
       status: "Trạng thái",
+      enabled: "Bật",
       published: "Đã publish",
       draftOnly: "Chỉ có draft",
       publish: "Publish",
