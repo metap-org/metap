@@ -33,9 +33,15 @@ pub struct VersionSummary {
     pub restored_from_version: Option<i32>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct PublishOutcome {
     pub version_number: i32,
+    /// The already-validated merged registry (`base_registry` + every other currently
+    /// published DB-authored entity + this publish/rollback's own definition) — the caller
+    /// (`metap-lowcode-http`) swaps this straight into its live `ArcSwap` instead of
+    /// re-querying and re-merging from scratch, which used to mean every publish/rollback
+    /// paid for the same `list_all_published` + registry build twice.
+    pub registry: MetadataRegistry,
 }
 
 pub async fn save_draft(
@@ -67,14 +73,29 @@ pub async fn save_draft(
     Ok(())
 }
 
-/// Every entity name that currently has a draft (published or not) — used by the admin API's
-/// `GET /admin/lowcode/entities` to list what exists for a future builder UI, alongside
-/// `list_all_published`.
-pub async fn list_draft_names(pool: &PgPool) -> anyhow::Result<Vec<String>> {
-    let rows = sqlx::query("SELECT entity_name FROM low_code_entity_drafts ORDER BY entity_name")
+/// Every entity name that currently has a draft (published or not), with its current
+/// enabled/disabled flag — used by the admin API's `GET /admin/lowcode/entities` to list what
+/// exists and drive the enabled toggle, alongside `list_all_published`.
+pub async fn list_draft_statuses(pool: &PgPool) -> anyhow::Result<Vec<(String, bool)>> {
+    let rows = sqlx::query("SELECT entity_name, enabled FROM low_code_entity_drafts ORDER BY entity_name")
         .fetch_all(pool)
         .await?;
-    rows.iter().map(|row| Ok(row.try_get("entity_name")?)).collect()
+    rows.iter().map(|row| Ok((row.try_get("entity_name")?, row.try_get("enabled")?))).collect()
+}
+
+/// Flips a published entity's enabled flag — disabled entities are excluded from
+/// `list_enabled_published` and therefore from the runtime-serving `MetadataRegistry` (no
+/// restart needed, same hot-reload mechanism as publish/rollback: the caller in
+/// `metap-lowcode-http` rebuilds and swaps the live registry after this returns) without
+/// touching the entity's draft/version history — re-enabling it brings back exactly what was
+/// there before. A no-op, not an error, if `entity_name` has no draft row (nothing to flip).
+pub async fn set_enabled(pool: &PgPool, entity_name: &str, enabled: bool) -> anyhow::Result<()> {
+    sqlx::query("UPDATE low_code_entity_drafts SET enabled = $2 WHERE entity_name = $1")
+        .bind(entity_name)
+        .bind(enabled)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn get_draft(pool: &PgPool, entity_name: &str) -> anyhow::Result<Option<LowCodeEntityDefinition>> {
@@ -140,6 +161,32 @@ pub async fn list_all_published(pool: &PgPool) -> anyhow::Result<Vec<(String, Lo
         .collect()
 }
 
+/// Same as `list_all_published` but excludes disabled entities — this is the one the
+/// runtime-serving `MetadataRegistry` (boot merge in `apps/crm-server`, and every reload
+/// after a publish/rollback/enable-toggle in `metap-lowcode-http`) is actually built from,
+/// and the one `build_check_registry` validates a new publish/rollback against. A published
+/// entity that references a *disabled* one (via a `reference` field's `refEntity`) will fail
+/// that validation as if the referenced entity didn't exist — a known, deliberate tradeoff:
+/// disabling isn't meant to be transparent to entities that depend on the disabled one.
+pub async fn list_enabled_published(pool: &PgPool) -> anyhow::Result<Vec<(String, LowCodeEntityDefinition)>> {
+    let rows = sqlx::query(
+        "SELECT DISTINCT ON (v.entity_name) v.entity_name, v.definition \
+         FROM low_code_entity_versions v \
+         JOIN low_code_entity_drafts d ON d.entity_name = v.entity_name \
+         WHERE d.enabled = true \
+         ORDER BY v.entity_name, v.version_number DESC",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|row| {
+            let name: String = row.try_get("entity_name")?;
+            let Json(definition) = row.try_get::<Json<LowCodeEntityDefinition>, _>("definition")?;
+            Ok((name, definition))
+        })
+        .collect()
+}
+
 fn version_from_row(row: sqlx::postgres::PgRow) -> anyhow::Result<PublishedVersion> {
     let Json(definition) = row.try_get::<Json<LowCodeEntityDefinition>, _>("definition")?;
     Ok(PublishedVersion {
@@ -150,18 +197,61 @@ fn version_from_row(row: sqlx::postgres::PgRow) -> anyhow::Result<PublishedVersi
     })
 }
 
-async fn next_version_number(pool: &PgPool, entity_name: &str) -> anyhow::Result<i32> {
+/// Computes the next version number and inserts the row in one transaction, guarded by a
+/// Postgres advisory lock scoped to `entity_name` (`pg_advisory_xact_lock`, auto-released on
+/// commit/rollback) — without it, two concurrent `publish`/`rollback` calls for the same
+/// entity could both read the same `MAX(version_number)` and both try to insert it, tripping
+/// the `(entity_name, version_number)` unique constraint and surfacing as an opaque 500
+/// instead of serializing cleanly. `hashtext` turns the name into the `bigint` key
+/// `pg_advisory_xact_lock` wants; a hash collision between two different entity names would
+/// only over-serialize (briefly block an unrelated publish), never under-serialize, so it's
+/// safe even though `hashtext` isn't collision-free.
+async fn insert_version(
+    pool: &PgPool,
+    entity_name: &str,
+    definition: &LowCodeEntityDefinition,
+    restored_from_version: Option<i32>,
+) -> anyhow::Result<i32> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(entity_name)
+        .execute(&mut *tx)
+        .await?;
     let max: Option<i32> =
         sqlx::query_scalar("SELECT MAX(version_number) FROM low_code_entity_versions WHERE entity_name = $1")
             .bind(entity_name)
-            .fetch_one(pool)
+            .fetch_one(&mut *tx)
             .await?;
-    Ok(max.unwrap_or(0) + 1)
+    let version_number = max.unwrap_or(0) + 1;
+    sqlx::query(
+        "INSERT INTO low_code_entity_versions \
+         (entity_name, definition, version_number, restored_from_version) \
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(entity_name)
+    .bind(Json(definition))
+    .bind(version_number)
+    .bind(restored_from_version)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(version_number)
+}
+
+struct CheckRegistry {
+    /// `base_registry` + every *other* currently-enabled-published DB-authored entity +
+    /// `candidate` — used for `validate_references()`, which needs the candidate present to
+    /// check its own outbound `refEntity`s.
+    registry: MetadataRegistry,
+    /// The same "other enabled entities" defs `registry` was merged from, *without*
+    /// `candidate` — kept around so `publish`/`rollback` can rebuild a registry that omits
+    /// `candidate` (when `entity_name` is disabled) without a second DB round-trip.
+    other_published: Vec<metap_metadata::EntityDefinition>,
 }
 
 /// Builds the registry `publish`/`rollback` validate a candidate definition against: the
-/// code-authored `base_registry`, plus every *other* currently-published DB-authored entity
-/// (fetched fresh from the DB, not from a possibly-stale in-memory snapshot), plus the
+/// code-authored `base_registry`, plus every *other* currently-enabled-published DB-authored
+/// entity (fetched fresh from the DB, not from a possibly-stale in-memory snapshot), plus the
 /// candidate itself. Rejects up front if `entity_name` is already taken by a code-authored
 /// entity — the check the original TS-era spec deferred for lack of registry access
 /// (`docs/low-code-metadata-storage-design.md`), now possible since this crate depends on
@@ -171,18 +261,44 @@ async fn build_check_registry(
     entity_name: &str,
     candidate: &LowCodeEntityDefinition,
     base_registry: &MetadataRegistry,
-) -> Result<MetadataRegistry, PublishError> {
+) -> Result<CheckRegistry, PublishError> {
     if base_registry.get_entity(entity_name).is_some() {
         return Err(PublishError::NameReservedByCodeEntity);
     }
-    let other_published = list_all_published(pool).await.map_err(PublishError::from)?;
-    let mut extra: Vec<_> = other_published
+    let published = list_enabled_published(pool).await.map_err(PublishError::from)?;
+    let other_published: Vec<_> = published
         .into_iter()
         .filter(|(name, _)| name != entity_name)
         .map(|(_, def)| def.to_entity_definition())
         .collect();
+    let mut extra = other_published.clone();
     extra.push(candidate.to_entity_definition());
-    base_registry.merge_with(extra).map_err(PublishError::from)
+    let registry = base_registry.merge_with(extra).map_err(PublishError::from)?;
+    Ok(CheckRegistry { registry, other_published })
+}
+
+/// The registry `publish`/`rollback` actually swap live: `check.registry` (candidate
+/// included) if `entity_name` is currently enabled, otherwise `check.other_published` merged
+/// *without* the candidate — publishing/rolling back a disabled entity's definition must not
+/// implicitly re-enable it (the enabled flag is independent of publish history; only an
+/// explicit `set_enabled` call flips it).
+async fn live_registry_for(
+    pool: &PgPool,
+    entity_name: &str,
+    base_registry: &MetadataRegistry,
+    check: CheckRegistry,
+) -> Result<MetadataRegistry, PublishError> {
+    let enabled: Option<bool> =
+        sqlx::query_scalar("SELECT enabled FROM low_code_entity_drafts WHERE entity_name = $1")
+            .bind(entity_name)
+            .fetch_optional(pool)
+            .await
+            .map_err(PublishError::from)?;
+    if enabled.unwrap_or(true) {
+        Ok(check.registry)
+    } else {
+        base_registry.merge_with(check.other_published).map_err(PublishError::from)
+    }
 }
 
 pub async fn publish(
@@ -194,23 +310,14 @@ pub async fn publish(
     let Some(draft) = draft else { return Err(PublishError::NoDraft) };
     draft.validate_shape().map_err(PublishError::Invalid)?;
 
-    let check_registry = build_check_registry(pool, entity_name, &draft, base_registry).await?;
-    check_registry.validate_references().map_err(PublishError::Invalid)?;
+    let check = build_check_registry(pool, entity_name, &draft, base_registry).await?;
+    check.registry.validate_references().map_err(PublishError::Invalid)?;
 
-    let version_number = next_version_number(pool, entity_name).await.map_err(PublishError::from)?;
-    sqlx::query(
-        "INSERT INTO low_code_entity_versions \
-         (entity_name, definition, version_number, restored_from_version) \
-         VALUES ($1, $2, $3, NULL)",
-    )
-    .bind(entity_name)
-    .bind(Json(&draft))
-    .bind(version_number)
-    .execute(pool)
-    .await
-    .map_err(PublishError::from)?;
+    let version_number =
+        insert_version(pool, entity_name, &draft, None).await.map_err(PublishError::from)?;
+    let registry = live_registry_for(pool, entity_name, base_registry, check).await?;
 
-    Ok(PublishOutcome { version_number })
+    Ok(PublishOutcome { version_number, registry })
 }
 
 pub async fn rollback(
@@ -229,24 +336,15 @@ pub async fn rollback(
     let Json(target_definition) =
         row.try_get::<Json<LowCodeEntityDefinition>, _>("definition").map_err(PublishError::from)?;
 
-    let check_registry = build_check_registry(pool, entity_name, &target_definition, base_registry).await?;
-    check_registry.validate_references().map_err(PublishError::Invalid)?;
+    let check = build_check_registry(pool, entity_name, &target_definition, base_registry).await?;
+    check.registry.validate_references().map_err(PublishError::Invalid)?;
 
     save_draft(pool, entity_name, &target_definition).await?;
 
-    let version_number = next_version_number(pool, entity_name).await.map_err(PublishError::from)?;
-    sqlx::query(
-        "INSERT INTO low_code_entity_versions \
-         (entity_name, definition, version_number, restored_from_version) \
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(entity_name)
-    .bind(Json(&target_definition))
-    .bind(version_number)
-    .bind(to_version_number)
-    .execute(pool)
-    .await
-    .map_err(PublishError::from)?;
+    let version_number = insert_version(pool, entity_name, &target_definition, Some(to_version_number))
+        .await
+        .map_err(PublishError::from)?;
+    let registry = live_registry_for(pool, entity_name, base_registry, check).await?;
 
-    Ok(PublishOutcome { version_number })
+    Ok(PublishOutcome { version_number, registry })
 }

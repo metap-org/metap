@@ -208,3 +208,78 @@ async fn list_all_published_includes_every_published_entity_at_latest_version() 
     assert!(names.contains(&name_a.as_str()));
     assert!(names.contains(&name_b.as_str()));
 }
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn concurrent_publishes_of_the_same_entity_serialize_instead_of_colliding() {
+    // Regression test for the version-number race: without the advisory-lock transaction in
+    // `insert_version`, two concurrent publishes can both read the same `MAX(version_number)`
+    // and both try to insert it, tripping the unique constraint and surfacing as a generic
+    // `PublishError::Db` instead of both succeeding with distinct sequential versions.
+    let pool_a = pool().await;
+    let pool_b = pool().await;
+    let name = entity_name("concurrent_publish");
+    let registry = MetadataRegistry::new();
+
+    metap_lowcode::save_draft(&pool_a, &name, &definition(&name)).await.expect("save_draft");
+
+    let (result_a, result_b) =
+        tokio::join!(metap_lowcode::publish(&pool_a, &name, &registry), metap_lowcode::publish(&pool_b, &name, &registry));
+
+    let mut versions: Vec<i32> =
+        [result_a, result_b].into_iter().map(|r| r.expect("publish").version_number).collect();
+    versions.sort();
+    assert_eq!(versions, vec![1, 2]);
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn disabling_an_entity_excludes_it_from_enabled_published_but_not_all_published() {
+    let pool = pool().await;
+    let name = entity_name("disable_toggle");
+    let registry = MetadataRegistry::new();
+
+    metap_lowcode::save_draft(&pool, &name, &definition(&name)).await.expect("save_draft");
+    metap_lowcode::publish(&pool, &name, &registry).await.expect("publish");
+
+    let enabled_names: Vec<String> =
+        metap_lowcode::list_enabled_published(&pool).await.expect("list_enabled_published").into_iter().map(|(n, _)| n).collect();
+    assert!(enabled_names.contains(&name));
+
+    metap_lowcode::set_enabled(&pool, &name, false).await.expect("set_enabled false");
+
+    let enabled_names: Vec<String> =
+        metap_lowcode::list_enabled_published(&pool).await.expect("list_enabled_published").into_iter().map(|(n, _)| n).collect();
+    assert!(!enabled_names.contains(&name));
+
+    let all_names: Vec<String> =
+        metap_lowcode::list_all_published(&pool).await.expect("list_all_published").into_iter().map(|(n, _)| n).collect();
+    assert!(all_names.contains(&name), "disabling must not remove publish history");
+
+    metap_lowcode::set_enabled(&pool, &name, true).await.expect("set_enabled true");
+    let enabled_names: Vec<String> =
+        metap_lowcode::list_enabled_published(&pool).await.expect("list_enabled_published").into_iter().map(|(n, _)| n).collect();
+    assert!(enabled_names.contains(&name), "re-enabling must bring it back");
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn publishing_a_disabled_entity_does_not_implicitly_reenable_it_in_the_live_registry() {
+    let pool = pool().await;
+    let name = entity_name("disabled_publish");
+    let registry = MetadataRegistry::new();
+
+    metap_lowcode::save_draft(&pool, &name, &definition(&name)).await.expect("save_draft v1");
+    metap_lowcode::publish(&pool, &name, &registry).await.expect("publish v1");
+    metap_lowcode::set_enabled(&pool, &name, false).await.expect("set_enabled false");
+
+    let mut v2_def = definition(&name);
+    v2_def.label = "Still disabled".to_string();
+    metap_lowcode::save_draft(&pool, &name, &v2_def).await.expect("save_draft v2");
+    let outcome = metap_lowcode::publish(&pool, &name, &registry).await.expect("publish v2");
+
+    assert!(
+        outcome.registry.get_entity(&name).is_none(),
+        "publishing a disabled entity must not resurrect it in the swapped-live registry"
+    );
+}

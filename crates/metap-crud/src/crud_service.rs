@@ -62,7 +62,12 @@ impl CrudService {
         input: &ListInput,
         context: &RequestContext,
     ) -> anyhow::Result<ServiceResult<Vec<RecordDto>>> {
-        let Some(entity) = self.get_entity(entity_name) else {
+        // Loaded once, up front, and reused for both `entity` and `plan_list` below —
+        // loading it twice (once via `get_entity`, again here) would let a publish/rollback
+        // land in between and tear this request between two registry versions (see the
+        // struct doc comment's "one snapshot per call" invariant).
+        let metadata = self.metadata.load();
+        let Some(entity) = metadata.get_entity(entity_name).cloned() else {
             tracing::debug!(entity = entity_name, "list rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
@@ -76,7 +81,6 @@ impl CrudService {
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
         let record_policies = snapshot.get_record_policies(EntityAction::Read);
 
-        let metadata = self.metadata.load();
         let planned = match plan_list(&metadata, &self.permissions, &entity.name, input, context, record_policies) {
             Ok(p) => p,
             Err(e) => {

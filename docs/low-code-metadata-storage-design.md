@@ -1,7 +1,8 @@
 Status: được viết ngày 2026-08-02. **Đã triển khai (2026-08-11), retarget sang Rust** — xem
 `docs/roadmap.md` Phase 11 cho tình trạng thật/live-verify, và
 `crates/metap-lowcode` (data model + service) cùng
-`crates/metap-http/src/routes/lowcode.rs` (admin API, sub-project 4) cho code thật. Ba quyết
+`crates/metap-lowcode-http` (admin API, sub-project 4 — crate riêng, tách khỏi `metap-http`
+core) cho code thật. Ba quyết
 định phạm vi đã chốt bên dưới đều được giữ nguyên trong bản Rust; điểm khác duy nhất so với
 spec: sub-project 2 (runtime loader) đi xa hơn — hot-reload thật qua `ArcSwap`, không chỉ
 load lúc boot — và sub-project 3 (publish validation) được gộp thẳng vào

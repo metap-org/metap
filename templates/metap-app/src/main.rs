@@ -11,6 +11,8 @@ mod example_entity;
 
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
+use axum::Router;
 use jsonwebtoken::DecodingKey;
 use metap::prelude::*;
 
@@ -24,19 +26,38 @@ async fn main() -> anyhow::Result<()> {
     let mut registry = MetadataRegistry::new();
     registry.register(example_entity::example_entity())?;
     registry.validate_references()?;
+    let metadata_base = Arc::new(registry);
 
-    let entities = registry.list_entities();
+    let entities = metadata_base.list_entities();
     check_metadata_drift(&pool, &entities).await;
     reconcile_indexes(&pool, &entities).await;
 
+    let metadata = Arc::new(ArcSwap::new(metadata_base.clone()));
     let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
 
     let public_key_pem = std::fs::read(&config.auth_jwt_public_key_path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_public_key_path))?;
     let decoding_key = DecodingKey::from_rsa_pem(&public_key_pem)?;
 
-    let state = AppState::new(pool, Arc::new(registry), Arc::new(permissions), decoding_key);
-    let router = build_router(state, &config.cors_origins);
+    // Needed only for POST /auth/login (metap_peripherals::mint_jwt) — this binary issues
+    // tokens, not just verifies them, so both halves of the keypair are load-bearing.
+    let private_key_pem = std::fs::read_to_string(&config.auth_jwt_private_key_path).map_err(|e| {
+        anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_private_key_path)
+    })?;
+
+    let state = AppState::new(
+        pool,
+        metadata_base,
+        metadata,
+        Arc::new(permissions),
+        decoding_key,
+        private_key_pem,
+    );
+    // `Router::new()` — this template doesn't wire in `metap-lowcode-http`'s DB-authored
+    // entity control plane by default; a single code-authored `example_entity` is the
+    // starting point. Add `metap-lowcode-http` as a dependency and pass
+    // `metap::lowcode_http::router()` here instead if you want that surface.
+    let router = build_router(state, &config.cors_origins, Router::new());
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;

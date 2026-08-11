@@ -44,16 +44,23 @@ async fn main() -> anyhow::Result<()> {
     code_registry.validate_references()?;
     let metadata_base = Arc::new(code_registry);
 
-    // DB-authored entities (`metap-lowcode`, Phase A sub-project 1/2) — every entity that
-    // has been published at least once, merged on top of the code-authored base. Empty on a
-    // fresh install; `routes/lowcode.rs`'s publish/rollback handlers rebuild and swap this
-    // same way at runtime, so a restart is never required to pick up a new publish.
-    let db_entities: Vec<_> = metap::lowcode::list_all_published(&pool)
+    // DB-authored entities (`metap-lowcode`, Phase A sub-project 1/2) — every *enabled*
+    // entity that has been published at least once, merged on top of the code-authored base
+    // (a disabled entity stays out of the registry entirely, same as if it had never been
+    // published — see `metap_lowcode::list_enabled_published`'s doc comment). Empty on a
+    // fresh install; `metap-lowcode-http`'s publish/rollback/enable-toggle handlers rebuild
+    // and swap this same way at runtime, so a restart is never required to pick up a change.
+    let db_entities: Vec<_> = metap::lowcode::list_enabled_published(&pool)
         .await?
         .into_iter()
         .map(|(_, def)| def.to_entity_definition())
         .collect();
     let runtime_registry = metadata_base.merge_with(db_entities)?;
+    // `merge_with`/`register` only run per-entity shape validation — cross-entity reference
+    // checks (a DB-authored `refEntity` pointing at a code-authored entity, or vice versa)
+    // need the merged registry, not `code_registry` alone, so this can't be skipped just
+    // because `code_registry.validate_references()` already ran above.
+    runtime_registry.validate_references()?;
 
     let entities = runtime_registry.list_entities();
     check_metadata_drift(&pool, &entities).await;
