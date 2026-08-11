@@ -8,6 +8,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
+use axum::Router;
 use jsonwebtoken::{encode, DecodingKey, EncodingKey, Header};
 use metap_http::{build_router, AppState};
 use metap_metadata::{
@@ -164,7 +165,7 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     // A real origin list, not empty — exercises the `allow_credentials` +
     // explicit-origin/header CORS branch (see `lib.rs`'s doc comment on the panic this
     // once triggered; an empty list here would silently skip that branch again).
-    let router = build_router(state, &["http://localhost:5173".to_string()]);
+    let router = build_router(state, &["http://localhost:5173".to_string()], Router::new());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -311,7 +312,7 @@ async fn rate_limit_returns_429_once_the_burst_is_exhausted() {
         decoding_key,
         private_pem,
     );
-    let router = build_router(state, &[]);
+    let router = build_router(state, &[], Router::new());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

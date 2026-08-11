@@ -1,12 +1,22 @@
 //! Admin-gated HTTP surface for `metap-lowcode`'s draft/publish/rollback storage
 //! (`docs/roadmap.md` Phase 11 / Phase A sub-project 4, retargeted from
-//! `docs/low-code-metadata-storage-design.md`). Same shape as `routes/admin.rs`/
-//! `routes/cron.rs`: every handler uses `AdminContext`. Unlike `routes/cron.rs`, nothing here
-//! is tenant-scoped — DB-authored entity metadata is global by design for Phase A (see the
-//! spec's "Các quyết định đã chốt"), so there's no `tenant_id` in any query.
+//! `docs/low-code-metadata-storage-design.md`). Same shape as `metap-http`'s
+//! `routes/admin.rs`/`routes/cron.rs`: every handler uses `AdminContext`. Unlike
+//! `routes/cron.rs`, nothing here is tenant-scoped — DB-authored entity metadata is global by
+//! design for Phase A (see the spec's "Các quyết định đã chốt"), so there's no `tenant_id` in
+//! any query.
+//!
+//! **Deliberately its own crate, not a module inside `metap-http`** — the low-code control
+//! plane is an optional platform capability, not core (`docs/roadmap.md` Phase 11 is a
+//! trigger-based, in-progress phase; the base execution engine predates it and must keep
+//! working without it). `metap-http` has zero dependency on this crate or on `metap-lowcode`;
+//! a binary that wants this surface merges [`router`] into `metap_http::build_router`'s
+//! `extra_routes` argument itself (see `apps/crm-server/src/main.rs`) — it is never wired in
+//! automatically. A downstream project that doesn't want a low-code control plane at all can
+//! depend on `metap-http`/`metap-crud`/`metap-metadata` and skip this crate entirely.
 //!
 //! `publish`/`rollback` are the only handlers that mutate `state.metadata` — both call
-//! `reload_metadata` after `metap_lowcode` writes a new version, which rebuilds the merged
+//! [`reload_metadata`] after `metap_lowcode` writes a new version, which rebuilds the merged
 //! registry from `state.metadata_base` (code-authored) plus every currently-published
 //! DB-authored entity and swaps it into `state.metadata`'s `ArcSwap` before the handler
 //! responds. No restart required (Phase A sub-project 2) — any request after the response
@@ -18,14 +28,13 @@ use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use metap_http::auth::AdminContext;
+use metap_http::error::{internal_error_response, service_error_response};
+use metap_http::AppState;
 use metap_lowcode::{LowCodeEntityDefinition, PublishError};
 use metap_metadata::{EntityField, EntityListView};
 use serde::Deserialize;
 use serde_json::json;
-
-use crate::auth::AdminContext;
-use crate::error::{internal_error_response, service_error_response};
-use crate::state::AppState;
 
 #[derive(Deserialize)]
 struct DraftBody {
@@ -66,7 +75,7 @@ fn publish_error_response(err: PublishError) -> Response {
 /// sequence (`metap_peripherals::reconcile_indexes`), not reimplemented here. Does *not*
 /// re-run `check_metadata_drift`: that check only concerns code-authored entities, which
 /// never change at runtime.
-async fn reload_metadata(state: &AppState) -> anyhow::Result<()> {
+pub async fn reload_metadata(state: &AppState) -> anyhow::Result<()> {
     let db_entities: Vec<_> = metap_lowcode::list_all_published(&state.pool)
         .await?
         .into_iter()
@@ -200,6 +209,8 @@ async fn list_versions(
     }
 }
 
+/// Merge this into `metap_http::build_router`'s `extra_routes` argument to expose the
+/// low-code admin API on a running server — never merged automatically by `metap-http` itself.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/admin/lowcode/entities", get(list_entities))

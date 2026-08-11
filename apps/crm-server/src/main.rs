@@ -80,7 +80,12 @@ async fn main() -> anyhow::Result<()> {
         decoding_key,
         private_key_pem,
     );
-    let mut router = build_router(state, &config.cors_origins);
+    // `metap::lowcode_http::router()` is the low-code control plane's admin API
+    // (`docs/roadmap.md` Phase 11 / Phase A) — an optional platform capability, not core;
+    // `build_router` itself has zero knowledge of it (see that function's doc comment). This
+    // demo app opts in; a downstream project that doesn't want DB-authored entities can pass
+    // `Router::new()` here instead and never link `metap-lowcode`/`metap-lowcode-http` in.
+    let mut router = build_router(state, &config.cors_origins, metap::lowcode_http::router());
 
     if let Some(dir) = &config.static_dir {
         if std::path::Path::new(dir).is_dir() {
