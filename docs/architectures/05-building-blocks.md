@@ -425,8 +425,10 @@ graph TD
     query["metap-query<br/>plan_list, cursor, condition-to-sql"]
     workflow["metap-workflow<br/>initial status, transitions, guards, audit"]
     crud["metap-crud<br/>CrudService: list/get/create/update/transition/delete"]
-    http["metap-http<br/>axum router: /api/:entity*, /metadata/*, /health, JWT extractor"]
+    http["metap-http<br/>axum router: /api/:entity*, /metadata/*, /health, JWT extractor<br/>build_router nhận extra_routes: Router&lt;AppState&gt; — không phụ thuộc lowcode(-http)"]
     peripherals["metap-peripherals<br/>index reconciler, drift check, role assignment"]
+    lowcode["metap-lowcode<br/>draft/publish/rollback storage cho DB-authored entity (Phase 11)"]
+    lowcodehttp["metap-lowcode-http<br/>/admin/lowcode/entities/* — crate riêng, opt-in qua extra_routes"]
   end
 
   subgraph opsbin["ops binaries (Cargo workspace members, built trên metap-*)"]
@@ -454,8 +456,12 @@ graph TD
   crud --> query
   crud --> workflow
   crud --> infra
+  lowcode --> metadata
+  lowcodehttp --> lowcode
+  lowcodehttp -.đọc/ghi AppState.metadata qua metap-http, không import ngược.-> http
   mainrs -->|"phụ thuộc vào"| http
   mainrs -->|"phụ thuộc vào"| infra
+  mainrs -.opt-in: merge metap::lowcode_http::router vào build_router.-> lowcodehttp
   customerentity -.entity definition, không có business knowledge của metap-*.-> mainrs
   outboxpub --> infra
   dbmigrate --> infra
