@@ -95,6 +95,48 @@ fn test_entity() -> EntityDefinition {
     }
 }
 
+/// A second entity, distinct from `test_entity()`, with a `sku` field declared
+/// `unique: true`. Mirrors `EntityField.unique`'s enforcement: purely a Postgres unique
+/// index (`crates/metap-peripherals/src/index_reconciler.rs`), reconciled at boot/hot-reload
+/// in production but never by `CrudService` itself — so this test creates the same index by
+/// hand rather than pulling in `metap-peripherals` as a dev-dependency just for this.
+fn unique_field_entity() -> EntityDefinition {
+    EntityDefinition {
+        name: "test.unique_orders".to_string(),
+        label: "Unique Order".to_string(),
+        table_name: "records".to_string(),
+        fields: vec![
+            EntityField {
+                name: "sku".to_string(),
+                label: "SKU".to_string(),
+                kind: FieldKind::String,
+                required: Some(true),
+                indexed: None,
+                unique: Some(true),
+                enum_values: None,
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+            },
+        ],
+        list_views: vec![],
+        workflow: None,
+    }
+}
+
+async fn ensure_sku_unique_index(pool: &PgPool) {
+    sqlx::query(
+        "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uniq_records_test_unique_orders_sku \
+         ON records (tenant_id, (jsonb_extract_path_text(data, 'sku'))) \
+         WHERE entity = 'test.unique_orders' AND deleted = false",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn connect() -> PgPool {
     let database_url =
         std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
@@ -341,5 +383,67 @@ async fn non_admin_field_write_policy_is_enforced_through_create() {
         other => panic!("expected a field-level 403 on amount, got {other:?}"),
     }
 
+    cleanup(&pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn unique_field_violation_is_a_clean_409_not_a_500() {
+    let pool = connect().await;
+    ensure_sku_unique_index(&pool).await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(unique_field_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
+    let crud = CrudService::new(
+        pool.clone(),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
+
+    let mut payload = JsonObject::new();
+    payload.insert("sku".to_string(), json!("ABC-1"));
+    let first = match crud.create("test.unique_orders", &payload, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected first create to succeed, got {other:?}"),
+    };
+
+    // second create with the same sku -> 409 unique_violation, field_errors names "sku",
+    // not an unhandled 500 from the raw DB error propagating through `?`.
+    match crud.create("test.unique_orders", &payload, &ctx).await.unwrap() {
+        ServiceResult::Err { status, error, field_errors, .. } => {
+            assert_eq!(status, 409);
+            assert_eq!(error, "unique_violation");
+            assert!(field_errors.unwrap().contains_key("sku"));
+        }
+        other => panic!("expected unique_violation on duplicate create, got {other:?}"),
+    }
+
+    // a second, distinct record, then updated to collide with the first -> same 409 on update.
+    let mut other_payload = JsonObject::new();
+    other_payload.insert("sku".to_string(), json!("ABC-2"));
+    let second = match crud.create("test.unique_orders", &other_payload, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected second create to succeed, got {other:?}"),
+    };
+    match crud.update("test.unique_orders", second.id, second.version, &payload, &ctx).await.unwrap() {
+        ServiceResult::Err { status, error, field_errors, .. } => {
+            assert_eq!(status, 409);
+            assert_eq!(error, "unique_violation");
+            assert!(field_errors.unwrap().contains_key("sku"));
+        }
+        other => panic!("expected unique_violation on colliding update, got {other:?}"),
+    }
+
+    // update did not bump the record's version (the write never actually happened)
+    let (refetched, _) = match crud.get("test.unique_orders", second.id, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected get to succeed, got {other:?}"),
+    };
+    assert_eq!(refetched.version, second.version);
+
+    let _ = first;
     cleanup(&pool, tenant_id).await;
 }

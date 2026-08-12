@@ -213,7 +213,7 @@ impl CrudService {
         let user_id = parse_user_id(context)?;
 
         let mut tx = self.pool.begin().await?;
-        let row = sqlx::query(&format!(
+        let row = match sqlx::query(&format!(
             "INSERT INTO records (tenant_id, entity, code, status, data, created_by, updated_by) \
              VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {RECORD_COLUMNS}"
         ))
@@ -225,7 +225,18 @@ impl CrudService {
         .bind(user_id)
         .bind(user_id)
         .fetch_one(&mut *tx)
-        .await?;
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                if let Some(result) = unique_violation(&entity.name, &e) {
+                    tx.rollback().await.ok();
+                    tracing::warn!(entity = entity.name, "create rejected: unique constraint violated");
+                    return Ok(result);
+                }
+                return Err(e.into());
+            }
+        };
         let record = row_to_dto(row)?;
 
         emit_created(&mut *tx, &entity, record.id, &data).await?;
@@ -301,7 +312,7 @@ impl CrudService {
         let user_id = parse_user_id(context)?;
 
         let mut tx = self.pool.begin().await?;
-        let row = sqlx::query(&format!(
+        let row = match sqlx::query(&format!(
             "UPDATE records SET data = $1, code = $2, version = version + 1, updated_at = now(), updated_by = $3 \
              WHERE id = $4 AND tenant_id = $5 AND entity = $6 AND version = $7 AND deleted = false \
              RETURNING {RECORD_COLUMNS}"
@@ -314,7 +325,18 @@ impl CrudService {
         .bind(&entity.name)
         .bind(expected_version)
         .fetch_optional(&mut *tx)
-        .await?;
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                if let Some(result) = unique_violation(&entity.name, &e) {
+                    tx.rollback().await.ok();
+                    tracing::warn!(entity = entity.name, record_id = %id, "update rejected: unique constraint violated");
+                    return Ok(result);
+                }
+                return Err(e.into());
+            }
+        };
 
         let Some(row) = row else {
             tx.rollback().await.ok();
@@ -538,6 +560,35 @@ fn forbidden_with_field<T>(decision: PermissionDecision) -> ServiceResult<T> {
         ),
         None => ServiceResult::err(403, reason),
     }
+}
+
+/// A DB unique-index violation on `records` — `EntityField.unique: true` (`docs/roadmap.md`
+/// Phase 11 field builder flags) is enforced purely as a Postgres unique index
+/// (`crates/metap-peripherals/src/index_reconciler.rs::ensure_index`, named
+/// `uniq_records_<entity, dots as underscores>_<field>`), not pre-checked here — so a
+/// racing/duplicate write must be caught after the fact, at the `INSERT`/`UPDATE` call site,
+/// rather than surfacing as an unhandled 500 (`?` on the query result would otherwise convert
+/// straight to `anyhow::Error`, mirrors the same catch `routes/admin.rs::create_user` does for
+/// `email_taken`, just generalized to any entity's `unique` field). Returns `None` for any
+/// other database error, so the caller's `Err(e) => return Err(e.into())` fallback still
+/// applies.
+fn unique_violation<T>(entity_name: &str, error: &sqlx::Error) -> Option<ServiceResult<T>> {
+    let sqlx::Error::Database(db_err) = error else {
+        return None;
+    };
+    if !db_err.is_unique_violation() {
+        return None;
+    }
+    let prefix = format!("uniq_records_{}_", entity_name.replace('.', "_"));
+    let field = db_err.constraint().and_then(|c| c.strip_prefix(&prefix)).map(str::to_string);
+    Some(match field {
+        Some(field) => ServiceResult::err_with_field_errors(
+            409,
+            "unique_violation",
+            HashMap::from([(field, vec!["A record with this value already exists.".to_string()])]),
+        ),
+        None => ServiceResult::err(409, "unique_violation"),
+    })
 }
 
 async fn fetch_existing(
