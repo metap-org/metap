@@ -48,7 +48,13 @@ type FieldRow = {
   label: string;
   kind: string;
   required: boolean;
+  indexed: boolean;
+  unique: boolean;
   searchable: boolean;
+  // "substring" (default, ILIKE) or "fts" (Postgres full-text search) — only meaningful when
+  // `searchable` is true. Mirrors `EntityField.search_mode`'s doc comment in
+  // `crates/metap-metadata/src/entity.rs`.
+  searchMode: string;
   sortable: boolean;
   // A real string[], not a comma-joined string — only meaningful when kind === "enum". A
   // comma-joined representation would silently corrupt any enum value that itself contains a
@@ -57,6 +63,7 @@ type FieldRow = {
   // join/split needed.
   enumValues: string[];
   refEntity: string; // only meaningful when kind === "reference"
+  refDisplayField: string; // only meaningful when kind === "reference"
 };
 
 function emptyFieldRow(): FieldRow {
@@ -65,10 +72,14 @@ function emptyFieldRow(): FieldRow {
     label: "",
     kind: "string",
     required: false,
+    indexed: false,
+    unique: false,
     searchable: false,
+    searchMode: "substring",
     sortable: false,
     enumValues: [],
     refEntity: "",
+    refDisplayField: "",
   };
 }
 
@@ -83,13 +94,23 @@ function fieldRowToWire(row: FieldRow): Record<string, unknown> {
     kind: row.kind,
   };
   if (row.required) wire.required = true;
-  if (row.searchable) wire.searchable = true;
+  if (row.indexed) wire.indexed = true;
+  if (row.unique) wire.unique = true;
+  if (row.searchable) {
+    wire.searchable = true;
+    if (row.searchMode === "fts") {
+      wire.searchMode = "fts";
+    }
+  }
   if (row.sortable) wire.sortable = true;
   if (row.kind === "enum") {
     wire.enumValues = row.enumValues;
   }
   if (row.kind === "reference" && row.refEntity.trim().length > 0) {
     wire.refEntity = row.refEntity.trim();
+    if (row.refDisplayField.trim().length > 0) {
+      wire.refDisplayField = row.refDisplayField.trim();
+    }
   }
   return wire;
 }
@@ -101,12 +122,16 @@ function wireToFieldRow(field: unknown): FieldRow {
     label: typeof f.label === "string" ? f.label : "",
     kind: typeof f.kind === "string" ? f.kind : "string",
     required: f.required === true,
+    indexed: f.indexed === true,
+    unique: f.unique === true,
     searchable: f.searchable === true,
+    searchMode: f.searchMode === "fts" ? "fts" : "substring",
     sortable: f.sortable === true,
     enumValues: Array.isArray(f.enumValues)
       ? f.enumValues.filter((v): v is string => typeof v === "string")
       : [],
     refEntity: typeof f.refEntity === "string" ? f.refEntity : "",
+    refDisplayField: typeof f.refDisplayField === "string" ? f.refDisplayField : "",
   };
 }
 
@@ -164,8 +189,34 @@ const FieldRowEditor = memo(function FieldRowEditor({
       </Table.Td>
       <Table.Td>
         <Checkbox
+          checked={row.indexed}
+          onChange={(e) => onUpdate(index, { indexed: e.currentTarget.checked })}
+        />
+      </Table.Td>
+      <Table.Td>
+        <Checkbox
+          checked={row.unique}
+          onChange={(e) => onUpdate(index, { unique: e.currentTarget.checked })}
+        />
+      </Table.Td>
+      <Table.Td>
+        <Checkbox
           checked={row.searchable}
           onChange={(e) => onUpdate(index, { searchable: e.currentTarget.checked })}
+        />
+      </Table.Td>
+      <Table.Td>
+        <Select
+          size="xs"
+          data={[
+            { value: "substring", label: t("admin.lowcode.searchModeSubstring") },
+            { value: "fts", label: t("admin.lowcode.searchModeFts") },
+          ]}
+          value={row.searchMode}
+          disabled={!row.searchable}
+          onChange={(value) => onUpdate(index, { searchMode: value ?? "substring" })}
+          allowDeselect={false}
+          w={110}
         />
       </Table.Td>
       <Table.Td>
@@ -183,12 +234,20 @@ const FieldRowEditor = memo(function FieldRowEditor({
             onChange={(value) => onUpdate(index, { enumValues: value })}
           />
         ) : row.kind === "reference" ? (
-          <TextInput
-            size="xs"
-            placeholder={t("admin.lowcode.refEntityPlaceholder")}
-            value={row.refEntity}
-            onChange={(e) => onUpdate(index, { refEntity: e.currentTarget.value })}
-          />
+          <Stack gap={4}>
+            <TextInput
+              size="xs"
+              placeholder={t("admin.lowcode.refEntityPlaceholder")}
+              value={row.refEntity}
+              onChange={(e) => onUpdate(index, { refEntity: e.currentTarget.value })}
+            />
+            <TextInput
+              size="xs"
+              placeholder={t("admin.lowcode.refDisplayFieldPlaceholder")}
+              value={row.refDisplayField}
+              onChange={(e) => onUpdate(index, { refDisplayField: e.currentTarget.value })}
+            />
+          </Stack>
         ) : (
           "—"
         )}
@@ -245,7 +304,10 @@ function FieldBuilder({
             <Table.Th>{t("admin.lowcode.fieldLabel")}</Table.Th>
             <Table.Th>{t("admin.lowcode.fieldKind")}</Table.Th>
             <Table.Th>{t("admin.lowcode.fieldRequired")}</Table.Th>
+            <Table.Th>{t("admin.lowcode.fieldIndexed")}</Table.Th>
+            <Table.Th>{t("admin.lowcode.fieldUnique")}</Table.Th>
             <Table.Th>{t("admin.lowcode.fieldSearchable")}</Table.Th>
+            <Table.Th>{t("admin.lowcode.fieldSearchMode")}</Table.Th>
             <Table.Th>{t("admin.lowcode.fieldSortable")}</Table.Th>
             <Table.Th>{t("admin.lowcode.fieldExtra")}</Table.Th>
             <Table.Th />
@@ -254,7 +316,7 @@ function FieldBuilder({
         <Table.Tbody>
           {fields.length === 0 ? (
             <Table.Tr>
-              <Table.Td colSpan={8}>{t("admin.lowcode.noFields")}</Table.Td>
+              <Table.Td colSpan={11}>{t("admin.lowcode.noFields")}</Table.Td>
             </Table.Tr>
           ) : (
             fields.map((row, index) => (
