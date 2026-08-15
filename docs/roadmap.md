@@ -24,6 +24,7 @@ và `docs/agile-process.md`.
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
 | 15. Shared App Shell (UI kit, real login, permission-aware components) | Đã xong |
+| 16. Multi-tenant SaaS Control Plane & Data Plane | Thiết kế đã chốt (`docs/multi-tenant-platform-design.md`); triển khai chưa bắt đầu — trigger-based |
 
 ## Phase 0: Skeleton
 
@@ -390,6 +391,18 @@ Mục tiêu:
   cùng `request_id`/`trace_id` và nằm lồng trong cùng một span.
 - load test cho list/query/export — Chưa bắt đầu.
 - backup/restore drill — Chưa bắt đầu.
+- **TS `strict` tắt cả 2 tsconfig** (`apps/crm-fe`, `packages/platform-react`) — Chưa bắt đầu.
+  Phát hiện từ review kiến trúc 2026-08-15 (`docs/multi-tenant-platform-design.md`). Bật
+  `"strict": true` + `noUncheckedIndexedAccess`.
+- **`opt-level = "z"` cho server backend** (`Cargo.toml`) — Chưa bắt đầu. Cùng review trên; đổi
+  `[profile.release]` sang `opt-level = 3` (footprint không phải mối lo hiện tại, throughput
+  quan trọng hơn cho một API server).
+- **Clippy chưa gate, thiếu `rustfmt.toml`** — Chưa bắt đầu. Thêm `[workspace.lints]`, commit
+  `rustfmt.toml`, dọn warning tới khi bật được `-D warnings` trong CI.
+- **JWT không check `aud`/`iss`** (`metap-peripherals` mint/verify) — Chưa bắt đầu. Thêm vào
+  `jsonwebtoken::Validation`.
+- **`.claude/settings.local.json` từng bị commit kèm JWT** — Chưa bắt đầu. Thêm vào
+  `.gitignore`, kiểm tra lại lịch sử git nếu cần rotate key đã lộ.
 
 ## Phase 9: Multi-Service Evolution
 
@@ -558,6 +571,46 @@ Chưa làm (gap đã biết, không nằm trong hàng đợi):
 - Admin UI kit hoạt động được nhưng còn tối giản: chưa có pagination trên bất kỳ admin list nào, `PolicyCondition`/`targetConfig` của cron là textarea raw-JSON thay vì structured builder, chưa có bộ chuyển tenant (chỉ một dev tenant duy nhất).
 
 Liên quan đến: Phase 13 (admin UI cho cron — được đóng bởi admin kit của phase này), Phase 11 (shared shell là một phần của platform surface, không phải mối quan tâm riêng của từng app).
+
+## Phase 16: Multi-tenant SaaS Control Plane & Data Plane
+
+**Trạng thái: Thiết kế đã chốt ở mức tài liệu (2026-08-15), triển khai chưa bắt đầu.** Trigger
+cho việc bắt đầu implement: quyết định thật đi theo hướng B ("SaaS multi-tenant là đích, per-client
+outsource là cách kiếm tiền trong lúc xây B" — xem `docs/multi-tenant-platform-design.md` §11.2)
+thay vì tiếp tục chỉ ship per-client. Cho tới lúc đó, phase này chỉ là tài liệu tham khảo khi cần
+quyết định liên quan (ví dụ một khách hàng paid cần isolation vật lý sớm hơn dự kiến).
+
+Toàn bộ thiết kế nằm ở `docs/multi-tenant-platform-design.md` (hợp nhất từ hai bản nháp brainstorm
+`adr.md`/`adr2.md` ngày 2026-08-15, đã xóa sau khi hợp nhất); các quyết định cốt lõi rút gọn dạng
+bullet nằm ở [09. Architecture Decisions](architectures/09-adr.md). Tóm tắt phạm vi:
+
+- **Tenant isolation**: tiered tenancy — schema-per-tenant cho trial (1 DB chung, N schema),
+  DB-per-tenant cho paid (isolation vật lý). Thay cho đề xuất RLS-only ban đầu. §2.1.
+- **Control plane**: `control.tenants` registry + `Router.begin(tenant)` (mọi query qua
+  transaction, `SET LOCAL search_path` — không session-level, tránh rò tenant qua pool tái dùng),
+  Vault cho secret + config 4 tầng kế thừa, tenant provisioning tự phục vụ + template pack YAML.
+  §2.2-§2.5.
+- **Data plane**: table-per-entity thay `records` JSONB dùng chung (khi @ ~10M row/entity), 3
+  tier storage suy từ cờ metadata (`indexed/unique/searchable`), reconciler DDL level-triggered
+  (idempotent, tự lành sau crash — DDL online không rollback được), migration declarative-only
+  (eager cho field indexed, lazy cho field display-only), quarantine cho data bẩn, orchestrator
+  fan-out multi-tenant (pull-based, canary→wave rollout). §3-§7.
+- **Capabilities phái sinh**: audit/history (diff mode, opt-in per-entity), aggregation/rollup
+  (permission pushdown vào WHERE), inbound integration (idempotency gate + raw store trước khi
+  xử). §8.
+- **FE onboarding**: `<MetapApp>` shell đọc `AppManifest` từ pack, tự dựng nav/routes — thay cho
+  việc ráp tay từng dự án như `apps/crm-fe/App.tsx` hiện nay. §9.
+- **Deployment SaaS**: PgBouncer transaction-mode bắt buộc khi scale ngang (connection budget
+  nhân theo số instance), reconcile-orchestrator + cron tách khỏi request-serving instance
+  (singleton/worker riêng), HA cho control-plane + Vault (SPOF). §11.
+
+**Đừng over-build trước khi có trigger** (nguyên văn từ thiết kế gốc): three-way merge pack,
+Kafka, pack registry/CDN, scripting/plugin runtime per-tenant, zero-downtime cutover phức tạp hơn
+expand-contract 2 tầng đã mô tả.
+
+Findings nhỏ từ cùng đợt review đã tách sang mục tiêu Phase 8 (TS strict, `opt-level`, clippy/
+rustfmt gate, JWT `aud`/`iss`, `.gitignore` cho `settings.local.json`) vì không phụ thuộc trigger
+SaaS — làm được ngay, không cần đợi Phase 16 bắt đầu.
 
 ## Định hướng chưa lên phase (chưa có trigger)
 

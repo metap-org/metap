@@ -31,3 +31,21 @@ việc đó là thừa.
 - **Capability SPI (`docs/modular-spi-architecture.md`) là một đích đến có tên gọi, chưa phải
   cam kết xây dựng.** Ngoài `EventBus`, không SPI nào khác (Storage/Scheduler/Identity/Cache/
   Search/WorkflowRuntime) có trigger hiện tại — không xây trước khi có.
+- **Tenant isolation cho SaaS multi-tenant: schema-per-tenant (trial) / DB-per-tenant (paid),
+  không phải Postgres RLS trên một bảng `records` dùng chung.** Chọn vì tách bạch trial/paid rõ
+  ràng hơn (teardown trial = `DROP SCHEMA`, backup/PITR/xóa per-client trivial cho paid) và vì
+  data-plane cũng đang chuyển sang table-per-entity (xem điểm dưới) — lúc đó RLS trên bảng chung
+  không còn là seam đúng chỗ. RLS vẫn có thể bật thêm như defense-in-depth, không phải cơ chế
+  chính. Chi tiết: `docs/multi-tenant-platform-design.md` §2.1. Chưa triển khai — xem
+  `docs/roadmap.md` Phase 16.
+- **Bảng `records` JSONB dùng chung sẽ được thay bằng table-per-entity khi có tín hiệu scale
+  (@ ~10M row/entity), không phải ngay bây giờ.** Giữ nguyên chiến lược hiện tại
+  (xem Data Model Strategy, [05. Building Block View](05-building-blocks.md)) cho tới khi trigger
+  đó xảy ra; khi xảy ra, dùng một reconciler DDL level-triggered (`reconcile = diff(desired,
+  actual) → plan → execute`, tự lành sau crash, không cần rollback vì DDL online không rollback
+  được) thay vì migration một-lần. Chi tiết: `docs/multi-tenant-platform-design.md` §3-§5.
+- **Không tách microservice cho hướng SaaS multi-tenant.** Modular monolith + Dispatch contract
+  sạch (`CrudService`) đã "distributed-ready" mà chưa trả giá phân tán (mất ACID xuyên
+  audit/outbox/lock). Tách một mảnh cụ thể khi có tín hiệu cụ thể — cùng tinh thần trigger-based
+  của Phase 9 ([04. Solution Strategy](04-strategy.md)), không phải quyết định trả trước. Chi
+  tiết: `docs/multi-tenant-platform-design.md` §10.
