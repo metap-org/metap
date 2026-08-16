@@ -20,12 +20,12 @@ use crate::state::AppState;
 /// the source of truth for what's actually translated).
 const SUPPORTED_LOCALES: [&str; 2] = ["en", "vi"];
 
-fn user_id(context: &metap_permission::RequestContext) -> Result<Uuid, Response> {
+fn user_id(context: &metap_permission::RequestContext) -> Result<Uuid, Box<Response>> {
     context
         .user_id
         .as_deref()
         .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| internal_error_response(anyhow::anyhow!("token missing user id")))
+        .ok_or_else(|| Box::new(internal_error_response(anyhow::anyhow!("token missing user id"))))
 }
 
 async fn get_preferences(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
@@ -35,7 +35,7 @@ async fn get_preferences(State(state): State<AppState>, AuthContext(context): Au
     };
     let user_id = match user_id(&context) {
         Ok(id) => id,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match metap_peripherals::get_locale(&state.pool, tenant_id, user_id).await {
         Ok(locale) => Json(json!({ "data": { "locale": locale } })).into_response(),
@@ -57,10 +57,7 @@ async fn update_preferences(
         return service_error_response(
             400,
             "validation_failed",
-            Some(&format!(
-                "`locale` must be one of: {}.",
-                SUPPORTED_LOCALES.join(", ")
-            )),
+            Some(&format!("`locale` must be one of: {}.", SUPPORTED_LOCALES.join(", "))),
             None,
         );
     }
@@ -70,7 +67,7 @@ async fn update_preferences(
     };
     let user_id = match user_id(&context) {
         Ok(id) => id,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match metap_peripherals::set_locale(&state.pool, tenant_id, user_id, &body.locale).await {
         Ok(()) => Json(json!({ "data": { "locale": body.locale } })).into_response(),

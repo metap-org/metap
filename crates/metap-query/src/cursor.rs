@@ -76,14 +76,16 @@ mod tests {
     #[test]
     fn rejects_garbage() {
         assert_eq!(decode_cursor("not-base64!!!"), None);
-        assert_eq!(decode_cursor(&base64::engine::general_purpose::STANDARD.encode("{}")), None);
+        assert_eq!(
+            decode_cursor(&base64::engine::general_purpose::STANDARD.encode("{}")),
+            None
+        );
     }
 
     #[test]
     fn rejects_non_uuid_id() {
-        let raw = base64::engine::general_purpose::STANDARD.encode(
-            r#"{"field":"createdAt","value":"x","id":"not-a-uuid","dir":"asc"}"#,
-        );
+        let raw = base64::engine::general_purpose::STANDARD
+            .encode(r#"{"field":"createdAt","value":"x","id":"not-a-uuid","dir":"asc"}"#);
         assert_eq!(decode_cursor(&raw), None);
     }
 }

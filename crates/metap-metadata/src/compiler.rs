@@ -79,8 +79,7 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
             ));
         }
 
-        if matches!(field.kind, crate::entity::FieldKind::Reference) && field.ref_entity.is_none()
-        {
+        if matches!(field.kind, crate::entity::FieldKind::Reference) && field.ref_entity.is_none() {
             issues.push(format!(
                 "field \"{}\" is kind \"reference\" but declares no refEntity",
                 field.name
@@ -88,9 +87,7 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
         }
     }
 
-    let is_known_field = |name: &str| -> bool {
-        field_names.contains(name) || IMPLICIT_SYSTEM_FIELDS.contains(&name)
-    };
+    let is_known_field = |name: &str| -> bool { field_names.contains(name) || IMPLICIT_SYSTEM_FIELDS.contains(&name) };
 
     for list_view in &entity.list_views {
         for field_name in &list_view.fields {
@@ -138,8 +135,7 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
 
         let mut seen_transition_keys: HashSet<String> = HashSet::new();
         for transition in &workflow.transitions {
-            if transition.from.is_empty() || transition.to.is_empty() || transition.action.is_empty()
-            {
+            if transition.from.is_empty() || transition.to.is_empty() || transition.action.is_empty() {
                 issues.push(format!(
                     "workflow transition is missing from/to/action: {{\"from\":\"{}\",\"to\":\"{}\",\"action\":\"{}\"}}",
                     transition.from, transition.to, transition.action
@@ -159,7 +155,10 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
     if issues.is_empty() {
         Ok(())
     } else {
-        Err(MetadataValidationError { entity: entity.name.clone(), issues })
+        Err(MetadataValidationError {
+            entity: entity.name.clone(),
+            issues,
+        })
     }
 }
 

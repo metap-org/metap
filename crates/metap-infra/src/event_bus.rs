@@ -69,11 +69,7 @@ pub trait EventBus: Send + Sync {
     /// caller expects to clear quickly, not as a general retry mechanism — a caller that needs
     /// bounded retries-with-backoff should track its own attempt count (e.g. in the DLQ message
     /// itself, or a side table) rather than relying on this call alone.
-    async fn subscribe(
-        &self,
-        queue: &str,
-        routing_key: &str,
-    ) -> anyhow::Result<BoxStream<'static, ConsumedEvent>>;
+    async fn subscribe(&self, queue: &str, routing_key: &str) -> anyhow::Result<BoxStream<'static, ConsumedEvent>>;
 
     async fn close(&self) -> anyhow::Result<()>;
 }
@@ -126,11 +122,7 @@ impl EventBus for RabbitEventBus {
         Ok(())
     }
 
-    async fn subscribe(
-        &self,
-        queue: &str,
-        routing_key: &str,
-    ) -> anyhow::Result<BoxStream<'static, ConsumedEvent>> {
+    async fn subscribe(&self, queue: &str, routing_key: &str) -> anyhow::Result<BoxStream<'static, ConsumedEvent>> {
         // A dedicated channel per subscription — consuming holds a channel open for the
         // stream's whole lifetime, and sharing `self.channel` with `publish` would mean a
         // slow/blocked consumer could stall publishes on the same connection.

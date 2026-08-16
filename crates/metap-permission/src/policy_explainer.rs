@@ -39,7 +39,10 @@ pub fn explain_policies(
     subject: Option<&JsonObject>,
 ) -> PolicyExplanation {
     if policy_rows.is_empty() {
-        return PolicyExplanation { allowed: true, policies_considered: vec![] };
+        return PolicyExplanation {
+            allowed: true,
+            policies_considered: vec![],
+        };
     }
 
     let entries: Vec<PolicyTraceEntry> = policy_rows
@@ -103,5 +106,8 @@ pub fn explain_policies(
         .iter()
         .any(|entry| entry.role_gate != Gate::Failed && entry.condition_gate != Gate::Failed);
 
-    PolicyExplanation { allowed, policies_considered: entries }
+    PolicyExplanation {
+        allowed,
+        policies_considered: entries,
+    }
 }

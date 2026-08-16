@@ -41,11 +41,7 @@ pub fn find_transition<'a>(
 /// `true | string` shape as the TS `runGuard`, just spelled as a `Result` instead of a
 /// union. The guard itself is a `PolicyCondition`, not a function — see `entity.rs`'s doc
 /// comment on `WorkflowTransition::guard` for why.
-pub fn run_guard(
-    transition: &WorkflowTransition,
-    data: &JsonObject,
-    context: &RequestContext,
-) -> Result<(), String> {
+pub fn run_guard(transition: &WorkflowTransition, data: &JsonObject, context: &RequestContext) -> Result<(), String> {
     let Some(guard) = &transition.guard else { return Ok(()) };
     let subject = Value::Object(data.clone());
     let result = evaluate_condition(guard, &subject, context);

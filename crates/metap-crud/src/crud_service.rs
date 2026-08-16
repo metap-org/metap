@@ -12,12 +12,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
+use metap_control::{Router, RouterError};
 use metap_metadata::{EntityDefinition, MetadataRegistry};
 use metap_permission::{EntityAction, PermissionDecision, PermissionService, PermissionSnapshot, RequestContext};
 use metap_query::{apply_params, encode_cursor, plan_list, Cursor, InvalidCursorError, ListInput, SortDir};
-use metap_workflow::{emit_created, emit_deleted, emit_transitioned, emit_updated, find_transition, get_initial_status, record_event, run_guard};
+use metap_workflow::{
+    emit_created, emit_deleted, emit_transitioned, emit_updated, find_transition, get_initial_status, record_event,
+    run_guard,
+};
 use serde_json::Value;
-use sqlx::{PgPool, Row};
+use sqlx::{PgExecutor, Row};
 use uuid::Uuid;
 
 use crate::dto::{JsonObject, RecordCapabilities, RecordDto, TransitionAvailability};
@@ -38,18 +42,18 @@ const RECORD_COLUMNS: &str = "id, entity, code, status, data, version, created_a
 /// same snapshot for the rest of the call — a request is never torn between two registry
 /// versions even if a publish happens mid-request.
 pub struct CrudService {
-    pool: PgPool,
+    router: Router,
     metadata: Arc<ArcSwap<MetadataRegistry>>,
     permissions: Arc<PermissionService>,
 }
 
 impl CrudService {
-    pub fn new(
-        pool: PgPool,
-        metadata: Arc<ArcSwap<MetadataRegistry>>,
-        permissions: Arc<PermissionService>,
-    ) -> Self {
-        Self { pool, metadata, permissions }
+    pub fn new(router: Router, metadata: Arc<ArcSwap<MetadataRegistry>>, permissions: Arc<PermissionService>) -> Self {
+        Self {
+            router,
+            metadata,
+            permissions,
+        }
     }
 
     fn get_entity(&self, entity_name: &str) -> Option<EntityDefinition> {
@@ -81,7 +85,14 @@ impl CrudService {
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
         let record_policies = snapshot.get_record_policies(EntityAction::Read);
 
-        let planned = match plan_list(&metadata, &self.permissions, &entity.name, input, context, record_policies) {
+        let planned = match plan_list(
+            &metadata,
+            &self.permissions,
+            &entity.name,
+            input,
+            context,
+            record_policies,
+        ) {
             Ok(p) => p,
             Err(e) => {
                 if e.downcast_ref::<InvalidCursorError>().is_some() {
@@ -97,14 +108,26 @@ impl CrudService {
             planned.order_by_sql,
             planned.limit + 1
         );
+        let mut tx = match self.router.begin(tenant_id.into()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                if let Some(result) = router_unavailable(&e) {
+                    return Ok(result);
+                }
+                return Err(e);
+            }
+        };
         let query = apply_params(sqlx::query(&sql), &planned.params);
-        let rows = query.fetch_all(&self.pool).await?;
+        let rows = query.fetch_all(&mut *tx).await?;
+        tx.commit().await?;
 
         let has_more = rows.len() as i64 > planned.limit;
-        let page_rows: Vec<_> =
-            if has_more { rows.into_iter().take(planned.limit as usize).collect() } else { rows };
-        let page_dtos: Vec<RecordDto> =
-            page_rows.into_iter().map(row_to_dto).collect::<anyhow::Result<_>>()?;
+        let page_rows: Vec<_> = if has_more {
+            rows.into_iter().take(planned.limit as usize).collect()
+        } else {
+            rows
+        };
+        let page_dtos: Vec<RecordDto> = page_rows.into_iter().map(row_to_dto).collect::<anyhow::Result<_>>()?;
 
         let next_cursor = if has_more {
             page_dtos.last().map(|last| {
@@ -112,7 +135,11 @@ impl CrudService {
                     field: planned.resolved_sort.field.clone(),
                     value: sort_field_value(last, &planned.resolved_sort.field),
                     id: last.id.to_string(),
-                    dir: if planned.resolved_sort.descending { SortDir::Desc } else { SortDir::Asc },
+                    dir: if planned.resolved_sort.descending {
+                        SortDir::Desc
+                    } else {
+                        SortDir::Asc
+                    },
                 })
             })
         } else {
@@ -124,7 +151,13 @@ impl CrudService {
             .map(|dto| mask_record_for_read(&entity, context, &snapshot, dto))
             .collect();
 
-        Ok(ServiceResult::ok_with_page(data, PageInfo { limit: planned.limit, next_cursor }))
+        Ok(ServiceResult::ok_with_page(
+            data,
+            PageInfo {
+                limit: planned.limit,
+                next_cursor,
+            },
+        ))
     }
 
     pub async fn get(
@@ -144,14 +177,23 @@ impl CrudService {
         }
 
         let tenant_id = self.permissions.scoped_tenant(context)?;
-        let Some(existing) = fetch_existing(&self.pool, id, tenant_id, &entity.name).await? else {
+        let mut tx = match self.router.begin(tenant_id.into()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                if let Some(result) = router_unavailable(&e) {
+                    return Ok(result);
+                }
+                return Err(e);
+            }
+        };
+        let Some(existing) = fetch_existing(&mut *tx, id, tenant_id, &entity.name).await? else {
             tracing::debug!(entity = entity.name, record_id = %id, "get rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
+        tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision =
-            snapshot.can_update_record_condition(context, &existing.data, EntityAction::Read);
+        let record_decision = snapshot.can_update_record_condition(context, &existing.data, EntityAction::Read);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
@@ -194,7 +236,11 @@ impl CrudService {
                     fields = ?field_errors.keys().collect::<Vec<_>>(),
                     "create rejected: validation failed"
                 );
-                return Ok(ServiceResult::err_with_field_errors(400, "validation_failed", field_errors));
+                return Ok(ServiceResult::err_with_field_errors(
+                    400,
+                    "validation_failed",
+                    field_errors,
+                ));
             }
         };
 
@@ -207,12 +253,21 @@ impl CrudService {
         // blob disagree the moment a caller omits it, which `mask_record_for_read`'s
         // masking check (`filtered_data.contains_key(stateField)`) then reads as "absent".
         if let (Some(workflow), Some(status)) = (&entity.workflow, &status) {
-            data.entry(workflow.state_field.clone()).or_insert_with(|| Value::String(status.clone()));
+            data.entry(workflow.state_field.clone())
+                .or_insert_with(|| Value::String(status.clone()));
         }
         let code = data.get("code").and_then(Value::as_str).map(String::from);
         let user_id = parse_user_id(context)?;
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = match self.router.begin(tenant_id.into()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                if let Some(result) = router_unavailable(&e) {
+                    return Ok(result);
+                }
+                return Err(e);
+            }
+        };
         let row = match sqlx::query(&format!(
             "INSERT INTO records (tenant_id, entity, code, status, data, created_by, updated_by) \
              VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {RECORD_COLUMNS}"
@@ -243,7 +298,9 @@ impl CrudService {
         tx.commit().await?;
         tracing::info!(entity = entity.name, record_id = %record.id, "record created");
 
-        Ok(ServiceResult::ok(mask_record_for_read(&entity, context, &snapshot, record)))
+        Ok(ServiceResult::ok(mask_record_for_read(
+            &entity, context, &snapshot, record,
+        )))
     }
 
     pub async fn update(
@@ -265,14 +322,23 @@ impl CrudService {
         }
 
         let tenant_id = self.permissions.scoped_tenant(context)?;
-        let Some(existing) = fetch_existing(&self.pool, id, tenant_id, &entity.name).await? else {
+        let mut precheck_tx = match self.router.begin(tenant_id.into()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                if let Some(result) = router_unavailable(&e) {
+                    return Ok(result);
+                }
+                return Err(e);
+            }
+        };
+        let Some(existing) = fetch_existing(&mut *precheck_tx, id, tenant_id, &entity.name).await? else {
             tracing::debug!(entity = entity.name, record_id = %id, "update rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
+        precheck_tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision =
-            snapshot.can_update_record_condition(context, &existing.data, EntityAction::Update);
+        let record_decision = snapshot.can_update_record_condition(context, &existing.data, EntityAction::Update);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
@@ -304,14 +370,26 @@ impl CrudService {
                     fields = ?field_errors.keys().collect::<Vec<_>>(),
                     "update rejected: validation failed"
                 );
-                return Ok(ServiceResult::err_with_field_errors(400, "validation_failed", field_errors));
+                return Ok(ServiceResult::err_with_field_errors(
+                    400,
+                    "validation_failed",
+                    field_errors,
+                ));
             }
         };
 
         let code = data.get("code").and_then(Value::as_str).map(String::from);
         let user_id = parse_user_id(context)?;
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = match self.router.begin(tenant_id.into()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                if let Some(result) = router_unavailable(&e) {
+                    return Ok(result);
+                }
+                return Err(e);
+            }
+        };
         let row = match sqlx::query(&format!(
             "UPDATE records SET data = $1, code = $2, version = version + 1, updated_at = now(), updated_by = $3 \
              WHERE id = $4 AND tenant_id = $5 AND entity = $6 AND version = $7 AND deleted = false \
@@ -354,7 +432,9 @@ impl CrudService {
         tx.commit().await?;
         tracing::info!(entity = entity.name, record_id = %record.id, version = record.version, "record updated");
 
-        Ok(ServiceResult::ok(mask_record_for_read(&entity, context, &snapshot, record)))
+        Ok(ServiceResult::ok(mask_record_for_read(
+            &entity, context, &snapshot, record,
+        )))
     }
 
     pub async fn transition(
@@ -376,14 +456,23 @@ impl CrudService {
         }
 
         let tenant_id = self.permissions.scoped_tenant(context)?;
-        let Some(existing) = fetch_existing(&self.pool, id, tenant_id, &entity.name).await? else {
+        let mut precheck_tx = match self.router.begin(tenant_id.into()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                if let Some(result) = router_unavailable(&e) {
+                    return Ok(result);
+                }
+                return Err(e);
+            }
+        };
+        let Some(existing) = fetch_existing(&mut *precheck_tx, id, tenant_id, &entity.name).await? else {
             tracing::debug!(entity = entity.name, record_id = %id, "transition rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
+        precheck_tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision =
-            snapshot.can_update_record_condition(context, &existing.data, EntityAction::Update);
+        let record_decision = snapshot.can_update_record_condition(context, &existing.data, EntityAction::Update);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
@@ -433,7 +522,15 @@ impl CrudService {
 
         let user_id = parse_user_id(context)?;
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = match self.router.begin(tenant_id.into()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                if let Some(result) = router_unavailable(&e) {
+                    return Ok(result);
+                }
+                return Err(e);
+            }
+        };
         let row = sqlx::query(&format!(
             "UPDATE records SET data = $1, status = $2, version = version + 1, updated_at = now(), updated_by = $3 \
              WHERE id = $4 AND tenant_id = $5 AND entity = $6 AND version = $7 AND deleted = false \
@@ -473,7 +570,9 @@ impl CrudService {
             "record transitioned"
         );
 
-        Ok(ServiceResult::ok(mask_record_for_read(&entity, context, &snapshot, record)))
+        Ok(ServiceResult::ok(mask_record_for_read(
+            &entity, context, &snapshot, record,
+        )))
     }
 
     pub async fn delete(
@@ -494,21 +593,38 @@ impl CrudService {
         }
 
         let tenant_id = self.permissions.scoped_tenant(context)?;
-        let Some(existing) = fetch_existing(&self.pool, id, tenant_id, &entity.name).await? else {
+        let mut precheck_tx = match self.router.begin(tenant_id.into()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                if let Some(result) = router_unavailable(&e) {
+                    return Ok(result);
+                }
+                return Err(e);
+            }
+        };
+        let Some(existing) = fetch_existing(&mut *precheck_tx, id, tenant_id, &entity.name).await? else {
             tracing::debug!(entity = entity.name, record_id = %id, "delete rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
+        precheck_tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision =
-            snapshot.can_update_record_condition(context, &existing.data, EntityAction::Delete);
+        let record_decision = snapshot.can_update_record_condition(context, &existing.data, EntityAction::Delete);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
 
         let user_id = parse_user_id(context)?;
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = match self.router.begin(tenant_id.into()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                if let Some(result) = router_unavailable(&e) {
+                    return Ok(result);
+                }
+                return Err(e);
+            }
+        };
         let row = sqlx::query(&format!(
             "UPDATE records SET deleted = true, version = version + 1, updated_at = now(), updated_by = $1 \
              WHERE id = $2 AND tenant_id = $3 AND entity = $4 AND version = $5 AND deleted = false \
@@ -538,7 +654,9 @@ impl CrudService {
         tx.commit().await?;
         tracing::info!(entity = entity.name, record_id = %record.id, "record deleted");
 
-        Ok(ServiceResult::ok(mask_record_for_read(&entity, context, &snapshot, record)))
+        Ok(ServiceResult::ok(mask_record_for_read(
+            &entity, context, &snapshot, record,
+        )))
     }
 }
 
@@ -553,11 +671,9 @@ fn forbidden<T>(decision: PermissionDecision) -> ServiceResult<T> {
 fn forbidden_with_field<T>(decision: PermissionDecision) -> ServiceResult<T> {
     let reason = decision.reason.clone().unwrap_or_else(|| "forbidden".to_string());
     match decision.field {
-        Some(field) => ServiceResult::err_with_field_errors(
-            403,
-            reason,
-            HashMap::from([(field, vec!["forbidden".to_string()])]),
-        ),
+        Some(field) => {
+            ServiceResult::err_with_field_errors(403, reason, HashMap::from([(field, vec!["forbidden".to_string()])]))
+        }
         None => ServiceResult::err(403, reason),
     }
 }
@@ -580,7 +696,10 @@ fn unique_violation<T>(entity_name: &str, error: &sqlx::Error) -> Option<Service
         return None;
     }
     let prefix = format!("uniq_records_{}_", entity_name.replace('.', "_"));
-    let field = db_err.constraint().and_then(|c| c.strip_prefix(&prefix)).map(str::to_string);
+    let field = db_err
+        .constraint()
+        .and_then(|c| c.strip_prefix(&prefix))
+        .map(str::to_string);
     Some(match field {
         Some(field) => ServiceResult::err_with_field_errors(
             409,
@@ -591,8 +710,27 @@ fn unique_violation<T>(entity_name: &str, error: &sqlx::Error) -> Option<Service
     })
 }
 
-async fn fetch_existing(
-    pool: &PgPool,
+/// `Router::begin` fails with `metap_control::RouterError` for tenant states that are a normal,
+/// expected part of the tenant lifecycle (suspended for non-payment, mid-migration, still
+/// provisioning, trial expired) rather than a bug — those get a clean 4xx/5xx instead of falling
+/// through to the generic `?` -> 500 path. Any other error (DB connectivity, an
+/// `InvalidSchemaName` that should never occur from real `control.tenants` data) returns `None`
+/// so the caller's `return Err(e)` fallback still applies — same shape as `unique_violation`
+/// above.
+fn router_unavailable<T>(error: &anyhow::Error) -> Option<ServiceResult<T>> {
+    match error.downcast_ref::<RouterError>()? {
+        RouterError::TenantSuspended | RouterError::TenantExpired => {
+            Some(ServiceResult::err(403, "tenant_unavailable"))
+        }
+        RouterError::TenantMigrating | RouterError::TenantProvisioning => {
+            Some(ServiceResult::err(503, "tenant_unavailable"))
+        }
+        RouterError::InvalidSchemaName(_) => None,
+    }
+}
+
+async fn fetch_existing<'e, E: PgExecutor<'e>>(
+    executor: E,
     id: Uuid,
     tenant_id: Uuid,
     entity_name: &str,
@@ -604,7 +742,7 @@ async fn fetch_existing(
     .bind(id)
     .bind(tenant_id)
     .bind(entity_name)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?;
     row.map(row_to_dto).transpose()
 }
@@ -639,12 +777,21 @@ fn mask_record_for_read(
 ) -> RecordDto {
     let filtered_data = snapshot.filter_readable_fields(context, &row.data);
     let state_field = entity.workflow.as_ref().map(|w| w.state_field.as_str());
-    let code = if filtered_data.contains_key("code") { row.code } else { None };
+    let code = if filtered_data.contains_key("code") {
+        row.code
+    } else {
+        None
+    };
     let status = match state_field {
         Some(sf) if !filtered_data.contains_key(sf) => None,
         _ => row.status,
     };
-    RecordDto { code, status, data: filtered_data, ..row }
+    RecordDto {
+        code,
+        status,
+        data: filtered_data,
+        ..row
+    }
 }
 
 fn compute_capabilities(
@@ -656,13 +803,15 @@ fn compute_capabilities(
     let all_field_names: Vec<String> = entity.fields.iter().map(|f| f.name.clone()).collect();
     let writable_fields = snapshot.writable_fields(context, &all_field_names, Some(existing_data));
 
-    let record_decision =
-        snapshot.can_update_record_condition(context, existing_data, EntityAction::Update);
+    let record_decision = snapshot.can_update_record_condition(context, existing_data, EntityAction::Update);
     let can_update = record_decision.allowed;
 
     let mut transitions = Vec::new();
-    let current_state =
-        entity.workflow.as_ref().and_then(|w| existing_data.get(&w.state_field)).and_then(Value::as_str);
+    let current_state = entity
+        .workflow
+        .as_ref()
+        .and_then(|w| existing_data.get(&w.state_field))
+        .and_then(Value::as_str);
 
     if let (Some(workflow), Some(current_state)) = (&entity.workflow, current_state) {
         for transition in &workflow.transitions {
@@ -688,7 +837,11 @@ fn compute_capabilities(
         }
     }
 
-    RecordCapabilities { writable_fields, can_update, transitions }
+    RecordCapabilities {
+        writable_fields,
+        can_update,
+        transitions,
+    }
 }
 
 fn sort_field_value(row: &RecordDto, field: &str) -> String {

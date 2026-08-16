@@ -9,8 +9,7 @@
 
 use metap::permission::{ConditionOp, PolicyValue};
 use metap::prelude::{
-    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, PolicyCondition,
-    WorkflowTransition,
+    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, PolicyCondition, WorkflowTransition,
 };
 use serde_json::json;
 
@@ -61,7 +60,15 @@ pub fn sales_order_entity() -> EntityDefinition {
                 sortable: None,
             },
             field("orderDate", "Order Date", FieldKind::Date, true, false, false, true),
-            field("totalAmount", "Total Amount", FieldKind::Money, true, false, false, true),
+            field(
+                "totalAmount",
+                "Total Amount",
+                FieldKind::Money,
+                true,
+                false,
+                false,
+                true,
+            ),
             EntityField {
                 name: "status".to_string(),
                 label: "Status".to_string(),

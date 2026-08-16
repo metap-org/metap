@@ -5,15 +5,14 @@
 //! `src/*.rs`; this file is the DB-dependent counterpart, kept structurally and by-default
 //! separate from them.
 
-use metap_permission::{PolicySubject, PolicyStore, PostgresPolicyStore};
+use metap_permission::{PolicyStore, PolicySubject, PostgresPolicyStore};
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn create_list_and_delete_round_trip_against_real_postgres() {
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -49,7 +48,10 @@ async fn create_list_and_delete_round_trip_against_real_postgres() {
     assert_eq!(context_policies.len(), 1);
     assert_eq!(context_policies[0].id, created.id);
 
-    let all = store.load_all_policies(tenant_id, "crm.customers").await.expect("load_all_policies");
+    let all = store
+        .load_all_policies(tenant_id, "crm.customers")
+        .await
+        .expect("load_all_policies");
     assert_eq!(all.len(), 1);
 
     let listed = store.list_policies(tenant_id, None).await.expect("list_policies");
@@ -57,18 +59,23 @@ async fn create_list_and_delete_round_trip_against_real_postgres() {
 
     store.delete_policy(tenant_id, created.id).await.expect("delete_policy");
 
-    let after_delete =
-        store.load_all_policies(tenant_id, "crm.customers").await.expect("load_all_policies after delete");
+    let after_delete = store
+        .load_all_policies(tenant_id, "crm.customers")
+        .await
+        .expect("load_all_policies after delete");
     assert!(after_delete.is_empty());
 }
 
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn create_policy_with_condition_round_trips_jsonb() {
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
 
-    let pool = PgPoolOptions::new().max_connections(2).connect(&database_url).await.unwrap();
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&database_url)
+        .await
+        .unwrap();
     let store = PostgresPolicyStore::new(pool);
     let tenant_id = Uuid::new_v4();
 

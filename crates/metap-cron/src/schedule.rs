@@ -13,8 +13,7 @@ use cron::Schedule;
 /// create/update handlers to reject a bad job definition at write time instead of failing
 /// silently the first time the ticker tries to schedule it.
 pub fn validate(cron_expr: &str, timezone: &str) -> anyhow::Result<()> {
-    Schedule::from_str(cron_expr)
-        .map_err(|e| anyhow::anyhow!("invalid cron expression {cron_expr:?}: {e}"))?;
+    Schedule::from_str(cron_expr).map_err(|e| anyhow::anyhow!("invalid cron expression {cron_expr:?}: {e}"))?;
     timezone
         .parse::<Tz>()
         .map_err(|_| anyhow::anyhow!("invalid IANA timezone {timezone:?}"))?;
@@ -24,9 +23,11 @@ pub fn validate(cron_expr: &str, timezone: &str) -> anyhow::Result<()> {
 /// The next occurrence of `cron_expr` strictly after `after`, evaluated in `timezone` (so
 /// "every day at 9am" means 9am local time, not UTC) and returned back in UTC for storage.
 pub fn next_run_at(cron_expr: &str, timezone: &str, after: DateTime<Utc>) -> anyhow::Result<DateTime<Utc>> {
-    let schedule = Schedule::from_str(cron_expr)
-        .map_err(|e| anyhow::anyhow!("invalid cron expression {cron_expr:?}: {e}"))?;
-    let tz: Tz = timezone.parse().map_err(|_| anyhow::anyhow!("invalid IANA timezone {timezone:?}"))?;
+    let schedule =
+        Schedule::from_str(cron_expr).map_err(|e| anyhow::anyhow!("invalid cron expression {cron_expr:?}: {e}"))?;
+    let tz: Tz = timezone
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid IANA timezone {timezone:?}"))?;
 
     let after_in_tz = after.with_timezone(&tz);
     let next = schedule

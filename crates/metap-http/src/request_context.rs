@@ -26,10 +26,14 @@ pub async fn request_context(request: Request, next: Next) -> Response {
     // Always present — `generate_request_ids` runs outside this layer in `build_router`, so
     // by construction every request reaching here already has one.
     let RequestIds { request_id, trace_id } =
-        request.extensions().get::<RequestIds>().cloned().unwrap_or_else(|| RequestIds {
-            request_id: uuid::Uuid::new_v4().to_string(),
-            trace_id: uuid::Uuid::new_v4().to_string(),
-        });
+        request
+            .extensions()
+            .get::<RequestIds>()
+            .cloned()
+            .unwrap_or_else(|| RequestIds {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                trace_id: uuid::Uuid::new_v4().to_string(),
+            });
 
     let response = next.run(request).await;
     let (mut parts, body) = response.into_parts();

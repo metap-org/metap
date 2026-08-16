@@ -7,8 +7,7 @@
 
 use metap::permission::{ConditionOp, PolicyValue};
 use metap::prelude::{
-    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, PolicyCondition,
-    WorkflowTransition,
+    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, PolicyCondition, WorkflowTransition,
 };
 use serde_json::json;
 

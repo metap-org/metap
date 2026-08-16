@@ -143,15 +143,13 @@ impl PolicyStore for PostgresPolicyStore {
         options: &ExplainOptions,
     ) -> anyhow::Result<Vec<PolicyRow>> {
         let rows = if let Some(field) = &options.field {
-            sqlx::query(
-                "SELECT * FROM policies WHERE tenant_id = $1 AND entity = $2 AND action = $3 AND field = $4",
-            )
-            .bind(tenant_id)
-            .bind(entity)
-            .bind(action)
-            .bind(field)
-            .fetch_all(&self.pool)
-            .await?
+            sqlx::query("SELECT * FROM policies WHERE tenant_id = $1 AND entity = $2 AND action = $3 AND field = $4")
+                .bind(tenant_id)
+                .bind(entity)
+                .bind(action)
+                .bind(field)
+                .fetch_all(&self.pool)
+                .await?
         } else {
             let subject = options.subject.unwrap_or(PolicySubject::Context).as_str();
             sqlx::query(

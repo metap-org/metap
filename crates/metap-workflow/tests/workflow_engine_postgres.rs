@@ -22,9 +22,12 @@ fn entity() -> EntityDefinition {
 }
 
 async fn connect() -> PgPool {
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-    PgPoolOptions::new().max_connections(2).connect(&database_url).await.unwrap()
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&database_url)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -78,13 +81,17 @@ async fn emit_transitioned_and_emit_created_enqueue_outbox_rows_with_correct_top
 
     let mut data = JsonObject::new();
     data.insert("name".to_string(), json!("Acme"));
-    emit_created(&pool, &entity, record_id, &data).await.expect("emit_created");
-
-    let rows = sqlx::query("SELECT topic, aggregate_id, payload FROM outbox_events WHERE aggregate_id = $1 ORDER BY created_at")
-        .bind(record_id)
-        .fetch_all(&pool)
+    emit_created(&pool, &entity, record_id, &data)
         .await
-        .expect("fetch outbox rows");
+        .expect("emit_created");
+
+    let rows = sqlx::query(
+        "SELECT topic, aggregate_id, payload FROM outbox_events WHERE aggregate_id = $1 ORDER BY created_at",
+    )
+    .bind(record_id)
+    .fetch_all(&pool)
+    .await
+    .expect("fetch outbox rows");
 
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].get::<String, _>("topic"), "test.widgets.workflow.transitioned");

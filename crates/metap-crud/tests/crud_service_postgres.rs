@@ -6,12 +6,10 @@
 //! confidence.
 
 use metap_crud::{CrudService, JsonObject, ServiceResult};
-use metap_metadata::{
-    EntityDefinition, EntityField, EntityWorkflow, FieldKind, MetadataRegistry, WorkflowTransition,
-};
+use metap_metadata::{EntityDefinition, EntityField, EntityWorkflow, FieldKind, MetadataRegistry, WorkflowTransition};
 use metap_permission::{
-    ConditionOp, PermissionService, PolicyCondition, PolicyStore, PolicySubject, PolicyValue,
-    PostgresPolicyStore, RequestContext,
+    ConditionOp, PermissionService, PolicyCondition, PolicyStore, PolicySubject, PolicyValue, PostgresPolicyStore,
+    RequestContext,
 };
 use metap_query::ListInput;
 use serde_json::json;
@@ -105,22 +103,20 @@ fn unique_field_entity() -> EntityDefinition {
         name: "test.unique_orders".to_string(),
         label: "Unique Order".to_string(),
         table_name: "records".to_string(),
-        fields: vec![
-            EntityField {
-                name: "sku".to_string(),
-                label: "SKU".to_string(),
-                kind: FieldKind::String,
-                required: Some(true),
-                indexed: None,
-                unique: Some(true),
-                enum_values: None,
-                ref_entity: None,
-                ref_display_field: None,
-                searchable: None,
-                search_mode: None,
-                sortable: None,
-            },
-        ],
+        fields: vec![EntityField {
+            name: "sku".to_string(),
+            label: "SKU".to_string(),
+            kind: FieldKind::String,
+            required: Some(true),
+            indexed: None,
+            unique: Some(true),
+            enum_values: None,
+            ref_entity: None,
+            ref_display_field: None,
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+        }],
         list_views: vec![],
         workflow: None,
     }
@@ -138,9 +134,24 @@ async fn ensure_sku_unique_index(pool: &PgPool) {
 }
 
 async fn connect() -> PgPool {
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-    PgPoolOptions::new().max_connections(5).connect(&database_url).await.unwrap()
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap()
+}
+
+/// No `control.tenants` row is ever inserted by these tests, so `Router::begin` always takes
+/// the unregistered-tenant fallback (public schema) — same behavior `CrudService` had before
+/// the Router refactor, which is exactly what these tests exercise.
+fn test_router(pool: PgPool) -> metap_control::Router {
+    let registry = std::sync::Arc::new(metap_control::PostgresTenantRegistry::new(pool.clone()));
+    metap_control::Router::new(
+        pool,
+        metap_control::RegistryCache::new(registry),
+        std::sync::Arc::new(metap_control::EnvStore),
+    )
 }
 
 fn admin_context(tenant_id: Uuid) -> RequestContext {
@@ -163,8 +174,16 @@ async fn cleanup(pool: &PgPool, tenant_id: Uuid) {
         .execute(pool)
         .await
         .ok();
-    sqlx::query("DELETE FROM records WHERE tenant_id = $1").bind(tenant_id).execute(pool).await.ok();
-    sqlx::query("DELETE FROM policies WHERE tenant_id = $1").bind(tenant_id).execute(pool).await.ok();
+    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM policies WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .ok();
 }
 
 #[tokio::test]
@@ -177,7 +196,11 @@ async fn full_lifecycle_create_get_update_transition_delete() {
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
     let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
-    let crud = CrudService::new(pool.clone(), std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))), std::sync::Arc::new(permissions));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
 
     // create
     let mut payload = JsonObject::new();
@@ -187,14 +210,23 @@ async fn full_lifecycle_create_get_update_transition_delete() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
-    assert_eq!(created.status.as_deref(), Some("draft"), "getInitialStatus must set draft");
+    assert_eq!(
+        created.status.as_deref(),
+        Some("draft"),
+        "getInitialStatus must set draft"
+    );
     assert_eq!(created.version, 1);
 
     // create validation failure: missing required "name"
     let mut bad_payload = JsonObject::new();
     bad_payload.insert("amount".to_string(), json!(1));
     match crud.create("test.orders", &bad_payload, &ctx).await.unwrap() {
-        ServiceResult::Err { status, error, field_errors, .. } => {
+        ServiceResult::Err {
+            status,
+            error,
+            field_errors,
+            ..
+        } => {
             assert_eq!(status, 400);
             assert_eq!(error, "validation_failed");
             assert!(field_errors.unwrap().contains_key("name"));
@@ -211,12 +243,19 @@ async fn full_lifecycle_create_get_update_transition_delete() {
     assert!(capabilities.can_update);
     assert_eq!(capabilities.transitions.len(), 1);
     assert_eq!(capabilities.transitions[0].action, "approve");
-    assert!(!capabilities.transitions[0].available, "guard requires amount == 100, current is 50");
+    assert!(
+        !capabilities.transitions[0].available,
+        "guard requires amount == 100, current is 50"
+    );
 
     // update with stale version -> 409
     let mut update_payload = JsonObject::new();
     update_payload.insert("amount".to_string(), json!(100));
-    match crud.update("test.orders", created.id, 999, &update_payload, &ctx).await.unwrap() {
+    match crud
+        .update("test.orders", created.id, 999, &update_payload, &ctx)
+        .await
+        .unwrap()
+    {
         ServiceResult::Err { status, error, .. } => {
             assert_eq!(status, 409);
             assert_eq!(error, "version_conflict");
@@ -225,29 +264,41 @@ async fn full_lifecycle_create_get_update_transition_delete() {
     }
 
     // update with correct version -> succeeds, version increments
-    let updated = match crud.update("test.orders", created.id, created.version, &update_payload, &ctx).await.unwrap() {
+    let updated = match crud
+        .update("test.orders", created.id, created.version, &update_payload, &ctx)
+        .await
+        .unwrap()
+    {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected update to succeed, got {other:?}"),
     };
     assert_eq!(updated.version, 2);
     assert_eq!(updated.data["amount"], json!(100));
     assert_eq!(
-        updated.data["status"], json!("draft"),
+        updated.data["status"],
+        json!("draft"),
         "status field must not change via update, only via transition"
     );
 
     // transition guard now passes (amount == 100)
-    let transitioned =
-        match crud.transition("test.orders", created.id, "approve", updated.version, &ctx).await.unwrap() {
-            ServiceResult::Ok { data, .. } => data,
-            other => panic!("expected transition to succeed, got {other:?}"),
-        };
+    let transitioned = match crud
+        .transition("test.orders", created.id, "approve", updated.version, &ctx)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected transition to succeed, got {other:?}"),
+    };
     assert_eq!(transitioned.status.as_deref(), Some("approved"));
     assert_eq!(transitioned.data["status"], json!("approved"));
     assert_eq!(transitioned.version, 3);
 
     // transition again from a now-invalid from-state -> invalid_transition
-    match crud.transition("test.orders", created.id, "approve", transitioned.version, &ctx).await.unwrap() {
+    match crud
+        .transition("test.orders", created.id, "approve", transitioned.version, &ctx)
+        .await
+        .unwrap()
+    {
         ServiceResult::Err { status, error, .. } => {
             assert_eq!(status, 409);
             assert_eq!(error, "invalid_transition");
@@ -256,7 +307,11 @@ async fn full_lifecycle_create_get_update_transition_delete() {
     }
 
     // delete (soft)
-    let deleted = match crud.delete("test.orders", created.id, transitioned.version, &ctx).await.unwrap() {
+    let deleted = match crud
+        .delete("test.orders", created.id, transitioned.version, &ctx)
+        .await
+        .unwrap()
+    {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected delete to succeed, got {other:?}"),
     };
@@ -272,24 +327,22 @@ async fn full_lifecycle_create_get_update_transition_delete() {
     }
 
     // workflow_events audit trail has exactly one row (the one real transition)
-    let event_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM workflow_events WHERE tenant_id = $1 AND record_id = $2",
-    )
-    .bind(tenant_id)
-    .bind(created.id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let event_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM workflow_events WHERE tenant_id = $1 AND record_id = $2")
+            .bind(tenant_id)
+            .bind(created.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(event_count, 1);
 
     // outbox got: record.created, record.updated, workflow.transitioned, record.deleted
-    let topics: Vec<String> = sqlx::query_scalar(
-        "SELECT topic FROM outbox_events WHERE aggregate_id = $1 ORDER BY created_at",
-    )
-    .bind(created.id)
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+    let topics: Vec<String> =
+        sqlx::query_scalar("SELECT topic FROM outbox_events WHERE aggregate_id = $1 ORDER BY created_at")
+            .bind(created.id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
     assert_eq!(
         topics,
         vec![
@@ -313,7 +366,11 @@ async fn list_returns_created_records_scoped_to_tenant() {
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
     let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
-    let crud = CrudService::new(pool.clone(), std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))), std::sync::Arc::new(permissions));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
 
     for name in ["a", "b", "c"] {
         let mut payload = JsonObject::new();
@@ -321,7 +378,10 @@ async fn list_returns_created_records_scoped_to_tenant() {
         crud.create("test.orders", &payload, &ctx).await.unwrap();
     }
 
-    let input = ListInput { limit: 50, ..Default::default() };
+    let input = ListInput {
+        limit: 50,
+        ..Default::default()
+    };
     let list_result = crud.list("test.orders", &input, &ctx).await.unwrap();
     match list_result {
         ServiceResult::Ok { data, page } => {
@@ -362,7 +422,11 @@ async fn non_admin_field_write_policy_is_enforced_through_create() {
         .unwrap();
 
     let permissions = PermissionService::new(Box::new(store));
-    let crud = CrudService::new(pool.clone(), std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))), std::sync::Arc::new(permissions));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
 
     let ctx = RequestContext {
         tenant_id: tenant_id.to_string(),
@@ -376,7 +440,9 @@ async fn non_admin_field_write_policy_is_enforced_through_create() {
     payload.insert("amount".to_string(), json!(1));
 
     match crud.create("test.orders", &payload, &ctx).await.unwrap() {
-        ServiceResult::Err { status, field_errors, .. } => {
+        ServiceResult::Err {
+            status, field_errors, ..
+        } => {
             assert_eq!(status, 403);
             assert!(field_errors.unwrap().contains_key("amount"));
         }
@@ -398,7 +464,7 @@ async fn unique_field_violation_is_a_clean_409_not_a_500() {
     registry.register(unique_field_entity()).unwrap();
     let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
     let crud = CrudService::new(
-        pool.clone(),
+        test_router(pool.clone()),
         std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
         std::sync::Arc::new(permissions),
     );
@@ -413,7 +479,12 @@ async fn unique_field_violation_is_a_clean_409_not_a_500() {
     // second create with the same sku -> 409 unique_violation, field_errors names "sku",
     // not an unhandled 500 from the raw DB error propagating through `?`.
     match crud.create("test.unique_orders", &payload, &ctx).await.unwrap() {
-        ServiceResult::Err { status, error, field_errors, .. } => {
+        ServiceResult::Err {
+            status,
+            error,
+            field_errors,
+            ..
+        } => {
             assert_eq!(status, 409);
             assert_eq!(error, "unique_violation");
             assert!(field_errors.unwrap().contains_key("sku"));
@@ -428,8 +499,17 @@ async fn unique_field_violation_is_a_clean_409_not_a_500() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected second create to succeed, got {other:?}"),
     };
-    match crud.update("test.unique_orders", second.id, second.version, &payload, &ctx).await.unwrap() {
-        ServiceResult::Err { status, error, field_errors, .. } => {
+    match crud
+        .update("test.unique_orders", second.id, second.version, &payload, &ctx)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Err {
+            status,
+            error,
+            field_errors,
+            ..
+        } => {
             assert_eq!(status, 409);
             assert_eq!(error, "unique_violation");
             assert!(field_errors.unwrap().contains_key("sku"));

@@ -9,9 +9,7 @@ use metap_infra::{enqueue_outbox_event, OutboxEvent};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::model::{
-    ClaimedDirectJob, CronJob, CronJobDuePayload, CronJobRun, DispatchMode, RunStatus, ROUTING_KEY,
-};
+use crate::model::{ClaimedDirectJob, CronJob, CronJobDuePayload, CronJobRun, DispatchMode, RunStatus, ROUTING_KEY};
 use crate::schedule::next_run_at;
 
 fn job_from_row(row: &sqlx::postgres::PgRow) -> anyhow::Result<CronJob> {
@@ -122,7 +120,9 @@ pub async fn update_job(
     id: Uuid,
     update: JobUpdate,
 ) -> anyhow::Result<Option<CronJob>> {
-    let Some(existing) = get_job(pool, tenant_id, id).await? else { return Ok(None) };
+    let Some(existing) = get_job(pool, tenant_id, id).await? else {
+        return Ok(None);
+    };
 
     let name = update.name.unwrap_or(existing.name);
     let cron_expr = update.cron_expr.unwrap_or(existing.cron_expr);
@@ -204,11 +204,7 @@ pub struct ClaimResult {
 /// claim and outbox-write can't lose one either); `Direct` jobs get no outbox event at all —
 /// they come back in `ClaimResult::direct_jobs` for the caller to execute immediately, with no
 /// durability guarantee beyond the `cron_job_runs` row already written.
-pub async fn claim_due_jobs(
-    pool: &PgPool,
-    now: DateTime<Utc>,
-    batch_size: i64,
-) -> anyhow::Result<ClaimResult> {
+pub async fn claim_due_jobs(pool: &PgPool, now: DateTime<Utc>, batch_size: i64) -> anyhow::Result<ClaimResult> {
     let mut tx = pool.begin().await?;
 
     let rows = sqlx::query(
@@ -220,7 +216,10 @@ pub async fn claim_due_jobs(
     .fetch_all(&mut *tx)
     .await?;
 
-    let mut result = ClaimResult { claimed: rows.len(), direct_jobs: Vec::new() };
+    let mut result = ClaimResult {
+        claimed: rows.len(),
+        direct_jobs: Vec::new(),
+    };
 
     for row in &rows {
         let job = job_from_row(row)?;
@@ -240,14 +239,12 @@ pub async fn claim_due_jobs(
             }
         };
 
-        sqlx::query(
-            "UPDATE cron_jobs SET next_run_at = $1, last_run_at = $2, updated_at = now() WHERE id = $3",
-        )
-        .bind(next)
-        .bind(now)
-        .bind(job.id)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("UPDATE cron_jobs SET next_run_at = $1, last_run_at = $2, updated_at = now() WHERE id = $3")
+            .bind(next)
+            .bind(now)
+            .bind(job.id)
+            .execute(&mut *tx)
+            .await?;
 
         let run_id = Uuid::new_v4();
         sqlx::query(

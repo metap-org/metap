@@ -54,8 +54,7 @@ pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Rout
     let cors = if cors_origins.is_empty() {
         CorsLayer::new()
     } else {
-        let origins: Vec<HeaderValue> =
-            cors_origins.iter().filter_map(|o| o.parse().ok()).collect();
+        let origins: Vec<HeaderValue> = cors_origins.iter().filter_map(|o| o.parse().ok()).collect();
         // `allow_credentials(true)` cannot be combined with a wildcard `Any` for
         // origin/headers — the CORS spec forbids it, and tower-http enforces this at
         // runtime (a hard panic, not a type error), so both origins and headers must be an

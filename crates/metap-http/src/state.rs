@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
+use metap_control::{EnvStore, PostgresTenantRegistry, RegistryCache, Router};
 use metap_crud::CrudService;
 use metap_metadata::MetadataRegistry;
 use metap_permission::PermissionService;
@@ -39,8 +40,15 @@ impl AppState {
         jwt_decoding_key: DecodingKey,
         jwt_encoding_key_pem: String,
     ) -> Self {
-        let crud =
-            Arc::new(CrudService::new(pool.clone(), metadata.clone(), permissions.clone()));
+        // `Router` (`metap-control`, `docs/multi-tenant-platform-design.md` §2.2) is built here,
+        // not passed in — same pattern `CrudService` itself already follows below — so
+        // `apps/crm-server/src/main.rs` doesn't need to know about it. It wraps the same
+        // `pool.clone()`, not a second physical pool.
+        let tenant_registry = Arc::new(PostgresTenantRegistry::new(pool.clone()));
+        // `EnvStore` is the only `SecretStore` this repo has — real Vault integration is later
+        // work (`docs/multi-tenant-platform-design.md` §2.3, not triggered yet).
+        let router = Router::new(pool.clone(), RegistryCache::new(tenant_registry), Arc::new(EnvStore));
+        let crud = Arc::new(CrudService::new(router, metadata.clone(), permissions.clone()));
         Self {
             pool,
             metadata_base,

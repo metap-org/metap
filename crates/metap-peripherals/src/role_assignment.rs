@@ -8,17 +8,12 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-pub async fn get_roles_for_user(
-    pool: &PgPool,
-    tenant_id: Uuid,
-    user_id: Uuid,
-) -> anyhow::Result<Vec<String>> {
-    let roles: Vec<String> =
-        sqlx::query_scalar("SELECT role FROM user_roles WHERE tenant_id = $1 AND user_id = $2")
-            .bind(tenant_id)
-            .bind(user_id)
-            .fetch_all(pool)
-            .await?;
+pub async fn get_roles_for_user(pool: &PgPool, tenant_id: Uuid, user_id: Uuid) -> anyhow::Result<Vec<String>> {
+    let roles: Vec<String> = sqlx::query_scalar("SELECT role FROM user_roles WHERE tenant_id = $1 AND user_id = $2")
+        .bind(tenant_id)
+        .bind(user_id)
+        .fetch_all(pool)
+        .await?;
     Ok(roles)
 }
 
@@ -42,12 +37,7 @@ pub async fn assign_role(
     Ok(())
 }
 
-pub async fn revoke_role(
-    pool: &PgPool,
-    tenant_id: Uuid,
-    user_id: Uuid,
-    role: &str,
-) -> anyhow::Result<()> {
+pub async fn revoke_role(pool: &PgPool, tenant_id: Uuid, user_id: Uuid, role: &str) -> anyhow::Result<()> {
     sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1 AND user_id = $2 AND role = $3")
         .bind(tenant_id)
         .bind(user_id)
@@ -64,17 +54,19 @@ pub struct UserRoles {
 }
 
 pub async fn list_users(pool: &PgPool, tenant_id: Uuid) -> anyhow::Result<Vec<UserRoles>> {
-    let rows: Vec<(Uuid, String)> =
-        sqlx::query_as("SELECT user_id, role FROM user_roles WHERE tenant_id = $1")
-            .bind(tenant_id)
-            .fetch_all(pool)
-            .await?;
+    let rows: Vec<(Uuid, String)> = sqlx::query_as("SELECT user_id, role FROM user_roles WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .fetch_all(pool)
+        .await?;
 
     let mut grouped: Vec<UserRoles> = Vec::new();
     for (user_id, role) in rows {
         match grouped.iter_mut().find(|u| u.user_id == user_id) {
             Some(existing) => existing.roles.push(role),
-            None => grouped.push(UserRoles { user_id, roles: vec![role] }),
+            None => grouped.push(UserRoles {
+                user_id,
+                roles: vec![role],
+            }),
         }
     }
     Ok(grouped)

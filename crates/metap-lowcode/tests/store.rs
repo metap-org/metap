@@ -12,7 +12,11 @@ use uuid::Uuid;
 
 async fn pool() -> sqlx::PgPool {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-    PgPoolOptions::new().max_connections(2).connect(&database_url).await.expect("connect to dev postgres")
+    PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&database_url)
+        .await
+        .expect("connect to dev postgres")
 }
 
 fn field(name: &str, kind: FieldKind) -> EntityField {
@@ -90,7 +94,9 @@ async fn publish_rejects_name_reserved_by_code_authored_entity() {
     metap_lowcode::save_draft(&pool, &name, &def).await.expect("save_draft");
 
     let mut registry = MetadataRegistry::new();
-    registry.register(def.to_entity_definition()).expect("register code-authored stand-in");
+    registry
+        .register(def.to_entity_definition())
+        .expect("register code-authored stand-in");
 
     let err = metap_lowcode::publish(&pool, &name, &registry).await.unwrap_err();
     assert!(matches!(err, PublishError::NameReservedByCodeEntity));
@@ -119,17 +125,28 @@ async fn publish_increments_version_and_get_published_returns_latest() {
     let name = entity_name("versioning");
     let registry = MetadataRegistry::new();
 
-    metap_lowcode::save_draft(&pool, &name, &definition(&name)).await.expect("save_draft v1");
-    let v1 = metap_lowcode::publish(&pool, &name, &registry).await.expect("publish v1");
+    metap_lowcode::save_draft(&pool, &name, &definition(&name))
+        .await
+        .expect("save_draft v1");
+    let v1 = metap_lowcode::publish(&pool, &name, &registry)
+        .await
+        .expect("publish v1");
     assert_eq!(v1.version_number, 1);
 
     let mut v2_def = definition(&name);
     v2_def.label = "Renamed".to_string();
-    metap_lowcode::save_draft(&pool, &name, &v2_def).await.expect("save_draft v2");
-    let v2 = metap_lowcode::publish(&pool, &name, &registry).await.expect("publish v2");
+    metap_lowcode::save_draft(&pool, &name, &v2_def)
+        .await
+        .expect("save_draft v2");
+    let v2 = metap_lowcode::publish(&pool, &name, &registry)
+        .await
+        .expect("publish v2");
     assert_eq!(v2.version_number, 2);
 
-    let published = metap_lowcode::get_published(&pool, &name).await.expect("get_published").unwrap();
+    let published = metap_lowcode::get_published(&pool, &name)
+        .await
+        .expect("get_published")
+        .unwrap();
     assert_eq!(published.version_number, 2);
     assert_eq!(published.definition.label, "Renamed");
 }
@@ -141,10 +158,18 @@ async fn list_versions_returns_newest_first() {
     let name = entity_name("list_versions");
     let registry = MetadataRegistry::new();
 
-    metap_lowcode::save_draft(&pool, &name, &definition(&name)).await.expect("save_draft v1");
-    metap_lowcode::publish(&pool, &name, &registry).await.expect("publish v1");
-    metap_lowcode::save_draft(&pool, &name, &definition(&name)).await.expect("save_draft v2");
-    metap_lowcode::publish(&pool, &name, &registry).await.expect("publish v2");
+    metap_lowcode::save_draft(&pool, &name, &definition(&name))
+        .await
+        .expect("save_draft v1");
+    metap_lowcode::publish(&pool, &name, &registry)
+        .await
+        .expect("publish v1");
+    metap_lowcode::save_draft(&pool, &name, &definition(&name))
+        .await
+        .expect("save_draft v2");
+    metap_lowcode::publish(&pool, &name, &registry)
+        .await
+        .expect("publish v2");
 
     let versions = metap_lowcode::list_versions(&pool, &name).await.expect("list_versions");
     assert_eq!(versions.len(), 2);
@@ -158,7 +183,9 @@ async fn rollback_to_unknown_version_fails() {
     let pool = pool().await;
     let name = entity_name("rollback_unknown");
     let registry = MetadataRegistry::new();
-    metap_lowcode::save_draft(&pool, &name, &definition(&name)).await.expect("save_draft");
+    metap_lowcode::save_draft(&pool, &name, &definition(&name))
+        .await
+        .expect("save_draft");
     metap_lowcode::publish(&pool, &name, &registry).await.expect("publish");
 
     let err = metap_lowcode::rollback(&pool, &name, 99, &registry).await.unwrap_err();
@@ -172,21 +199,34 @@ async fn rollback_creates_new_version_with_restored_from_set() {
     let name = entity_name("rollback_ok");
     let registry = MetadataRegistry::new();
 
-    metap_lowcode::save_draft(&pool, &name, &definition(&name)).await.expect("save_draft v1");
-    metap_lowcode::publish(&pool, &name, &registry).await.expect("publish v1");
+    metap_lowcode::save_draft(&pool, &name, &definition(&name))
+        .await
+        .expect("save_draft v1");
+    metap_lowcode::publish(&pool, &name, &registry)
+        .await
+        .expect("publish v1");
     let mut v2_def = definition(&name);
     v2_def.label = "Changed".to_string();
-    metap_lowcode::save_draft(&pool, &name, &v2_def).await.expect("save_draft v2");
-    metap_lowcode::publish(&pool, &name, &registry).await.expect("publish v2");
+    metap_lowcode::save_draft(&pool, &name, &v2_def)
+        .await
+        .expect("save_draft v2");
+    metap_lowcode::publish(&pool, &name, &registry)
+        .await
+        .expect("publish v2");
 
-    let rolled_back = metap_lowcode::rollback(&pool, &name, 1, &registry).await.expect("rollback");
+    let rolled_back = metap_lowcode::rollback(&pool, &name, 1, &registry)
+        .await
+        .expect("rollback");
     assert_eq!(rolled_back.version_number, 3);
 
     let versions = metap_lowcode::list_versions(&pool, &name).await.expect("list_versions");
     assert_eq!(versions[0].version_number, 3);
     assert_eq!(versions[0].restored_from_version, Some(1));
 
-    let draft = metap_lowcode::get_draft(&pool, &name).await.expect("get_draft").unwrap();
+    let draft = metap_lowcode::get_draft(&pool, &name)
+        .await
+        .expect("get_draft")
+        .unwrap();
     assert_eq!(draft.label, "Test Entity"); // v1's label, not "Changed"
 }
 
@@ -198,12 +238,22 @@ async fn list_all_published_includes_every_published_entity_at_latest_version() 
     let name_b = entity_name("list_all_b");
     let registry = MetadataRegistry::new();
 
-    metap_lowcode::save_draft(&pool, &name_a, &definition(&name_a)).await.expect("save_draft a");
-    metap_lowcode::publish(&pool, &name_a, &registry).await.expect("publish a");
-    metap_lowcode::save_draft(&pool, &name_b, &definition(&name_b)).await.expect("save_draft b");
-    metap_lowcode::publish(&pool, &name_b, &registry).await.expect("publish b");
+    metap_lowcode::save_draft(&pool, &name_a, &definition(&name_a))
+        .await
+        .expect("save_draft a");
+    metap_lowcode::publish(&pool, &name_a, &registry)
+        .await
+        .expect("publish a");
+    metap_lowcode::save_draft(&pool, &name_b, &definition(&name_b))
+        .await
+        .expect("save_draft b");
+    metap_lowcode::publish(&pool, &name_b, &registry)
+        .await
+        .expect("publish b");
 
-    let all = metap_lowcode::list_all_published(&pool).await.expect("list_all_published");
+    let all = metap_lowcode::list_all_published(&pool)
+        .await
+        .expect("list_all_published");
     let names: Vec<&str> = all.iter().map(|(n, _)| n.as_str()).collect();
     assert!(names.contains(&name_a.as_str()));
     assert!(names.contains(&name_b.as_str()));
@@ -221,13 +271,19 @@ async fn concurrent_publishes_of_the_same_entity_serialize_instead_of_colliding(
     let name = entity_name("concurrent_publish");
     let registry = MetadataRegistry::new();
 
-    metap_lowcode::save_draft(&pool_a, &name, &definition(&name)).await.expect("save_draft");
+    metap_lowcode::save_draft(&pool_a, &name, &definition(&name))
+        .await
+        .expect("save_draft");
 
-    let (result_a, result_b) =
-        tokio::join!(metap_lowcode::publish(&pool_a, &name, &registry), metap_lowcode::publish(&pool_b, &name, &registry));
+    let (result_a, result_b) = tokio::join!(
+        metap_lowcode::publish(&pool_a, &name, &registry),
+        metap_lowcode::publish(&pool_b, &name, &registry)
+    );
 
-    let mut versions: Vec<i32> =
-        [result_a, result_b].into_iter().map(|r| r.expect("publish").version_number).collect();
+    let mut versions: Vec<i32> = [result_a, result_b]
+        .into_iter()
+        .map(|r| r.expect("publish").version_number)
+        .collect();
     versions.sort();
     assert_eq!(versions, vec![1, 2]);
 }
@@ -239,26 +295,48 @@ async fn disabling_an_entity_excludes_it_from_enabled_published_but_not_all_publ
     let name = entity_name("disable_toggle");
     let registry = MetadataRegistry::new();
 
-    metap_lowcode::save_draft(&pool, &name, &definition(&name)).await.expect("save_draft");
+    metap_lowcode::save_draft(&pool, &name, &definition(&name))
+        .await
+        .expect("save_draft");
     metap_lowcode::publish(&pool, &name, &registry).await.expect("publish");
 
-    let enabled_names: Vec<String> =
-        metap_lowcode::list_enabled_published(&pool).await.expect("list_enabled_published").into_iter().map(|(n, _)| n).collect();
+    let enabled_names: Vec<String> = metap_lowcode::list_enabled_published(&pool)
+        .await
+        .expect("list_enabled_published")
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
     assert!(enabled_names.contains(&name));
 
-    metap_lowcode::set_enabled(&pool, &name, false).await.expect("set_enabled false");
+    metap_lowcode::set_enabled(&pool, &name, false)
+        .await
+        .expect("set_enabled false");
 
-    let enabled_names: Vec<String> =
-        metap_lowcode::list_enabled_published(&pool).await.expect("list_enabled_published").into_iter().map(|(n, _)| n).collect();
+    let enabled_names: Vec<String> = metap_lowcode::list_enabled_published(&pool)
+        .await
+        .expect("list_enabled_published")
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
     assert!(!enabled_names.contains(&name));
 
-    let all_names: Vec<String> =
-        metap_lowcode::list_all_published(&pool).await.expect("list_all_published").into_iter().map(|(n, _)| n).collect();
+    let all_names: Vec<String> = metap_lowcode::list_all_published(&pool)
+        .await
+        .expect("list_all_published")
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
     assert!(all_names.contains(&name), "disabling must not remove publish history");
 
-    metap_lowcode::set_enabled(&pool, &name, true).await.expect("set_enabled true");
-    let enabled_names: Vec<String> =
-        metap_lowcode::list_enabled_published(&pool).await.expect("list_enabled_published").into_iter().map(|(n, _)| n).collect();
+    metap_lowcode::set_enabled(&pool, &name, true)
+        .await
+        .expect("set_enabled true");
+    let enabled_names: Vec<String> = metap_lowcode::list_enabled_published(&pool)
+        .await
+        .expect("list_enabled_published")
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
     assert!(enabled_names.contains(&name), "re-enabling must bring it back");
 }
 
@@ -269,14 +347,24 @@ async fn publishing_a_disabled_entity_does_not_implicitly_reenable_it_in_the_liv
     let name = entity_name("disabled_publish");
     let registry = MetadataRegistry::new();
 
-    metap_lowcode::save_draft(&pool, &name, &definition(&name)).await.expect("save_draft v1");
-    metap_lowcode::publish(&pool, &name, &registry).await.expect("publish v1");
-    metap_lowcode::set_enabled(&pool, &name, false).await.expect("set_enabled false");
+    metap_lowcode::save_draft(&pool, &name, &definition(&name))
+        .await
+        .expect("save_draft v1");
+    metap_lowcode::publish(&pool, &name, &registry)
+        .await
+        .expect("publish v1");
+    metap_lowcode::set_enabled(&pool, &name, false)
+        .await
+        .expect("set_enabled false");
 
     let mut v2_def = definition(&name);
     v2_def.label = "Still disabled".to_string();
-    metap_lowcode::save_draft(&pool, &name, &v2_def).await.expect("save_draft v2");
-    let outcome = metap_lowcode::publish(&pool, &name, &registry).await.expect("publish v2");
+    metap_lowcode::save_draft(&pool, &name, &v2_def)
+        .await
+        .expect("save_draft v2");
+    let outcome = metap_lowcode::publish(&pool, &name, &registry)
+        .await
+        .expect("publish v2");
 
     assert!(
         outcome.registry.get_entity(&name).is_none(),

@@ -6,7 +6,7 @@ use crate::context::{EntityAction, PermissionDecision, RequestContext};
 use crate::permission_snapshot::PermissionSnapshot;
 use crate::policy_condition::{evaluate_policy_row, PolicyCondition};
 use crate::policy_explainer::{explain_policies, PolicyExplanation};
-use crate::policy_store::{ExplainOptions, PolicyRow, PolicySubject, PolicyStore};
+use crate::policy_store::{ExplainOptions, PolicyRow, PolicyStore, PolicySubject};
 
 pub struct PermissionService {
     store: Box<dyn PolicyStore>,
@@ -39,7 +39,12 @@ impl PermissionService {
         let action_str = action.as_str();
 
         if context.is_admin() {
-            tracing::debug!(entity = entity_name, action = action_str, user_id, "allowed: admin role");
+            tracing::debug!(
+                entity = entity_name,
+                action = action_str,
+                user_id,
+                "allowed: admin role"
+            );
             return Ok(PermissionDecision::allowed());
         }
 
@@ -61,7 +66,12 @@ impl PermissionService {
 
         let passed = rows.iter().any(|policy| evaluate_policy_row(policy, context, None));
         if passed {
-            tracing::debug!(entity = entity_name, action = action_str, user_id, "allowed: policy matched");
+            tracing::debug!(
+                entity = entity_name,
+                action = action_str,
+                user_id,
+                "allowed: policy matched"
+            );
             Ok(PermissionDecision::allowed())
         } else {
             tracing::warn!(
@@ -75,11 +85,7 @@ impl PermissionService {
         }
     }
 
-    pub async fn can_read_entity(
-        &self,
-        context: &RequestContext,
-        entity: &str,
-    ) -> anyhow::Result<PermissionDecision> {
+    pub async fn can_read_entity(&self, context: &RequestContext, entity: &str) -> anyhow::Result<PermissionDecision> {
         self.check_action(context, entity, EntityAction::Read).await
     }
 
@@ -107,19 +113,11 @@ impl PermissionService {
         self.check_action(context, entity, EntityAction::Delete).await
     }
 
-    pub async fn load_snapshot(
-        &self,
-        tenant_id: Uuid,
-        entity: &str,
-    ) -> anyhow::Result<PermissionSnapshot> {
+    pub async fn load_snapshot(&self, tenant_id: Uuid, entity: &str) -> anyhow::Result<PermissionSnapshot> {
         PermissionSnapshot::load(self.store.as_ref(), tenant_id, entity).await
     }
 
-    pub async fn list_policies(
-        &self,
-        tenant_id: Uuid,
-        entity: Option<&str>,
-    ) -> anyhow::Result<Vec<PolicyRow>> {
+    pub async fn list_policies(&self, tenant_id: Uuid, entity: Option<&str>) -> anyhow::Result<Vec<PolicyRow>> {
         self.store.list_policies(tenant_id, entity).await
     }
 
@@ -155,14 +153,23 @@ impl PermissionService {
         let tenant_id = self.scoped_tenant(context)?;
 
         let options = if let Some(field) = field {
-            ExplainOptions { field: Some(field.to_string()), subject: None }
+            ExplainOptions {
+                field: Some(field.to_string()),
+                subject: None,
+            }
         } else if record.is_some() {
-            ExplainOptions { field: None, subject: Some(PolicySubject::Record) }
+            ExplainOptions {
+                field: None,
+                subject: Some(PolicySubject::Record),
+            }
         } else {
             ExplainOptions::default()
         };
 
-        let rows = self.store.find_explain_policies(tenant_id, entity, action, &options).await?;
+        let rows = self
+            .store
+            .find_explain_policies(tenant_id, entity, action, &options)
+            .await?;
         Ok(explain_policies(&rows, context, record))
     }
 }

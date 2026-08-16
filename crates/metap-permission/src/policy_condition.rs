@@ -10,7 +10,9 @@ use crate::policy_store::PolicyRow;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PolicyValue {
-    Literal { literal: serde_json::Value },
+    Literal {
+        literal: serde_json::Value,
+    },
     FromContext {
         #[serde(rename = "fromContext")]
         from_context: String,
@@ -67,7 +69,7 @@ fn match_operator(op: ConditionOp, actual: &serde_json::Value, expected: &serde_
 pub fn role_gate_passed(policy_roles: Option<&[String]>, caller_roles: Option<&[String]>) -> bool {
     match policy_roles {
         None => true,
-        Some(roles) if roles.is_empty() => true,
+        Some([]) => true,
         Some(policy_roles) => caller_roles
             .unwrap_or(&[])
             .iter()
@@ -84,7 +86,9 @@ pub fn evaluate_policy_row(
         return false;
     }
 
-    let Some(condition) = &policy.condition else { return true };
+    let Some(condition) = &policy.condition else {
+        return true;
+    };
 
     let subject = if policy.subject == "record" {
         record_subject.cloned().unwrap_or_else(|| context.to_value())
@@ -138,9 +142,7 @@ pub fn evaluate_condition(
                 }
                 last_failure = result.reason().map(String::from);
             }
-            ConditionResult::Failed(
-                last_failure.unwrap_or_else(|| "no condition in 'any' matched".to_string()),
-            )
+            ConditionResult::Failed(last_failure.unwrap_or_else(|| "no condition in 'any' matched".to_string()))
         }
         PolicyCondition::Attribute { attribute, op, value } => {
             let actual = subject.get(attribute).cloned().unwrap_or(serde_json::Value::Null);
@@ -177,11 +179,7 @@ mod tests {
         }
     }
 
-    fn policy(
-        roles: Option<Vec<&str>>,
-        condition: Option<PolicyCondition>,
-        subject: &str,
-    ) -> PolicyRow {
+    fn policy(roles: Option<Vec<&str>>, condition: Option<PolicyCondition>, subject: &str) -> PolicyRow {
         PolicyRow {
             id: Uuid::new_v4(),
             tenant_id: Uuid::new_v4(),
@@ -217,14 +215,18 @@ mod tests {
         let eq_cond = PolicyCondition::Attribute {
             attribute: "status".to_string(),
             op: ConditionOp::Eq,
-            value: PolicyValue::Literal { literal: json!("active") },
+            value: PolicyValue::Literal {
+                literal: json!("active"),
+            },
         };
         assert!(evaluate_condition(&eq_cond, &subject, &ctx).is_passed());
 
         let neq_cond = PolicyCondition::Attribute {
             attribute: "status".to_string(),
             op: ConditionOp::Neq,
-            value: PolicyValue::Literal { literal: json!("active") },
+            value: PolicyValue::Literal {
+                literal: json!("active"),
+            },
         };
         assert!(!evaluate_condition(&neq_cond, &subject, &ctx).is_passed());
     }
@@ -237,14 +239,18 @@ mod tests {
         let in_cond = PolicyCondition::Attribute {
             attribute: "region".to_string(),
             op: ConditionOp::In,
-            value: PolicyValue::Literal { literal: json!(["eu", "us"]) },
+            value: PolicyValue::Literal {
+                literal: json!(["eu", "us"]),
+            },
         };
         assert!(evaluate_condition(&in_cond, &subject, &ctx).is_passed());
 
         let not_in_cond = PolicyCondition::Attribute {
             attribute: "region".to_string(),
             op: ConditionOp::NotIn,
-            value: PolicyValue::Literal { literal: json!(["apac"]) },
+            value: PolicyValue::Literal {
+                literal: json!(["apac"]),
+            },
         };
         assert!(evaluate_condition(&not_in_cond, &subject, &ctx).is_passed());
     }
@@ -256,7 +262,9 @@ mod tests {
         let cond = PolicyCondition::Attribute {
             attribute: "tenantId".to_string(),
             op: ConditionOp::Eq,
-            value: PolicyValue::FromContext { from_context: "tenantId".to_string() },
+            value: PolicyValue::FromContext {
+                from_context: "tenantId".to_string(),
+            },
         };
         assert!(evaluate_condition(&cond, &subject, &ctx).is_passed());
     }

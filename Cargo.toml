@@ -6,6 +6,7 @@ members = [
   "crates/db-migrate",
   "crates/dev-tools",
   "crates/metap",
+  "crates/metap-control",
   "crates/metap-cron",
   "crates/metap-crud",
   "crates/metap-lowcode",
@@ -24,8 +25,16 @@ members = [
 [workspace.package]
 edition = "2021"
 
+# Baseline lint policy for the workspace (`docs/roadmap.md` Phase 8). The actual gate is
+# `.github/workflows/ci.yml`'s `cargo clippy -- -D warnings` — this table just codifies the same
+# policy declaratively so a plain local `cargo clippy` matches what CI enforces. No per-crate
+# `[lints] workspace = true` opt-in exists yet since CI already gates via the CLI flag; add that
+# per-crate if a local `cargo clippy` without the flag ever needs to match CI exactly.
+[workspace.lints.clippy]
+all = "warn"
+
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = true
 strip = true
 codegen-units = 1

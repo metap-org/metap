@@ -55,7 +55,10 @@ fn parse_sort(candidate: Option<&str>, sortable_fields: &HashSet<String>) -> Opt
     let descending = candidate.starts_with('-');
     let field = candidate.strip_prefix('-').unwrap_or(candidate);
     if sortable_fields.contains(field) {
-        Some(ResolvedSort { field: field.to_string(), descending })
+        Some(ResolvedSort {
+            field: field.to_string(),
+            descending,
+        })
     } else {
         None
     }
@@ -77,11 +80,7 @@ fn sort_field_expression(field_name: &str, params: &mut ParamBuilder) -> (String
     }
 }
 
-fn bind_cursor_value(
-    col_type: &SortColType,
-    value: &str,
-    params: &mut ParamBuilder,
-) -> String {
+fn bind_cursor_value(col_type: &SortColType, value: &str, params: &mut ParamBuilder) -> String {
     match col_type {
         SortColType::Timestamptz => {
             format!("{}::timestamptz", params.push(BindValue::Text(value.to_string())))
@@ -114,15 +113,19 @@ pub fn plan_list(
     let mut conditions: Vec<String> = Vec::new();
 
     conditions.push(format!("tenant_id = {}", params.push(BindValue::Uuid(tenant_id))));
-    conditions.push(format!("entity = {}", params.push(BindValue::Text(entity.name.clone()))));
+    conditions.push(format!(
+        "entity = {}",
+        params.push(BindValue::Text(entity.name.clone()))
+    ));
     conditions.push("deleted = false".to_string());
 
     if let Some(record_condition) = record_policy_where_clause(record_read_policies, context, &mut params)? {
         conditions.push(record_condition);
     }
 
-    let allowed_filter_fields: HashSet<&str> =
-        list_view.map(|lv| lv.filters.iter().map(String::as_str).collect()).unwrap_or_default();
+    let allowed_filter_fields: HashSet<&str> = list_view
+        .map(|lv| lv.filters.iter().map(String::as_str).collect())
+        .unwrap_or_default();
     let fields_by_name: std::collections::HashMap<&str, &metap_metadata::EntityField> =
         entity.fields.iter().map(|f| (f.name.as_str(), f)).collect();
 
@@ -139,9 +142,8 @@ pub fn plan_list(
         let (field_expr, _) = sort_field_expression(field, &mut params);
         let field_def = fields_by_name.get(field.as_str());
 
-        let is_fts = field_def.is_some_and(|f| {
-            f.searchable.unwrap_or(false) && f.search_mode.as_deref() == Some("fts")
-        });
+        let is_fts =
+            field_def.is_some_and(|f| f.searchable.unwrap_or(false) && f.search_mode.as_deref() == Some("fts"));
         let is_substring_search = field_def.is_some_and(|f| f.searchable.unwrap_or(false)) && !is_fts;
 
         if is_fts {
@@ -152,7 +154,13 @@ pub fn plan_list(
         } else if is_substring_search {
             let escaped: String = value
                 .chars()
-                .flat_map(|c| if matches!(c, '\\' | '%' | '_') { vec!['\\', c] } else { vec![c] })
+                .flat_map(|c| {
+                    if matches!(c, '\\' | '%' | '_') {
+                        vec!['\\', c]
+                    } else {
+                        vec![c]
+                    }
+                })
                 .collect();
             let ph = params.push(BindValue::Text(format!("%{escaped}%")));
             conditions.push(format!("{field_expr} ILIKE {ph}"));
@@ -182,7 +190,10 @@ pub fn plan_list(
     }
     let resolved_sort = parse_sort(input.sort.as_deref(), &sortable_fields)
         .or_else(|| parse_sort(list_view.and_then(|lv| lv.default_sort.as_deref()), &sortable_fields))
-        .unwrap_or(ResolvedSort { field: "createdAt".to_string(), descending: true });
+        .unwrap_or(ResolvedSort {
+            field: "createdAt".to_string(),
+            descending: true,
+        });
 
     let (sort_expr, sort_col_type) = sort_field_expression(&resolved_sort.field, &mut params);
 
@@ -192,7 +203,12 @@ pub fn plan_list(
             InvalidCursorError("Cursor does not match the current sort".to_string())
         })?;
 
-        let cursor_dir_matches = cursor.dir == if resolved_sort.descending { SortDir::Desc } else { SortDir::Asc };
+        let cursor_dir_matches = cursor.dir
+            == if resolved_sort.descending {
+                SortDir::Desc
+            } else {
+                SortDir::Asc
+            };
         if cursor.field != resolved_sort.field || !cursor_dir_matches {
             tracing::warn!(
                 entity = entity.name,

@@ -136,6 +136,35 @@ impl Router {
 session-level — pool tái dùng connection sẽ rò tenant/schema sang request sau, **im lặng**
 (không crash, chỉ trả sai data). Dùng PgBouncer thì bắt buộc transaction mode.
 
+**Cập nhật triển khai (2026-08-16, Giai đoạn 1):** `crates/metap-control` implement `Router` +
+`control.tenants` đúng như trên, và `CrudService` đã refactor để mọi method đi qua
+`router.begin(tenant)`. Một khác biệt so với pseudocode gốc: tenant **chưa có row** trong
+`control.tenants` không bị coi là lỗi — `Router::begin` fallback về
+`{status: Active, strategy: Schema("public")}` (hành vi trước khi có Router). Đây là shim tương
+thích ngược có chủ đích, vì chưa có bước provisioning nào ghi vào `control.tenants` cả (mọi
+tenant hiện tại chỉ là một UUID bất kỳ trong JWT, không qua đăng ký) — coi tenant chưa đăng ký là
+lỗi cứng sẽ phá vỡ toàn bộ dev flow hiện có. Shim này nên được siết lại (bỏ fallback, bắt buộc
+row) một khi §2.4 (tenant provisioning) tồn tại và luôn ghi row cho mọi tenant mới.
+**Cập nhật triển khai (2026-08-16, Giai đoạn 2):** `TenantStrategy::DedicatedDb` giờ hoạt động —
+`crates/metap-control::SecretStore` (trait) + `EnvStore` (impl duy nhất hôm nay: đọc DSN từ biến
+env tên đúng bằng `dsn_secret_ref`, không qua Vault) + `Router`'s `dedicated_pools` cache (moka,
+idle TTL 10 phút, key theo `dsn_secret_ref`). `dev-tools provision-tenant <id> dedicated_db
+<dsnSecretRefName> <dedicatedDatabaseUrl> <adminEmail> <adminPassword>` chạy migration lên DB
+riêng, ghi row `control.tenants`, tạo admin user đầu trên DB riêng đó, và in ra biến env cần set
+cho tiến trình `crm-server`. Đã verify end-to-end qua HTTP thật: record tạo qua tenant
+`dedicated_db` chỉ nằm trong DB riêng, hoàn toàn không xuất hiện ở DB chính.
+
+Ngược lại, `strategy=schema` **vẫn chưa có "răng" thật** — `dev-tools provision-tenant <id> schema
+...` luôn ghim `schema_name='public'` (không cho chọn schema khác), vì bảng `records`/`users`/...
+chỉ tồn tại ở `public` cho tới khi table-per-entity (§3) triển khai; route một tenant `schema`
+sang bất kỳ schema nào khác hôm nay sẽ vỡ với "relation does not exist". Không có `POST
+/admin/tenants` qua HTTP — `AdminContext` chỉ ủy quyền hành động trong tenant của chính người gọi
+(không có khái niệm "platform superadmin" xuyên tenant), nên provisioning vẫn là CLI-only, cùng
+cách `seed-admin`/`create-user` đã giải quyết bài toán con-gà-quả-trứng cho user/role.
+`PermissionService::check_action` mặc định **allow** khi entity/action chưa có policy nào — một
+tenant mới không có "starter policy" seed sẵn (không khả thi cho code entity-agnostic), nên
+`provision-tenant` in cảnh báo rõ thay vì âm thầm bỏ qua.
+
 `CrudService` refactor: mọi query (kể cả read đơn) chạy trên `router.begin(tenant)` thay
 `&self.pool`. Metadata cũng per-tenant (`MetadataRouter` cache-per-tenant, vì DB-authored entity
 của mỗi tenant nằm trong không gian riêng).

@@ -19,10 +19,7 @@ pub const ROUTING_KEY: &str = "#.workflow.transitioned";
 /// wants to run the worker in the same process instead (see `apps/crm-server`'s
 /// `NOTIFICATION_WORKER_INLINE` flag) — same function either way, so the two deployment shapes
 /// can't drift apart.
-pub async fn run(
-    bus: &impl EventBus,
-    shutdown: impl std::future::Future<Output = ()>,
-) -> anyhow::Result<()> {
+pub async fn run(bus: &impl EventBus, shutdown: impl std::future::Future<Output = ()>) -> anyhow::Result<()> {
     let mut events = bus.subscribe(QUEUE, ROUTING_KEY).await?;
     let mut shutdown = std::pin::pin!(shutdown);
 

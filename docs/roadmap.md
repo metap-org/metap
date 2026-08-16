@@ -24,7 +24,7 @@ và `docs/agile-process.md`.
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
 | 15. Shared App Shell (UI kit, real login, permission-aware components) | Đã xong |
-| 16. Multi-tenant SaaS Control Plane & Data Plane | Thiết kế đã chốt (`docs/multi-tenant-platform-design.md`); triển khai chưa bắt đầu — trigger-based |
+| 16. Multi-tenant SaaS Control Plane & Data Plane | Giai đoạn 1 (Router + `control.tenants` + refactor `CrudService`) và Giai đoạn 2 (`provision-tenant`, `DedicatedDb` hoạt động thật) xong 2026-08-16; `schema`/trial vẫn chưa có isolation thật; phần còn lại trigger-based |
 
 ## Phase 0: Skeleton
 
@@ -391,18 +391,31 @@ Mục tiêu:
   cùng `request_id`/`trace_id` và nằm lồng trong cùng một span.
 - load test cho list/query/export — Chưa bắt đầu.
 - backup/restore drill — Chưa bắt đầu.
-- **TS `strict` tắt cả 2 tsconfig** (`apps/crm-fe`, `packages/platform-react`) — Chưa bắt đầu.
-  Phát hiện từ review kiến trúc 2026-08-15 (`docs/multi-tenant-platform-design.md`). Bật
-  `"strict": true` + `noUncheckedIndexedAccess`.
-- **`opt-level = "z"` cho server backend** (`Cargo.toml`) — Chưa bắt đầu. Cùng review trên; đổi
-  `[profile.release]` sang `opt-level = 3` (footprint không phải mối lo hiện tại, throughput
-  quan trọng hơn cho một API server).
-- **Clippy chưa gate, thiếu `rustfmt.toml`** — Chưa bắt đầu. Thêm `[workspace.lints]`, commit
-  `rustfmt.toml`, dọn warning tới khi bật được `-D warnings` trong CI.
-- **JWT không check `aud`/`iss`** (`metap-peripherals` mint/verify) — Chưa bắt đầu. Thêm vào
-  `jsonwebtoken::Validation`.
-- **`.claude/settings.local.json` từng bị commit kèm JWT** — Chưa bắt đầu. Thêm vào
-  `.gitignore`, kiểm tra lại lịch sử git nếu cần rotate key đã lộ.
+- **TS `strict` tắt cả 2 tsconfig** (`apps/crm-fe`, `packages/platform-react`) — **Đã xong
+  2026-08-16.** Bật `"strict": true` + `noUncheckedIndexedAccess` ở cả 3 tsconfig
+  (`apps/crm-fe/tsconfig.app.json`, `tsconfig.node.json`, `packages/platform-react/tsconfig.json`).
+  `tsc -b --force`/`tsc --noEmit` sạch ngay, không phát sinh lỗi type nào cần sửa.
+- **`opt-level = "z"` cho server backend** (`Cargo.toml`) — **Đã xong 2026-08-16.** Đổi
+  `[profile.release]` sang `opt-level = 3`.
+- **Clippy chưa gate, thiếu `rustfmt.toml`** — **Đã xong 2026-08-16.** Thêm
+  `[workspace.lints.clippy]` (`Cargo.toml` gốc), commit `rustfmt.toml` (`max_width = 120` — khớp
+  độ rộng dòng thực tế của codebase, không dùng mặc định 100 để tránh diff cơ học quá lớn không
+  cần thiết), dọn 5 warning clippy có sẵn (redundant guard, derivable impl, 2×result_large_err,
+  1 warning mới tự phát sinh ở `metap-control`), chạy `cargo fmt --all` một lần cho toàn repo
+  (diff cơ học lớn, thuần whitespace, đã verify build + toàn bộ test unit/e2e vẫn pass y hệt sau
+  đó). CI (`​.github/workflows/ci.yml`) giờ chạy `cargo fmt --all --check` +
+  `cargo clippy -- -D warnings` như gate thật, không còn "chỉ informational".
+- **JWT không check `aud`/`iss`** (`metap-peripherals` mint/verify) — **Đã xong 2026-08-16.**
+  Thêm hằng số `JWT_ISSUER`/`JWT_AUDIENCE` (`metap-peripherals::auth`), cả hai `Claims` struct
+  (mint lẫn verify) thêm field `iss`/`aud`, `Validation::set_audience`/`set_issuer` ở phía verify
+  (`metap-http::auth`). Verify qua e2e thật (`cargo test -p metap-http -- --ignored`) + smoke
+  `pnpm mint-token` → gọi API thật → 200. Token đã mint trước ngày này (không có `aud`/`iss`,
+  gồm cả `CRON_SERVICE_JWT` nếu đã set ở môi trường thật) sẽ cần mint lại.
+- **`.claude/settings.local.json` từng bị commit kèm JWT** — **Đã xong một phần 2026-08-16.**
+  Thêm `.claude/settings.local.json` vào `.gitignore`. KHÔNG rewrite lịch sử git — không tìm
+  thấy dấu vết file này từng được commit trong lịch sử của clone local hiện tại; nếu sự cố có
+  thật ở một remote/fork khác, cần tự kiểm tra và quyết định rotate key/rewrite history riêng
+  (hành động phá hoại, không tự động hoá).
 
 ## Phase 9: Multi-Service Evolution
 
@@ -574,11 +587,45 @@ Liên quan đến: Phase 13 (admin UI cho cron — được đóng bởi admin k
 
 ## Phase 16: Multi-tenant SaaS Control Plane & Data Plane
 
-**Trạng thái: Thiết kế đã chốt ở mức tài liệu (2026-08-15), triển khai chưa bắt đầu.** Trigger
-cho việc bắt đầu implement: quyết định thật đi theo hướng B ("SaaS multi-tenant là đích, per-client
-outsource là cách kiếm tiền trong lúc xây B" — xem `docs/multi-tenant-platform-design.md` §11.2)
-thay vì tiếp tục chỉ ship per-client. Cho tới lúc đó, phase này chỉ là tài liệu tham khảo khi cần
-quyết định liên quan (ví dụ một khách hàng paid cần isolation vật lý sớm hơn dự kiến).
+**Trạng thái: Giai đoạn 1 (control-plane skeleton) đã triển khai (2026-08-16)** — crate mới
+`crates/metap-control` (`Router`, `control.tenants` registry, `RegistryCache`) và `CrudService`
+(`crates/metap-crud`) đã refactor để mọi method (list/get/create/update/transition/delete) đi
+qua `Router::begin(tenant)` thay vì `&PgPool` trực tiếp — đúng seam đã chốt ở §2.2. **Không đổi
+hành vi runtime nào** ở giai đoạn này: chưa có tenant nào được provision qua `control.tenants`
+(bảng mới toanh, `crates/migrations/0012_control_tenants.sql`), nên `Router::begin` áp dụng
+fallback tương thích ngược có chủ đích — tenant chưa có row → coi như
+`{status: Active, strategy: Schema("public")}`, đúng hành vi trước khi có Router (mọi thứ vẫn nằm
+`public` schema, isolation vẫn là cột `tenant_id` như cũ). Đã verify: 5 kịch bản e2e Router
+(`cargo test -p metap-control -- --ignored`, gồm kịch bản chứng minh `SET LOCAL search_path`
+không rò qua pool tái dùng — bẫy #1 nghiêm trọng nhất của thiết kế) + 4 test e2e `CrudService`
+cũ pass y hệt không đổi + smoke thủ công qua HTTP (create/get/update/transition/delete) đều 200.
+
+**Giai đoạn 2 (tenant provisioning + `DedicatedDb`) đã triển khai (2026-08-16).** `dev-tools
+provision-tenant` (`pnpm provision:tenant`) là cách duy nhất ghi row `control.tenants` hôm nay
+(không có HTTP `POST /admin/tenants` — `AdminContext` chỉ ủy quyền trong tenant của chính người
+gọi, chưa có khái niệm "platform superadmin" xuyên tenant). Hai nhánh:
+- `schema` (trial): luôn ghim `schema_name='public'` — **chưa có isolation thật**, vì bảng
+  `records`/`users`/... chỉ tồn tại ở `public` cho tới khi data-plane evolution (§3,
+  table-per-entity) triển khai. Route một tenant sang schema khác hôm nay sẽ vỡ hết query.
+- `dedicated_db` (paid): **có isolation thật** — chạy migration lên một DB Postgres riêng, ghi
+  `control.tenants.dsn_secret_ref`, tạo admin user trên DB đó. `crates/metap-control::SecretStore`
+  (trait) + `EnvStore` (impl duy nhất — đọc DSN từ biến env tên đúng bằng `dsn_secret_ref`, chưa
+  có Vault) + `Router`'s `dedicated_pools` cache (moka, idle TTL 10 phút) làm cho
+  `Router::begin` mở transaction đúng trên DB riêng. Đã verify end-to-end qua HTTP thật: record
+  tạo qua tenant `dedicated_db` chỉ nằm trong DB riêng, không xuất hiện ở DB chính.
+
+Cả hai nhánh in cảnh báo: `PermissionService::check_action` mặc định **allow** khi entity/action
+chưa có policy nào (`crates/metap-permission/src/permission_service.rs:52-59`) — tenant mới
+không tự động có policy hạn chế nào, seed "starter policy" chung chung không khả thi (thư viện
+platform không được biết business entity cụ thể).
+
+Ngoài phạm vi Giai đoạn 1+2 (còn lại cho Giai đoạn 3+): role lookup
+(`auth.rs::get_roles_for_user`) và `PostgresPolicyStore` (RBAC/policy) vẫn dùng `AppState.pool`
+trực tiếp, không qua Router (coi RBAC/policy là bảng control-plane/platform dùng chung, không
+phải data-plane theo-tenant); Vault/dynamic creds thật; HTTP provisioning + platform-superadmin;
+template pack; data-plane evolution (§3-§7). Trigger cho các phần còn lại: quyết định thật đi
+theo hướng B ("SaaS multi-tenant là đích, per-client outsource là cách kiếm tiền trong lúc xây B"
+— xem `docs/multi-tenant-platform-design.md` §11.2) thay vì tiếp tục chỉ ship per-client.
 
 Toàn bộ thiết kế nằm ở `docs/multi-tenant-platform-design.md` (hợp nhất từ hai bản nháp brainstorm
 `adr.md`/`adr2.md` ngày 2026-08-15, đã xóa sau khi hợp nhất); các quyết định cốt lõi rút gọn dạng

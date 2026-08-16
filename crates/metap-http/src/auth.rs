@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use jsonwebtoken::{decode, Algorithm, Validation};
-use metap_peripherals::get_roles_for_user;
+use metap_peripherals::{get_roles_for_user, JWT_AUDIENCE, JWT_ISSUER};
 use metap_permission::RequestContext;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -27,6 +27,8 @@ struct Claims {
     #[serde(rename = "functionId")]
     function_id: Option<String>,
     exp: usize,
+    iss: String,
+    aud: String,
 }
 
 #[derive(Debug)]
@@ -37,17 +39,27 @@ pub struct AuthError {
 
 impl AuthError {
     fn unauthorized(message: &'static str) -> Self {
-        Self { message, status: StatusCode::UNAUTHORIZED }
+        Self {
+            message,
+            status: StatusCode::UNAUTHORIZED,
+        }
     }
 
     fn forbidden(message: &'static str) -> Self {
-        Self { message, status: StatusCode::FORBIDDEN }
+        Self {
+            message,
+            status: StatusCode::FORBIDDEN,
+        }
     }
 }
 
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
-        let code = if self.status == StatusCode::FORBIDDEN { "forbidden" } else { "unauthorized" };
+        let code = if self.status == StatusCode::FORBIDDEN {
+            "forbidden"
+        } else {
+            "unauthorized"
+        };
         (
             self.status,
             Json(serde_json::json!({
@@ -83,15 +95,17 @@ where
             .strip_prefix("Bearer ")
             .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
 
-        let validation = Validation::new(Algorithm::RS256);
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.set_audience(&[JWT_AUDIENCE]);
+        validation.set_issuer(&[JWT_ISSUER]);
         let token_data = decode::<Claims>(token, &app_state.jwt_decoding_key, &validation)
             .map_err(|_| AuthError::unauthorized("Invalid or expired token."))?;
         let claims = token_data.claims;
 
         let tenant_id = Uuid::parse_str(&claims.tenant_id)
             .map_err(|_| AuthError::unauthorized("Token is missing required claims."))?;
-        let user_id = Uuid::parse_str(&claims.sub)
-            .map_err(|_| AuthError::unauthorized("Token is missing required claims."))?;
+        let user_id =
+            Uuid::parse_str(&claims.sub).map_err(|_| AuthError::unauthorized("Token is missing required claims."))?;
 
         let roles = get_roles_for_user(&app_state.pool, tenant_id, user_id)
             .await

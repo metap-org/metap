@@ -96,11 +96,7 @@ async fn shutdown_signal() {
 /// A per-row publish failure bumps `attempts`/`last_error` and leaves the row for the next
 /// poll cycle rather than failing the whole batch — matching the Node implementation's
 /// per-row try/catch inside the same transaction.
-async fn publish_pending(
-    pool: &sqlx::PgPool,
-    bus: &impl EventBus,
-    batch_size: i64,
-) -> anyhow::Result<()> {
+async fn publish_pending(pool: &sqlx::PgPool, bus: &impl EventBus, batch_size: i64) -> anyhow::Result<()> {
     let mut tx = pool.begin().await?;
 
     let rows = sqlx::query(
@@ -148,11 +144,7 @@ async fn mark_published(tx: &mut Transaction<'_, sqlx::Postgres>, id: Uuid) -> a
     Ok(())
 }
 
-async fn mark_failed(
-    tx: &mut Transaction<'_, sqlx::Postgres>,
-    id: Uuid,
-    error: &str,
-) -> anyhow::Result<()> {
+async fn mark_failed(tx: &mut Transaction<'_, sqlx::Postgres>, id: Uuid, error: &str) -> anyhow::Result<()> {
     sqlx::query(
         "UPDATE outbox_events SET attempts = attempts + 1, last_error = $1 \
          WHERE id = $2 AND published_at IS NULL",

@@ -10,7 +10,10 @@ pub struct PageInfo {
 
 #[derive(Debug, Clone)]
 pub enum ServiceResult<T> {
-    Ok { data: T, page: Option<PageInfo> },
+    Ok {
+        data: T,
+        page: Option<PageInfo>,
+    },
     Err {
         status: u16,
         error: String,
@@ -29,7 +32,12 @@ impl<T> ServiceResult<T> {
     }
 
     pub fn err(status: u16, error: impl Into<String>) -> Self {
-        ServiceResult::Err { status, error: error.into(), message: None, field_errors: None }
+        ServiceResult::Err {
+            status,
+            error: error.into(),
+            message: None,
+            field_errors: None,
+        }
     }
 
     pub fn err_with_message(status: u16, error: impl Into<String>, message: impl Into<String>) -> Self {

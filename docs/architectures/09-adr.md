@@ -36,8 +36,13 @@ việc đó là thừa.
   ràng hơn (teardown trial = `DROP SCHEMA`, backup/PITR/xóa per-client trivial cho paid) và vì
   data-plane cũng đang chuyển sang table-per-entity (xem điểm dưới) — lúc đó RLS trên bảng chung
   không còn là seam đúng chỗ. RLS vẫn có thể bật thêm như defense-in-depth, không phải cơ chế
-  chính. Chi tiết: `docs/multi-tenant-platform-design.md` §2.1. Chưa triển khai — xem
-  `docs/roadmap.md` Phase 16.
+  chính. Chi tiết: `docs/multi-tenant-platform-design.md` §2.1. Giai đoạn 1 (control-plane
+  skeleton: `crates/metap-control`'s `Router` + `control.tenants` registry, `CrudService` đã
+  refactor để đi qua `Router::begin(tenant)`) và Giai đoạn 2 (`dev-tools provision-tenant`,
+  `SecretStore`/`EnvStore`, `DedicatedDb` strategy hoạt động thật — verify isolation vật lý qua
+  HTTP thật) đã triển khai 2026-08-16. `DedicatedDb` (paid) đã có "răng" thật; `schema` (trial)
+  vẫn ghim `schema_name='public'`, chưa có isolation thật cho tới khi data plane evolution (§3)
+  xong. Không có HTTP provisioning (chỉ CLI, xem `docs/roadmap.md` Phase 16 để biết lý do).
 - **Bảng `records` JSONB dùng chung sẽ được thay bằng table-per-entity khi có tín hiệu scale
   (@ ~10M row/entity), không phải ngay bây giờ.** Giữ nguyên chiến lược hiện tại
   (xem Data Model Strategy, [05. Building Block View](05-building-blocks.md)) cho tới khi trigger

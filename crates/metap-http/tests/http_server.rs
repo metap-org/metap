@@ -9,14 +9,12 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use axum::Router;
-use jsonwebtoken::{encode, DecodingKey, EncodingKey, Header};
+use jsonwebtoken::DecodingKey;
 use metap_http::{build_router, AppState};
 use metap_metadata::{
-    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, MetadataRegistry,
-    WorkflowTransition,
+    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, MetadataRegistry, WorkflowTransition,
 };
 use metap_permission::PermissionService;
-use serde::Serialize;
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -49,22 +47,12 @@ fn openssl_genrsa(dir: &std::path::Path) -> (String, String) {
     )
 }
 
-#[derive(Serialize)]
-struct Claims {
-    sub: String,
-    #[serde(rename = "tenantId")]
-    tenant_id: String,
-    exp: usize,
-}
-
+/// Delegates to `metap_peripherals::mint_jwt` — the same function `POST /auth/login` and
+/// `dev-tools mint-token` use — instead of hand-rolling a `Claims` struct here, so this test
+/// can't drift from the real claim shape (`iss`/`aud` in particular: a hand-rolled struct
+/// without them would silently start failing once the verify side started checking them).
 fn mint_token(private_pem: &str, tenant_id: Uuid, user_id: Uuid) -> String {
-    let claims = Claims {
-        sub: user_id.to_string(),
-        tenant_id: tenant_id.to_string(),
-        exp: (chrono::Utc::now().timestamp() + 3600) as usize,
-    };
-    let key = EncodingKey::from_rsa_pem(private_pem.as_bytes()).unwrap();
-    encode(&Header::new(jsonwebtoken::Algorithm::RS256), &claims, &key).unwrap()
+    metap_peripherals::mint_jwt(private_pem, tenant_id, user_id, 3600).unwrap()
 }
 
 fn test_entity() -> EntityDefinition {
@@ -126,9 +114,12 @@ fn test_entity() -> EntityDefinition {
 }
 
 async fn connect() -> PgPool {
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-    PgPoolOptions::new().max_connections(5).connect(&database_url).await.unwrap()
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -202,16 +193,29 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
         .send()
         .await
         .unwrap();
-    assert_eq!(with_trace_id.headers().get("x-trace-id").unwrap(), "caller-supplied-trace-id");
+    assert_eq!(
+        with_trace_id.headers().get("x-trace-id").unwrap(),
+        "caller-supplied-trace-id"
+    );
 
     // openapi.json is public
-    let openapi = client.get(format!("{base}/metadata/openapi.json")).send().await.unwrap();
+    let openapi = client
+        .get(format!("{base}/metadata/openapi.json"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(openapi.status(), 200);
 
     // records route without a token -> 401, with requestId/traceId injected into the error body
     let unauthed = client.get(format!("{base}/api/test.orders")).send().await.unwrap();
     assert_eq!(unauthed.status(), 401);
-    let expected_request_id = unauthed.headers().get("x-request-id").unwrap().to_str().unwrap().to_string();
+    let expected_request_id = unauthed
+        .headers()
+        .get("x-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
     let unauthed_body: serde_json::Value = unauthed.json().await.unwrap();
     assert_eq!(unauthed_body["error"]["requestId"], expected_request_id);
     assert!(unauthed_body["error"]["traceId"].is_string());
@@ -286,10 +290,25 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
         .unwrap();
     assert_eq!(after_delete.status(), 404);
 
-    sqlx::query("DELETE FROM outbox_events WHERE aggregate_type = 'test.orders'").execute(&pool).await.ok();
-    sqlx::query("DELETE FROM workflow_events WHERE tenant_id = $1").bind(tenant_id).execute(&pool).await.ok();
-    sqlx::query("DELETE FROM records WHERE tenant_id = $1").bind(tenant_id).execute(&pool).await.ok();
-    sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1").bind(tenant_id).execute(&pool).await.ok();
+    sqlx::query("DELETE FROM outbox_events WHERE aggregate_type = 'test.orders'")
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM workflow_events WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
 }
 
 #[tokio::test]
@@ -354,8 +373,8 @@ async fn rate_limit_returns_429_once_the_burst_is_exhausted() {
             rate_limited = Some(hit);
         }
     }
-    let (has_retry_after, body) = rate_limited
-        .expect("expected at least one 429 among 400 concurrent requests against a 300-request burst");
+    let (has_retry_after, body) =
+        rate_limited.expect("expected at least one 429 among 400 concurrent requests against a 300-request burst");
     assert!(has_retry_after);
     assert_eq!(body["error"]["code"], "too_many_requests");
     assert!(body["error"]["requestId"].is_string());

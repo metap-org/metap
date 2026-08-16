@@ -7,9 +7,7 @@
 //! `anyhow::Error` at query-build time rather than a silent wrong-type comparison — a
 //! stricter, more honest failure mode than the original, not a weaker one.
 
-use metap_permission::{
-    role_gate_passed, ConditionOp, PolicyCondition, PolicyRow, PolicyValue, RequestContext,
-};
+use metap_permission::{role_gate_passed, ConditionOp, PolicyCondition, PolicyRow, PolicyValue, RequestContext};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -230,7 +228,9 @@ mod tests {
         let cond = PolicyCondition::Attribute {
             attribute: "ownerId".to_string(),
             op: ConditionOp::Eq,
-            value: PolicyValue::Literal { literal: serde_json::json!("u1") },
+            value: PolicyValue::Literal {
+                literal: serde_json::json!("u1"),
+            },
         };
         let sql = condition_to_sql(&cond, &ctx, &mut params).unwrap();
         assert_eq!(sql, "jsonb_extract_path_text(data, $1) = $2");
@@ -260,7 +260,9 @@ mod tests {
         let cond = PolicyCondition::Attribute {
             attribute: "createdBy".to_string(),
             op: ConditionOp::Eq,
-            value: PolicyValue::Literal { literal: serde_json::json!("not-a-uuid") },
+            value: PolicyValue::Literal {
+                literal: serde_json::json!("not-a-uuid"),
+            },
         };
         assert!(condition_to_sql(&cond, &ctx, &mut params).is_err());
     }
@@ -272,7 +274,9 @@ mod tests {
         let cond = PolicyCondition::Attribute {
             attribute: "status".to_string(),
             op: ConditionOp::In,
-            value: PolicyValue::Literal { literal: serde_json::json!([]) },
+            value: PolicyValue::Literal {
+                literal: serde_json::json!([]),
+            },
         };
         assert_eq!(condition_to_sql(&cond, &ctx, &mut params).unwrap(), "false");
     }
@@ -284,7 +288,9 @@ mod tests {
         let cond = PolicyCondition::Attribute {
             attribute: "status".to_string(),
             op: ConditionOp::NotIn,
-            value: PolicyValue::Literal { literal: serde_json::json!([]) },
+            value: PolicyValue::Literal {
+                literal: serde_json::json!([]),
+            },
         };
         assert_eq!(condition_to_sql(&cond, &ctx, &mut params).unwrap(), "true");
     }

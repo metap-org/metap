@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+metap-control = { path = "../metap-control" }
 metap-cron = { path = "../metap-cron" }
 metap-crud = { path = "../metap-crud" }
 metap-infra = { path = "../metap-infra" }

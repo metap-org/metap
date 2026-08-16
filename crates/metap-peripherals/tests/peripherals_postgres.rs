@@ -3,17 +3,19 @@
 
 use metap_metadata::{EntityField, EntityListView, EntitySummary, FieldKind};
 use metap_peripherals::{
-    assign_role, check_metadata_drift, get_roles_for_user, list_users, reconcile_indexes,
-    revoke_role,
+    assign_role, check_metadata_drift, get_roles_for_user, list_users, reconcile_indexes, revoke_role,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 async fn connect() -> PgPool {
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-    PgPoolOptions::new().max_connections(3).connect(&database_url).await.unwrap()
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    PgPoolOptions::new()
+        .max_connections(3)
+        .connect(&database_url)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -42,7 +44,11 @@ async fn role_assignment_round_trip() {
     let roles = get_roles_for_user(&pool, tenant_id, user_id).await.unwrap();
     assert_eq!(roles, vec!["support".to_string()]);
 
-    sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1").bind(tenant_id).execute(&pool).await.ok();
+    sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
 }
 
 fn summary(name: &str, version: &str) -> EntitySummary {
@@ -63,22 +69,20 @@ async fn metadata_drift_records_first_boot_then_detects_change() {
     let entity_name = format!("test.drift.{}", Uuid::new_v4());
 
     check_metadata_drift(&pool, &[summary(&entity_name, "hash-v1")]).await;
-    let stored: String =
-        sqlx::query_scalar("SELECT hash FROM metadata_versions WHERE entity_name = $1")
-            .bind(&entity_name)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let stored: String = sqlx::query_scalar("SELECT hash FROM metadata_versions WHERE entity_name = $1")
+        .bind(&entity_name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(stored, "hash-v1");
 
     // second call with a different hash — drift is logged (stderr), row is updated either way
     check_metadata_drift(&pool, &[summary(&entity_name, "hash-v2")]).await;
-    let stored: String =
-        sqlx::query_scalar("SELECT hash FROM metadata_versions WHERE entity_name = $1")
-            .bind(&entity_name)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let stored: String = sqlx::query_scalar("SELECT hash FROM metadata_versions WHERE entity_name = $1")
+        .bind(&entity_name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(stored, "hash-v2");
 
     sqlx::query("DELETE FROM metadata_versions WHERE entity_name = $1")
@@ -168,13 +172,20 @@ async fn reconcile_creates_an_index_postgres_actually_selects_for_the_exact_quer
     .fetch_all(&pool)
     .await
     .unwrap();
-    let plan: String = explain_rows.iter().map(|r| r.get::<String, _>(0)).collect::<Vec<_>>().join("\n");
+    let plan: String = explain_rows
+        .iter()
+        .map(|r| r.get::<String, _>(0))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
         plan.contains(&index_name),
         "expected query plan to use {index_name}, got:\n{plan}"
     );
 
-    sqlx::query(&format!("DROP INDEX CONCURRENTLY IF EXISTS {index_name}")).execute(&pool).await.ok();
+    sqlx::query(&format!("DROP INDEX CONCURRENTLY IF EXISTS {index_name}"))
+        .execute(&pool)
+        .await
+        .ok();
 
     // idempotent: reconciling again when the index already exists is a no-op, not an error
     let entity_again = EntitySummary {
@@ -192,6 +203,12 @@ async fn reconcile_creates_an_index_postgres_actually_selects_for_the_exact_quer
         .fetch_optional(&pool)
         .await
         .unwrap();
-    assert!(gin_exists.is_some(), "expected GIN index {gin_index_name} to have been created");
-    sqlx::query(&format!("DROP INDEX CONCURRENTLY IF EXISTS {gin_index_name}")).execute(&pool).await.ok();
+    assert!(
+        gin_exists.is_some(),
+        "expected GIN index {gin_index_name} to have been created"
+    );
+    sqlx::query(&format!("DROP INDEX CONCURRENTLY IF EXISTS {gin_index_name}"))
+        .execute(&pool)
+        .await
+        .ok();
 }

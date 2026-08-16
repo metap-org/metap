@@ -63,9 +63,7 @@ async fn create_cron_job(
         Err(e) => return internal_error_response(e),
     };
     if TargetType::parse(&body.target_type).is_none() {
-        return validation_error(
-            "`targetType` must be one of: workflow_transition, bulk_query_action, webhook.",
-        );
+        return validation_error("`targetType` must be one of: workflow_transition, bulk_query_action, webhook.");
     }
     if DispatchMode::parse(&body.dispatch_mode).is_none() {
         return validation_error("`dispatchMode` must be one of: outbox, direct.");
@@ -144,9 +142,7 @@ async fn update_cron_job(
     };
     if let Some(target_type) = &body.target_type {
         if TargetType::parse(target_type).is_none() {
-            return validation_error(
-                "`targetType` must be one of: workflow_transition, bulk_query_action, webhook.",
-            );
+            return validation_error("`targetType` must be one of: workflow_transition, bulk_query_action, webhook.");
         }
     }
     if let Some(dispatch_mode) = &body.dispatch_mode {
@@ -210,7 +206,11 @@ async fn list_cron_job_runs(
         Ok(id) => id,
         Err(e) => return internal_error_response(e),
     };
-    let limit = params.get("limit").and_then(|v| v.parse::<i64>().ok()).filter(|n| *n > 0 && *n <= 200).unwrap_or(50);
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|n| *n > 0 && *n <= 200)
+        .unwrap_or(50);
     match metap_cron::list_job_runs(&state.pool, tenant_id, id, limit).await {
         Ok(runs) => Json(json!({ "data": runs })).into_response(),
         Err(e) => internal_error_response(e),

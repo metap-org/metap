@@ -47,9 +47,12 @@ struct DraftBody {
 
 fn publish_error_response(err: PublishError) -> Response {
     match err {
-        PublishError::NoDraft => {
-            service_error_response(404, "lowcode_draft_not_found", Some("No draft exists for this entity."), None)
-        }
+        PublishError::NoDraft => service_error_response(
+            404,
+            "lowcode_draft_not_found",
+            Some("No draft exists for this entity."),
+            None,
+        ),
         PublishError::NameReservedByCodeEntity => service_error_response(
             409,
             "lowcode_name_reserved",
@@ -103,8 +106,7 @@ async fn list_entities(State(state): State<AppState>, AdminContext(_context): Ad
         Ok(s) => s,
         Err(e) => return internal_error_response(e),
     };
-    let published_names: std::collections::HashSet<&str> =
-        published.iter().map(|(name, _)| name.as_str()).collect();
+    let published_names: std::collections::HashSet<&str> = published.iter().map(|(name, _)| name.as_str()).collect();
     let entities: Vec<_> = statuses
         .into_iter()
         .map(|(name, enabled)| {
@@ -134,7 +136,10 @@ async fn set_enabled(
         return internal_error_response(e);
     }
     let db_entities: Vec<_> = match metap_lowcode::list_enabled_published(&state.pool).await {
-        Ok(entities) => entities.into_iter().map(|(_, def)| def.to_entity_definition()).collect(),
+        Ok(entities) => entities
+            .into_iter()
+            .map(|(_, def)| def.to_entity_definition())
+            .collect(),
         Err(e) => return internal_error_response(e),
     };
     let registry = match state.metadata_base.merge_with(db_entities) {

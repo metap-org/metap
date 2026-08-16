@@ -17,7 +17,9 @@ pub struct RequestContext {
 
 impl RequestContext {
     pub fn is_admin(&self) -> bool {
-        self.roles.as_ref().is_some_and(|roles| roles.iter().any(|r| r == "admin"))
+        self.roles
+            .as_ref()
+            .is_some_and(|roles| roles.iter().any(|r| r == "admin"))
     }
 
     /// `context[attribute]`-style lookup used when a condition's subject is the caller's
@@ -39,15 +41,27 @@ pub struct PermissionDecision {
 
 impl PermissionDecision {
     pub fn allowed() -> Self {
-        Self { allowed: true, reason: None, field: None }
+        Self {
+            allowed: true,
+            reason: None,
+            field: None,
+        }
     }
 
     pub fn forbidden() -> Self {
-        Self { allowed: false, reason: Some("forbidden".to_string()), field: None }
+        Self {
+            allowed: false,
+            reason: Some("forbidden".to_string()),
+            field: None,
+        }
     }
 
     pub fn forbidden_field(field: impl Into<String>) -> Self {
-        Self { allowed: false, reason: Some("forbidden".to_string()), field: Some(field.into()) }
+        Self {
+            allowed: false,
+            reason: Some("forbidden".to_string()),
+            field: Some(field.into()),
+        }
     }
 }
 

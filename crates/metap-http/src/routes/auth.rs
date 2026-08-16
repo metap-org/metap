@@ -22,26 +22,15 @@ struct LoginBody {
 }
 
 async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Response {
-    let user =
-        match metap_peripherals::verify_credentials(&state.pool, &body.email, &body.password).await {
-            Ok(Some(user)) => user,
-            Ok(None) => {
-                return service_error_response(
-                    401,
-                    "invalid_credentials",
-                    Some("Invalid email or password."),
-                    None,
-                )
-            }
-            Err(e) => return internal_error_response(e),
-        };
+    let user = match metap_peripherals::verify_credentials(&state.pool, &body.email, &body.password).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return service_error_response(401, "invalid_credentials", Some("Invalid email or password."), None)
+        }
+        Err(e) => return internal_error_response(e),
+    };
 
-    match metap_peripherals::mint_jwt(
-        &state.jwt_encoding_key_pem,
-        user.tenant_id,
-        user.id,
-        TOKEN_TTL_SECONDS,
-    ) {
+    match metap_peripherals::mint_jwt(&state.jwt_encoding_key_pem, user.tenant_id, user.id, TOKEN_TTL_SECONDS) {
         Ok(token) => Json(json!({ "data": { "token": token } })).into_response(),
         Err(e) => internal_error_response(e),
     }
@@ -63,5 +52,7 @@ async fn me(State(_state): State<AppState>, AuthContext(context): AuthContext) -
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/auth/login", post(login)).route("/auth/me", get(me))
+    Router::new()
+        .route("/auth/login", post(login))
+        .route("/auth/me", get(me))
 }

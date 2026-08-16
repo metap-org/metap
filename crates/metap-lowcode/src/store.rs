@@ -80,7 +80,9 @@ pub async fn list_draft_statuses(pool: &PgPool) -> anyhow::Result<Vec<(String, b
     let rows = sqlx::query("SELECT entity_name, enabled FROM low_code_entity_drafts ORDER BY entity_name")
         .fetch_all(pool)
         .await?;
-    rows.iter().map(|row| Ok((row.try_get("entity_name")?, row.try_get("enabled")?))).collect()
+    rows.iter()
+        .map(|row| Ok((row.try_get("entity_name")?, row.try_get("enabled")?)))
+        .collect()
 }
 
 /// Flips a published entity's enabled flag — disabled entities are excluded from
@@ -103,13 +105,13 @@ pub async fn get_draft(pool: &PgPool, entity_name: &str) -> anyhow::Result<Optio
         .bind(entity_name)
         .fetch_optional(pool)
         .await?;
-    Ok(row.map(|r| r.try_get::<Json<LowCodeEntityDefinition>, _>("definition")).transpose()?.map(|Json(v)| v))
+    Ok(row
+        .map(|r| r.try_get::<Json<LowCodeEntityDefinition>, _>("definition"))
+        .transpose()?
+        .map(|Json(v)| v))
 }
 
-pub async fn get_published(
-    pool: &PgPool,
-    entity_name: &str,
-) -> anyhow::Result<Option<PublishedVersion>> {
+pub async fn get_published(pool: &PgPool, entity_name: &str) -> anyhow::Result<Option<PublishedVersion>> {
     let row = sqlx::query(
         "SELECT definition, version_number, published_at, restored_from_version \
          FROM low_code_entity_versions WHERE entity_name = $1 \
@@ -274,7 +276,10 @@ async fn build_check_registry(
     let mut extra = other_published.clone();
     extra.push(candidate.to_entity_definition());
     let registry = base_registry.merge_with(extra).map_err(PublishError::from)?;
-    Ok(CheckRegistry { registry, other_published })
+    Ok(CheckRegistry {
+        registry,
+        other_published,
+    })
 }
 
 /// The registry `publish`/`rollback` actually swap live: `check.registry` (candidate
@@ -288,16 +293,17 @@ async fn live_registry_for(
     base_registry: &MetadataRegistry,
     check: CheckRegistry,
 ) -> Result<MetadataRegistry, PublishError> {
-    let enabled: Option<bool> =
-        sqlx::query_scalar("SELECT enabled FROM low_code_entity_drafts WHERE entity_name = $1")
-            .bind(entity_name)
-            .fetch_optional(pool)
-            .await
-            .map_err(PublishError::from)?;
+    let enabled: Option<bool> = sqlx::query_scalar("SELECT enabled FROM low_code_entity_drafts WHERE entity_name = $1")
+        .bind(entity_name)
+        .fetch_optional(pool)
+        .await
+        .map_err(PublishError::from)?;
     if enabled.unwrap_or(true) {
         Ok(check.registry)
     } else {
-        base_registry.merge_with(check.other_published).map_err(PublishError::from)
+        base_registry
+            .merge_with(check.other_published)
+            .map_err(PublishError::from)
     }
 }
 
@@ -307,17 +313,23 @@ pub async fn publish(
     base_registry: &MetadataRegistry,
 ) -> Result<PublishOutcome, PublishError> {
     let draft = get_draft(pool, entity_name).await.map_err(PublishError::from)?;
-    let Some(draft) = draft else { return Err(PublishError::NoDraft) };
+    let Some(draft) = draft else {
+        return Err(PublishError::NoDraft);
+    };
     draft.validate_shape().map_err(PublishError::Invalid)?;
 
     let check = build_check_registry(pool, entity_name, &draft, base_registry).await?;
     check.registry.validate_references().map_err(PublishError::Invalid)?;
 
-    let version_number =
-        insert_version(pool, entity_name, &draft, None).await.map_err(PublishError::from)?;
+    let version_number = insert_version(pool, entity_name, &draft, None)
+        .await
+        .map_err(PublishError::from)?;
     let registry = live_registry_for(pool, entity_name, base_registry, check).await?;
 
-    Ok(PublishOutcome { version_number, registry })
+    Ok(PublishOutcome {
+        version_number,
+        registry,
+    })
 }
 
 pub async fn rollback(
@@ -326,15 +338,19 @@ pub async fn rollback(
     to_version_number: i32,
     base_registry: &MetadataRegistry,
 ) -> Result<PublishOutcome, PublishError> {
-    let row = sqlx::query("SELECT definition FROM low_code_entity_versions WHERE entity_name = $1 AND version_number = $2")
-        .bind(entity_name)
-        .bind(to_version_number)
-        .fetch_optional(pool)
-        .await
+    let row =
+        sqlx::query("SELECT definition FROM low_code_entity_versions WHERE entity_name = $1 AND version_number = $2")
+            .bind(entity_name)
+            .bind(to_version_number)
+            .fetch_optional(pool)
+            .await
+            .map_err(PublishError::from)?;
+    let Some(row) = row else {
+        return Err(PublishError::VersionNotFound(to_version_number));
+    };
+    let Json(target_definition) = row
+        .try_get::<Json<LowCodeEntityDefinition>, _>("definition")
         .map_err(PublishError::from)?;
-    let Some(row) = row else { return Err(PublishError::VersionNotFound(to_version_number)) };
-    let Json(target_definition) =
-        row.try_get::<Json<LowCodeEntityDefinition>, _>("definition").map_err(PublishError::from)?;
 
     let check = build_check_registry(pool, entity_name, &target_definition, base_registry).await?;
     check.registry.validate_references().map_err(PublishError::Invalid)?;
@@ -346,5 +362,8 @@ pub async fn rollback(
         .map_err(PublishError::from)?;
     let registry = live_registry_for(pool, entity_name, base_registry, check).await?;
 
-    Ok(PublishOutcome { version_number, registry })
+    Ok(PublishOutcome {
+        version_number,
+        registry,
+    })
 }

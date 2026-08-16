@@ -9,10 +9,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
 pub async fn connect(database_url: &str) -> anyhow::Result<PgPool> {
-    Ok(PgPoolOptions::new()
-        .max_connections(5)
-        .connect(database_url)
-        .await?)
+    Ok(PgPoolOptions::new().max_connections(5).connect(database_url).await?)
 }
 
 /// Mirrors `packages/core/src/core/health/health-service.ts`'s `checkDatabase`.

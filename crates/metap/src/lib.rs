@@ -8,6 +8,7 @@
 //! modules below (`metap::query::plan_list`, `metap::workflow::run_guard`, etc.) without
 //! adding that sub-crate as its own direct dependency.
 
+pub use metap_control as control;
 pub use metap_crud as crud;
 pub use metap_http as http;
 pub use metap_infra as infra;
@@ -32,8 +33,7 @@ pub mod prelude {
     pub use metap_http::{build_router, AdminContext, AppState, AuthContext};
     pub use metap_infra::{connect_db, load_config, AppConfig};
     pub use metap_metadata::{
-        EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind,
-        MetadataRegistry, WorkflowTransition,
+        EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, MetadataRegistry, WorkflowTransition,
     };
     pub use metap_peripherals::{check_metadata_drift, reconcile_indexes};
     pub use metap_permission::{PermissionService, PolicyCondition, PostgresPolicyStore};

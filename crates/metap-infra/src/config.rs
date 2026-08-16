@@ -65,8 +65,7 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         .filter(|&p: &u16| p > 0)
         .unwrap_or(3000);
 
-    let database_url = env::var("DATABASE_URL")
-        .map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let database_url = env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
     if !is_url_like(&database_url) {
         anyhow::bail!("DATABASE_URL must be a valid URL");
     }
@@ -81,8 +80,7 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         _ => None,
     };
 
-    let rabbitmq_url = env::var("RABBITMQ_URL")
-        .map_err(|_| anyhow::anyhow!("RABBITMQ_URL is required"))?;
+    let rabbitmq_url = env::var("RABBITMQ_URL").map_err(|_| anyhow::anyhow!("RABBITMQ_URL is required"))?;
     if !is_url_like(&rabbitmq_url) {
         anyhow::bail!("RABBITMQ_URL must be a valid URL");
     }

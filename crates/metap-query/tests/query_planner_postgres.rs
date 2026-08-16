@@ -9,9 +9,7 @@
 
 use async_trait::async_trait;
 use metap_metadata::{EntityDefinition, EntityField, EntityListView, FieldKind, MetadataRegistry};
-use metap_permission::{
-    ExplainOptions, PermissionService, PolicyRow, PolicyStore, PolicySubject, RequestContext,
-};
+use metap_permission::{ExplainOptions, PermissionService, PolicyRow, PolicyStore, PolicySubject, RequestContext};
 use metap_query::{apply_params, plan_list, ListInput};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
@@ -98,14 +96,7 @@ fn test_entity() -> EntityDefinition {
     }
 }
 
-async fn insert_fixture(
-    pool: &PgPool,
-    tenant_id: Uuid,
-    name: &str,
-    status: &str,
-    score: i64,
-    deleted: bool,
-) -> Uuid {
+async fn insert_fixture(pool: &PgPool, tenant_id: Uuid, name: &str, status: &str, score: i64, deleted: bool) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO records (id, tenant_id, entity, data, deleted) \
@@ -145,13 +136,21 @@ struct Harness {
 }
 
 async fn setup() -> Harness {
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-    let pool = PgPoolOptions::new().max_connections(3).connect(&database_url).await.unwrap();
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    let pool = PgPoolOptions::new()
+        .max_connections(3)
+        .connect(&database_url)
+        .await
+        .unwrap();
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
     let permissions = PermissionService::new(Box::new(UnusedPolicyStore));
-    Harness { pool, registry, permissions, tenant_id: Uuid::new_v4() }
+    Harness {
+        pool,
+        registry,
+        permissions,
+        tenant_id: Uuid::new_v4(),
+    }
 }
 
 impl Harness {
@@ -166,7 +165,11 @@ impl Harness {
 
     async fn cleanup(&self, ids: &[Uuid]) {
         for id in ids {
-            sqlx::query("DELETE FROM records WHERE id = $1").bind(id).execute(&self.pool).await.ok();
+            sqlx::query("DELETE FROM records WHERE id = $1")
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .ok();
         }
     }
 }
@@ -181,7 +184,10 @@ async fn tenant_scoping_and_soft_delete_exclusion() {
     let deleted = insert_fixture(&h.pool, h.tenant_id, "beta", "active", 2, true).await;
     let other = insert_fixture(&h.pool, other_tenant, "gamma", "active", 3, false).await;
 
-    let input = ListInput { limit: 50, ..Default::default() };
+    let input = ListInput {
+        limit: 50,
+        ..Default::default()
+    };
     let planned = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]).unwrap();
     let ids = run_plan(&h.pool, &planned).await;
 
@@ -246,7 +252,10 @@ async fn default_sort_is_used_when_no_sort_given_and_limit_is_clamped() {
     let b = insert_fixture(&h.pool, h.tenant_id, "b", "active", 2, false).await;
 
     // maxLimit on the list view is 50; requesting 500 must clamp down to it.
-    let input = ListInput { limit: 500, ..Default::default() };
+    let input = ListInput {
+        limit: 500,
+        ..Default::default()
+    };
     let planned = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]).unwrap();
     assert_eq!(planned.limit, 50);
     assert_eq!(planned.resolved_sort.field, "createdAt");
@@ -255,7 +264,10 @@ async fn default_sort_is_used_when_no_sort_given_and_limit_is_clamped() {
     let ids = run_plan(&h.pool, &planned).await;
     let pos_a = ids.iter().position(|id| id == &a).unwrap();
     let pos_b = ids.iter().position(|id| id == &b).unwrap();
-    assert!(pos_b < pos_a, "newer row (b) must sort before older row (a) on default -createdAt");
+    assert!(
+        pos_b < pos_a,
+        "newer row (b) must sort before older row (a) on default -createdAt"
+    );
 
     h.cleanup(&[a, b]).await;
 }
@@ -268,9 +280,19 @@ async fn sortable_field_ascending_order() {
     let low = insert_fixture(&h.pool, h.tenant_id, "low", "active", 1, false).await;
     let high = insert_fixture(&h.pool, h.tenant_id, "high", "active", 9, false).await;
 
-    let input = ListInput { limit: 50, sort: Some("score".to_string()), ..Default::default() };
+    let input = ListInput {
+        limit: 50,
+        sort: Some("score".to_string()),
+        ..Default::default()
+    };
     let planned = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]).unwrap();
-    assert_eq!(planned.resolved_sort, metap_query::ResolvedSort { field: "score".to_string(), descending: false });
+    assert_eq!(
+        planned.resolved_sort,
+        metap_query::ResolvedSort {
+            field: "score".to_string(),
+            descending: false
+        }
+    );
 
     let ids = run_plan(&h.pool, &planned).await;
     let pos_low = ids.iter().position(|id| id == &low).unwrap();
@@ -285,7 +307,11 @@ async fn sortable_field_ascending_order() {
 async fn unsortable_requested_field_falls_back_to_default_sort() {
     let h = setup().await;
 
-    let input = ListInput { limit: 50, sort: Some("status".to_string()), ..Default::default() };
+    let input = ListInput {
+        limit: 50,
+        sort: Some("status".to_string()),
+        ..Default::default()
+    };
     let planned = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]).unwrap();
     // "status" is not declared sortable — must fall back to the list view's defaultSort.
     assert_eq!(planned.resolved_sort.field, "createdAt");
@@ -302,22 +328,31 @@ async fn keyset_pagination_produces_disjoint_consecutive_pages() {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
-    let page1_input = ListInput { limit: 2, ..Default::default() };
-    let page1_planned =
-        plan_list(&h.registry, &h.permissions, "test.widgets", &page1_input, &h.context(), &[]).unwrap();
+    let page1_input = ListInput {
+        limit: 2,
+        ..Default::default()
+    };
+    let page1_planned = plan_list(
+        &h.registry,
+        &h.permissions,
+        "test.widgets",
+        &page1_input,
+        &h.context(),
+        &[],
+    )
+    .unwrap();
     let page1 = run_plan(&h.pool, &page1_planned).await;
     assert_eq!(page1.len(), 2);
 
     // Build a cursor from the last row of page 1, matching CrudService's real job
     // (Migration Order step 7) — reconstructed here directly since that's not built yet.
     let last_id = page1[1];
-    let created_at: chrono::DateTime<chrono::Utc> =
-        sqlx::query("SELECT created_at FROM records WHERE id = $1")
-            .bind(last_id)
-            .fetch_one(&h.pool)
-            .await
-            .unwrap()
-            .get("created_at");
+    let created_at: chrono::DateTime<chrono::Utc> = sqlx::query("SELECT created_at FROM records WHERE id = $1")
+        .bind(last_id)
+        .fetch_one(&h.pool)
+        .await
+        .unwrap()
+        .get("created_at");
     let cursor = metap_query::Cursor {
         field: "createdAt".to_string(),
         value: created_at.to_rfc3339(),
@@ -326,9 +361,20 @@ async fn keyset_pagination_produces_disjoint_consecutive_pages() {
     };
     let encoded = metap_query::encode_cursor(&cursor);
 
-    let page2_input = ListInput { limit: 2, cursor: Some(encoded), ..Default::default() };
-    let page2_planned =
-        plan_list(&h.registry, &h.permissions, "test.widgets", &page2_input, &h.context(), &[]).unwrap();
+    let page2_input = ListInput {
+        limit: 2,
+        cursor: Some(encoded),
+        ..Default::default()
+    };
+    let page2_planned = plan_list(
+        &h.registry,
+        &h.permissions,
+        "test.widgets",
+        &page2_input,
+        &h.context(),
+        &[],
+    )
+    .unwrap();
     let page2 = run_plan(&h.pool, &page2_planned).await;
 
     assert!(
@@ -353,7 +399,11 @@ async fn cursor_mismatched_with_current_sort_is_rejected() {
     };
     let encoded = metap_query::encode_cursor(&cursor);
 
-    let input = ListInput { limit: 50, cursor: Some(encoded), ..Default::default() };
+    let input = ListInput {
+        limit: 50,
+        cursor: Some(encoded),
+        ..Default::default()
+    };
     let result = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]);
     assert!(result.is_err());
 }

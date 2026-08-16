@@ -19,18 +19,18 @@ use crate::state::AppState;
 
 const RESERVED_QUERY_KEYS: [&str; 3] = ["limit", "sort", "cursor"];
 
-fn parse_list_input(params: &HashMap<String, String>) -> Result<ListInput, Response> {
+fn parse_list_input(params: &HashMap<String, String>) -> Result<ListInput, Box<Response>> {
     let limit = match params.get("limit") {
         None => 30,
         Some(raw) => match raw.parse::<i64>() {
             Ok(n) if n > 0 && n <= 200 => n,
             _ => {
-                return Err(service_error_response(
+                return Err(Box::new(service_error_response(
                     400,
                     "validation_failed",
                     Some("`limit` must be a positive integer no greater than 200."),
                     None,
-                ))
+                )))
             }
         },
     };
@@ -57,7 +57,7 @@ async fn list_records(
 ) -> Response {
     let input = match parse_list_input(&params) {
         Ok(i) => i,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
     match state.crud.list(&entity, &input, &context).await {
@@ -65,9 +65,12 @@ async fn list_records(
             let page = page.map(|p| json!({ "limit": p.limit, "nextCursor": p.next_cursor }));
             Json(json!({ "data": data, "page": page })).into_response()
         }
-        Ok(ServiceResult::Err { status, error, message, field_errors }) => {
-            service_error_response(status, &error, message.as_deref(), field_errors)
-        }
+        Ok(ServiceResult::Err {
+            status,
+            error,
+            message,
+            field_errors,
+        }) => service_error_response(status, &error, message.as_deref(), field_errors),
         Err(e) => internal_error_response(e),
     }
 }
@@ -78,16 +81,25 @@ async fn get_record(
     AuthContext(context): AuthContext,
 ) -> Response {
     match state.crud.get(&entity, id, &context).await {
-        Ok(ServiceResult::Ok { data: (record, capabilities), .. }) => {
+        Ok(ServiceResult::Ok {
+            data: (record, capabilities),
+            ..
+        }) => {
             let mut data = serde_json::to_value(record).unwrap_or(Value::Null);
             if let Value::Object(map) = &mut data {
-                map.insert("capabilities".to_string(), serde_json::to_value(capabilities).unwrap_or(Value::Null));
+                map.insert(
+                    "capabilities".to_string(),
+                    serde_json::to_value(capabilities).unwrap_or(Value::Null),
+                );
             }
             Json(json!({ "data": data })).into_response()
         }
-        Ok(ServiceResult::Err { status, error, message, field_errors }) => {
-            service_error_response(status, &error, message.as_deref(), field_errors)
-        }
+        Ok(ServiceResult::Err {
+            status,
+            error,
+            message,
+            field_errors,
+        }) => service_error_response(status, &error, message.as_deref(), field_errors),
         Err(e) => internal_error_response(e),
     }
 }
@@ -105,12 +117,13 @@ async fn create_record(
 ) -> Response {
     let data: metap_crud::JsonObject = body.data.into_iter().collect();
     match state.crud.create(&entity, &data, &context).await {
-        Ok(ServiceResult::Ok { data, .. }) => {
-            (StatusCode::CREATED, Json(json!({ "data": data }))).into_response()
-        }
-        Ok(ServiceResult::Err { status, error, message, field_errors }) => {
-            service_error_response(status, &error, message.as_deref(), field_errors)
-        }
+        Ok(ServiceResult::Ok { data, .. }) => (StatusCode::CREATED, Json(json!({ "data": data }))).into_response(),
+        Ok(ServiceResult::Err {
+            status,
+            error,
+            message,
+            field_errors,
+        }) => service_error_response(status, &error, message.as_deref(), field_errors),
         Err(e) => internal_error_response(e),
     }
 }
@@ -130,9 +143,12 @@ async fn update_record(
     let data: metap_crud::JsonObject = body.data.into_iter().collect();
     match state.crud.update(&entity, id, body.version, &data, &context).await {
         Ok(ServiceResult::Ok { data, .. }) => Json(json!({ "data": data })).into_response(),
-        Ok(ServiceResult::Err { status, error, message, field_errors }) => {
-            service_error_response(status, &error, message.as_deref(), field_errors)
-        }
+        Ok(ServiceResult::Err {
+            status,
+            error,
+            message,
+            field_errors,
+        }) => service_error_response(status, &error, message.as_deref(), field_errors),
         Err(e) => internal_error_response(e),
     }
 }
@@ -150,9 +166,12 @@ async fn delete_record(
 ) -> Response {
     match state.crud.delete(&entity, id, body.version, &context).await {
         Ok(ServiceResult::Ok { data, .. }) => Json(json!({ "data": data })).into_response(),
-        Ok(ServiceResult::Err { status, error, message, field_errors }) => {
-            service_error_response(status, &error, message.as_deref(), field_errors)
-        }
+        Ok(ServiceResult::Err {
+            status,
+            error,
+            message,
+            field_errors,
+        }) => service_error_response(status, &error, message.as_deref(), field_errors),
         Err(e) => internal_error_response(e),
     }
 }
@@ -168,11 +187,18 @@ async fn transition_record(
     AuthContext(context): AuthContext,
     Json(body): Json<TransitionBody>,
 ) -> Response {
-    match state.crud.transition(&entity, id, &action, body.version, &context).await {
+    match state
+        .crud
+        .transition(&entity, id, &action, body.version, &context)
+        .await
+    {
         Ok(ServiceResult::Ok { data, .. }) => Json(json!({ "data": data })).into_response(),
-        Ok(ServiceResult::Err { status, error, message, field_errors }) => {
-            service_error_response(status, &error, message.as_deref(), field_errors)
-        }
+        Ok(ServiceResult::Err {
+            status,
+            error,
+            message,
+            field_errors,
+        }) => service_error_response(status, &error, message.as_deref(), field_errors),
         Err(e) => internal_error_response(e),
     }
 }
@@ -180,6 +206,9 @@ async fn transition_record(
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/{entity}", get(list_records).post(create_record))
-        .route("/api/{entity}/{id}", get(get_record).patch(update_record).delete(delete_record))
+        .route(
+            "/api/{entity}/{id}",
+            get(get_record).patch(update_record).delete(delete_record),
+        )
         .route("/api/{entity}/{id}/transitions/{action}", post(transition_record))
 }

@@ -56,9 +56,10 @@ impl TargetType {
 /// job needs the outbox's durability guarantee; a job an operator is fine losing an
 /// occasional firing of (a low-stakes webhook ping, a best-effort cache warm) shouldn't pay
 /// for it.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DispatchMode {
+    #[default]
     Outbox,
     Direct,
 }
@@ -77,12 +78,6 @@ impl DispatchMode {
             "direct" => Some(DispatchMode::Direct),
             _ => None,
         }
-    }
-}
-
-impl Default for DispatchMode {
-    fn default() -> Self {
-        DispatchMode::Outbox
     }
 }
 

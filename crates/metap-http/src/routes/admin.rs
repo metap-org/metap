@@ -43,9 +43,7 @@ async fn create_user(
         Err(e) => return internal_error_response(e),
     };
 
-    let user = match metap_peripherals::create_user(&state.pool, tenant_id, &body.email, &body.password)
-        .await
-    {
+    let user = match metap_peripherals::create_user(&state.pool, tenant_id, &body.email, &body.password).await {
         Ok(user) => user,
         Err(e) => {
             let is_duplicate_email = e
@@ -66,8 +64,7 @@ async fn create_user(
 
     let assigned_by = context.user_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
     for role in &body.roles {
-        if let Err(e) = metap_peripherals::assign_role(&state.pool, tenant_id, user.id, role, assigned_by).await
-        {
+        if let Err(e) = metap_peripherals::assign_role(&state.pool, tenant_id, user.id, role, assigned_by).await {
             return internal_error_response(e);
         }
     }
@@ -100,8 +97,10 @@ async fn list_users(State(state): State<AppState>, AdminContext(context): AdminC
     };
     match metap_peripherals::list_users(&state.pool, tenant_id).await {
         Ok(users) => {
-            let data: Vec<Value> =
-                users.into_iter().map(|u| json!({ "userId": u.user_id, "roles": u.roles })).collect();
+            let data: Vec<Value> = users
+                .into_iter()
+                .map(|u| json!({ "userId": u.user_id, "roles": u.roles }))
+                .collect();
             Json(json!({ "data": data })).into_response()
         }
         Err(e) => internal_error_response(e),
@@ -125,10 +124,11 @@ async fn assign_role(
     };
     let assigned_by = context.user_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
     match metap_peripherals::assign_role(&state.pool, tenant_id, user_id, &body.role, assigned_by).await {
-        Ok(()) => {
-            (StatusCode::CREATED, Json(json!({ "data": { "userId": user_id, "role": body.role } })))
-                .into_response()
-        }
+        Ok(()) => (
+            StatusCode::CREATED,
+            Json(json!({ "data": { "userId": user_id, "role": body.role } })),
+        )
+            .into_response(),
         Err(e) => internal_error_response(e),
     }
 }
@@ -240,7 +240,13 @@ async fn explain_policy(
 ) -> Response {
     match state
         .permissions
-        .explain(&context, &body.entity, &body.action, body.field.as_deref(), body.record.as_ref())
+        .explain(
+            &context,
+            &body.entity,
+            &body.action,
+            body.field.as_deref(),
+            body.record.as_ref(),
+        )
         .await
     {
         Ok(explanation) => Json(json!({ "data": explanation })).into_response(),

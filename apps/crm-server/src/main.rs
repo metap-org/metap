@@ -75,9 +75,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Needed only for POST /auth/login (metap_peripherals::mint_jwt) — crm-server issues
     // tokens now, not just verifies them, so both halves of the keypair are load-bearing.
-    let private_key_pem = std::fs::read_to_string(&config.auth_jwt_private_key_path).map_err(|e| {
-        anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_private_key_path)
-    })?;
+    let private_key_pem = std::fs::read_to_string(&config.auth_jwt_private_key_path)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_private_key_path))?;
 
     let state = AppState::new(
         pool,
@@ -104,7 +103,10 @@ async fn main() -> anyhow::Result<()> {
             // normally instead of treating it as an error page.
             router = router.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index_html)));
         } else {
-            tracing::warn!(dir, "STATIC_DIR is set but is not a directory, skipping static file serving");
+            tracing::warn!(
+                dir,
+                "STATIC_DIR is set but is not a directory, skipping static file serving"
+            );
         }
     }
 
@@ -118,8 +120,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("connecting notification worker to rabbitmq (inline mode)...");
         let notification_bus = RabbitEventBus::connect(&config.rabbitmq_url).await?;
         Some(tokio::spawn(async move {
-            if let Err(err) = notification_worker::run(&notification_bus, shutdown_signal()).await
-            {
+            if let Err(err) = notification_worker::run(&notification_bus, shutdown_signal()).await {
                 tracing::error!(error = %err, "notification worker exited with error");
             }
             notification_bus.close().await.ok();

@@ -90,9 +90,7 @@ pub async fn execute(pool: &PgPool, http: &reqwest::Client, config: &ExecutorCon
         tracing::info!(job_id = %payload.job_id, run_id = %payload.run_id, "cron job executed");
     }
 
-    if let Err(err) =
-        metap_cron::finish_run(pool, payload.run_id, status, error.as_deref(), summary).await
-    {
+    if let Err(err) = metap_cron::finish_run(pool, payload.run_id, status, error.as_deref(), summary).await {
         tracing::error!(run_id = %payload.run_id, error = %err, "failed to record cron job run result");
     }
 }
@@ -106,9 +104,7 @@ async fn dispatch(
         anyhow::bail!("unknown target_type {:?}", payload.target_type);
     };
     match target_type {
-        TargetType::WorkflowTransition => {
-            run_workflow_transition(http, config, &payload.target_config).await
-        }
+        TargetType::WorkflowTransition => run_workflow_transition(http, config, &payload.target_config).await,
         TargetType::BulkQueryAction => run_bulk_query_action(http, config, &payload.target_config).await,
         TargetType::Webhook => run_webhook(http, payload).await,
     }
@@ -162,8 +158,10 @@ async fn run_bulk_query_action(
     let mut succeeded = 0usize;
     let mut failed: Vec<Value> = Vec::new();
     for record in &records {
-        let Some(id) =
-            record.get("id").and_then(Value::as_str).and_then(|s| Uuid::parse_str(s).ok())
+        let Some(id) = record
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|s| Uuid::parse_str(s).ok())
         else {
             continue;
         };

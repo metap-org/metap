@@ -20,12 +20,7 @@ pub async fn get_locale(pool: &PgPool, tenant_id: Uuid, user_id: Uuid) -> anyhow
     Ok(locale.unwrap_or_else(|| DEFAULT_LOCALE.to_string()))
 }
 
-pub async fn set_locale(
-    pool: &PgPool,
-    tenant_id: Uuid,
-    user_id: Uuid,
-    locale: &str,
-) -> anyhow::Result<()> {
+pub async fn set_locale(pool: &PgPool, tenant_id: Uuid, user_id: Uuid, locale: &str) -> anyhow::Result<()> {
     sqlx::query(
         "INSERT INTO user_preferences (tenant_id, user_id, locale, updated_at) \
          VALUES ($1, $2, $3, now()) \

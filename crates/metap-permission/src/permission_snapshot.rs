@@ -18,15 +18,10 @@ pub struct PermissionSnapshot {
 }
 
 impl PermissionSnapshot {
-    pub async fn load(
-        store: &dyn PolicyStore,
-        tenant_id: Uuid,
-        entity: &str,
-    ) -> anyhow::Result<Self> {
+    pub async fn load(store: &dyn PolicyStore, tenant_id: Uuid, entity: &str) -> anyhow::Result<Self> {
         let rows = store.load_all_policies(tenant_id, entity).await?;
 
-        let field_policies: Vec<PolicyRow> =
-            rows.iter().filter(|r| r.field.is_some()).cloned().collect();
+        let field_policies: Vec<PolicyRow> = rows.iter().filter(|r| r.field.is_some()).cloned().collect();
 
         let mut record_policies_by_action: HashMap<String, Vec<PolicyRow>> = HashMap::new();
         for row in &rows {
@@ -38,11 +33,17 @@ impl PermissionSnapshot {
             }
         }
 
-        Ok(Self { field_policies, record_policies_by_action })
+        Ok(Self {
+            field_policies,
+            record_policies_by_action,
+        })
     }
 
     pub fn get_record_policies(&self, action: EntityAction) -> &[PolicyRow] {
-        self.record_policies_by_action.get(action.as_str()).map(|v| v.as_slice()).unwrap_or(&[])
+        self.record_policies_by_action
+            .get(action.as_str())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     pub fn filter_readable_fields(&self, context: &RequestContext, record: &JsonObject) -> JsonObject {
@@ -123,8 +124,7 @@ impl PermissionSnapshot {
         }
 
         let writable = self.writable_fields(context, payload_fields, existing_record);
-        let writable_set: std::collections::HashSet<&str> =
-            writable.iter().map(String::as_str).collect();
+        let writable_set: std::collections::HashSet<&str> = writable.iter().map(String::as_str).collect();
 
         match payload_fields.iter().find(|f| !writable_set.contains(f.as_str())) {
             Some(denied_field) => {
@@ -155,7 +155,10 @@ impl PermissionSnapshot {
         if passed {
             PermissionDecision::allowed()
         } else {
-            tracing::warn!(action = action.as_str(), "denied: no record-level policy condition matched");
+            tracing::warn!(
+                action = action.as_str(),
+                "denied: no record-level policy condition matched"
+            );
             PermissionDecision::forbidden()
         }
     }

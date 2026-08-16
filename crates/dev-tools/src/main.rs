@@ -12,6 +12,10 @@ fn usage() -> ! {
     eprintln!("  dev-tools mint-token [tenantId] [userId]         (RS256, reads ./keys/dev-jwt-private.pem)");
     eprintln!("  dev-tools seed-admin <tenantId> <userId>");
     eprintln!("  dev-tools create-user <tenantId> <email> <password>  (local login, argon2id)");
+    eprintln!("  dev-tools provision-tenant <tenantId> schema <adminEmail> <adminPassword>");
+    eprintln!(
+        "  dev-tools provision-tenant <tenantId> dedicated_db <dsnSecretRefName> <dedicatedDatabaseUrl> <adminEmail> <adminPassword>"
+    );
     std::process::exit(1);
 }
 
@@ -23,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
         Some("mint-token") => mint_token(&args),
         Some("seed-admin") => seed_admin(&args).await,
         Some("create-user") => create_user(&args).await,
+        Some("provision-tenant") => provision_tenant(&args).await,
         _ => usage(),
     }
 }
@@ -85,8 +90,7 @@ async fn seed_admin(args: &[String]) -> anyhow::Result<()> {
         std::process::exit(1);
     };
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL")
-        .map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
 
     let tenant_id: Uuid = tenant_id.parse()?;
@@ -101,14 +105,12 @@ async fn seed_admin(args: &[String]) -> anyhow::Result<()> {
 /// both call `metap_peripherals::create_user`, so a seeded dev user and an admin-provisioned
 /// one get their password hashed identically.
 async fn create_user(args: &[String]) -> anyhow::Result<()> {
-    let (Some(tenant_id), Some(email), Some(password)) = (args.get(2), args.get(3), args.get(4))
-    else {
+    let (Some(tenant_id), Some(email), Some(password)) = (args.get(2), args.get(3), args.get(4)) else {
         eprintln!("Usage: dev-tools create-user <tenantId> <email> <password>");
         std::process::exit(1);
     };
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL")
-        .map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
 
     let tenant_id: Uuid = tenant_id.parse()?;
@@ -116,4 +118,93 @@ async fn create_user(args: &[String]) -> anyhow::Result<()> {
 
     println!("Created user {} ({email}) in tenant {tenant_id}.", user.id);
     Ok(())
+}
+
+/// Registers a `control.tenants` row (`metap_control::PostgresTenantRegistry::provision`) and
+/// creates the tenant's first admin user — the bootstrap path for a tenant, mirroring how
+/// `seed_admin`/`create_user` above already bootstrap a user/role without going through
+/// `AdminContext` (there's no admin yet to authorize an HTTP call). No `POST /admin/tenants`
+/// exists for the same reason `AdminContext` can't provision a *new* tenant: it only authorizes
+/// actions inside the caller's own tenant (`PermissionService::scoped_tenant`), and there's no
+/// cross-tenant "platform admin" concept — see `docs/multi-tenant-platform-design.md` §2.2's
+/// implementation note.
+///
+/// `strategy=schema` always pins `schema_name` to `"public"` — schema-per-tenant has no real
+/// isolation yet (the shared `records`/`users`/... tables only exist in `public` until
+/// table-per-entity, §3, lands; routing a tenant to any other schema today would just break
+/// every query with "relation does not exist"). `strategy=dedicated_db` is the only strategy
+/// with real isolation right now: a genuinely separate Postgres database, migrated the same as
+/// the primary one.
+async fn provision_tenant(args: &[String]) -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
+    let registry = metap_control::PostgresTenantRegistry::new(pool.clone());
+
+    match args.get(3).map(String::as_str) {
+        Some("schema") => {
+            let (Some(tenant_id), Some(email), Some(password)) = (args.get(2), args.get(4), args.get(5)) else {
+                eprintln!("Usage: dev-tools provision-tenant <tenantId> schema <adminEmail> <adminPassword>");
+                std::process::exit(1);
+            };
+            let tenant_id: Uuid = tenant_id.parse()?;
+
+            registry
+                .provision(tenant_id, "trial", "schema", Some("public"), None, "active")
+                .await?;
+            let user = metap_peripherals::create_user(&pool, tenant_id, email, password).await?;
+            metap_peripherals::assign_role(&pool, tenant_id, user.id, "admin", None).await?;
+
+            println!(
+                "Provisioned tenant {tenant_id} (trial, schema=public), admin user {} ({email}).",
+                user.id
+            );
+            print_default_allow_warning();
+        }
+        Some("dedicated_db") => {
+            let (Some(tenant_id), Some(dsn_secret_ref), Some(dedicated_url), Some(email), Some(password)) =
+                (args.get(2), args.get(4), args.get(5), args.get(6), args.get(7))
+            else {
+                eprintln!(
+                    "Usage: dev-tools provision-tenant <tenantId> dedicated_db <dsnSecretRefName> <dedicatedDatabaseUrl> <adminEmail> <adminPassword>"
+                );
+                std::process::exit(1);
+            };
+            let tenant_id: Uuid = tenant_id.parse()?;
+
+            let dedicated_pool = PgPoolOptions::new().max_connections(1).connect(dedicated_url).await?;
+            sqlx::migrate!("../migrations").run(&dedicated_pool).await?;
+
+            registry
+                .provision(tenant_id, "paid", "dedicated_db", None, Some(dsn_secret_ref), "active")
+                .await?;
+            let user = metap_peripherals::create_user(&dedicated_pool, tenant_id, email, password).await?;
+            metap_peripherals::assign_role(&dedicated_pool, tenant_id, user.id, "admin", None).await?;
+
+            println!(
+                "Provisioned tenant {tenant_id} (paid, dedicated_db), admin user {} ({email}).",
+                user.id
+            );
+            println!(
+                "Before this tenant can be routed to, set env var {dsn_secret_ref}={dedicated_url} \
+                 for the crm-server process (Router's EnvStore looks it up by this exact name)."
+            );
+            print_default_allow_warning();
+        }
+        _ => {
+            eprintln!("Usage: dev-tools provision-tenant <tenantId> <schema|dedicated_db> ...");
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+fn print_default_allow_warning() {
+    println!(
+        "Note: no policies exist yet for this tenant — PermissionService allows any action on \
+         an entity/action pair with zero policies (default-allow-when-empty). Every authenticated \
+         user in this tenant can read/write every entity until you add restrictive policies via \
+         POST /admin/policies."
+    );
 }

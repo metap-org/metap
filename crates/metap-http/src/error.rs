@@ -32,7 +32,9 @@ pub fn service_error_response(
     message: Option<&str>,
     field_errors: Option<HashMap<String, Vec<String>>>,
 ) -> Response {
-    let message = message.map(str::to_string).unwrap_or_else(|| default_message(error).to_string());
+    let message = message
+        .map(str::to_string)
+        .unwrap_or_else(|| default_message(error).to_string());
     let mut body = serde_json::json!({ "error": { "code": error, "message": message } });
     if let Some(field_errors) = field_errors {
         body["error"]["fieldErrors"] = serde_json::to_value(field_errors).unwrap_or_default();

@@ -307,7 +307,8 @@ mod tests {
         assert!(doc["paths"]["/api/crm.customers/{id}"]["patch"].is_object());
         assert!(doc["paths"]["/api/crm.customers/{id}/transitions/{action}"].is_null());
         assert_eq!(
-            doc["paths"]["/api/crm.customers"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["data"]["properties"]["name"]["type"],
+            doc["paths"]["/api/crm.customers"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                ["properties"]["data"]["properties"]["name"]["type"],
             "string"
         );
     }

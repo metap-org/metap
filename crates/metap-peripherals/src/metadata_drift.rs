@@ -15,15 +15,18 @@ pub async fn check(pool: &PgPool, entities: &[EntitySummary]) {
 
 async fn check_inner(pool: &PgPool, entities: &[EntitySummary]) -> anyhow::Result<()> {
     for entity in entities {
-        let existing: Option<String> =
-            sqlx::query_scalar("SELECT hash FROM metadata_versions WHERE entity_name = $1")
-                .bind(&entity.name)
-                .fetch_optional(pool)
-                .await?;
+        let existing: Option<String> = sqlx::query_scalar("SELECT hash FROM metadata_versions WHERE entity_name = $1")
+            .bind(&entity.name)
+            .fetch_optional(pool)
+            .await?;
 
         match &existing {
             None => {
-                tracing::info!(entity = entity.name, hash = entity.version, "metadata: first boot, recording initial hash");
+                tracing::info!(
+                    entity = entity.name,
+                    hash = entity.version,
+                    "metadata: first boot, recording initial hash"
+                );
             }
             Some(hash) if hash != &entity.version => {
                 tracing::warn!(

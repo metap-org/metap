@@ -59,12 +59,7 @@ async fn index_exists(pool: &PgPool, index_name: &str) -> anyhow::Result<bool> {
     Ok(row.is_some())
 }
 
-async fn ensure_index(
-    pool: &PgPool,
-    entity_name: &str,
-    field_name: &str,
-    unique: bool,
-) -> anyhow::Result<()> {
+async fn ensure_index(pool: &PgPool, entity_name: &str, field_name: &str, unique: bool) -> anyhow::Result<()> {
     let index_name = build_index_name(entity_name, field_name, if unique { "uniq" } else { "idx" });
 
     // Check first rather than relying solely on IF NOT EXISTS so we only log (and only pay
@@ -94,7 +89,13 @@ async fn ensure_index(
     );
     sqlx::query(&sql).execute(pool).await?;
 
-    tracing::info!(entity = entity_name, field = field_name, unique, index = index_name, "index created");
+    tracing::info!(
+        entity = entity_name,
+        field = field_name,
+        unique,
+        index = index_name,
+        "index created"
+    );
     Ok(())
 }
 
@@ -118,7 +119,12 @@ async fn ensure_gin_index(pool: &PgPool, entity_name: &str, field_name: &str) ->
     );
     sqlx::query(&sql).execute(pool).await?;
 
-    tracing::info!(entity = entity_name, field = field_name, index = index_name, "gin index created");
+    tracing::info!(
+        entity = entity_name,
+        field = field_name,
+        index = index_name,
+        "gin index created"
+    );
     Ok(())
 }
 
@@ -128,9 +134,18 @@ mod tests {
 
     #[test]
     fn index_name_replaces_dots_and_uses_the_right_prefix() {
-        assert_eq!(build_index_name("crm.customers", "email", "idx"), "idx_records_crm_customers_email");
-        assert_eq!(build_index_name("crm.customers", "code", "uniq"), "uniq_records_crm_customers_code");
-        assert_eq!(build_index_name("crm.customers", "name", "gin"), "gin_records_crm_customers_name");
+        assert_eq!(
+            build_index_name("crm.customers", "email", "idx"),
+            "idx_records_crm_customers_email"
+        );
+        assert_eq!(
+            build_index_name("crm.customers", "code", "uniq"),
+            "uniq_records_crm_customers_code"
+        );
+        assert_eq!(
+            build_index_name("crm.customers", "name", "gin"),
+            "gin_records_crm_customers_name"
+        );
     }
 
     #[test]

@@ -55,9 +55,9 @@ impl From<metap_metadata::RegistryError> for PublishError {
     fn from(err: metap_metadata::RegistryError) -> Self {
         match err {
             metap_metadata::RegistryError::Validation(e) => PublishError::Invalid(e),
-            metap_metadata::RegistryError::AlreadyRegistered(name) => {
-                PublishError::Db(anyhow::anyhow!("unexpected name collision on \"{name}\" while validating"))
-            }
+            metap_metadata::RegistryError::AlreadyRegistered(name) => PublishError::Db(anyhow::anyhow!(
+                "unexpected name collision on \"{name}\" while validating"
+            )),
         }
     }
 }

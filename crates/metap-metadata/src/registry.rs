@@ -73,7 +73,9 @@ impl MetadataRegistry {
     /// `register` does: a duplicate name (against `self` or within `extra`) or a shape
     /// validation failure aborts the whole merge rather than partially applying it.
     pub fn merge_with(&self, extra: Vec<EntityDefinition>) -> Result<MetadataRegistry, RegistryError> {
-        let mut merged = MetadataRegistry { entities: self.entities.clone() };
+        let mut merged = MetadataRegistry {
+            entities: self.entities.clone(),
+        };
         for entity in extra {
             merged.register(entity)?;
         }
@@ -87,7 +89,9 @@ impl MetadataRegistry {
                 if !matches!(field.kind, FieldKind::Reference) {
                     continue;
                 }
-                let Some(ref_entity_name) = &field.ref_entity else { continue };
+                let Some(ref_entity_name) = &field.ref_entity else {
+                    continue;
+                };
 
                 match self.entities.get(ref_entity_name) {
                     None => issues.push(format!(
@@ -107,7 +111,10 @@ impl MetadataRegistry {
                 }
             }
             if !issues.is_empty() {
-                return Err(MetadataValidationError { entity: entity.name.clone(), issues });
+                return Err(MetadataValidationError {
+                    entity: entity.name.clone(),
+                    issues,
+                });
             }
         }
         Ok(())
@@ -172,7 +179,9 @@ mod tests {
     #[test]
     fn register_then_get_round_trips() {
         let mut registry = MetadataRegistry::new();
-        registry.register(entity("crm.customers", vec![field("name", FieldKind::String)])).unwrap();
+        registry
+            .register(entity("crm.customers", vec![field("name", FieldKind::String)]))
+            .unwrap();
         assert!(registry.get_entity("crm.customers").is_some());
         assert!(registry.get_entity("crm.unknown").is_none());
     }
@@ -225,7 +234,8 @@ mod tests {
     #[test]
     fn merge_with_combines_entities_from_both_sources() {
         let mut base = MetadataRegistry::new();
-        base.register(entity("crm.customers", vec![field("name", FieldKind::String)])).unwrap();
+        base.register(entity("crm.customers", vec![field("name", FieldKind::String)]))
+            .unwrap();
 
         let merged = base
             .merge_with(vec![entity("lowcode.demo", vec![field("title", FieldKind::String)])])
@@ -249,7 +259,9 @@ mod tests {
     #[test]
     fn list_entities_includes_deterministic_version_hash() {
         let mut registry = MetadataRegistry::new();
-        registry.register(entity("crm.customers", vec![field("name", FieldKind::String)])).unwrap();
+        registry
+            .register(entity("crm.customers", vec![field("name", FieldKind::String)]))
+            .unwrap();
         let summaries = registry.list_entities();
         assert_eq!(summaries.len(), 1);
         assert!(!summaries[0].version.is_empty());

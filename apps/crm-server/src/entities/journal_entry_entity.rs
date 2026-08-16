@@ -12,8 +12,7 @@
 
 use metap::permission::{ConditionOp, PolicyCondition as Cond, PolicyValue};
 use metap::prelude::{
-    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, PolicyCondition,
-    WorkflowTransition,
+    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, PolicyCondition, WorkflowTransition,
 };
 use serde_json::json;
 
@@ -61,7 +60,15 @@ pub fn journal_entry_entity() -> EntityDefinition {
             field("account", "Account", FieldKind::String, true, true, true, true),
             field("debitAmount", "Debit", FieldKind::Money, true, false, false, true),
             field("creditAmount", "Credit", FieldKind::Money, true, false, false, true),
-            field("description", "Description", FieldKind::String, false, false, true, false),
+            field(
+                "description",
+                "Description",
+                FieldKind::String,
+                false,
+                false,
+                true,
+                false,
+            ),
             EntityField {
                 name: "referenceMovement".to_string(),
                 label: "Reference Movement".to_string(),

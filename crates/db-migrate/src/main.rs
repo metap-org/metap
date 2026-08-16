@@ -20,8 +20,7 @@
 async fn main() -> anyhow::Result<()> {
     metap_infra::init_tracing();
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL")
-        .map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
 
     tracing::info!("connecting to postgres...");
     let pool = sqlx::postgres::PgPoolOptions::new()

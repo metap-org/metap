@@ -17,9 +17,7 @@ pub struct RequestIds {
 }
 
 fn is_valid_trace_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    !value.is_empty() && value.len() <= 128 && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 pub async fn generate_request_ids(mut request: Request, next: Next) -> Response {

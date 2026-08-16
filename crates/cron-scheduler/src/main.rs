@@ -9,10 +9,14 @@ async fn main() -> anyhow::Result<()> {
     metap_infra::init_tracing();
     let config = load_config()?;
 
-    let tick_ms: u64 =
-        env::var("CRON_TICK_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5000);
-    let batch_size: i64 =
-        env::var("CRON_BATCH_SIZE").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
+    let tick_ms: u64 = env::var("CRON_TICK_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5000);
+    let batch_size: i64 = env::var("CRON_BATCH_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
     let target_base_url = env::var("CRON_TARGET_BASE_URL")
         .ok()
         .filter(|s| !s.is_empty())
@@ -33,8 +37,14 @@ async fn main() -> anyhow::Result<()> {
     let bus = RabbitEventBus::connect(&config.rabbitmq_url).await?;
 
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
-    let executor_config = ExecutorConfig { target_base_url, service_jwt };
-    let ticker_config = TickerConfig { interval: Duration::from_millis(tick_ms), batch_size };
+    let executor_config = ExecutorConfig {
+        target_base_url,
+        service_jwt,
+    };
+    let ticker_config = TickerConfig {
+        interval: Duration::from_millis(tick_ms),
+        batch_size,
+    };
 
     tracing::info!(
         tick_ms,

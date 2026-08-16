@@ -36,17 +36,17 @@ fn kind_matches(kind: FieldKind, value: &Value) -> bool {
 /// validator doesn't transform/default values the way Zod's `.default()` can — see the
 /// module doc comment). On failure, returns per-field error messages in the same
 /// `Record<string, string[]>` shape `parsed.error.flatten().fieldErrors` produced.
-pub fn validate_payload(
-    entity: &EntityDefinition,
-    data: &JsonObject,
-) -> Result<JsonObject, FieldErrors> {
+pub fn validate_payload(entity: &EntityDefinition, data: &JsonObject) -> Result<JsonObject, FieldErrors> {
     let mut errors: FieldErrors = FieldErrors::new();
 
     for field in &entity.fields {
         let value = data.get(&field.name).filter(|v| !v.is_null());
 
         if field.required.unwrap_or(false) && value.is_none() {
-            errors.entry(field.name.clone()).or_default().push("required".to_string());
+            errors
+                .entry(field.name.clone())
+                .or_default()
+                .push("required".to_string());
             continue;
         }
 
@@ -61,7 +61,10 @@ pub fn validate_payload(
         };
 
         if !valid {
-            errors.entry(field.name.clone()).or_default().push("invalid_type".to_string());
+            errors
+                .entry(field.name.clone())
+                .or_default()
+                .push("invalid_type".to_string());
         }
     }
 

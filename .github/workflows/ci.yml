@@ -29,9 +29,12 @@ jobs:
       # Unit tests only — no DATABASE_URL/RABBITMQ_URL set, so every #[ignore]'d e2e test
       # is skipped automatically (see crates/metap-query/tests/*.rs's doc comment).
       - run: cargo test --workspace --locked
-      # Not `-D warnings`: the codebase isn't clippy-clean yet (a couple of pre-existing
-      # warnings predate this workflow) — informational for now, not a merge gate.
-      - run: cargo clippy --workspace --all-targets --locked
+      # `rustfmt.toml` committed and the whole workspace reformatted to it (2026-08-16) —
+      # a real merge gate now, not just informational.
+      - run: cargo fmt --all --check
+      # `-D warnings`: warnings were cleaned up (2026-08-16, docs/roadmap.md Phase 8) — a real
+      # merge gate now, not just informational.
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   rust-e2e:
     name: Rust — e2e (real Postgres/RabbitMQ)

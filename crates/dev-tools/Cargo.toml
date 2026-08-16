@@ -8,9 +8,10 @@ name = "dev-tools"
 path = "src/main.rs"
 
 [dependencies]
+metap-control = { path = "../metap-control" }
 metap-peripherals = { path = "../metap-peripherals" }
 anyhow = "1"
 dotenvy = "0.15"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "macros", "migrate"] }
 uuid = { version = "1", features = ["v4"] }
