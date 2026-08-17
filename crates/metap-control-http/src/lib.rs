@@ -189,6 +189,41 @@ async fn get_tenant(
     }
 }
 
+#[derive(Deserialize)]
+struct SetTenantStatusBody {
+    /// Deliberately narrower than the full `control.tenants.status` domain
+    /// (`Provisioning`/`Migrating`/`Expired` are set by flows that don't exist yet — this
+    /// endpoint is only for an operator flipping a tenant between active and suspended).
+    status: String,
+}
+
+/// Suspend/resume a tenant. Enforcement already exists (`Router::begin` already rejects
+/// `Suspended` with a 403 — see `PostgresTenantRegistry::set_status`'s doc comment); this only
+/// writes the column that check reads, subject to `RegistryCache`'s existing 30s TTL. Not
+/// implemented (deliberately, Phase 16 Giai đoạn 3): delete/deprovision — needs a real answer
+/// for what happens to a suspended tenant's data first.
+async fn set_tenant_status(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    PlatformAdminContext(_context): PlatformAdminContext,
+    Json(body): Json<SetTenantStatusBody>,
+) -> Response {
+    if body.status != "active" && body.status != "suspended" {
+        return service_error_response(
+            400,
+            "validation_failed",
+            Some("`status` must be \"active\" or \"suspended\"."),
+            None,
+        );
+    }
+    let registry = PostgresTenantRegistry::new(state.pool.clone());
+    match registry.set_status(id, &body.status).await {
+        Ok(true) => Json(json!({ "data": { "id": id, "status": body.status } })).into_response(),
+        Ok(false) => service_error_response(404, "tenant_not_found", None, None),
+        Err(e) => internal_error_response(e),
+    }
+}
+
 /// Merge this into `metap_http::build_router`'s `extra_routes` argument to expose the
 /// platform-tenant admin API on a running server — never merged automatically by `metap-http`
 /// itself.
@@ -196,4 +231,5 @@ pub fn router() -> AxumRouter<AppState> {
     AxumRouter::new()
         .route("/platform/tenants", post(provision_tenant).get(list_tenants))
         .route("/platform/tenants/{id}", get(get_tenant))
+        .route("/platform/tenants/{id}/status", axum::routing::patch(set_tenant_status))
 }

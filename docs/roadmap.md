@@ -735,23 +735,34 @@ sẵn có, không thêm bảng/loại claim mới:
 - Crate mới `crates/metap-control-http` (cùng lý do tách riêng `metap-lowcode-http` — khả năng
   optional, `metap-http` không phụ thuộc nó): `POST /platform/tenants` (body có `strategy:
   "schema"|"dedicated_db"`, 409 nếu `tenantId` trùng, 400 nếu thiếu field theo strategy),
-  `GET /platform/tenants`, `GET /platform/tenants/{id}`. **Chưa làm** (out of scope đợt này):
-  suspend/resume, delete/deprovision — cần thiết kế riêng cho việc dọn dữ liệu tenant.
-- Test mới: 4 test e2e `metap-control` (provisioning + `list()` + trùng `tenantId` → lỗi
-  downcast được thành unique-violation), 1 test e2e `metap-http` (`PlatformAdminContext` gate
-  qua route giả lập). `metap-control-http` không có test tự động (đúng tiền lệ
-  `metap-lowcode-http`) — verify live qua HTTP thật: bootstrap platform-admin → mint token →
-  provision tenant `schema` → 409 khi trùng id → `GET /platform/tenants`/`{id}` (kể cả 404) →
-  admin user tenant mới login được qua `POST /auth/login` → provision tenant `dedicated_db` →
-  thiếu field bắt buộc → 400 → strategy sai → 400 → token không phải platform-admin → 403 trên
-  mọi route `/platform/*`, kể cả một admin thường của tenant khác.
+  `GET /platform/tenants`, `GET /platform/tenants/{id}`, `PATCH /platform/tenants/{id}/status`
+  (suspend/resume — thêm ngay sau đó cùng ngày 2026-08-17). **Chưa làm** (out of scope đợt
+  này): delete/deprovision — cần thiết kế riêng cho việc dọn dữ liệu tenant.
+- **Suspend/resume hoá ra là một việc rất nhỏ**: enforcement đã tồn tại sẵn từ Giai đoạn 1 —
+  `Router::begin` đã reject `TenantStatus::Suspended` với 403 (`RouterError`, xem
+  `crud_service.rs`'s `router_unavailable`) từ trước, việc còn thiếu chỉ là hành động admin để
+  đổi cột `status`. `PostgresTenantRegistry::set_status(id, status)` (mới, chỉ nhận
+  `"active"`/`"suspended"` qua route — các status khác do flow chưa xây quản lý) +
+  `PATCH /platform/tenants/{id}/status`. Chịu ảnh hưởng của `RegistryCache`'s TTL 30s có sẵn
+  (đã document từ trước là tradeoff chấp nhận được cho "provisioning, suspend/promote") — một
+  suspend/resume có thể mất tới 30s mới có hiệu lực trên route đã cache, không phải bug mới.
+- Test mới: 5 test e2e `metap-control` (provisioning + `list()` + trùng `tenantId` → lỗi
+  downcast được thành unique-violation + `set_status` nối trực tiếp với `Router::begin` reject
+  thật), 1 test e2e `metap-http` (`PlatformAdminContext` gate qua route giả lập).
+  `metap-control-http` không có test tự động (đúng tiền lệ `metap-lowcode-http`) — verify live
+  qua HTTP thật: bootstrap platform-admin → mint token → provision tenant `schema` → 409 khi
+  trùng id → `GET /platform/tenants`/`{id}` (kể cả 404) → admin user tenant mới login được qua
+  `POST /auth/login` → provision tenant `dedicated_db` → thiếu field bắt buộc → 400 → strategy
+  sai → 400 → suspend → tenant đó bị 403 trên `/api/*` → status không hợp lệ → 400 → id không
+  tồn tại → 404 → resume → hoạt động lại → token không phải platform-admin → 403 trên mọi route
+  `/platform/*`, kể cả một admin thường của tenant khác.
 
 Ngoài phạm vi Giai đoạn 1-3 (còn lại cho Giai đoạn 4+): role lookup
 (`auth.rs::get_roles_for_user`) và `PostgresPolicyStore` (RBAC/policy) vẫn dùng `AppState.pool`
 trực tiếp, không qua Router (coi RBAC/policy là bảng control-plane/platform dùng chung, không
-phải data-plane theo-tenant); Vault/dynamic creds thật; template pack; suspend/resume +
-delete/deprovision tenant; data-plane evolution (§3-§7); capabilities (§8); FE onboarding (§9);
-deployment SaaS specifics (§11).
+phải data-plane theo-tenant); Vault/dynamic creds thật; template pack; delete/deprovision
+tenant; data-plane evolution (§3-§7); capabilities (§8); FE onboarding (§9); deployment SaaS
+specifics (§11).
 
 Toàn bộ thiết kế nằm ở `docs/multi-tenant-platform-design.md` (hợp nhất từ hai bản nháp brainstorm
 `adr.md`/`adr2.md` ngày 2026-08-15, đã xóa sau khi hợp nhất); các quyết định cốt lõi rút gọn dạng

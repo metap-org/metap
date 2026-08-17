@@ -85,6 +85,25 @@ impl PostgresTenantRegistry {
         Ok(())
     }
 
+    /// Flips `status` on an existing tenant — the only mutation `PATCH /platform/tenants/{id}/status`
+    /// (`metap-control-http`) needs. Enforcement already exists and needs no changes here:
+    /// `Router::begin` already rejects `Suspended`/`Expired` with a 403 (`RouterError`,
+    /// `crates/metap-crud/src/crud_service.rs`'s `router_unavailable`) — this just writes the
+    /// column that check reads. Subject to `RegistryCache`'s 30s TTL (see that module's doc
+    /// comment: "control.tenants changes rarely (provisioning, suspend/promote)... an
+    /// acceptable tradeoff"), so a suspend/resume can take up to 30s to actually take effect on
+    /// already-cached routing — a deliberate, already-documented tradeoff, not new for this.
+    /// Returns `false` (not an error) when `id` doesn't match any row, so the caller can turn
+    /// that into a clean 404.
+    pub async fn set_status(&self, id: Uuid, status: &str) -> anyhow::Result<bool> {
+        let result = sqlx::query("UPDATE control.tenants SET status = $2 WHERE id = $1")
+            .bind(id)
+            .bind(status)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Every `control.tenants` row, newest first — backs `GET /platform/tenants`
     /// (`metap-control-http`). A row whose `strategy`/`status` value doesn't parse is skipped
     /// with a `tracing::warn!` rather than failing the whole listing — one corrupt row

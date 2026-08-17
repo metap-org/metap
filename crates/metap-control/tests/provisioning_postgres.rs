@@ -9,7 +9,11 @@
 //! user -> assign role), just not genuine physical separation. A real second database is
 //! covered by manual smoke testing, not this suite.
 
-use metap_control::{PostgresTenantRegistry, TenantId, TenantRegistry, TenantStrategy};
+use std::sync::Arc;
+
+use metap_control::{
+    EnvStore, PostgresTenantRegistry, RegistryCache, Router, RouterError, TenantId, TenantRegistry, TenantStrategy,
+};
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
@@ -161,6 +165,48 @@ async fn provisioning_a_duplicate_tenant_id_fails_with_a_downcastable_unique_vio
         panic!("expected a database error, got {sqlx_err:?}");
     };
     assert!(db_err.is_unique_violation());
+
+    cleanup(&pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn set_status_to_suspended_is_immediately_enforced_by_router() {
+    // Regression test tying `PostgresTenantRegistry::set_status` to the enforcement it relies
+    // on already existing (`Router::begin` rejecting `Suspended` — `RouterError`) — a fresh
+    // `RegistryCache` here (not the 30s-TTL one a real server holds across requests) means this
+    // sees the write immediately, so this only proves the write + the Router check are both
+    // correct, not the cache staleness tradeoff `set_status`'s doc comment already documents.
+    let pool = connect().await;
+    let registry = PostgresTenantRegistry::new(pool.clone());
+    let tenant_id = Uuid::new_v4();
+
+    metap_control::provision_schema_tenant(&pool, &registry, tenant_id, "suspend-test@test.local", "pass123")
+        .await
+        .expect("provision");
+
+    let updated = registry.set_status(tenant_id, "suspended").await.expect("set_status");
+    assert!(updated);
+
+    let router = Router::new(
+        pool.clone(),
+        RegistryCache::new(Arc::new(PostgresTenantRegistry::new(pool.clone()))),
+        Arc::new(EnvStore),
+    );
+    let err = router
+        .begin(TenantId(tenant_id))
+        .await
+        .expect_err("suspended tenant must be rejected");
+    assert!(matches!(
+        err.downcast_ref::<RouterError>(),
+        Some(RouterError::TenantSuspended)
+    ));
+
+    let unknown = registry.set_status(Uuid::new_v4(), "active").await.expect("set_status");
+    assert!(
+        !unknown,
+        "set_status on an unknown id must report no row updated, not error"
+    );
 
     cleanup(&pool, tenant_id).await;
 }

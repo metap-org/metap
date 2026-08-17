@@ -227,10 +227,13 @@ Idempotent (chạy lại không nhân đôi). Template pack = một "dự án OS
 
 **Cập nhật triển khai (2026-08-17, Giai đoạn 3):** `POST /platform/tenants` (không phải
 `/admin/tenants` — xem §2.2) làm đúng "tạo tenant row" + "tạo admin user đầu" ở trên, cộng
-`GET /platform/tenants`/`GET /platform/tenants/{id}` để list/xem. Chưa làm: seed default
-roles/starter policies (`PermissionService` vẫn default-allow cho tenant mới — cảnh báo được in
-ra, không tự seed), apply template pack (§2.5 chưa tồn tại), suspend/resume/deprovision. Không
-idempotent theo nghĩa pseudocode — trùng `tenantId` trả 409 rõ ràng thay vì no-op.
+`GET /platform/tenants`/`GET /platform/tenants/{id}` để list/xem, và
+`PATCH /platform/tenants/{id}/status` cho suspend/resume (thêm cùng ngày — hoá ra rất nhỏ, vì
+`Router::begin` đã reject tenant `Suspended` từ Giai đoạn 1, chỉ thiếu hành động ghi cột
+`status`). Chưa làm: seed default roles/starter policies (`PermissionService` vẫn default-allow
+cho tenant mới — cảnh báo được in ra, không tự seed), apply template pack (§2.5 chưa tồn tại),
+delete/deprovision (cần thiết kế riêng cho việc dọn dữ liệu tenant). Không idempotent theo
+nghĩa pseudocode — trùng `tenantId` trả 409 rõ ràng thay vì no-op.
 
 ### 2.5 Template Pack (đóng gói)
 
