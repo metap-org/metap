@@ -121,6 +121,85 @@ async fn publish_rejects_dangling_reference() {
 
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn preview_publish_reports_the_would_be_version_without_writing_anything() {
+    // Phase B publish preview/validation report (`docs/roadmap.md`, 2026-08-17) — must run the
+    // exact same checks `publish` does, but leave no trace: no new version row, no change to
+    // what `get_published` sees.
+    let pool = pool().await;
+    let name = entity_name("preview");
+    let registry = MetadataRegistry::new();
+
+    metap_lowcode::save_draft(&pool, &name, &definition(&name))
+        .await
+        .expect("save_draft");
+    let preview = metap_lowcode::preview_publish(&pool, &name, &registry)
+        .await
+        .expect("preview_publish");
+    assert_eq!(preview.would_be_version, 1);
+    assert!(
+        metap_lowcode::list_versions(&pool, &name)
+            .await
+            .expect("list_versions")
+            .is_empty(),
+        "preview must not insert a version row"
+    );
+
+    metap_lowcode::publish(&pool, &name, &registry)
+        .await
+        .expect("publish v1");
+    let mut v2_def = definition(&name);
+    v2_def.label = "Changed".to_string();
+    metap_lowcode::save_draft(&pool, &name, &v2_def)
+        .await
+        .expect("save_draft v2");
+    let preview2 = metap_lowcode::preview_publish(&pool, &name, &registry)
+        .await
+        .expect("preview_publish after v1");
+    assert_eq!(preview2.would_be_version, 2);
+    assert_eq!(
+        metap_lowcode::get_published(&pool, &name)
+            .await
+            .expect("get_published")
+            .unwrap()
+            .version_number,
+        1,
+        "preview after publish must not have bumped the live published version"
+    );
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn preview_publish_surfaces_the_same_errors_publish_would() {
+    let pool = pool().await;
+
+    let no_draft_name = entity_name("preview_no_draft");
+    let registry = MetadataRegistry::new();
+    let err = metap_lowcode::preview_publish(&pool, &no_draft_name, &registry)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, PublishError::NoDraft));
+
+    // `save_draft` itself already rejects shape-invalid drafts (see
+    // `save_draft_rejects_invalid_shape`), so the only way to get an *invalid* draft actually
+    // persisted is the same gap `publish_rejects_dangling_reference` exercises: a dangling
+    // `refEntity` only fails `validate_references()`, which needs a registry — checked at
+    // publish/preview time, not at save_draft time.
+    let dangling_name = entity_name("preview_dangling_ref");
+    let mut dangling_def = definition(&dangling_name);
+    let mut ref_field = field("parent", FieldKind::Reference);
+    ref_field.ref_entity = Some("test.does_not_exist".to_string());
+    dangling_def.fields.push(ref_field);
+    metap_lowcode::save_draft(&pool, &dangling_name, &dangling_def)
+        .await
+        .expect("save_draft");
+    let err = metap_lowcode::preview_publish(&pool, &dangling_name, &registry)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, PublishError::Invalid(_)));
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn publish_increments_version_and_get_published_returns_latest() {
     let pool = pool().await;
     let name = entity_name("versioning");

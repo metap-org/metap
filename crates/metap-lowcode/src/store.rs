@@ -307,11 +307,15 @@ async fn live_registry_for(
     }
 }
 
-pub async fn publish(
+/// The read-only half of `publish`: everything that can reject a draft (missing draft, shape
+/// validation, name-reservation, cross-reference validation) with no side effect — shared by
+/// `publish` itself and `preview_publish` (`docs/roadmap.md` Phase 11 Phase B's publish
+/// preview/validation report), which needs the exact same checks without the write.
+async fn validate_for_publish(
     pool: &PgPool,
     entity_name: &str,
     base_registry: &MetadataRegistry,
-) -> Result<PublishOutcome, PublishError> {
+) -> Result<(LowCodeEntityDefinition, CheckRegistry), PublishError> {
     let draft = get_draft(pool, entity_name).await.map_err(PublishError::from)?;
     let Some(draft) = draft else {
         return Err(PublishError::NoDraft);
@@ -321,6 +325,16 @@ pub async fn publish(
     let check = build_check_registry(pool, entity_name, &draft, base_registry).await?;
     check.registry.validate_references().map_err(PublishError::Invalid)?;
 
+    Ok((draft, check))
+}
+
+pub async fn publish(
+    pool: &PgPool,
+    entity_name: &str,
+    base_registry: &MetadataRegistry,
+) -> Result<PublishOutcome, PublishError> {
+    let (draft, check) = validate_for_publish(pool, entity_name, base_registry).await?;
+
     let version_number = insert_version(pool, entity_name, &draft, None)
         .await
         .map_err(PublishError::from)?;
@@ -329,6 +343,36 @@ pub async fn publish(
     Ok(PublishOutcome {
         version_number,
         registry,
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct PublishPreview {
+    /// The version number publishing right now would produce — advisory only. `insert_version`
+    /// computes the real one inside an advisory-locked transaction (see its doc comment on the
+    /// concurrent-publish race it guards against); this is a plain unlocked read, so it can go
+    /// stale if another publish for the same entity lands between this preview and a real
+    /// publish. Good enough for "here's roughly what you're about to do," not a reservation.
+    pub would_be_version: i32,
+}
+
+/// Runs every check `publish` would, without writing anything — no new `low_code_entity_versions`
+/// row, no live registry swap. Lets an operator validate a draft before committing to a new
+/// published version (`docs/roadmap.md` Phase 11 Phase B).
+pub async fn preview_publish(
+    pool: &PgPool,
+    entity_name: &str,
+    base_registry: &MetadataRegistry,
+) -> Result<PublishPreview, PublishError> {
+    validate_for_publish(pool, entity_name, base_registry).await?;
+    let max: Option<i32> =
+        sqlx::query_scalar("SELECT MAX(version_number) FROM low_code_entity_versions WHERE entity_name = $1")
+            .bind(entity_name)
+            .fetch_one(pool)
+            .await
+            .map_err(PublishError::from)?;
+    Ok(PublishPreview {
+        would_be_version: max.unwrap_or(0) + 1,
     })
 }
 

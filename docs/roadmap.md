@@ -19,7 +19,7 @@ và `docs/agile-process.md`.
 | 8. Hardening | Đang làm — chỉ còn "tích hợp secret manager" (design-only 2026-08-17, chờ chốt target production); load test + backup/restore drill xong 2026-08-17 |
 | 9. Multi-Service Evolution | Trigger-based, đã rà soát lại 2026-08-17 — vẫn chưa trigger nào xảy ra, không có việc để làm |
 | 10. Monorepo, npm publish | Làm một phần |
-| 11. Low-code Platform Backbone Architecture | Đang làm — Phase A xong; Phase B: field builder UI + declarative workflow guard model xong 2026-08-17, còn workflow/policy editor UI + publish preview |
+| 11. Low-code Platform Backbone Architecture | Phase A + Phase B xong 2026-08-17 (Phase B's "policy editor UI" hoá ra đã có sẵn từ Phase 15); Phase C chưa bắt đầu |
 | 12. Rust Core Migration | Đã quyết định; Migration Order (bước 1-9) đã xong trong `crates/`; chưa cut over sang production |
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
@@ -489,7 +489,7 @@ Mục tiêu:
 
 ## Phase 11: Low-code Platform Backbone Architecture
 
-**Trạng thái: Phase A (Metadata Control Plane Foundation) đã xong, retarget sang Rust — Phase B bắt đầu 2026-08-12, Phase C chưa bắt đầu.** Định nghĩa kiến trúc cho việc dùng Metap làm backbone của một low-code platform (ERP, CRM, và hơn thế), không chỉ là một ERP core đơn mục đích.
+**Trạng thái: Phase A (Metadata Control Plane Foundation) và Phase B (Builder UI và Safe Runtime Rules) đã xong (Phase B: 2026-08-12 → 2026-08-17), Phase C chưa bắt đầu.** Định nghĩa kiến trúc cho việc dùng Metap làm backbone của một low-code platform (ERP, CRM, và hơn thế), không chỉ là một ERP core đơn mục đích.
 
 Mục tiêu:
 
@@ -535,9 +535,47 @@ một entity `lowcode.wftest2` với workflow + guard `email neq ""` → publish
 email → transition `activate` bị `409 guard_failed` → tạo record đủ email → transition thành
 công — đúng path `CrudService::transition` mà một entity code-authored dùng.
 
-Còn lại của Phase B, chưa làm: workflow editor UI (Builder UI hiện chưa có chỗ author
-transition/guard — chỉ mới field builder + list-view builder, xem Phase A ở trên), policy
-editor UI, publish preview/validation report.
+**Workflow editor UI — Đã xong (2026-08-17).** `LowCodeEntitiesAdminPage.tsx`
+(`packages/platform-react`) có thêm `WorkflowBuilder` — cùng pattern với `FieldBuilder`/
+`ListViewBuilder` đã có (memoized row editor, `useCallback`-stable update/remove/add). "Không
+có workflow" được biểu diễn bằng `stateField` rỗng (giống cách `ListViewRow.sortField` rỗng =
+"không default sort"), không cần một boolean toggle riêng: state field (`Select`, chọn từ field
+đã khai báo + `createdAt`/`updatedAt`), initial state, terminal states (`TagsInput`), và danh
+sách transition (action/from/to/label + guard). Guard được edit như JSON thô trong một
+`Textarea` — cùng pattern `PoliciesAdminPage` đã dùng cho `PolicyCondition` (recursive untagged
+enum `Attribute`/`All`/`Any`, không hand-model một structured editor cho nó), không phải quyết
+định mới. Validate phía client trước khi save: initial state bắt buộc khi đã cấu hình workflow,
+mọi transition cần đủ action/from/to/label, guard JSON không hợp lệ chặn save với thông báo rõ
+ràng thay vì gửi lên server để 400. `adminApi.ts`'s `LowCodeEntityDefinition`/`saveDraft` gained
+`workflow?: unknown` (loose, cùng lý do field/listView đã loose). i18n: cả `en`/`vi` dưới
+`admin.lowcode.workflow.*`. `pnpm typecheck`/`lint`/`format:check` (root, cả `platform-react`
+lẫn `crm-fe`) sạch; chưa verify trên browser (theo policy hiện tại, xem CLAUDE.md).
+
+**Policy editor UI — hoá ra đã xong từ trước, do Phase 15 (2026-08-10).** Rà lại thấy
+`PoliciesAdminPage` (`packages/platform-react/src/admin/`) đã tồn tại — create/list/delete
+policy, editor raw-JSON cho `PolicyCondition`, cùng pattern đang dùng lại cho guard editor ở
+trên. Đây là staleness của chính tài liệu Phase 11 (bullet này được viết trước khi Phase 15
+build cái đó, chưa ai reconcile lại), không phải việc thật còn thiếu — bỏ khỏi danh sách "còn
+lại" của Phase B.
+
+**Publish preview/validation report — Đã xong (2026-08-17).** `metap-lowcode/src/store.rs`
+tách phần validate-only của `publish` (get draft → `validate_shape` → name-reservation check →
+`validate_references`) thành `validate_for_publish`, dùng chung bởi cả `publish` lẫn hàm mới
+`preview_publish` — hàm sau chạy đúng các check đó nhưng không `insert_version`/swap live
+registry, chỉ đọc thêm `MAX(version_number)` (không lock, chỉ mang tính tham khảo — số thật vẫn
+do `insert_version`'s advisory-lock transaction quyết định lúc publish thật) để báo
+`wouldBeVersion`. Route mới `POST /admin/lowcode/entities/{name}/publish/preview`
+(`metap-lowcode-http`). FE: nút "Preview" cạnh "Publish" trong `LowCodeEntitiesAdminPage.tsx`,
+kết quả hiện trong một alert riêng màu xanh (không lẫn với `rowError` màu đỏ) — thành công báo
+"hợp lệ, sẽ tạo version N", lỗi hiện đúng message `PublishError` mà `publish` thật cũng trả về.
+Test mới: `preview_publish_reports_the_would_be_version_without_writing_anything` (xác nhận
+không có row version nào được ghi, published version không đổi),
+`preview_publish_surfaces_the_same_errors_publish_would` (`metap-lowcode`, e2e Postgres thật).
+Verify live qua HTTP thật: no draft → 404; draft hợp lệ → `{valid:true, wouldBeVersion:1}`,
+`GET .../versions` vẫn rỗng; publish thật → v1; preview lại → `wouldBeVersion:2`, published
+version vẫn là 1; draft với dangling reference → 422 `lowcode_validation_failed`.
+
+Phase 11 Phase B coi như xong tất cả các mục đã liệt kê.
 
 ## Phase 12: Rust Core Migration
 

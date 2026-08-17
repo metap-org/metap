@@ -16,6 +16,7 @@ import {
   Table,
   TagsInput,
   Text,
+  Textarea,
   TextInput,
   Title,
 } from "@mantine/core";
@@ -563,6 +564,303 @@ function ListViewBuilder({
   );
 }
 
+type TransitionRow = {
+  action: string;
+  from: string;
+  to: string;
+  label: string;
+  // Raw JSON text for a `PolicyCondition`, same editing pattern as `PoliciesAdminPage`'s
+  // `conditionText` — `guard` is a recursive untagged enum (Attribute/All/Any), not something
+  // this page hand-models a structured editor for. "" = no guard (unconditional transition).
+  guardText: string;
+};
+
+function emptyTransitionRow(): TransitionRow {
+  return { action: "", from: "", to: "", label: "", guardText: "" };
+}
+
+function wireToTransitionRow(transition: unknown): TransitionRow {
+  const t = (transition ?? {}) as Record<string, unknown>;
+  return {
+    action: typeof t.action === "string" ? t.action : "",
+    from: typeof t.from === "string" ? t.from : "",
+    to: typeof t.to === "string" ? t.to : "",
+    label: typeof t.label === "string" ? t.label : "",
+    guardText: t.guard !== undefined ? JSON.stringify(t.guard) : "",
+  };
+}
+
+/** Throws on invalid guard JSON — the caller (`workflowRowToWire`) is expected to catch this
+ * and turn it into a form error, same as `PoliciesAdminPage.handleCreate`'s `JSON.parse`. */
+function transitionRowToWire(row: TransitionRow): Record<string, unknown> {
+  const wire: Record<string, unknown> = {
+    action: row.action.trim(),
+    from: row.from.trim(),
+    to: row.to.trim(),
+    label: row.label.trim(),
+  };
+  if (row.guardText.trim().length > 0) {
+    wire.guard = JSON.parse(row.guardText);
+  }
+  return wire;
+}
+
+type WorkflowRow = {
+  // "" = no workflow configured for this draft at all — `EntityWorkflow` is optional
+  // (`Option<EntityWorkflow>`) on the wire, and this page represents "unset" by an empty
+  // state field rather than a separate boolean toggle, same spirit as `ListViewRow.sortField`
+  // ("" = no default sort).
+  stateField: string;
+  initialState: string;
+  terminalStates: string[];
+  transitions: TransitionRow[];
+};
+
+function emptyWorkflowRow(): WorkflowRow {
+  return { stateField: "", initialState: "", terminalStates: [], transitions: [] };
+}
+
+function wireToWorkflowRow(workflow: unknown): WorkflowRow {
+  if (workflow === null || typeof workflow !== "object") {
+    return emptyWorkflowRow();
+  }
+  const w = workflow as Record<string, unknown>;
+  return {
+    stateField: typeof w.stateField === "string" ? w.stateField : "",
+    initialState: typeof w.initialState === "string" ? w.initialState : "",
+    terminalStates: Array.isArray(w.terminalStates)
+      ? w.terminalStates.filter((s): s is string => typeof s === "string")
+      : [],
+    transitions: Array.isArray(w.transitions) ? w.transitions.map(wireToTransitionRow) : [],
+  };
+}
+
+/** Returns `undefined` (not an empty object) when `stateField` is blank, so
+ * `JSON.stringify({ ...body, workflow })` omits the key entirely — matches
+ * `LowCodeEntityDefinition::workflow`'s `#[serde(default, skip_serializing_if =
+ * "Option::is_none")]` on the Rust side, an absent key rather than `null`. Throws on the
+ * first invalid guard JSON among the transitions — the caller surfaces that as a form error. */
+function workflowRowToWire(row: WorkflowRow): Record<string, unknown> | undefined {
+  if (row.stateField.trim().length === 0) {
+    return undefined;
+  }
+  return {
+    stateField: row.stateField.trim(),
+    initialState: row.initialState.trim(),
+    terminalStates: row.terminalStates,
+    transitions: row.transitions.map(transitionRowToWire),
+  };
+}
+
+/** Memoized for the same reason as `FieldRowEditor`/`ListViewRowEditor` — a keystroke in one
+ * transition's guard textarea shouldn't re-render every other transition's `Select`s. */
+const TransitionRowEditor = memo(function TransitionRowEditor({
+  row,
+  index,
+  stateOptions,
+  onUpdate,
+  onRemove,
+}: {
+  row: TransitionRow;
+  index: number;
+  stateOptions: string[];
+  onUpdate: (index: number, patch: Partial<TransitionRow>) => void;
+  onRemove: (index: number) => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <Stack
+      gap="xs"
+      p="sm"
+      style={{ border: "1px solid var(--mantine-color-gray-4)", borderRadius: 4 }}
+    >
+      <Group align="flex-end">
+        <TextInput
+          style={{ flex: 1 }}
+          size="xs"
+          label={t("admin.lowcode.workflow.transitionAction")}
+          value={row.action}
+          onChange={(e) => onUpdate(index, { action: e.currentTarget.value })}
+        />
+        <TextInput
+          style={{ flex: 1 }}
+          size="xs"
+          label={t("admin.lowcode.workflow.transitionLabel")}
+          value={row.label}
+          onChange={(e) => onUpdate(index, { label: e.currentTarget.value })}
+        />
+        <ActionIcon color="red" variant="subtle" onClick={() => onRemove(index)}>
+          ×
+        </ActionIcon>
+      </Group>
+      <Group align="flex-end">
+        <TextInput
+          style={{ flex: 1 }}
+          size="xs"
+          label={t("admin.lowcode.workflow.transitionFrom")}
+          description={t("admin.lowcode.workflow.transitionFromDescription")}
+          list={`transition-states-${index}`}
+          value={row.from}
+          onChange={(e) => onUpdate(index, { from: e.currentTarget.value })}
+        />
+        <TextInput
+          style={{ flex: 1 }}
+          size="xs"
+          label={t("admin.lowcode.workflow.transitionTo")}
+          list={`transition-states-${index}`}
+          value={row.to}
+          onChange={(e) => onUpdate(index, { to: e.currentTarget.value })}
+        />
+      </Group>
+      <datalist id={`transition-states-${index}`}>
+        {stateOptions.map((s) => (
+          <option key={s} value={s} />
+        ))}
+      </datalist>
+      <Textarea
+        size="xs"
+        label={t("admin.lowcode.workflow.transitionGuard")}
+        description={t("admin.lowcode.workflow.transitionGuardDescription")}
+        value={row.guardText}
+        onChange={(e) => onUpdate(index, { guardText: e.currentTarget.value })}
+        autosize
+        minRows={1}
+      />
+    </Stack>
+  );
+});
+
+function WorkflowBuilder({
+  workflow,
+  fieldNames,
+  onChange,
+}: {
+  workflow: WorkflowRow;
+  fieldNames: string[];
+  onChange: Dispatch<SetStateAction<WorkflowRow>>;
+}) {
+  const { t } = useTranslation();
+
+  const updateTransition = useCallback(
+    (index: number, patch: Partial<TransitionRow>) => {
+      onChange((prev) => ({
+        ...prev,
+        transitions: prev.transitions.map((row, i) => (i === index ? { ...row, ...patch } : row)),
+      }));
+    },
+    [onChange],
+  );
+
+  const removeTransition = useCallback(
+    (index: number) => {
+      onChange((prev) => ({
+        ...prev,
+        transitions: prev.transitions.filter((_, i) => i !== index),
+      }));
+    },
+    [onChange],
+  );
+
+  const addTransition = useCallback(() => {
+    onChange((prev) => ({ ...prev, transitions: [...prev.transitions, emptyTransitionRow()] }));
+  }, [onChange]);
+
+  if (workflow.stateField.trim().length === 0) {
+    return (
+      <Stack gap="xs">
+        <Text size="sm" fw={500}>
+          {t("admin.lowcode.workflow.title")}
+        </Text>
+        <Text size="sm" c="dimmed">
+          {t("admin.lowcode.workflow.noWorkflow")}
+        </Text>
+        <Group>
+          <Button
+            variant="default"
+            size="xs"
+            disabled={fieldNames.length === 0}
+            onClick={() => onChange({ ...emptyWorkflowRow(), stateField: fieldNames[0] ?? "" })}
+          >
+            {t("admin.lowcode.workflow.addWorkflow")}
+          </Button>
+        </Group>
+      </Stack>
+    );
+  }
+
+  const stateOptions = [
+    ...new Set([
+      ...(workflow.initialState.trim().length > 0 ? [workflow.initialState.trim()] : []),
+      ...workflow.terminalStates,
+      ...workflow.transitions.flatMap((tr) => [tr.from.trim(), tr.to.trim()].filter(Boolean)),
+    ]),
+  ];
+
+  return (
+    <Stack gap="xs">
+      <Group justify="space-between">
+        <Text size="sm" fw={500}>
+          {t("admin.lowcode.workflow.title")}
+        </Text>
+        <Button variant="subtle" color="red" size="xs" onClick={() => onChange(emptyWorkflowRow())}>
+          {t("admin.lowcode.workflow.removeWorkflow")}
+        </Button>
+      </Group>
+      <Group align="flex-end">
+        <Select
+          style={{ flex: 1 }}
+          size="xs"
+          label={t("admin.lowcode.workflow.stateField")}
+          data={fieldNames}
+          value={workflow.stateField}
+          onChange={(value) =>
+            onChange((prev) => ({ ...prev, stateField: value ?? prev.stateField }))
+          }
+          allowDeselect={false}
+        />
+        <TextInput
+          style={{ flex: 1 }}
+          size="xs"
+          label={t("admin.lowcode.workflow.initialState")}
+          value={workflow.initialState}
+          onChange={(e) => onChange((prev) => ({ ...prev, initialState: e.currentTarget.value }))}
+        />
+      </Group>
+      <TagsInput
+        size="xs"
+        label={t("admin.lowcode.workflow.terminalStates")}
+        placeholder={t("admin.lowcode.workflow.terminalStatesPlaceholder")}
+        value={workflow.terminalStates}
+        onChange={(value) => onChange((prev) => ({ ...prev, terminalStates: value }))}
+      />
+      <Text size="sm" fw={500} mt="xs">
+        {t("admin.lowcode.workflow.transitions")}
+      </Text>
+      {workflow.transitions.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          {t("admin.lowcode.workflow.noTransitions")}
+        </Text>
+      ) : null}
+      {workflow.transitions.map((row, index) => (
+        <TransitionRowEditor
+          key={index}
+          row={row}
+          index={index}
+          stateOptions={stateOptions}
+          onUpdate={updateTransition}
+          onRemove={removeTransition}
+        />
+      ))}
+      <Group>
+        <Button variant="default" size="xs" onClick={addTransition}>
+          {t("admin.lowcode.workflow.addTransition")}
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
 function LowCodeVersionHistory({
   name,
   onRollback,
@@ -621,16 +919,19 @@ function LowCodeVersionHistory({
 export function LowCodeEntitiesAdminPage() {
   const { t } = useTranslation();
   const { data: entities, isLoading, error, refetch } = useLowCodeEntities();
-  const { getDraft, saveDraft, publish, rollback, setEnabled } = useLowCodeActions();
+  const { getDraft, saveDraft, publish, previewPublish, rollback, setEnabled } =
+    useLowCodeActions();
 
   const [name, setName] = useState("");
   const [label, setLabel] = useState("");
   const [fields, setFields] = useState<FieldRow[]>([]);
   const [listViews, setListViews] = useState<ListViewRow[]>([]);
+  const [workflow, setWorkflow] = useState<WorkflowRow>(emptyWorkflowRow());
   const [formError, setFormError] = useState<string | null>(null);
   const [cleanupNote, setCleanupNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [rowError, setRowError] = useState<string | null>(null);
+  const [previewNote, setPreviewNote] = useState<string | null>(null);
   const [expandedName, setExpandedName] = useState<string | null>(null);
   // Bumped on every handleLoad call, checked when its getDraft() resolves — clicking Edit on
   // two different entities in quick succession fires two overlapping requests, and without
@@ -643,6 +944,7 @@ export function LowCodeEntitiesAdminPage() {
     setLabel("");
     setFields([]);
     setListViews([]);
+    setWorkflow(emptyWorkflowRow());
     setFormError(null);
   }
 
@@ -661,10 +963,12 @@ export function LowCodeEntitiesAdminPage() {
         setLabel(draft.label);
         setFields(draft.fields.map(wireToFieldRow));
         setListViews(draft.listViews.map(wireToListViewRow));
+        setWorkflow(wireToWorkflowRow(draft.workflow));
       } else {
         setLabel("");
         setFields([]);
         setListViews([]);
+        setWorkflow(emptyWorkflowRow());
       }
     } catch (err) {
       if (requestId !== loadRequestId.current) {
@@ -684,6 +988,27 @@ export function LowCodeEntitiesAdminPage() {
     }
     if (listViews.some((v) => v.name.trim().length === 0 || v.label.trim().length === 0)) {
       setFormError(t("admin.lowcode.listViewNameLabelRequired"));
+      return;
+    }
+    if (
+      workflow.stateField.trim().length > 0 &&
+      (workflow.initialState.trim().length === 0 ||
+        workflow.transitions.some(
+          (tr) =>
+            tr.action.trim().length === 0 ||
+            tr.from.trim().length === 0 ||
+            tr.to.trim().length === 0 ||
+            tr.label.trim().length === 0,
+        ))
+    ) {
+      setFormError(t("admin.lowcode.workflow.transitionFieldsRequired"));
+      return;
+    }
+    let workflowWire: Record<string, unknown> | undefined;
+    try {
+      workflowWire = workflowRowToWire(workflow);
+    } catch {
+      setFormError(t("admin.lowcode.workflow.invalidGuardJson"));
       return;
     }
 
@@ -725,6 +1050,7 @@ export function LowCodeEntitiesAdminPage() {
         label,
         fields: fields.map(fieldRowToWire),
         listViews: sanitizedListViews.map(listViewRowToWire),
+        workflow: workflowWire,
       });
       await refetch();
     } catch (err) {
@@ -745,8 +1071,25 @@ export function LowCodeEntitiesAdminPage() {
 
   async function handlePublish(entityName: string) {
     setRowError(null);
+    setPreviewNote(null);
     try {
       await publish(entityName);
+    } catch (err) {
+      setRowError(err instanceof ApiError ? err.message : t("common.somethingWentWrong"));
+    }
+  }
+
+  // Read-only — validates the draft the same way Publish would, without writing a version row.
+  // Shown as its own info-colored note (`previewNote`), not `rowError`, so a *successful*
+  // preview doesn't read as an error and doesn't get cleared by other rows' error handling.
+  async function handlePreview(entityName: string) {
+    setRowError(null);
+    setPreviewNote(null);
+    try {
+      const result = await previewPublish(entityName);
+      setPreviewNote(
+        t("admin.lowcode.previewValid", { entity: entityName, version: result.wouldBeVersion }),
+      );
     } catch (err) {
       setRowError(err instanceof ApiError ? err.message : t("common.somethingWentWrong"));
     }
@@ -819,6 +1162,7 @@ export function LowCodeEntitiesAdminPage() {
         />
         <FieldBuilder fields={fields} onChange={setFields} />
         <ListViewBuilder listViews={listViews} fieldNames={fieldNames} onChange={setListViews} />
+        <WorkflowBuilder workflow={workflow} fieldNames={fieldNames} onChange={setWorkflow} />
         <Group>
           <Button
             onClick={() => void handleSaveDraft()}
@@ -836,6 +1180,11 @@ export function LowCodeEntitiesAdminPage() {
       {rowError ? (
         <Alert color="red" mb="md" onClose={() => setRowError(null)} withCloseButton>
           {rowError}
+        </Alert>
+      ) : null}
+      {previewNote ? (
+        <Alert color="blue" mb="md" onClose={() => setPreviewNote(null)} withCloseButton>
+          {previewNote}
         </Alert>
       ) : null}
 
@@ -892,6 +1241,13 @@ export function LowCodeEntitiesAdminPage() {
                             }}
                           >
                             {t("common.edit")}
+                          </Button>
+                          <Button
+                            variant="subtle"
+                            size="compact-sm"
+                            onClick={() => void handlePreview(entityName)}
+                          >
+                            {t("admin.lowcode.preview")}
                           </Button>
                           <Button
                             variant="subtle"

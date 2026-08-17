@@ -48,15 +48,18 @@ export type CronJobRun = {
   createdAt: string;
 };
 
-/** Matches `crates/metap-metadata/src/entity.rs`'s `EntityField`/`EntityListView` wire shape
- * loosely (`unknown[]`, not a typed mirror) — the low-code admin page edits these as raw JSON,
- * same as `PoliciesAdminPage`'s `PolicyCondition` textarea, so this crate doesn't need to keep
- * a second copy of the field-shape type in sync by hand. */
+/** Matches `crates/metap-metadata/src/entity.rs`'s `EntityField`/`EntityListView`/
+ * `EntityWorkflow` wire shape loosely (`unknown`, not a typed mirror) — the low-code admin
+ * page edits these as raw JSON, same as `PoliciesAdminPage`'s `PolicyCondition` textarea, so
+ * this crate doesn't need to keep a second copy of the field-shape type in sync by hand.
+ * `workflow` is `unknown` rather than absent — DB-authored entities can carry one since Phase
+ * 11 Phase B's guard-model un-skip (`docs/roadmap.md`, 2026-08-17). */
 export type LowCodeEntityDefinition = {
   name: string;
   label: string;
   fields: unknown[];
   listViews: unknown[];
+  workflow?: unknown;
 };
 
 export type LowCodeEntitySummary = { name: string; published: boolean; enabled: boolean };
@@ -249,7 +252,7 @@ export function useLowCodeActions() {
 
   async function saveDraft(
     name: string,
-    body: { label: string; fields: unknown[]; listViews: unknown[] },
+    body: { label: string; fields: unknown[]; listViews: unknown[]; workflow?: unknown },
   ) {
     const result = await apiFetch<{ data: LowCodeEntityDefinition }>(
       `/admin/lowcode/entities/${name}/draft`,
@@ -267,6 +270,18 @@ export function useLowCodeActions() {
       { method: "POST" },
     );
     await queryClient.invalidateQueries({ queryKey: ["admin", "lowcode"] });
+    return result.data;
+  }
+
+  /** Read-only — validates the draft the same way `publish` would, without writing a version
+   * row or swapping the live registry. No `invalidateQueries` call, unlike every other action
+   * here: nothing this touches actually changes. */
+  async function previewPublish(name: string) {
+    const result = await apiFetch<{ data: { valid: boolean; wouldBeVersion: number } }>(
+      `/admin/lowcode/entities/${name}/publish/preview`,
+      token,
+      { method: "POST" },
+    );
     return result.data;
   }
 
@@ -288,5 +303,5 @@ export function useLowCodeActions() {
     await queryClient.invalidateQueries({ queryKey: ["admin", "lowcode", "entities"] });
   }
 
-  return { getDraft, saveDraft, publish, rollback, setEnabled };
+  return { getDraft, saveDraft, publish, previewPublish, rollback, setEnabled };
 }

@@ -204,6 +204,22 @@ struct RollbackBody {
     to_version_number: i32,
 }
 
+/// `docs/roadmap.md` Phase 11 Phase B's publish preview/validation report — runs the exact
+/// checks `publish` would (shape, name-reservation, cross-reference) with no side effect, so
+/// an operator can validate a draft before committing to a new published version.
+async fn preview_publish(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    AdminContext(_context): AdminContext,
+) -> Response {
+    match metap_lowcode::preview_publish(&state.pool, &name, &state.metadata_base).await {
+        Ok(preview) => {
+            Json(json!({ "data": { "wouldBeVersion": preview.would_be_version, "valid": true } })).into_response()
+        }
+        Err(e) => publish_error_response(e),
+    }
+}
+
 async fn rollback(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -271,6 +287,10 @@ pub fn router() -> Router<AppState> {
         .route("/admin/lowcode/entities/{name}", axum::routing::patch(set_enabled))
         .route("/admin/lowcode/entities/{name}/draft", get(get_draft).put(save_draft))
         .route("/admin/lowcode/entities/{name}/publish", axum::routing::post(publish))
+        .route(
+            "/admin/lowcode/entities/{name}/publish/preview",
+            axum::routing::post(preview_publish),
+        )
         .route("/admin/lowcode/entities/{name}/rollback", axum::routing::post(rollback))
         .route("/admin/lowcode/entities/{name}/published", get(get_published))
         .route("/admin/lowcode/entities/{name}/versions", get(list_versions))
