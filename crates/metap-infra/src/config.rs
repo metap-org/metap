@@ -32,6 +32,15 @@ pub struct AppConfig {
     /// normal split dev workflow (`pnpm dev:web` proxies to the API separately); set by the
     /// `pnpm start` monolith script.
     pub static_dir: Option<String>,
+    /// Opt-in — when set (with `vault_token`), `apps/crm-server/src/main.rs` builds a
+    /// `metap_control::VaultStore` instead of the default `EnvStore` for resolving
+    /// `DedicatedDb` tenant DSNs (`docs/roadmap.md` Phase 16 Giai đoạn 4). Neither var is
+    /// validated here (no format requirement) — `VaultStore::new` surfaces a clear error at
+    /// construction if `vault_addr` isn't a usable Vault address.
+    pub vault_addr: Option<String>,
+    /// See `vault_addr`. A plain Vault token today (`VAULT_TOKEN`), not AppRole — see
+    /// `metap_control::VaultStore`'s doc comment for why.
+    pub vault_token: Option<String>,
 }
 
 impl AppConfig {
@@ -102,6 +111,9 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
 
     let static_dir = env::var("STATIC_DIR").ok().filter(|s| !s.is_empty());
 
+    let vault_addr = env::var("VAULT_ADDR").ok().filter(|s| !s.is_empty());
+    let vault_token = env::var("VAULT_TOKEN").ok().filter(|s| !s.is_empty());
+
     Ok(AppConfig {
         node_env,
         host,
@@ -113,5 +125,7 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         auth_jwt_public_key_path,
         auth_jwt_private_key_path,
         static_dir,
+        vault_addr,
+        vault_token,
     })
 }

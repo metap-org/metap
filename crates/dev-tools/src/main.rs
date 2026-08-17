@@ -17,6 +17,7 @@ fn usage() -> ! {
         "  dev-tools provision-tenant <tenantId> dedicated_db <dsnSecretRefName> <dedicatedDatabaseUrl> <adminEmail> <adminPassword>"
     );
     eprintln!("  dev-tools bootstrap-platform-admin <email> <password>");
+    eprintln!("  dev-tools vault-put-dsn <dsnSecretRef> <dsn>                     (reads VAULT_ADDR/VAULT_TOKEN)");
     std::process::exit(1);
 }
 
@@ -30,6 +31,7 @@ async fn main() -> anyhow::Result<()> {
         Some("create-user") => create_user(&args).await,
         Some("provision-tenant") => provision_tenant(&args).await,
         Some("bootstrap-platform-admin") => bootstrap_platform_admin(&args).await,
+        Some("vault-put-dsn") => vault_put_dsn(&args).await,
         _ => usage(),
     }
 }
@@ -223,6 +225,27 @@ async fn bootstrap_platform_admin(args: &[String]) -> anyhow::Result<()> {
 
     println!("Created platform-admin user {} ({email}).", user.id);
     println!("Mint a token for it with: pnpm mint-token {tenant_id} {}", user.id);
+    Ok(())
+}
+
+/// Populates Vault for a `dedicated_db` tenant (Phase 16 Giai đoạn 4, `docs/roadmap.md`) — the
+/// Vault-backed counterpart to "set env var `<dsnSecretRef>`" that `provision-tenant ...
+/// dedicated_db` already prints for `EnvStore`. Independent of `provision-tenant`: run it
+/// before or after, in either order — `Router` only resolves the DSN when it actually routes a
+/// request to that tenant.
+async fn vault_put_dsn(args: &[String]) -> anyhow::Result<()> {
+    let (Some(dsn_secret_ref), Some(dsn)) = (args.get(2), args.get(3)) else {
+        eprintln!("Usage: dev-tools vault-put-dsn <dsnSecretRef> <dsn>");
+        std::process::exit(1);
+    };
+    dotenvy::dotenv().ok();
+    let vault_addr = std::env::var("VAULT_ADDR").map_err(|_| anyhow::anyhow!("VAULT_ADDR is required"))?;
+    let vault_token = std::env::var("VAULT_TOKEN").map_err(|_| anyhow::anyhow!("VAULT_TOKEN is required"))?;
+
+    let store = metap_control::VaultStore::new(&vault_addr, &vault_token)?;
+    store.put_dsn(dsn_secret_ref, dsn).await?;
+
+    println!("Wrote dsn_secret_ref \"{dsn_secret_ref}\" to Vault at {vault_addr}.");
     Ok(())
 }
 

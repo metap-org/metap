@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
-use metap_control::{EnvStore, PostgresTenantRegistry, RegistryCache, Router};
+use metap_control::{PostgresTenantRegistry, RegistryCache, Router, SecretStore};
 use metap_crud::CrudService;
 use metap_metadata::MetadataRegistry;
 use metap_permission::PermissionService;
@@ -39,15 +39,17 @@ impl AppState {
         permissions: Arc<PermissionService>,
         jwt_decoding_key: DecodingKey,
         jwt_encoding_key_pem: String,
+        secret_store: Arc<dyn SecretStore>,
     ) -> Self {
         // `Router` (`metap-control`, `docs/multi-tenant-platform-design.md` §2.2) is built here,
         // not passed in — same pattern `CrudService` itself already follows below — so
         // `apps/crm-server/src/main.rs` doesn't need to know about it. It wraps the same
-        // `pool.clone()`, not a second physical pool.
+        // `pool.clone()`, not a second physical pool. `secret_store` (which `SecretStore` impl
+        // — `EnvStore` or `VaultStore`, Phase 16 Giai đoạn 4) is the caller's call, not this
+        // constructor's — same "wiring inline at the composition root" pattern as everything
+        // else in `apps/crm-server/src/main.rs`.
         let tenant_registry = Arc::new(PostgresTenantRegistry::new(pool.clone()));
-        // `EnvStore` is the only `SecretStore` this repo has — real Vault integration is later
-        // work (`docs/multi-tenant-platform-design.md` §2.3, not triggered yet).
-        let router = Router::new(pool.clone(), RegistryCache::new(tenant_registry), Arc::new(EnvStore));
+        let router = Router::new(pool.clone(), RegistryCache::new(tenant_registry), secret_store);
         let crud = Arc::new(CrudService::new(router, metadata.clone(), permissions.clone()));
         Self {
             pool,

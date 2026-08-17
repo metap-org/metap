@@ -78,6 +78,22 @@ async fn main() -> anyhow::Result<()> {
     let private_key_pem = std::fs::read_to_string(&config.auth_jwt_private_key_path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_private_key_path))?;
 
+    // Which `SecretStore` resolves a `DedicatedDb` tenant's DSN — decided here, not inside
+    // `AppState::new`, same "wiring inline at the composition root" pattern as everything else
+    // in this file. `EnvStore` (unchanged default) unless `VAULT_ADDR` is configured
+    // (`docs/roadmap.md` Phase 16 Giai đoạn 4) — opt-in, no downstream project is forced to run
+    // a Vault container to develop normally.
+    let secret_store: Arc<dyn metap::control::SecretStore> = match &config.vault_addr {
+        Some(addr) => {
+            let token = config
+                .vault_token
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("VAULT_ADDR is set but VAULT_TOKEN is not"))?;
+            Arc::new(metap::control::VaultStore::new(addr, token)?)
+        }
+        None => Arc::new(metap::control::EnvStore),
+    };
+
     let state = AppState::new(
         pool,
         metadata_base,
@@ -85,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(permissions),
         decoding_key,
         private_key_pem,
+        secret_store,
     );
     // `metap::lowcode_http::router()` is the low-code control plane's admin API
     // (`docs/roadmap.md` Phase 11 / Phase A) and `metap::control_http::router()` is the

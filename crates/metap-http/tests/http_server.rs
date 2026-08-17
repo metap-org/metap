@@ -152,6 +152,7 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
         Arc::new(permissions),
         decoding_key,
         private_pem.clone(),
+        Arc::new(metap_control::EnvStore),
     );
     // A real origin list, not empty — exercises the `allow_credentials` +
     // explicit-origin/header CORS branch (see `lib.rs`'s doc comment on the panic this
@@ -330,6 +331,7 @@ async fn rate_limit_returns_429_once_the_burst_is_exhausted() {
         Arc::new(permissions),
         decoding_key,
         private_pem,
+        Arc::new(metap_control::EnvStore),
     );
     let router = build_router(state, &[], Router::new());
 
@@ -413,6 +415,7 @@ async fn platform_admin_context_gates_by_sentinel_tenant_and_role() {
         Arc::new(permissions),
         decoding_key,
         private_pem.clone(),
+        Arc::new(metap_control::EnvStore),
     );
     let router = build_router(state, &[], extra_routes);
 

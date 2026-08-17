@@ -20,5 +20,19 @@ services:
       - "5672:5672"
       - "15672:15672"
 
+  # Opt-in (docs/roadmap.md Phase 16 Giai đoạn 4) — dev-mode Vault for metap-control::VaultStore.
+  # NOT part of the default `docker compose up -d postgres rabbitmq` dev stack; EnvStore stays
+  # the default SecretStore. Dev mode = in-memory, unsealed, fixed root token, never for
+  # anything but local dev.
+  vault:
+    image: hashicorp/vault:1.15
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: metap-dev-root-token
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "8200:8200"
+
 volumes:
   metap-postgres:
