@@ -165,6 +165,18 @@ cách `seed-admin`/`create-user` đã giải quyết bài toán con-gà-quả-tr
 tenant mới không có "starter policy" seed sẵn (không khả thi cho code entity-agnostic), nên
 `provision-tenant` in cảnh báo rõ thay vì âm thầm bỏ qua.
 
+**Cập nhật triển khai (2026-08-17, Giai đoạn 3):** "khái niệm platform superadmin xuyên tenant"
+ở trên giờ tồn tại — không phải bảng/claim mới, mà một tenant sentinel
+`metap_control::PLATFORM_TENANT_ID` (`Uuid::nil()`, không bao giờ có row `control.tenants`,
+không bao giờ được `Router` route tới) cộng role `"platform_admin"` gán trong tenant đó qua hạ
+tầng JWT/role sẵn có. `PlatformAdminContext` (extractor mới, cạnh `AdminContext`) gate route mới
+`POST /platform/tenants` (không phải `/admin/tenants` như pseudocode gốc — đặt tên riêng
+`/platform/*` để tách bạch rõ khỏi `/admin/*` vốn luôn tenant-scoped). CLI
+`dev-tools provision-tenant` và route HTTP này giờ gọi chung
+`metap_control::provision_schema_tenant`/`provision_dedicated_db_tenant`, không thể lệch nhau.
+`dev-tools bootstrap-platform-admin` bootstrap platform-admin đầu tiên, cùng lý do CLI-only như
+`seed-admin`. Chi tiết đầy đủ ở `docs/roadmap.md` Phase 16 Giai đoạn 3.
+
 `CrudService` refactor: mọi query (kể cả read đơn) chạy trên `router.begin(tenant)` thay
 `&self.pool`. Metadata cũng per-tenant (`MetadataRouter` cache-per-tenant, vì DB-authored entity
 của mỗi tenant nằm trong không gian riêng).
@@ -212,6 +224,13 @@ POST /admin/tenants  (hoặc CLI: metap provision-tenant)
 ```
 Idempotent (chạy lại không nhân đôi). Template pack = một "dự án OS starter" hoàn chỉnh → onboard
 = chọn pack + provision.
+
+**Cập nhật triển khai (2026-08-17, Giai đoạn 3):** `POST /platform/tenants` (không phải
+`/admin/tenants` — xem §2.2) làm đúng "tạo tenant row" + "tạo admin user đầu" ở trên, cộng
+`GET /platform/tenants`/`GET /platform/tenants/{id}` để list/xem. Chưa làm: seed default
+roles/starter policies (`PermissionService` vẫn default-allow cho tenant mới — cảnh báo được in
+ra, không tự seed), apply template pack (§2.5 chưa tồn tại), suspend/resume/deprovision. Không
+idempotent theo nghĩa pseudocode — trùng `tenantId` trả 409 rõ ràng thay vì no-op.
 
 ### 2.5 Template Pack (đóng gói)
 

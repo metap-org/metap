@@ -9,6 +9,7 @@
 //! adding that sub-crate as its own direct dependency.
 
 pub use metap_control as control;
+pub use metap_control_http as control_http;
 pub use metap_crud as crud;
 pub use metap_http as http;
 pub use metap_infra as infra;
@@ -30,7 +31,7 @@ pub mod prelude {
     //! wins the unqualified name here; reach the others through their namespaced module
     //! (`metap::permission::JsonObject`, `metap::workflow::JsonObject`).
     pub use metap_crud::{CrudService, JsonObject, RecordCapabilities, RecordDto};
-    pub use metap_http::{build_router, AdminContext, AppState, AuthContext};
+    pub use metap_http::{build_router, AdminContext, AppState, AuthContext, PlatformAdminContext};
     pub use metap_infra::{connect_db, load_config, AppConfig};
     pub use metap_metadata::{
         EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, MetadataRegistry, WorkflowTransition,

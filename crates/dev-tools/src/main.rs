@@ -16,6 +16,7 @@ fn usage() -> ! {
     eprintln!(
         "  dev-tools provision-tenant <tenantId> dedicated_db <dsnSecretRefName> <dedicatedDatabaseUrl> <adminEmail> <adminPassword>"
     );
+    eprintln!("  dev-tools bootstrap-platform-admin <email> <password>");
     std::process::exit(1);
 }
 
@@ -28,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
         Some("seed-admin") => seed_admin(&args).await,
         Some("create-user") => create_user(&args).await,
         Some("provision-tenant") => provision_tenant(&args).await,
+        Some("bootstrap-platform-admin") => bootstrap_platform_admin(&args).await,
         _ => usage(),
     }
 }
@@ -149,15 +151,12 @@ async fn provision_tenant(args: &[String]) -> anyhow::Result<()> {
             };
             let tenant_id: Uuid = tenant_id.parse()?;
 
-            registry
-                .provision(tenant_id, "trial", "schema", Some("public"), None, "active")
-                .await?;
-            let user = metap_peripherals::create_user(&pool, tenant_id, email, password).await?;
-            metap_peripherals::assign_role(&pool, tenant_id, user.id, "admin", None).await?;
+            let provisioned =
+                metap_control::provision_schema_tenant(&pool, &registry, tenant_id, email, password).await?;
 
             println!(
                 "Provisioned tenant {tenant_id} (trial, schema=public), admin user {} ({email}).",
-                user.id
+                provisioned.admin_user_id
             );
             print_default_allow_warning();
         }
@@ -172,18 +171,19 @@ async fn provision_tenant(args: &[String]) -> anyhow::Result<()> {
             };
             let tenant_id: Uuid = tenant_id.parse()?;
 
-            let dedicated_pool = PgPoolOptions::new().max_connections(1).connect(dedicated_url).await?;
-            sqlx::migrate!("../migrations").run(&dedicated_pool).await?;
-
-            registry
-                .provision(tenant_id, "paid", "dedicated_db", None, Some(dsn_secret_ref), "active")
-                .await?;
-            let user = metap_peripherals::create_user(&dedicated_pool, tenant_id, email, password).await?;
-            metap_peripherals::assign_role(&dedicated_pool, tenant_id, user.id, "admin", None).await?;
+            let provisioned = metap_control::provision_dedicated_db_tenant(
+                &registry,
+                tenant_id,
+                dsn_secret_ref,
+                dedicated_url,
+                email,
+                password,
+            )
+            .await?;
 
             println!(
                 "Provisioned tenant {tenant_id} (paid, dedicated_db), admin user {} ({email}).",
-                user.id
+                provisioned.admin_user_id
             );
             println!(
                 "Before this tenant can be routed to, set env var {dsn_secret_ref}={dedicated_url} \
@@ -197,6 +197,32 @@ async fn provision_tenant(args: &[String]) -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Bootstraps the very first platform-superadmin (Phase 16 Giai đoạn 3, `docs/roadmap.md`) —
+/// same con-gà-quả-trứng bootstrap as `seed_admin`/`create_user` above, CLI-only because no
+/// platform-admin exists yet to authorize an HTTP call. Creates a user in
+/// `metap_control::PLATFORM_TENANT_ID` (a sentinel tenant, never a real `control.tenants` row —
+/// see that constant's doc comment) and grants it the `"platform_admin"` role, the one
+/// `metap-http`'s `PlatformAdminContext` extractor checks for. The resulting user mints a token
+/// exactly like any other (`pnpm mint-token <platformTenantId> <userId>`) — there is no second
+/// auth mechanism to bootstrap here, only a role grant in a reserved tenant.
+async fn bootstrap_platform_admin(args: &[String]) -> anyhow::Result<()> {
+    let (Some(email), Some(password)) = (args.get(2), args.get(3)) else {
+        eprintln!("Usage: dev-tools bootstrap-platform-admin <email> <password>");
+        std::process::exit(1);
+    };
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
+
+    let tenant_id = metap_control::PLATFORM_TENANT_ID;
+    let user = metap_peripherals::create_user(&pool, tenant_id, email, password).await?;
+    assign_role(&pool, tenant_id, user.id, "platform_admin", None).await?;
+
+    println!("Created platform-admin user {} ({email}).", user.id);
+    println!("Mint a token for it with: pnpm mint-token {tenant_id} {}", user.id);
     Ok(())
 }
 

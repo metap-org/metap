@@ -24,7 +24,8 @@
     "mint-token": "cargo build --release -p dev-tools --quiet && cd apps/crm-server && ../../target/release/dev-tools mint-token",
     "seed:admin": "cargo build --release -p dev-tools --quiet && cd apps/crm-server && ../../target/release/dev-tools seed-admin",
     "create:user": "cargo build --release -p dev-tools --quiet && cd apps/crm-server && ../../target/release/dev-tools create-user",
-    "provision:tenant": "cargo build --release -p dev-tools --quiet && cd apps/crm-server && ../../target/release/dev-tools provision-tenant"
+    "provision:tenant": "cargo build --release -p dev-tools --quiet && cd apps/crm-server && ../../target/release/dev-tools provision-tenant",
+    "bootstrap:platform-admin": "cargo build --release -p dev-tools --quiet && cd apps/crm-server && ../../target/release/dev-tools bootstrap-platform-admin"
   },
   "packageManager": "pnpm@9.15.0"
 }

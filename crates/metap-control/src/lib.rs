@@ -6,13 +6,15 @@
 //! shape as `metap-permission`.
 
 mod cache;
+mod provisioning;
 mod registry;
 mod router;
 mod secret_store;
 mod tenant;
 
 pub use cache::RegistryCache;
-pub use registry::{PostgresTenantRegistry, TenantRegistry};
+pub use provisioning::{provision_dedicated_db_tenant, provision_schema_tenant, ProvisionedTenant};
+pub use registry::{PostgresTenantRegistry, TenantRegistry, TenantSummary};
 pub use router::{validate_schema_name, Router, RouterError};
 pub use secret_store::{DbCreds, EnvStore, SecretStore};
-pub use tenant::{TenantId, TenantRouting, TenantStatus, TenantStrategy};
+pub use tenant::{TenantId, TenantRouting, TenantStatus, TenantStrategy, PLATFORM_TENANT_ID};

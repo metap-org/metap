@@ -141,3 +141,33 @@ where
         Ok(AdminContext(context))
     }
 }
+
+/// Cross-tenant admin gate for the optional platform/SaaS-control-plane HTTP surface
+/// (`metap-control-http`, Phase 16 Giai đoạn 3, `docs/roadmap.md`) — distinct from
+/// `AdminContext`, which only authorizes actions *inside the caller's own tenant*. A request
+/// passes this gate when its JWT's `tenantId` is `metap_control::PLATFORM_TENANT_ID` (a
+/// sentinel, never a real tenant — see that constant's doc comment) and the resolved roles
+/// include `"platform_admin"`. No new auth mechanism: same `AuthContext` resolution
+/// (JWT verify + `get_roles_for_user`), just a different role/tenant check than `AdminContext`'s.
+pub struct PlatformAdminContext(pub RequestContext);
+
+impl<S> FromRequestParts<S> for PlatformAdminContext
+where
+    AppState: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = AuthError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let AuthContext(context) = AuthContext::from_request_parts(parts, state).await?;
+        let is_platform_tenant = context.tenant_id == metap_control::PLATFORM_TENANT_ID.to_string();
+        let has_platform_admin_role = context
+            .roles
+            .as_ref()
+            .is_some_and(|roles| roles.iter().any(|r| r == "platform_admin"));
+        if !is_platform_tenant || !has_platform_admin_role {
+            return Err(AuthError::forbidden("This action requires the platform_admin role."));
+        }
+        Ok(PlatformAdminContext(context))
+    }
+}

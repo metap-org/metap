@@ -42,7 +42,10 @@ việc đó là thừa.
   `SecretStore`/`EnvStore`, `DedicatedDb` strategy hoạt động thật — verify isolation vật lý qua
   HTTP thật) đã triển khai 2026-08-16. `DedicatedDb` (paid) đã có "răng" thật; `schema` (trial)
   vẫn ghim `schema_name='public'`, chưa có isolation thật cho tới khi data plane evolution (§3)
-  xong. Không có HTTP provisioning (chỉ CLI, xem `docs/roadmap.md` Phase 16 để biết lý do).
+  xong. Giai đoạn 3 (2026-08-17): `POST /platform/tenants` — provisioning giờ có cả HTTP lẫn
+  CLI, gate bởi `PlatformAdminContext` (một tenant sentinel `PLATFORM_TENANT_ID` + role
+  `"platform_admin"`, không phải bảng/claim mới) chứ không phải `AdminContext` (tenant-scoped).
+  Chi tiết: `docs/roadmap.md` Phase 16 Giai đoạn 3.
 - **Bảng `records` JSONB dùng chung sẽ được thay bằng table-per-entity khi có tín hiệu scale
   (@ ~10M row/entity), không phải ngay bây giờ.** Giữ nguyên chiến lược hiện tại
   (xem Data Model Strategy, [05. Building Block View](05-building-blocks.md)) cho tới khi trigger

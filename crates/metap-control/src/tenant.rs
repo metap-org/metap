@@ -19,6 +19,18 @@ impl fmt::Display for TenantId {
     }
 }
 
+/// The sentinel tenant a platform-superadmin's JWT carries as `tenantId` (Phase 16 Giai đoạn
+/// 3, `docs/roadmap.md`). Not a real tenant — never has a `control.tenants` row and is never
+/// routed to by `Router::begin`; it exists purely so `users`/`user_roles` (always `public`,
+/// never Router-scoped) has somewhere to hold a platform-admin's identity, reusing the exact
+/// same JWT/role machinery every tenant admin already goes through
+/// (`metap_peripherals::create_user`/`assign_role`/`mint_jwt`,
+/// `metap_peripherals::get_roles_for_user`) instead of a second auth model. A user in this
+/// tenant with the `"platform_admin"` role (a role name like any other — nothing in the schema
+/// distinguishes it) is what `metap-http`'s `PlatformAdminContext` extractor checks for.
+/// `Uuid::nil()` (all-zero) — verified unused by any other reserved id in this codebase.
+pub const PLATFORM_TENANT_ID: Uuid = Uuid::nil();
+
 /// Mirrors `control.tenants.status` (`crates/migrations/0012_control_tenants.sql`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TenantStatus {

@@ -381,6 +381,117 @@ async fn rate_limit_returns_429_once_the_burst_is_exhausted() {
     assert!(body["error"]["traceId"].is_string());
 }
 
+/// `PlatformAdminContext` (Phase 16 Giai đoạn 3, `docs/roadmap.md`) — no real business route
+/// uses it (that lives in the separate, untested-by-design `metap-control-http` crate, same
+/// convention as `metap-lowcode-http`), so this mounts a throwaway test-only route via
+/// `build_router`'s `extra_routes` argument just to exercise the extractor's gating logic in
+/// isolation: a normal tenant admin (even with the `"admin"` role) must NOT pass, a user in
+/// the platform sentinel tenant without `"platform_admin"` must NOT pass, and only a user in
+/// the platform sentinel tenant *with* `"platform_admin"` passes.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn platform_admin_context_gates_by_sentinel_tenant_and_role() {
+    let pool = connect().await;
+
+    async fn platform_only_handler(
+        metap_http::PlatformAdminContext(_context): metap_http::PlatformAdminContext,
+    ) -> &'static str {
+        "ok"
+    }
+    let extra_routes = Router::new().route("/test/platform-only", axum::routing::get(platform_only_handler));
+
+    let keydir = tempdir();
+    let (private_pem, public_pem) = openssl_genrsa(keydir.path());
+
+    let registry = Arc::new(MetadataRegistry::new());
+    let permissions = PermissionService::new(Box::new(metap_permission::PostgresPolicyStore::new(pool.clone())));
+    let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
+    let state = AppState::new(
+        pool.clone(),
+        registry.clone(),
+        Arc::new(ArcSwap::new(registry)),
+        Arc::new(permissions),
+        decoding_key,
+        private_pem.clone(),
+    );
+    let router = build_router(state, &[], extra_routes);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = reqwest::Client::new();
+
+    // a normal tenant's admin — even with the "admin" role — is not a platform admin
+    let ordinary_tenant_id = Uuid::new_v4();
+    let ordinary_user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')")
+        .bind(ordinary_tenant_id)
+        .bind(ordinary_user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let ordinary_token = mint_token(&private_pem, ordinary_tenant_id, ordinary_user_id);
+    let res = client
+        .get(format!("{base}/test/platform-only"))
+        .bearer_auth(&ordinary_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403);
+
+    // the platform sentinel tenant without the "platform_admin" role still doesn't pass
+    let unprivileged_platform_user_id = Uuid::new_v4();
+    let unprivileged_token = mint_token(
+        &private_pem,
+        metap_control::PLATFORM_TENANT_ID,
+        unprivileged_platform_user_id,
+    );
+    let res = client
+        .get(format!("{base}/test/platform-only"))
+        .bearer_auth(&unprivileged_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403);
+
+    // platform sentinel tenant + "platform_admin" role passes
+    let platform_admin_user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'platform_admin')")
+        .bind(metap_control::PLATFORM_TENANT_ID)
+        .bind(platform_admin_user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let platform_admin_token = mint_token(&private_pem, metap_control::PLATFORM_TENANT_ID, platform_admin_user_id);
+    let res = client
+        .get(format!("{base}/test/platform-only"))
+        .bearer_auth(&platform_admin_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+
+    sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1")
+        .bind(ordinary_tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1 AND user_id = $2")
+        .bind(metap_control::PLATFORM_TENANT_ID)
+        .bind(platform_admin_user_id)
+        .execute(&pool)
+        .await
+        .ok();
+}
+
 fn tempdir() -> TempDir {
     TempDir::new()
 }

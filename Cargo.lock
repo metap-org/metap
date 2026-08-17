@@ -1690,6 +1690,7 @@ name = "metap"
 version = "0.1.0"
 dependencies = [
  "metap-control",
+ "metap-control-http",
  "metap-crud",
  "metap-http",
  "metap-infra",
@@ -1708,11 +1709,27 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
+ "metap-peripherals",
  "moka",
  "secrecy",
  "sqlx",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "metap-control-http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "metap-control",
+ "metap-http",
+ "serde",
+ "serde_json",
+ "sqlx",
  "uuid",
 ]
 

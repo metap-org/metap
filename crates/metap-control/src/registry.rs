@@ -3,6 +3,7 @@
 //! `Router`/`RegistryCache`.
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -11,6 +12,39 @@ use crate::tenant::{TenantId, TenantRouting, TenantStatus, TenantStrategy};
 #[async_trait]
 pub trait TenantRegistry: Send + Sync {
     async fn get(&self, tenant: TenantId) -> anyhow::Result<Option<TenantRouting>>;
+}
+
+/// One `control.tenants` row, for listing (`GET /platform/tenants`, Phase 16 Giai đoạn 3) —
+/// unlike `TenantRouting` (which `Router` needs and nothing else), this carries the columns an
+/// operator actually wants to see: `id`/`tier`/`created_at`/`trial_expires_at` alongside the
+/// same `strategy`/`status` shape `get` already parses.
+#[derive(Debug, Clone)]
+pub struct TenantSummary {
+    pub id: Uuid,
+    pub tier: String,
+    pub strategy: TenantStrategy,
+    pub status: TenantStatus,
+    pub created_at: DateTime<Utc>,
+    pub trial_expires_at: Option<DateTime<Utc>>,
+}
+
+fn parse_strategy(
+    strategy_col: &str,
+    schema_name: Option<String>,
+    dsn_secret_ref: Option<String>,
+) -> anyhow::Result<TenantStrategy> {
+    match strategy_col {
+        "schema" => Ok(TenantStrategy::Schema {
+            schema_name: schema_name
+                .ok_or_else(|| anyhow::anyhow!("control.tenants row with strategy='schema' has no schema_name"))?,
+        }),
+        "dedicated_db" => Ok(TenantStrategy::DedicatedDb {
+            dsn_secret_ref: dsn_secret_ref.ok_or_else(|| {
+                anyhow::anyhow!("control.tenants row with strategy='dedicated_db' has no dsn_secret_ref")
+            })?,
+        }),
+        other => anyhow::bail!("unknown control.tenants.strategy value: {other}"),
+    }
 }
 
 pub struct PostgresTenantRegistry {
@@ -50,6 +84,49 @@ impl PostgresTenantRegistry {
         .await?;
         Ok(())
     }
+
+    /// Every `control.tenants` row, newest first — backs `GET /platform/tenants`
+    /// (`metap-control-http`). A row whose `strategy`/`status` value doesn't parse is skipped
+    /// with a `tracing::warn!` rather than failing the whole listing — one corrupt row
+    /// shouldn't hide every other tenant from an operator trying to see what's provisioned.
+    pub async fn list(&self) -> anyhow::Result<Vec<TenantSummary>> {
+        let rows = sqlx::query(
+            "SELECT id, tier, strategy, schema_name, dsn_secret_ref, status, created_at, trial_expires_at \
+             FROM control.tenants ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut summaries = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: Uuid = row.try_get("id")?;
+            let strategy_col: String = row.try_get("strategy")?;
+            let schema_name: Option<String> = row.try_get("schema_name")?;
+            let dsn_secret_ref: Option<String> = row.try_get("dsn_secret_ref")?;
+            let status_col: String = row.try_get("status")?;
+
+            let (strategy, status) = match (
+                parse_strategy(&strategy_col, schema_name, dsn_secret_ref),
+                TenantStatus::parse(&status_col),
+            ) {
+                (Ok(s), Ok(st)) => (s, st),
+                (strategy_result, status_result) => {
+                    tracing::warn!(tenant_id = %id, ?strategy_result, ?status_result, "skipping unparseable control.tenants row");
+                    continue;
+                }
+            };
+
+            summaries.push(TenantSummary {
+                id,
+                tier: row.try_get("tier")?,
+                strategy,
+                status,
+                created_at: row.try_get("created_at")?,
+                trial_expires_at: row.try_get("trial_expires_at")?,
+            });
+        }
+        Ok(summaries)
+    }
 }
 
 #[async_trait]
@@ -70,18 +147,7 @@ impl TenantRegistry for PostgresTenantRegistry {
         let schema_name: Option<String> = row.try_get("schema_name")?;
         let dsn_secret_ref: Option<String> = row.try_get("dsn_secret_ref")?;
 
-        let strategy = match strategy_col.as_str() {
-            "schema" => TenantStrategy::Schema {
-                schema_name: schema_name
-                    .ok_or_else(|| anyhow::anyhow!("control.tenants row with strategy='schema' has no schema_name"))?,
-            },
-            "dedicated_db" => TenantStrategy::DedicatedDb {
-                dsn_secret_ref: dsn_secret_ref.ok_or_else(|| {
-                    anyhow::anyhow!("control.tenants row with strategy='dedicated_db' has no dsn_secret_ref")
-                })?,
-            },
-            other => anyhow::bail!("unknown control.tenants.strategy value: {other}"),
-        };
+        let strategy = parse_strategy(&strategy_col, schema_name, dsn_secret_ref)?;
 
         Ok(Some(TenantRouting {
             status: TenantStatus::parse(&status_col)?,

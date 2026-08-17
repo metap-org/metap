@@ -39,7 +39,7 @@ use tracing::Span;
 
 use request_id::RequestIds;
 
-pub use auth::{AdminContext, AuthContext};
+pub use auth::{AdminContext, AuthContext, PlatformAdminContext};
 pub use state::AppState;
 
 /// `extra_routes` is the extension point for optional platform capabilities that are not

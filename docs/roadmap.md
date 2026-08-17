@@ -24,7 +24,7 @@ và `docs/agile-process.md`.
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
 | 15. Shared App Shell (UI kit, real login, permission-aware components) | Đã xong |
-| 16. Multi-tenant SaaS Control Plane & Data Plane | Giai đoạn 1 (Router + `control.tenants` + refactor `CrudService`) và Giai đoạn 2 (`provision-tenant`, `DedicatedDb` hoạt động thật) xong 2026-08-16; `schema`/trial vẫn chưa có isolation thật; phần còn lại trigger-based |
+| 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); `schema`/trial vẫn chưa có isolation thật; Vault/data-plane/capabilities/FE onboarding/deployment còn lại cho Giai đoạn 4+ |
 
 ## Phase 0: Skeleton
 
@@ -715,13 +715,43 @@ chưa có policy nào (`crates/metap-permission/src/permission_service.rs:52-59`
 không tự động có policy hạn chế nào, seed "starter policy" chung chung không khả thi (thư viện
 platform không được biết business entity cụ thể).
 
-Ngoài phạm vi Giai đoạn 1+2 (còn lại cho Giai đoạn 3+): role lookup
+**Giai đoạn 3 (HTTP tenant provisioning + platform-superadmin) đã triển khai (2026-08-17)** —
+trigger đi theo hướng B đã chốt. Mô hình "platform superadmin" tái dùng 100% hạ tầng JWT/role
+sẵn có, không thêm bảng/loại claim mới:
+- `metap_control::PLATFORM_TENANT_ID` (`Uuid::nil()`, all-zero) — một tenant sentinel, **không
+  bao giờ** có row `control.tenants`, không bao giờ được `Router` route tới. Chỉ tồn tại để
+  `users`/`user_roles` (luôn ở `public`, không qua Router) có chỗ giữ danh tính platform-admin.
+- Role `"platform_admin"` (một role name như bất kỳ role nào khác, gán qua
+  `metap_peripherals::assign_role` sẵn có) cho user trong tenant sentinel đó.
+- `PlatformAdminContext` (`crates/metap-http/src/auth.rs`, cạnh `AdminContext`) — extractor mới
+  check `tenantId == PLATFORM_TENANT_ID && roles chứa "platform_admin"`, khác `AdminContext`
+  (chỉ ủy quyền trong tenant của chính người gọi).
+- `dev-tools bootstrap-platform-admin <email> <password>` (`pnpm bootstrap:platform-admin`) —
+  bootstrap con-gà-quả-trứng đầu tiên, cùng kiểu `seed-admin` đã giải quyết cho tenant admin.
+- Logic provisioning (trước đây inline trong `dev-tools`) được kéo ra
+  `metap_control::provision_schema_tenant`/`provision_dedicated_db_tenant` — CLI và HTTP giờ
+  gọi chung 2 hàm này, không thể lệch nhau (cùng lý do `mint_jwt`/`create_user` đã dùng chung
+  trước đó). `PostgresTenantRegistry::list()` (mới) hỗ trợ `GET /platform/tenants`.
+- Crate mới `crates/metap-control-http` (cùng lý do tách riêng `metap-lowcode-http` — khả năng
+  optional, `metap-http` không phụ thuộc nó): `POST /platform/tenants` (body có `strategy:
+  "schema"|"dedicated_db"`, 409 nếu `tenantId` trùng, 400 nếu thiếu field theo strategy),
+  `GET /platform/tenants`, `GET /platform/tenants/{id}`. **Chưa làm** (out of scope đợt này):
+  suspend/resume, delete/deprovision — cần thiết kế riêng cho việc dọn dữ liệu tenant.
+- Test mới: 4 test e2e `metap-control` (provisioning + `list()` + trùng `tenantId` → lỗi
+  downcast được thành unique-violation), 1 test e2e `metap-http` (`PlatformAdminContext` gate
+  qua route giả lập). `metap-control-http` không có test tự động (đúng tiền lệ
+  `metap-lowcode-http`) — verify live qua HTTP thật: bootstrap platform-admin → mint token →
+  provision tenant `schema` → 409 khi trùng id → `GET /platform/tenants`/`{id}` (kể cả 404) →
+  admin user tenant mới login được qua `POST /auth/login` → provision tenant `dedicated_db` →
+  thiếu field bắt buộc → 400 → strategy sai → 400 → token không phải platform-admin → 403 trên
+  mọi route `/platform/*`, kể cả một admin thường của tenant khác.
+
+Ngoài phạm vi Giai đoạn 1-3 (còn lại cho Giai đoạn 4+): role lookup
 (`auth.rs::get_roles_for_user`) và `PostgresPolicyStore` (RBAC/policy) vẫn dùng `AppState.pool`
 trực tiếp, không qua Router (coi RBAC/policy là bảng control-plane/platform dùng chung, không
-phải data-plane theo-tenant); Vault/dynamic creds thật; HTTP provisioning + platform-superadmin;
-template pack; data-plane evolution (§3-§7). Trigger cho các phần còn lại: quyết định thật đi
-theo hướng B ("SaaS multi-tenant là đích, per-client outsource là cách kiếm tiền trong lúc xây B"
-— xem `docs/multi-tenant-platform-design.md` §11.2) thay vì tiếp tục chỉ ship per-client.
+phải data-plane theo-tenant); Vault/dynamic creds thật; template pack; suspend/resume +
+delete/deprovision tenant; data-plane evolution (§3-§7); capabilities (§8); FE onboarding (§9);
+deployment SaaS specifics (§11).
 
 Toàn bộ thiết kế nằm ở `docs/multi-tenant-platform-design.md` (hợp nhất từ hai bản nháp brainstorm
 `adr.md`/`adr2.md` ngày 2026-08-15, đã xóa sau khi hợp nhất); các quyết định cốt lõi rút gọn dạng
