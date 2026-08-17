@@ -64,11 +64,21 @@ pub struct EntityListView {
     pub max_limit: u32,
 }
 
-/// `guard` is `#[serde(skip)]` — it never crosses the wire (matches
-/// `entity-wire-schema.ts`'s exclusion, and `MetadataCompiler::hash`'s exclusion, since
-/// `#[serde(skip)]` also drops it from the JSON `compiler::hash` serializes). `guard` is a
-/// `PolicyCondition` (`metap-permission`, the same declarative type policies use) rather than
-/// a server-side predicate function — this is why this crate depends on `metap-permission`.
+/// `guard` is a `PolicyCondition` (`metap-permission`, the same declarative type policies
+/// use) rather than a server-side predicate function — this is why this crate depends on
+/// `metap-permission`. It crosses the wire like any other field (`GET /metadata/entities` is
+/// authenticated, not admin-gated, so any tenant user can already see it — same exposure
+/// level as the `capabilities.transitions` guard *results* `CrudService::get` already
+/// computes from it). Unlike the old TS-era shape (`entity-wire-schema.ts`, where `guard` was
+/// a server-side predicate *function* and genuinely couldn't be serialized), the Rust port's
+/// guard was always data — it stayed `#[serde(skip)]` here only to mirror that old exclusion,
+/// not because anything about `PolicyCondition` prevents it. Un-skipped 2026-08-17 (Phase 11
+/// Phase B, `docs/roadmap.md`) so DB-authored (low-code) entities can carry a workflow with
+/// guards at all — `metap-lowcode`'s `LowCodeEntityDefinition` round-trips this same struct
+/// through Postgres `jsonb`, and `#[serde(skip)]` would have silently dropped every guard on
+/// every save. `metap_workflow::run_guard` was already entity-agnostic before this change
+/// (it evaluates a `PolicyCondition` against record data + context, no code-authored
+/// assumption anywhere) — this was purely a serialization gap, not a runtime one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowTransition {
@@ -76,7 +86,7 @@ pub struct WorkflowTransition {
     pub from: String,
     pub to: String,
     pub label: String,
-    #[serde(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard: Option<metap_permission::PolicyCondition>,
 }
 

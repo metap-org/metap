@@ -42,8 +42,10 @@ struct HashShape<'a> {
     workflow: Option<&'a EntityWorkflow>,
 }
 
-/// Deterministic SHA-256 over the entity's shape — `label`/`fields`/`listViews`/`workflow`
-/// (guard-free by construction, see `entity.rs`). `serde_json::Value`'s object map is a
+/// Deterministic SHA-256 over the entity's shape — `label`/`fields`/`listViews`/`workflow`,
+/// including each transition's `guard` since `entity.rs`'s `WorkflowTransition::guard` un-skip
+/// (2026-08-17) — a guard-only edit now correctly bumps the hash / `version` at
+/// `GET /metadata/entities`, where before it silently didn't. `serde_json::Value`'s object map is a
 /// `BTreeMap` by default (no `preserve_order` feature enabled anywhere in this workspace),
 /// so `to_string` on a `Value` built via `to_value` emits keys in sorted order at every
 /// level — the same guarantee `stableStringify`'s explicit `Object.keys(value).sort()`
@@ -257,5 +259,43 @@ mod tests {
         let mut changed = minimal_entity();
         changed.fields.push(field("extra", FieldKind::String));
         assert_ne!(hash(&entity).unwrap(), hash(&changed).unwrap());
+    }
+
+    #[test]
+    fn hash_changes_when_only_a_transition_guard_changes() {
+        // Regression test for `WorkflowTransition::guard`'s `#[serde(skip)]` removal
+        // (2026-08-17, Phase 11 Phase B) — before that, two entities differing only by guard
+        // content hashed identically, so a guard-only edit never bumped `version`.
+        use crate::entity::{EntityWorkflow, WorkflowTransition};
+        use metap_permission::{ConditionOp, PolicyCondition, PolicyValue};
+
+        fn entity_with_guard(guard: Option<PolicyCondition>) -> EntityDefinition {
+            let mut entity = minimal_entity();
+            entity.fields.push(field("status", FieldKind::Enum));
+            entity.fields[1].enum_values = Some(vec!["draft".to_string(), "active".to_string()]);
+            entity.workflow = Some(EntityWorkflow {
+                state_field: "status".to_string(),
+                initial_state: "draft".to_string(),
+                terminal_states: vec![],
+                transitions: vec![WorkflowTransition {
+                    action: "activate".to_string(),
+                    from: "draft".to_string(),
+                    to: "active".to_string(),
+                    label: "Activate".to_string(),
+                    guard,
+                }],
+            });
+            entity
+        }
+
+        let no_guard = entity_with_guard(None);
+        let guarded = entity_with_guard(Some(PolicyCondition::Attribute {
+            attribute: "name".to_string(),
+            op: ConditionOp::Neq,
+            value: PolicyValue::Literal {
+                literal: serde_json::json!(""),
+            },
+        }));
+        assert_ne!(hash(&no_guard).unwrap(), hash(&guarded).unwrap());
     }
 }

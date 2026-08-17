@@ -4,7 +4,7 @@ Tài liệu này chỉ theo dõi trạng thái ở cấp độ phase. Với mộ
 `docs/features/`; về ownership/process của team, xem `docs/team-charter.md`, `docs/CONTRIBUTING.md`,
 và `docs/agile-process.md`.
 
-## Trạng thái hiện tại (cập nhật 2026-08-10)
+## Trạng thái hiện tại (cập nhật 2026-08-17)
 
 | Phase | Status |
 |---|---|
@@ -16,10 +16,10 @@ và `docs/agile-process.md`.
 | 5. Workflow Engine V1 | Đã xong |
 | 6. Frontend Core | Đã xong (chưa verify trên browser) |
 | 7. Module Migration Strategy | Đã xong — 4/4 module (crm.customers, sales.orders, inventory.movements, accounting.journal) |
-| 8. Hardening | Đang làm |
-| 9. Multi-Service Evolution | Trigger-based (chưa trigger nào xảy ra) |
+| 8. Hardening | Đang làm — chỉ còn "tích hợp secret manager" (design-only 2026-08-17, chờ chốt target production); load test + backup/restore drill xong 2026-08-17 |
+| 9. Multi-Service Evolution | Trigger-based, đã rà soát lại 2026-08-17 — vẫn chưa trigger nào xảy ra, không có việc để làm |
 | 10. Monorepo, npm publish | Làm một phần |
-| 11. Low-code Platform Backbone Architecture | Đang làm — Phase A xong, Phase B bắt đầu 2026-08-12 |
+| 11. Low-code Platform Backbone Architecture | Đang làm — Phase A xong; Phase B: field builder UI + declarative workflow guard model xong 2026-08-17, còn workflow/policy editor UI + publish preview |
 | 12. Rust Core Migration | Đã quyết định; Migration Order (bước 1-9) đã xong trong `crates/`; chưa cut over sang production |
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
@@ -304,9 +304,15 @@ gap đó là thứ được đóng lại đầu tiên, tiếp theo là các mụ
 
 Mục tiêu:
 
-- ~~Tích hợp secret manager~~ — Chưa bắt đầu. Chưa có production deployment topology nào
-  được document (`docs/architectures/11-risks.md`) để nói rõ nó sẽ tích hợp với secret
-  manager nào; config hiện tại là file `.env` (phù hợp cho dev, không phải tư thế production).
+- **Tích hợp secret manager** — **Design-only 2026-08-17, chưa code.** Chưa có production
+  deployment topology nào được chốt (self-host Vault? cloud secret manager của provider nào?)
+  để biết nên tích hợp với cái gì — đây là quyết định thuộc về lúc chọn hạ tầng production
+  thật. Đã ghi lại hướng đi ở `docs/architectures/07-deployment.md`'s "Secret manager — hướng
+  thiết kế" để không phải thiết kế lại từ đầu: `metap-control::SecretStore` trait (xây cho
+  Phase 16's `DedicatedDb`) đã đúng shape, một integration thật chỉ cần thêm impl mới của cùng
+  trait; `AppConfig` (đọc `DATABASE_URL`/`RABBITMQ_URL`/JWT key path từ env) là phạm vi rộng
+  hơn còn chưa qua abstraction nào, cần mở rộng riêng. Config hiện tại vẫn là file `.env` (phù
+  hợp cho dev, không phải tư thế production).
 - ~~CORS allowlist theo environment~~ — **Đã xong**, có trước khi phase này được track:
   `CORS_ORIGINS` (`crates/metap-infra/src/config.rs`) là một env var theo từng environment,
   phân tách bằng dấu phẩy, chỉ mặc định rỗng (permissive `CorsLayer::new()`) khi không được
@@ -389,8 +395,31 @@ Mục tiêu:
   `/health`, một route chưa auth, một entity không tồn tại, và một `create` payload rỗng — xác
   nhận dòng access-log và các log quyết định của `metap-crud`/`metap-permission` đều mang
   cùng `request_id`/`trace_id` và nằm lồng trong cùng một span.
-- load test cho list/query/export — Chưa bắt đầu.
-- backup/restore drill — Chưa bắt đầu.
+- **load test cho list/query/export** — **Đã xong 2026-08-17.** Không có endpoint export riêng
+  (report/export vẫn là một `listView` thứ hai trên cùng `GET /api/:entity`, xem Phase 4 ở
+  trên) nên load test nhắm vào chính path list/query đó:
+  `apps/crm-server/scripts/load-test.sh` (script thủ công, cùng kiểu `smoke.sh`, không dùng
+  binary ngoài như k6/hey — chỉ `curl` + `xargs -P`). Chạy thật với 200 row seed +
+  3 kịch bản × 250 request/kịch bản (limit=50; filter+sort `status=active&sort=-createdAt`;
+  keyset pagination trang 2), concurrency 20, nhắm vào `crm-server` debug build + dev Postgres
+  local: **p50 12-50ms, p95 66-118ms, p99 79-137ms, 0 lỗi** trên cả 3 kịch bản. Phát hiện đáng
+  chú ý trong lúc build script: rate limiter Phase 8 (`tower_governor`, burst 300 @ 5/giây, key
+  theo peer IP) dùng chung một token bucket cho *mọi* route — chạy seed + scenario liên tiếp từ
+  cùng một IP (như một script thủ công trên một máy) sẽ tự làm cạn bucket của chính nó và gây
+  429 hàng loạt, không phải lỗi ở query path. Script tự đợi bucket refill đầy (~65s) trước mỗi
+  kịch bản để số đo là latency thật của query, không lẫn hiệu ứng rate-limit; ghi lại rõ trong
+  comment của script cho lần chạy sau. Debug build (không phải `--release`), một máy dev — số
+  liệu này là baseline tương đối, không phải benchmark production.
+- **backup/restore drill** — **Đã xong 2026-08-17.** `apps/crm-server/scripts/backup-restore-drill.sh`
+  — `pg_dump -Fc` dev Postgres (qua `docker compose exec postgres`) thật, `pg_restore` vào một
+  database tạm trên cùng container, rồi diff row-count chính xác (`count(*)`, không dùng
+  `pg_stat_user_tables.n_live_tup` — đó chỉ là ước lượng theo ANALYZE, không đáng tin cho một
+  diff ngay-sau-restore) trên toàn bộ bảng ở cả 2 schema (`public` + `control`) giữa DB gốc và
+  DB restore. Chạy thật, verify khớp tuyệt đối trên cả 13 bảng (bao gồm `control.tenants` từ
+  Phase 16). Không phải pipeline backup production (không upload off-site, không retention
+  policy, không lịch chạy định kỳ) — chưa có target triển khai production nào để wire vào,
+  cùng gap với mục secret manager bên dưới; đây là drill xác nhận cơ chế `pg_dump`/`pg_restore`
+  hoạt động đúng trên schema thật của repo, chạy tay khi cần.
 - **TS `strict` tắt cả 2 tsconfig** (`apps/crm-fe`, `packages/platform-react`) — **Đã xong
   2026-08-16.** Bật `"strict": true` + `noUncheckedIndexedAccess` ở cả 3 tsconfig
   (`apps/crm-fe/tsconfig.app.json`, `tsconfig.node.json`, `packages/platform-react/tsconfig.json`).
@@ -430,6 +459,12 @@ Các trigger và transition mà mỗi cái mở khóa:
 - **Việc split repo/package ở trên đã thực sự xảy ra** → đánh giá gRPC cho các lệnh gọi service-to-service ở nơi overhead của REST đáng kể. Việc split đã xong về mặt cấu trúc, nhưng với chỉ một process đang chạy thì chưa có lệnh gọi service-to-service thật nào để tối ưu — đánh giá việc này khi một module thứ hai thực sự được deploy độc lập (Phase 7), không phải chỉ dựa trên việc split cấu trúc.
 
 Cho đến khi một trigger xảy ra, transition của nó không được build. Việc duy nhất cần làm ngay bây giờ, trước mọi trigger: giữ tên mọi entity module mới theo domain-namespace (`<module>.<entity>`, ví dụ `crm.customers`) và không bao giờ để `QueryPlanner`/`CrudService` join dữ liệu giữa các entity khác nhau trong SQL — cả hai điều này đã đúng ngay hôm nay và không tốn gì để giữ đúng.
+
+**Rà soát lại 2026-08-17:** kiểm tra lại cả 3 trigger ở trên — vẫn chỉ có một module thật
+(`crm.customers` + 3 module demo của Phase 7, cùng chạy chung một process `crm-server`), chưa
+màn hình FE nào cần aggregate ≥2 service, và việc split repo/package vẫn chỉ là hạ tầng sẵn có
+chứ chưa có lệnh gọi service-to-service thật nào tồn tại. Không có gì để "làm nốt" ở phase này
+— cố tình build trước trigger sẽ đi ngược triết lý trigger-based của chính phase này.
 
 ## Tiêu chí thành công
 
@@ -479,7 +514,30 @@ Mục tiêu:
 
 Rà lại phần core khi expose `unique` lên UI phát hiện một gap thật (đã fix cùng đợt, 2026-08-12): `indexed`/`searchMode` (`fts`) đã được `IndexReconciler` (`crates/metap-peripherals/src/index_reconciler.rs`) reconcile đầy đủ cho cả boot lẫn hot-reload publish/rollback/toggle của low-code entity (qua `apply_registry`, `crates/metap-lowcode-http/src/lib.rs`) — không có gap. Nhưng `unique: true` trước đây chỉ được enforce dưới dạng Postgres unique index, không có gì bắt exception ở tầng `CrudService`: một write đụng constraint sẽ rớt xuống `?` và biến thành lỗi 500 thô, thay vì một validation error sạch như mọi lỗi khác của `create`/`update`. Đã fix trong `crates/metap-crud/src/crud_service.rs` — cả `create` và `update` giờ bắt `sqlx::Error::Database` có `is_unique_violation()`, map tên constraint (`uniq_records_<entity>_<field>`) ngược lại thành tên field, trả về `409 unique_violation` kèm `field_errors` đúng shape mà `GeneratedForm` (`packages/platform-react`) đã tự render cho mọi lỗi có `fieldErrors`, không cần đổi gì ở `metap-http`/frontend. Có test e2e regression mới `unique_field_violation_is_a_clean_409_not_a_500` (`crates/metap-crud/tests/crud_service_postgres.rs`), verify trên Postgres thật: duplicate create -> 409, duplicate update -> 409 và record không bị bump version.
 
-Còn lại của Phase B, chưa làm: workflow editor UI, policy editor UI, declarative workflow guard model (tiền đề cho DB-authored workflow — xem gap đã biết ở `docs/low-code-metadata-storage-design.md`), publish preview/validation report.
+**Declarative workflow guard model cho DB-authored entity — Đã xong (2026-08-17).** Gap thật
+hoá ra nhỏ hơn cách spec gốc mô tả: bản port Rust đã biến `WorkflowTransition.guard` thành dữ
+liệu khai báo (`PolicyCondition`) từ trước, nhưng field đó vẫn bị `#[serde(skip)]` chỉ để khớp
+hành vi loại trừ của bản TS cũ (khi guard còn là một hàm) — đây chính là thứ chặn DB-authored
+entity có workflow, không phải thiếu một rule engine mới. Đã bỏ `#[serde(skip)]`
+(`crates/metap-metadata/src/entity.rs`, giờ `#[serde(default, skip_serializing_if =
+"Option::is_none")]`), thêm `workflow: Option<EntityWorkflow>` vào
+`crates/metap-lowcode/src/definition.rs`'s `LowCodeEntityDefinition` (không cần migration DB —
+cột `definition` đã là `jsonb`), cập nhật `MetadataCompiler::hash`'s doc comment (giờ hash gồm
+cả guard, trước đây thì không — một guard-only edit giờ bump đúng `version`), và thêm `guard: {}`
+(loose, không hand-model lại `PolicyCondition`'s recursive untagged enum) vào
+`workflow_transition_json_schema()` (`crates/metap-metadata/src/openapi.rs`) để không lệch với
+generated types. `metap_workflow::run_guard` vốn đã entity-agnostic từ trước — không cần đổi gì
+ở `metap-crud`/`metap-workflow`. Test mới: `hash_changes_when_only_a_transition_guard_changes`
+(`metap-metadata`), `workflow_with_guard_round_trips_through_draft_and_publish`
+(`metap-lowcode`, e2e Postgres thật). Verify live qua HTTP thật (không chỉ `cargo test`): draft
+một entity `lowcode.wftest2` với workflow + guard `email neq ""` → publish → `GET
+/metadata/entities/lowcode.wftest2` phản ánh guard ngay, không restart → tạo record thiếu
+email → transition `activate` bị `409 guard_failed` → tạo record đủ email → transition thành
+công — đúng path `CrudService::transition` mà một entity code-authored dùng.
+
+Còn lại của Phase B, chưa làm: workflow editor UI (Builder UI hiện chưa có chỗ author
+transition/guard — chỉ mới field builder + list-view builder, xem Phase A ở trên), policy
+editor UI, publish preview/validation report.
 
 ## Phase 12: Rust Core Migration
 

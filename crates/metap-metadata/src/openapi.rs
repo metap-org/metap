@@ -103,6 +103,11 @@ fn workflow_transition_json_schema() -> Value {
             "from": { "type": "string" },
             "to": { "type": "string" },
             "label": { "type": "string" },
+            // PolicyCondition (metap-permission) is a recursive untagged enum (Attribute /
+            // All / Any) — same reasoning as FieldKind::Json below: left untyped rather than
+            // hand-modeling the recursion, since this generator's job is describing entity
+            // `data` shape for CRUD forms, not re-deriving metap-permission's wire format.
+            "guard": {},
         },
         "required": ["action", "from", "to", "label"],
     })

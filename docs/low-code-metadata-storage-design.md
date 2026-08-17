@@ -41,7 +41,24 @@ Mỗi sub-project có chu trình spec → plan → implementation riêng của n
 
 - **Các entity được tạo từ DB (DB-authored) cuối cùng sẽ thay thế hoàn toàn các file `*.entity.ts` được tạo từ code (code-authored)** — đây là hướng đi đã tuyên bố, không phải một kiến trúc dual-source vĩnh viễn. `crm.customers` không được migrate như một phần của Phase A; nó vẫn tiếp tục hoạt động như một code-authored entity trong khi đường DB-authored được xây dựng và chứng minh trên các entity mới trước. `MetadataRegistry` sẽ cần gộp cả hai nguồn trong một giai đoạn chuyển tiếp (thuộc phạm vi sub-project 2), nhưng việc gộp đó là scaffolding phục vụ cho quá trình migration, không phải một tính năng vĩnh viễn.
 - **Metadata toàn cục, không phải theo từng tenant, cho Phase A.** Các DB-authored entity được quản lý trên toàn platform (một định nghĩa duy nhất, hiển thị với mọi tenant), khớp với cách các code-authored entity hoạt động hiện nay. Các định nghĩa entity tùy chỉnh theo từng tenant là một thay đổi kiến trúc lớn hơn đáng kể (một `MetadataRegistry` chỉ load một lần lúc boot sẽ cần trở thành dynamic/per-request) và được hoãn lại một cách tường minh sau Phase A.
-- **Không hỗ trợ workflow cho các DB-authored entity trong Phase A.** `WorkflowTransition.guard` hiện nay là một hàm TypeScript; các DB-authored entity không có code để viết một hàm như vậy. Công việc declarative-rule của Phase B là tiền đề cho DB-authored workflow, nên hình dạng định nghĩa được lưu trữ của Phase A hoàn toàn không có key `workflow` — thậm chí không có một phiên bản không-guard, để tránh ship một tính năng nửa vời rồi phải tái định hình sau này.
+- **Không hỗ trợ workflow cho các DB-authored entity trong Phase A** (spec gốc, viết cho TS —
+  `WorkflowTransition.guard` khi đó là một hàm TypeScript; DB-authored entity không có code để
+  viết một hàm như vậy, nên hình dạng lưu trữ của Phase A hoàn toàn không có key `workflow`).
+  **Đã đóng ở Phase B (2026-08-17):** bản port Rust từ đầu đã biến `guard` thành dữ liệu khai
+  báo (`PolicyCondition`, `metap-permission` — cùng type policy dùng), nhưng field đó vẫn bị
+  `#[serde(skip)]` (chỉ để khớp hành vi loại trừ của bản TS cũ, không phải vì bản thân
+  `PolicyCondition` không serialize được) — đây chính là gap thật khiến DB-authored entity chưa
+  thể có workflow, không phải thiếu một "declarative rule engine" mới. Đã fix bằng cách bỏ
+  `#[serde(skip)]` (`crates/metap-metadata/src/entity.rs`) và thêm `workflow: Option<EntityWorkflow>`
+  vào `LowCodeEntityDefinition` (`crates/metap-lowcode/src/definition.rs`) — không cần migration
+  DB mới (`definition` đã là cột `jsonb`, chấp nhận field mới tự nhiên qua serde).
+  `metap_workflow::run_guard` vốn đã entity-agnostic từ trước (không có assumption nào về
+  code-authored), nên toàn bộ `CrudService::transition` hoạt động cho DB-authored entity mà
+  không cần đổi gì ở `metap-crud`/`metap-workflow`. Verify live qua HTTP thật: draft → publish
+  → `GET /metadata/entities` phản ánh guard ngay không cần restart → tạo record thiếu field
+  → transition bị `409 guard_failed` → tạo record đủ field → transition thành công — cùng path
+  chính xác như một entity code-authored. Còn lại của Phase B (workflow editor UI, policy
+  editor UI, publish preview/validation report) là công việc riêng, dùng nền tảng này.
 
 ## Phạm vi của sub-project này
 

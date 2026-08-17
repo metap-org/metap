@@ -1824,6 +1824,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "metap-metadata",
+ "metap-permission",
  "serde",
  "serde_json",
  "sqlx",

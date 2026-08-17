@@ -42,6 +42,7 @@ fn definition(name: &str) -> LowCodeEntityDefinition {
         label: "Test Entity".to_string(),
         fields: vec![field("name", FieldKind::String)],
         list_views: vec![],
+        workflow: None,
     }
 }
 
@@ -369,5 +370,69 @@ async fn publishing_a_disabled_entity_does_not_implicitly_reenable_it_in_the_liv
     assert!(
         outcome.registry.get_entity(&name).is_none(),
         "publishing a disabled entity must not resurrect it in the swapped-live registry"
+    );
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn workflow_with_guard_round_trips_through_draft_and_publish() {
+    // Phase B (`docs/roadmap.md`, 2026-08-17): DB-authored entities can now carry a workflow,
+    // guard included — regression test for the `WorkflowTransition::guard` `#[serde(skip)]`
+    // removal (`metap-metadata/src/entity.rs`), which previously would have silently dropped
+    // the guard on every save/load through this jsonb-backed store.
+    use metap_metadata::{EntityWorkflow, WorkflowTransition};
+    use metap_permission::{ConditionOp, PolicyCondition, PolicyValue};
+
+    let pool = pool().await;
+    let name = entity_name("workflow_guard");
+    let mut def = definition(&name);
+    def.fields.push(field("email", FieldKind::String));
+    def.fields.push(field("status", FieldKind::Enum));
+    def.fields[2].enum_values = Some(vec!["draft".to_string(), "active".to_string()]);
+    def.workflow = Some(EntityWorkflow {
+        state_field: "status".to_string(),
+        initial_state: "draft".to_string(),
+        terminal_states: vec![],
+        transitions: vec![WorkflowTransition {
+            action: "activate".to_string(),
+            from: "draft".to_string(),
+            to: "active".to_string(),
+            label: "Activate".to_string(),
+            guard: Some(PolicyCondition::Attribute {
+                attribute: "email".to_string(),
+                op: ConditionOp::Neq,
+                value: PolicyValue::Literal {
+                    literal: serde_json::json!(""),
+                },
+            }),
+        }],
+    });
+
+    metap_lowcode::save_draft(&pool, &name, &def).await.expect("save_draft");
+    let loaded = metap_lowcode::get_draft(&pool, &name)
+        .await
+        .expect("get_draft")
+        .unwrap();
+    let loaded_guard = &loaded.workflow.as_ref().unwrap().transitions[0].guard;
+    assert!(
+        matches!(loaded_guard, Some(PolicyCondition::Attribute { attribute, .. }) if attribute == "email"),
+        "guard must round-trip through the jsonb draft column, not be silently dropped"
+    );
+
+    let registry = MetadataRegistry::new();
+    let outcome = metap_lowcode::publish(&pool, &name, &registry).await.expect("publish");
+    let published_entity = outcome
+        .registry
+        .get_entity(&name)
+        .expect("published entity in registry");
+    assert!(
+        published_entity.workflow.is_some(),
+        "publish must carry workflow into the live registry"
+    );
+    assert!(
+        published_entity.workflow.as_ref().unwrap().transitions[0]
+            .guard
+            .is_some(),
+        "publish must carry the guard, not just the workflow shape"
     );
 }

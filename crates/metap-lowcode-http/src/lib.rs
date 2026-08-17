@@ -32,7 +32,7 @@ use metap_http::auth::AdminContext;
 use metap_http::error::{internal_error_response, service_error_response};
 use metap_http::AppState;
 use metap_lowcode::{LowCodeEntityDefinition, PublishError};
-use metap_metadata::{EntityField, EntityListView, MetadataRegistry};
+use metap_metadata::{EntityField, EntityListView, EntityWorkflow, MetadataRegistry};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -43,6 +43,8 @@ struct DraftBody {
     fields: Vec<EntityField>,
     #[serde(rename = "listViews", default)]
     list_views: Vec<EntityListView>,
+    #[serde(default)]
+    workflow: Option<EntityWorkflow>,
 }
 
 fn publish_error_response(err: PublishError) -> Response {
@@ -161,6 +163,7 @@ async fn save_draft(
         label: body.label,
         fields: body.fields,
         list_views: body.list_views,
+        workflow: body.workflow,
     };
     match metap_lowcode::save_draft(&state.pool, &name, &definition).await {
         Ok(()) => Json(json!({ "data": definition })).into_response(),
