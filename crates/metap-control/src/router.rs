@@ -25,6 +25,18 @@ pub enum RouterError {
     TenantProvisioning,
     /// Maps to 403 — trial expired and was never promoted to paid.
     TenantExpired,
+    /// `metap-crud::crud_service`'s `router_unavailable` maps this to 404, not 403 — an admin
+    /// deprovisioned the tenant (`docs/roadmap.md` Phase 16, `TenantStatus::Deleted`'s doc
+    /// comment). Unlike `TenantSuspended`, there is no `resume` path back from this: as far as
+    /// anything going through `Router` is concerned, the tenant no longer exists, which 404
+    /// communicates correctly and 403 would not. In practice a caller usually never reaches
+    /// that mapping for a normal authenticated route, though: `crate::auth::AuthContext`'s
+    /// role lookup *also* goes through `Router::begin` for the same tenant id and runs first
+    /// (it's an extractor, evaluated before the handler body), collapsing this into a generic
+    /// 401 "failed to resolve roles" before `CrudService` is ever reached — same as it already
+    /// does for `TenantSuspended`/`TenantExpired`, not a new inconsistency this variant
+    /// introduces.
+    TenantDeleted,
     /// A `control.tenants` row has a `schema_name` that doesn't pass the whitelist below —
     /// should never happen in practice (rows are only ever written by trusted provisioning
     /// code, never from request input), but `Router::begin` string-interpolates this value
@@ -40,6 +52,7 @@ impl std::fmt::Display for RouterError {
             RouterError::TenantMigrating => write!(f, "tenant is mid-migration, retry shortly"),
             RouterError::TenantProvisioning => write!(f, "tenant is still provisioning, retry shortly"),
             RouterError::TenantExpired => write!(f, "tenant's trial has expired"),
+            RouterError::TenantDeleted => write!(f, "tenant has been deleted"),
             RouterError::InvalidSchemaName(name) => write!(f, "invalid tenant schema name: {name:?}"),
         }
     }
@@ -139,6 +152,7 @@ impl Router {
             TenantStatus::Migrating => return Err(RouterError::TenantMigrating.into()),
             TenantStatus::Provisioning => return Err(RouterError::TenantProvisioning.into()),
             TenantStatus::Expired => return Err(RouterError::TenantExpired.into()),
+            TenantStatus::Deleted => return Err(RouterError::TenantDeleted.into()),
         }
 
         match routing.strategy {

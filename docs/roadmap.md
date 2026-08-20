@@ -25,7 +25,7 @@ và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, 
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
 | 15. Shared App Shell (UI kit, real login, permission-aware components) | Đã xong |
-| 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4: `VaultStore` (token) xong 2026-08-17, AppRole auth xong 2026-08-20, role lookup + RBAC/policy qua Router xong 2026-08-20 (đóng một bug thật — login vỡ hoàn toàn cho mọi tenant `dedicated_db` từ Giai đoạn 2); `schema`/trial vẫn chưa có isolation thật; dynamic Vault creds/data-plane/capabilities/FE onboarding/deployment còn lại |
+| 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4: `VaultStore` (token) xong 2026-08-17, AppRole auth + role lookup/RBAC qua Router (đóng bug login vỡ cho `dedicated_db`) + delete/deprovision tenant xong 2026-08-20 → 2026-08-21; `schema`/trial vẫn chưa có isolation thật; dynamic Vault creds/data-plane/capabilities/FE onboarding/deployment còn lại |
 
 ## Phase 0: Skeleton
 
@@ -884,10 +884,41 @@ việc của operator, tách biệt với credential read-only mà server tự d
 → 200, JWT hợp lệ — xác nhận `Router` resolve đúng DSN qua Vault bằng AppRole token, không phải
 token tĩnh.
 
+**Delete/deprovision tenant — Đã xong (2026-08-21).** Hai quyết định thiết kế chốt trước khi code
+(không có sẵn trong `docs/architectures/09-adr.md`, thao tác phá huỷ nên hỏi trực tiếp thay vì tự
+suy đoán): (1) `dedicated_db` — **không** tự động `DROP DATABASE` vật lý; (2) `schema` (hiện vẫn
+chung `public`, chưa có isolation thật) — **không** tự động xoá record theo `tenant_id` trong
+`records`/`users`/... dùng chung. Cả hai lý do giống nhau: một API call lỡ tay không nên xoá dữ
+liệu vĩnh viễn, và với `schema` việc xoá theo `tenant_id` trên bảng dùng chung còn rủi ro hơn
+(một bug trong `WHERE` ảnh hưởng tenant khác) khi chưa có data-plane isolation thật (§3).
+
+Implement: `TenantStatus::Deleted` (mới, `metap-control::tenant`) — terminal, không có đường quay
+lại như `Suspended`→`resume`. `Router::begin` reject với `RouterError::TenantDeleted`, map 404
+(`metap-crud`'s `router_unavailable`, `metap-http`'s `router_unavailable_response`) — 404 chứ
+không phải 403 như Suspended/Expired, vì tenant coi như không còn tồn tại nữa, không phải "tồn
+tại nhưng tạm bị cấm". `PostgresTenantRegistry::deprovision(id)` (chỉ update cột `status`,
+idempotent — gọi lại trên tenant đã xoá vẫn `true`, không lỗi). Route mới
+`DELETE /platform/tenants/{id}` (`metap-control-http`, gate `PlatformAdminContext`, 204 thành
+công / 404 nếu `id` không tồn tại) — tách riêng khỏi `PATCH .../status` (chỉ nhận
+`active`/`suspended`) vì xoá là một chiều, không phải một giá trị status như hai cái kia.
+
+Test mới: `deprovisioning_is_immediately_enforced_by_router_with_a_404_not_a_403`
+(`crates/metap-control/tests/provisioning_postgres.rs`, e2e Postgres thật — cùng pattern test
+suspend có sẵn). Verify live qua HTTP thật: provision tenant `schema` → `GET` thấy `status:
+"active"` → `DELETE` → 204 → `GET` lại vẫn 200 nhưng `status: "deleted"` (row vẫn còn, chỉ đổi
+status) → `DELETE` lần 2 vẫn 204 (idempotent) → `DELETE` một id không tồn tại → 404 → mint token
+cho tenant đã xoá, gọi `/api/crm.customers` → bị chặn thật (không phải giả lập) — dù response
+thực tế caller thấy là **401** "failed to resolve roles" từ `AuthContext`, không phải 404 từ
+`CrudService`: role lookup cũng route qua `Router::begin` (fix RBAC 2026-08-20) và chạy trước
+handler, nên với `Suspended`/`Expired`/`Deleted` một client luôn gặp 401 ở tầng auth trước khi
+tới được tầng CrudService nơi 404/403 mới thực sự map — hành vi đã có sẵn cho
+`Suspended`/`Expired` từ trước, không phải điểm không nhất quán mới do `Deleted` gây ra. `404
+tenant_not_found` từ `CrudService`'s mapping vẫn đúng và có test riêng (Router-level), chỉ là
+không phải status code một client thật nhìn thấy qua route đã-auth thông thường.
+
 Còn lại cho Giai đoạn 4+: dynamic database-credentials engine thật của Vault (rotating creds,
-không phải static DSN); AppRole auto-renewal; template pack; delete/deprovision tenant;
-data-plane evolution (§3-§7); capabilities (§8); FE onboarding (§9); deployment SaaS specifics
-(§11).
+không phải static DSN); AppRole auto-renewal; template pack; data-plane evolution (§3-§7);
+capabilities (§8); FE onboarding (§9); deployment SaaS specifics (§11).
 
 Toàn bộ thiết kế nằm ở `docs/multi-tenant-platform-design.md` (hợp nhất từ hai bản nháp brainstorm
 `adr.md`/`adr2.md` ngày 2026-08-15, đã xóa sau khi hợp nhất); các quyết định cốt lõi rút gọn dạng

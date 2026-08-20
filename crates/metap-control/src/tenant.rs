@@ -39,6 +39,17 @@ pub enum TenantStatus {
     Migrating,
     Suspended,
     Expired,
+    /// Terminal, never reversible via `PATCH /platform/tenants/{id}/status` the way `Suspended`
+    /// is via `resume` (`docs/roadmap.md` Phase 16, deprovisioning — 2026-08-21). Set only by
+    /// `DELETE /platform/tenants/{id}`. Deliberately does **not** drop the tenant's physical
+    /// data — a `dedicated_db` tenant's database is left alone (an operator drops it by hand
+    /// once they're sure no backup/audit need remains), and a `schema` tenant's rows in the
+    /// shared `records`/`users`/... tables are left alone too (real per-tenant purge needs
+    /// data-plane isolation — §3, not built — to be safe against a bug in a `WHERE tenant_id`
+    /// clause touching another tenant sharing the same table). This status only ever changes
+    /// what `Router::begin` does: refuse permanently, so nothing new can be written or read
+    /// through the generic execution engine for this tenant id again.
+    Deleted,
 }
 
 impl TenantStatus {
@@ -49,6 +60,7 @@ impl TenantStatus {
             TenantStatus::Migrating => "migrating",
             TenantStatus::Suspended => "suspended",
             TenantStatus::Expired => "expired",
+            TenantStatus::Deleted => "deleted",
         }
     }
 
@@ -59,6 +71,7 @@ impl TenantStatus {
             "migrating" => Ok(TenantStatus::Migrating),
             "suspended" => Ok(TenantStatus::Suspended),
             "expired" => Ok(TenantStatus::Expired),
+            "deleted" => Ok(TenantStatus::Deleted),
             other => anyhow::bail!("unknown control.tenants.status value: {other}"),
         }
     }

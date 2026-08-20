@@ -16,10 +16,11 @@
 //! [`router`] into `metap_http::build_router`'s `extra_routes` argument itself (see
 //! `apps/crm-server/src/main.rs`).
 //!
-//! **Not implemented yet, deliberately** (Phase 16 Giai đoạn 3 scope, `docs/roadmap.md`):
-//! suspend/resume (`PATCH /platform/tenants/{id}` toggling `status`) and delete/deprovision —
-//! both need a real answer for what happens to a tenant's data first, left for whenever that
-//! need is concrete rather than guessed at now.
+//! Suspend/resume (`PATCH /platform/tenants/{id}/status`) and delete/deprovision
+//! (`DELETE /platform/tenants/{id}`, added 2026-08-21) are both implemented; neither touches a
+//! tenant's actual data — see `TenantStatus::Deleted`'s doc comment (`metap-control`) for why
+//! deprovisioning stops at "nothing can route to this tenant id again" rather than also purging
+//! rows or dropping a `DedicatedDb` tenant's physical database.
 
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
@@ -199,9 +200,9 @@ struct SetTenantStatusBody {
 
 /// Suspend/resume a tenant. Enforcement already exists (`Router::begin` already rejects
 /// `Suspended` with a 403 — see `PostgresTenantRegistry::set_status`'s doc comment); this only
-/// writes the column that check reads, subject to `RegistryCache`'s existing 30s TTL. Not
-/// implemented (deliberately, Phase 16 Giai đoạn 3): delete/deprovision — needs a real answer
-/// for what happens to a suspended tenant's data first.
+/// writes the column that check reads, subject to `RegistryCache`'s existing 30s TTL.
+/// Deliberately can't set `"deleted"` through this route — see [`delete_tenant`], a separate
+/// one-way operation.
 async fn set_tenant_status(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -224,12 +225,32 @@ async fn set_tenant_status(
     }
 }
 
+/// Deprovisions a tenant (`docs/roadmap.md` Phase 16, 2026-08-21) — a one-way operation, unlike
+/// suspend (see [`set_tenant_status`]'s doc comment and `TenantStatus::Deleted`'s doc comment
+/// in `metap-control` for exactly what this does and, just as deliberately, does not do:
+/// `Router::begin` refuses the tenant permanently with a 404 from here on, but no row in
+/// `records`/`users`/... is touched and (for `DedicatedDb`) no physical database is dropped).
+/// `204` on success; `404` if `id` doesn't match any `control.tenants` row, same convention as
+/// `get_tenant`.
+async fn delete_tenant(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    PlatformAdminContext(_context): PlatformAdminContext,
+) -> Response {
+    let registry = PostgresTenantRegistry::new(state.pool.clone());
+    match registry.deprovision(id).await {
+        Ok(true) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => service_error_response(404, "tenant_not_found", None, None),
+        Err(e) => internal_error_response(e),
+    }
+}
+
 /// Merge this into `metap_http::build_router`'s `extra_routes` argument to expose the
 /// platform-tenant admin API on a running server — never merged automatically by `metap-http`
 /// itself.
 pub fn router() -> AxumRouter<AppState> {
     AxumRouter::new()
         .route("/platform/tenants", post(provision_tenant).get(list_tenants))
-        .route("/platform/tenants/{id}", get(get_tenant))
+        .route("/platform/tenants/{id}", get(get_tenant).delete(delete_tenant))
         .route("/platform/tenants/{id}/status", axum::routing::patch(set_tenant_status))
 }

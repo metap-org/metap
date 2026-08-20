@@ -210,3 +210,51 @@ async fn set_status_to_suspended_is_immediately_enforced_by_router() {
 
     cleanup(&pool, tenant_id).await;
 }
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn deprovisioning_is_immediately_enforced_by_router_with_a_404_not_a_403() {
+    // Same shape as the suspend test above, but deprovisioning is one-way and 404s (the tenant
+    // no longer exists, as far as Router is concerned) instead of suspend's 403 (exists, but
+    // temporarily forbidden and resumable).
+    let pool = connect().await;
+    let registry = PostgresTenantRegistry::new(pool.clone());
+    let tenant_id = Uuid::new_v4();
+
+    metap_control::provision_schema_tenant(&pool, &registry, tenant_id, "deprovision-test@test.local", "pass123")
+        .await
+        .expect("provision");
+
+    let updated = registry.deprovision(tenant_id).await.expect("deprovision");
+    assert!(updated);
+
+    let router = Router::new(
+        pool.clone(),
+        RegistryCache::new(Arc::new(PostgresTenantRegistry::new(pool.clone()))),
+        Arc::new(EnvStore),
+    );
+    let err = router
+        .begin(TenantId(tenant_id))
+        .await
+        .expect_err("deleted tenant must be rejected");
+    assert!(matches!(
+        err.downcast_ref::<RouterError>(),
+        Some(RouterError::TenantDeleted)
+    ));
+
+    // Idempotent: deprovisioning an already-deleted tenant is a no-op, not an error, and still
+    // reports a row was matched (`true`), same as `set_status` would for any other value.
+    let updated_again = registry.deprovision(tenant_id).await.expect("second deprovision");
+    assert!(updated_again);
+
+    let unknown = registry
+        .deprovision(Uuid::new_v4())
+        .await
+        .expect("deprovision unknown id");
+    assert!(
+        !unknown,
+        "deprovision on an unknown id must report no row updated, not error"
+    );
+
+    cleanup(&pool, tenant_id).await;
+}

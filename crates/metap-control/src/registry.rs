@@ -104,6 +104,24 @@ impl PostgresTenantRegistry {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Deprovisions a tenant — `DELETE /platform/tenants/{id}` (`metap-control-http`,
+    /// `docs/roadmap.md` Phase 16). Sets `status = 'deleted'`, same one-column write as
+    /// `set_status`, but deliberately its own method rather than one more value accepted by
+    /// `set_status`'s route: unlike `active`/`suspended`, `deleted` has no way back (see
+    /// `TenantStatus::Deleted`'s doc comment) and the route this backs uses `DELETE`, not
+    /// `PATCH`. Does **not** touch the tenant's physical data — see `TenantStatus::Deleted`'s
+    /// doc comment for why (no real per-tenant data isolation to purge safely against yet).
+    /// Idempotent: deprovisioning an already-deleted tenant is a no-op, still returns `true`.
+    /// Returns `false` (not an error) when `id` doesn't match any row, same convention as
+    /// `set_status`.
+    pub async fn deprovision(&self, id: Uuid) -> anyhow::Result<bool> {
+        let result = sqlx::query("UPDATE control.tenants SET status = 'deleted' WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Every `control.tenants` row, newest first — backs `GET /platform/tenants`
     /// (`metap-control-http`). A row whose `strategy`/`status` value doesn't parse is skipped
     /// with a `tracing::warn!` rather than failing the whole listing — one corrupt row

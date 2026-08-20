@@ -725,6 +725,7 @@ fn router_unavailable<T>(error: &anyhow::Error) -> Option<ServiceResult<T>> {
         RouterError::TenantMigrating | RouterError::TenantProvisioning => {
             Some(ServiceResult::err(503, "tenant_unavailable"))
         }
+        RouterError::TenantDeleted => Some(ServiceResult::err(404, "tenant_not_found")),
         RouterError::InvalidSchemaName(_) => None,
     }
 }

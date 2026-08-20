@@ -69,6 +69,7 @@ pub fn router_unavailable_response(err: anyhow::Error) -> Response {
         Some(metap_control::RouterError::TenantMigrating | metap_control::RouterError::TenantProvisioning) => {
             service_error_response(503, "tenant_unavailable", None, None)
         }
+        Some(metap_control::RouterError::TenantDeleted) => service_error_response(404, "tenant_not_found", None, None),
         _ => internal_error_response(err),
     }
 }
