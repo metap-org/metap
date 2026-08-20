@@ -2,7 +2,8 @@
 
 Tài liệu này chỉ theo dõi trạng thái ở cấp độ phase. Với một feature nhỏ hơn một phase, xem
 `docs/features/`; về ownership/process của team, xem `docs/team-charter.md`, `docs/CONTRIBUTING.md`,
-và `docs/agile-process.md`.
+và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, xem
+`docs/frontend-checklist.md`.
 
 ## Trạng thái hiện tại (cập nhật 2026-08-17)
 

@@ -179,3 +179,30 @@ discipline hiện tại (`docs/architectures/02-constraints.md`'s "Tiến hóa t
   một tầng `variant → fields` ở tất cả các chỗ đó, không chỉ thêm một cột `variant` vào
   `records`. Trigger: một entity thật sự cần nhiều schema khác nhau trong cùng logical
   collection — chưa entity nào trong repo hôm nay cần điều này.
+
+- **Tầm nhìn application platform dài hạn (Jira/Confluence-style apps trên metadata, rồi
+  Durable Workflow Runtime kiểu Temporal/Cadence)** — ghi lại 2026-08-20 từ một brainstorm trước
+  đó bị dán nhầm vào `checklist.txt` (đã dọn khỏi file đó cùng ngày). Đào sâu hơn hai bullet đã
+  có ở trên (workflow hai chế độ, workflow visualize/BPM nhẹ), không phải ý mới độc lập:
+  - **State Machine và Workflow là hai primitive tách biệt, compose với nhau** — State Machine
+    (state/transition/guard/action) mô tả một entity đang ở đâu và được phép chuyển đi đâu;
+    Workflow (trigger/condition/activity/timer/event) mô tả một chuỗi việc có thể kéo dài, và có
+    thể vừa lắng nghe state-transition làm trigger, vừa gọi ngược lại một transition như một
+    action. Khác với `WorkflowTransition.guard` hiện tại (`crates/metap-metadata/src/entity.rs`)
+    — guard đó *là* `PolicyCondition`, tức đã là state-machine-guard, không phải một workflow
+    engine riêng; ý ở đây là thêm một lớp Workflow *phía trên* state machine đã có, không thay
+    thế nó.
+  - **Roadmap 5 level tham khảo**: (1) metadata-driven CRUD — hiện tại, xong; (2)
+    metadata-driven application (Jira/Confluence/CRM/ERP dựng chủ yếu bằng entity/field/view
+    definition, không viết CRUD riêng cho từng loại) — cần metadata mô tả thêm
+    Action/Command/Event/Condition/State/Transition/Policy/Workflow/Trigger/Job/Schedule, không
+    chỉ Entity/Field/Relation/View như hôm nay; (3) metadata-driven workflow — engine Workflow
+    nói trên; (4) durable workflow runtime (retry/timeout/timer/signal/replay/idempotency,
+    kiểu Temporal) — khác hẳn về độ khó so với `WorkflowEngine` hiện tại (chỉ atomic transition +
+    guard + audit, không có gì persist execution state giữa các bước); (5) distributed workflow
+    platform. Metap hôm nay đứng ở level 1, mới bắt đầu chạm level 2 qua Phase 11 (low-code
+    metadata).
+  - Cùng kỷ luật với mọi mục khác trong danh sách này: **không bắt đầu code level 3 trở lên**
+    (Workflow engine tách biệt State Machine, chưa nói tới durable runtime) khi chưa có feature
+    brief nêu trigger cụ thể — ví dụ một module thật sự cần một chuỗi việc dài-hạn/có thể
+    wait-for-event mà state machine transition đơn thuần không mô tả được.
