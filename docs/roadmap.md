@@ -25,7 +25,7 @@ và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, 
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
 | 15. Shared App Shell (UI kit, real login, permission-aware components) | Đã xong |
-| 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); `schema`/trial vẫn chưa có isolation thật; Vault/data-plane/capabilities/FE onboarding/deployment còn lại cho Giai đoạn 4+ |
+| 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4 bắt đầu, `VaultStore` (second `SecretStore` impl) xong 2026-08-17; `schema`/trial vẫn chưa có isolation thật; data-plane/capabilities/FE onboarding/deployment còn lại cho Giai đoạn 4+ |
 
 ## Phase 0: Skeleton
 
@@ -305,15 +305,18 @@ gap đó là thứ được đóng lại đầu tiên, tiếp theo là các mụ
 
 Mục tiêu:
 
-- **Tích hợp secret manager** — **Design-only 2026-08-17, chưa code.** Chưa có production
-  deployment topology nào được chốt (self-host Vault? cloud secret manager của provider nào?)
-  để biết nên tích hợp với cái gì — đây là quyết định thuộc về lúc chọn hạ tầng production
-  thật. Đã ghi lại hướng đi ở `docs/architectures/07-deployment.md`'s "Secret manager — hướng
-  thiết kế" để không phải thiết kế lại từ đầu: `metap-control::SecretStore` trait (xây cho
-  Phase 16's `DedicatedDb`) đã đúng shape, một integration thật chỉ cần thêm impl mới của cùng
-  trait; `AppConfig` (đọc `DATABASE_URL`/`RABBITMQ_URL`/JWT key path từ env) là phạm vi rộng
-  hơn còn chưa qua abstraction nào, cần mở rộng riêng. Config hiện tại vẫn là file `.env` (phù
-  hợp cho dev, không phải tư thế production).
+- **Tích hợp secret manager** — **Vault impl xong 2026-08-17** (`metap-control::VaultStore`, xem
+  Phase 16 Giai đoạn 4), đúng theo hướng thiết kế đã ghi trước đó ở
+  `docs/architectures/07-deployment.md`'s "Secret manager — hướng thiết kế":
+  `metap-control::SecretStore` trait (xây cho Phase 16's `DedicatedDb`) chỉ cần thêm một impl
+  mới của cùng trait, không phải thiết kế lại. Chỉ mới bao phủ `dsn_secret_ref` của
+  `DedicatedDb` (Vault token auth, static KV v2 — không phải AppRole, không phải dynamic
+  database-credentials engine, cả hai vẫn deferred tới khi có trigger production thật).
+  `AppConfig` (đọc `DATABASE_URL`/`RABBITMQ_URL`/JWT key path từ env) là phạm vi rộng hơn còn
+  chưa qua abstraction nào, cần mở rộng riêng — config hiện tại vẫn là file `.env` (phù hợp cho
+  dev, không phải tư thế production). Vẫn chưa có production deployment topology nào được chốt
+  (cloud secret manager của provider nào, nếu không self-host Vault) — quyết định đó vẫn thuộc
+  về lúc chọn hạ tầng production thật, không chặn phần đã làm ở trên.
 - ~~CORS allowlist theo environment~~ — **Đã xong**, có trước khi phase này được track:
   `CORS_ORIGINS` (`crates/metap-infra/src/config.rs`) là một env var theo từng environment,
   phân tách bằng dấu phẩy, chỉ mặc định rỗng (permissive `CorsLayer::new()`) khi không được
@@ -758,12 +761,28 @@ sẵn có, không thêm bảng/loại claim mới:
   tồn tại → 404 → resume → hoạt động lại → token không phải platform-admin → 403 trên mọi route
   `/platform/*`, kể cả một admin thường của tenant khác.
 
-Ngoài phạm vi Giai đoạn 1-3 (còn lại cho Giai đoạn 4+): role lookup
+**Giai đoạn 4 (Vault) — bắt đầu, `VaultStore` đã xong (2026-08-17).** `crates/metap-control::VaultStore`
+— second `SecretStore` impl cạnh `EnvStore` — static KV v2 secret qua HTTP API của Vault (crate
+`vaultrs`), token auth (`VAULT_TOKEN`), không phải AppRole, không phải dynamic database-credentials
+engine của Vault (cả hai đều là gap thật, cố tình để lại tới khi có một production deployment
+target thật sự cần — `DbCreds::expires_at` vẫn luôn `None`, giống `EnvStore`). Lựa chọn store nào
+(`EnvStore` hay `VaultStore`) giờ chuyển lên composition root (`apps/crm-server/src/main.rs`,
+`AppState::new` nhận `secret_store: Arc<dyn SecretStore>` thay vì tự build `EnvStore` bên trong) —
+hành vi mặc định không đổi: vẫn `EnvStore` trừ khi `VAULT_ADDR`/`VAULT_TOKEN` (`metap-infra`'s
+`AppConfig`) được set, nên không downstream project nào bị ép chạy Vault container để dev bình
+thường. `dev-tools vault-put-dsn <dsnSecretRef> <dsn>` (`pnpm`-equivalent chưa thêm) ghi DSN vào
+Vault cho một tenant `dedicated_db` — đối trọng Vault-backed của bước "set env var" mà
+`provision-tenant` vẫn in ra khi dùng `EnvStore`. `docker-compose.yml` có thêm service `vault` (dev
+mode, fixed root token) — opt-in, không nằm trong stack mặc định `docker compose up -d postgres
+rabbitmq`. Test: 3 e2e (`crates/metap-control/tests/vault_store.rs`, `--ignored`, cần một dev Vault
+sống). Đóng lại luôn phần "Design-only, chưa code" mà Phase 8's bullet secret manager từng ghi.
+
+Ngoài phạm vi Giai đoạn 1-3 (còn lại cho Giai đoạn 4+ sau `VaultStore`): role lookup
 (`auth.rs::get_roles_for_user`) và `PostgresPolicyStore` (RBAC/policy) vẫn dùng `AppState.pool`
 trực tiếp, không qua Router (coi RBAC/policy là bảng control-plane/platform dùng chung, không
-phải data-plane theo-tenant); Vault/dynamic creds thật; template pack; delete/deprovision
-tenant; data-plane evolution (§3-§7); capabilities (§8); FE onboarding (§9); deployment SaaS
-specifics (§11).
+phải data-plane theo-tenant); AppRole/dynamic creds thật của Vault; template pack;
+delete/deprovision tenant; data-plane evolution (§3-§7); capabilities (§8); FE onboarding (§9);
+deployment SaaS specifics (§11).
 
 Toàn bộ thiết kế nằm ở `docs/multi-tenant-platform-design.md` (hợp nhất từ hai bản nháp brainstorm
 `adr.md`/`adr2.md` ngày 2026-08-15, đã xóa sau khi hợp nhất); các quyết định cốt lõi rút gọn dạng
