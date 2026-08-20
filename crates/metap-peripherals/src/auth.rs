@@ -17,7 +17,7 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use argon2::Argon2;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::Serialize;
-use sqlx::{PgPool, Row};
+use sqlx::{PgExecutor, Row};
 use uuid::Uuid;
 
 /// `iss`/`aud` claim values every token this repo mints carries, and the only values
@@ -55,7 +55,12 @@ fn dummy_hash() -> &'static str {
     HASH.get_or_init(|| hash_password("dummy-password-for-timing-safety").expect("hashing a fixed string cannot fail"))
 }
 
-pub async fn create_user(pool: &PgPool, tenant_id: Uuid, email: &str, password: &str) -> anyhow::Result<AuthUser> {
+pub async fn create_user<'e>(
+    executor: impl PgExecutor<'e>,
+    tenant_id: Uuid,
+    email: &str,
+    password: &str,
+) -> anyhow::Result<AuthUser> {
     let password_hash = hash_password(password)?;
     let row = sqlx::query(
         "INSERT INTO users (tenant_id, email, password_hash) VALUES ($1, $2, $3) \
@@ -64,7 +69,7 @@ pub async fn create_user(pool: &PgPool, tenant_id: Uuid, email: &str, password: 
     .bind(tenant_id)
     .bind(email)
     .bind(password_hash)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
     Ok(AuthUser {
         id: row.try_get("id")?,
@@ -75,10 +80,20 @@ pub async fn create_user(pool: &PgPool, tenant_id: Uuid, email: &str, password: 
 
 /// `Ok(None)` for either "no user with this email" or "wrong password" — deliberately not
 /// distinguished, so a caller can't use this to enumerate registered emails.
-pub async fn verify_credentials(pool: &PgPool, email: &str, password: &str) -> anyhow::Result<Option<AuthUser>> {
+///
+/// Generic over `executor` (`docs/roadmap.md` Phase 16 gap, closed 2026-08-20) so
+/// `POST /auth/login` can run this against a `Router::begin(tenantId)`-opened transaction when
+/// the caller supplies a `tenantId` — required for a `DedicatedDb`-strategy tenant, whose
+/// `users` table lives only in that tenant's own database, never in the shared control-plane
+/// pool this used to be pinned to.
+pub async fn verify_credentials<'e>(
+    executor: impl PgExecutor<'e>,
+    email: &str,
+    password: &str,
+) -> anyhow::Result<Option<AuthUser>> {
     let row = sqlx::query("SELECT id, tenant_id, email, password_hash FROM users WHERE email = $1")
         .bind(email)
-        .fetch_optional(pool)
+        .fetch_optional(executor)
         .await?;
 
     let Some(row) = row else {

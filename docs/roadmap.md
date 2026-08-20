@@ -20,12 +20,12 @@ và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, 
 | 8. Hardening | Đang làm — chỉ còn "tích hợp secret manager" (design-only 2026-08-17, chờ chốt target production); load test + backup/restore drill xong 2026-08-17 |
 | 9. Multi-Service Evolution | Trigger-based, đã rà soát lại 2026-08-17 — vẫn chưa trigger nào xảy ra, không có việc để làm |
 | 10. Monorepo, npm publish | Làm một phần |
-| 11. Low-code Platform Backbone Architecture | Phase A + Phase B xong 2026-08-17 (Phase B's "policy editor UI" hoá ra đã có sẵn từ Phase 15); Phase C chưa bắt đầu |
+| 11. Low-code Platform Backbone Architecture | Phase A + Phase B xong 2026-08-17 (Phase B's "policy editor UI" hoá ra đã có sẵn từ Phase 15); Phase C bắt đầu 2026-08-20 — metadata audit log xong, phần còn lại (approval workflow, schema isolation, migration impact check, import/export) chưa làm |
 | 12. Rust Core Migration | Đã quyết định; Migration Order (bước 1-9) đã xong trong `crates/`; chưa cut over sang production |
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
 | 15. Shared App Shell (UI kit, real login, permission-aware components) | Đã xong |
-| 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4 bắt đầu, `VaultStore` (second `SecretStore` impl) xong 2026-08-17; `schema`/trial vẫn chưa có isolation thật; data-plane/capabilities/FE onboarding/deployment còn lại cho Giai đoạn 4+ |
+| 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4: `VaultStore` xong 2026-08-17, role lookup + RBAC/policy qua Router xong 2026-08-20 (đóng một bug thật — login vỡ hoàn toàn cho mọi tenant `dedicated_db` từ Giai đoạn 2); `schema`/trial vẫn chưa có isolation thật; data-plane/capabilities/FE onboarding/deployment còn lại |
 
 ## Phase 0: Skeleton
 
@@ -581,6 +581,30 @@ version vẫn là 1; draft với dangling reference → 422 `lowcode_validation_
 
 Phase 11 Phase B coi như xong tất cả các mục đã liệt kê.
 
+**Phase C: Củng cố Platform cho việc sử dụng Low-code thực tế — bắt đầu 2026-08-20.** Deliverable
+đầu tiên, "audit log cho metadata" (`docs/low-code-platform-v1.md`'s Phase C), **đã xong**:
+migration mới `crates/migrations/0013_low_code_metadata_audit.sql`
+(`low_code_metadata_audit_events` — entity_name/action/actor_user_id/actor_tenant_id/
+version_number/restored_from_version/occurred_at, index theo `(entity_name, occurred_at)`), module
+mới `crates/metap-lowcode::audit` (`record`/`list_for_entity`). **Cố tình không nằm trong cùng
+transaction** với `store.rs`'s `save_draft`/`set_enabled`/`publish`/`rollback` — 4 hàm đó đã có
+~40 call site trực tiếp trong `crates/metap-lowcode/tests/store.rs`, nên thay đổi signature để
+luồn thêm actor qua sẽ là một diff cơ học lớn cho một tính năng governance/observability;
+`crates/metap-lowcode-http`'s handler (vốn đã giữ `RequestContext` từ `AdminContext` — trước đây
+bind rồi bỏ qua dưới tên `_context`) gọi `audit::record` ngay sau khi `store.rs`'s call thành công.
+Best-effort: một lỗi ghi audit event bị log rồi nuốt (`tracing::warn!`), không bao giờ biến một
+draft/publish/rollback/enable-toggle đang thành công thành lỗi HTTP — chấp nhận mất một audit
+event nếu crash đúng khoảnh khắc giữa 2 write, phù hợp cho "khả năng quan sát vận hành", không
+phải một tamper-evident compliance log. Route mới `GET
+/admin/lowcode/entities/{name}/audit` (gate `AdminContext`, giống mọi route khác của crate này).
+Verify live qua HTTP thật (không chỉ build/clippy sạch): draft → publish → disable một entity mới
+→ `GET .../audit` trả đúng 3 event `draft_saved`/`published`/`disabled`, đúng thứ tự mới nhất
+trước, đúng `actorUserId`/`actorTenantId`/`versionNumber`.
+
+Các deliverable còn lại của Phase C (publish approval workflow, quy tắc cô lập schema cấp tenant,
+kiểm tra tác động migration cho thay đổi phá hủy, operational visibility rộng hơn audit log đơn
+lẻ, import/export định nghĩa app) — chưa bắt đầu.
+
 ## Phase 12: Rust Core Migration
 
 **Trạng thái: Đã quyết định, Migration Order đã hoàn tất, chưa deploy.** `packages/core`
@@ -777,12 +801,69 @@ mode, fixed root token) — opt-in, không nằm trong stack mặc định `dock
 rabbitmq`. Test: 3 e2e (`crates/metap-control/tests/vault_store.rs`, `--ignored`, cần một dev Vault
 sống). Đóng lại luôn phần "Design-only, chưa code" mà Phase 8's bullet secret manager từng ghi.
 
-Ngoài phạm vi Giai đoạn 1-3 (còn lại cho Giai đoạn 4+ sau `VaultStore`): role lookup
-(`auth.rs::get_roles_for_user`) và `PostgresPolicyStore` (RBAC/policy) vẫn dùng `AppState.pool`
-trực tiếp, không qua Router (coi RBAC/policy là bảng control-plane/platform dùng chung, không
-phải data-plane theo-tenant); AppRole/dynamic creds thật của Vault; template pack;
-delete/deprovision tenant; data-plane evolution (§3-§7); capabilities (§8); FE onboarding (§9);
-deployment SaaS specifics (§11).
+**Role lookup + RBAC/policy qua Router — Đã xong (2026-08-20), đóng một bug thật, không chỉ một
+gap kiến trúc.** Rà soát lại roadmap phát hiện dòng "role lookup và `PostgresPolicyStore` vẫn
+dùng `AppState.pool` trực tiếp" phía trên **sai lý do**: đây không phải RBAC/policy là bảng
+control-plane dùng chung an toàn để bỏ qua Router — `provision_dedicated_db_tenant` chạy toàn bộ
+`crates/migrations/*.sql` (gồm `users`/`user_roles`/`policies`) lên DB riêng của tenant, nên với
+một tenant `dedicated_db` các bảng này **chỉ tồn tại trong DB riêng đó**, không bao giờ có trong
+pool control-plane dùng chung. Verify trực tiếp (không chỉ đọc code): provision một tenant
+`dedicated_db` thật qua `POST /platform/tenants` → admin user được tạo đúng trong DB riêng
+(query xác nhận) → `POST /auth/login` với đúng email/password đó → **`401 invalid_credentials`**,
+vì `verify_credentials` query nhầm pool chung. Kết luận: **toàn bộ tier `dedicated_db`** (Phase 16
+Giai đoạn 2, 2026-08-16) **không ai login được** kể từ khi ship — không phải RBAC lỏng, mà auth
+hỏng hoàn toàn; không bị phát hiện trước đó vì narrative verify của Giai đoạn 3 chỉ test login
+cho tenant `schema`.
+
+Đã fix toàn bộ, không phải patch một phần:
+- `metap_peripherals::role_assignment` (`get_roles_for_user`/`assign_role`/`revoke_role`/
+  `list_users`) và `metap_peripherals::auth` (`verify_credentials`/`create_user`) đổi từ
+  `pool: &PgPool` sang generic `impl PgExecutor<'e>` (cùng pattern `metap-crud::crud_service`'s
+  `fetch_existing` đã dùng) — vừa chạy được với một `&PgPool` trần (provisioning, trước khi
+  `control.tenants` row tồn tại nên Router chưa route được), vừa chạy được với một
+  `Router::begin`-transaction (mọi call site còn lại).
+- `PostgresPolicyStore` **chuyển từ `metap-permission` sang sống trong `metap-control`**
+  (`crates/metap-control/src/policy_store.rs`) — lý do thuần dependency-cycle, không phải
+  ranh giới thiết kế mới: `metap-metadata -> metap-permission`, `metap-peripherals ->
+  metap-metadata`, `metap-control -> metap-peripherals`; `metap-permission -> metap-control`
+  (để với tới `Router`) sẽ khép vòng lặp đó. Trait `PolicyStore` vẫn ở `metap-permission`
+  (`row_from_sql` được đổi `pub` để impl bên `metap-control` tái dùng); mọi method của trait đã
+  sẵn nhận `tenant_id: Uuid` nên không cần đổi signature, chỉ đổi phần lưu trữ — mỗi method giờ
+  tự `router.begin(tenant_id.into())` rồi commit.
+- `AppState` (`metap-http`) có thêm field `router: Router` public; `AppState::new` nhận
+  `router: Router` thay vì tự build từ `secret_store` — `Router` giờ được build một lần ở
+  composition root (`apps/crm-server/src/main.rs`) và chia sẻ cho cả `PostgresPolicyStore::new`
+  lẫn `AppState`/`CrudService`, thay vì hai `Router`/`RegistryCache` độc lập.
+- `AuthContext` (`crate::auth`, mọi request đã auth) route role lookup qua
+  `state.router.begin(tenant_id)` — `PLATFORM_TENANT_ID` (sentinel, không bao giờ có
+  `control.tenants` row) tự động rơi vào fallback "unregistered tenant → public schema" sẵn có
+  của `Router::begin`, đúng nơi `users`/`user_roles` của nó thật sự nằm, không cần
+  special-case.
+- `POST /auth/login` thêm field **tuỳ chọn** `tenantId` vào body. Có `tenantId` → route qua
+  `Router::begin(tenantId)` (bắt buộc với `dedicated_db`, vì `users` không nằm ở pool chung).
+  Không có `tenantId` → giữ nguyên hành vi cũ (query pool chung theo email global) — đúng mặc
+  định cho tenant `schema` (hiện vẫn dùng chung `public`, chưa có isolation thật, nên email vẫn
+  là khoá tra cứu duy nhất khả dụng cho nhóm này). Không phải breaking change cho flow hiện có,
+  chỉ thêm khả năng mới.
+- `/admin/users`, `/admin/users/{id}/roles[/{role}]` (`routes/admin.rs`) route qua Router;
+  `create_user` giờ chạy insert user + mọi role assignment trong **một** transaction thay vì một
+  connection mỗi lệnh gọi — tiện thể đóng luôn một gap atomicity có sẵn từ trước (một role
+  assignment fail giữa chừng từng để lại user đã tạo nhưng chỉ có một phần role, không cách nào
+  biết role nào fail).
+- `templates/metap-app` (main.rs + tests/http_server.rs) cập nhật theo cùng shape — verify bằng
+  `cargo generate` một project thật (không nằm trong workspace nên `cargo check` gốc không tự
+  bắt được) rồi trỏ dependency `metap` sang path local, `cargo check --tests` sạch.
+
+Verify: toàn bộ test suite hiện có (`cargo test --workspace` + `-- --ignored` trên Postgres/
+RabbitMQ/Vault thật) pass không đổi, cộng test mới cho template. Verify live riêng cho đúng bug
+gốc: provision lại tenant `dedicated_db` → `POST /auth/login` **kèm** `tenantId` → 200, JWT hợp
+lệ → `GET /auth/me` trả đúng `roles: ["admin"]` (role lookup qua Router hoạt động) →
+`GET /admin/users` liệt kê đúng user của tenant đó → `POST /admin/policies` tạo policy thành
+công — cả bốn đều chạm đúng DB riêng của tenant, không phải pool chung.
+
+Còn lại cho Giai đoạn 4+: AppRole/dynamic creds thật của Vault; template pack; delete/deprovision
+tenant; data-plane evolution (§3-§7); capabilities (§8); FE onboarding (§9); deployment SaaS
+specifics (§11).
 
 Toàn bộ thiết kế nằm ở `docs/multi-tenant-platform-design.md` (hợp nhất từ hai bản nháp brainstorm
 `adr.md`/`adr2.md` ngày 2026-08-15, đã xóa sau khi hợp nhất); các quyết định cốt lõi rút gọn dạng

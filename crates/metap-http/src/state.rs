@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
-use metap_control::{PostgresTenantRegistry, RegistryCache, Router, SecretStore};
+use metap_control::Router;
 use metap_crud::CrudService;
 use metap_metadata::MetadataRegistry;
 use metap_permission::PermissionService;
@@ -11,6 +11,16 @@ use sqlx::PgPool;
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
+    /// The multi-tenant seam (`docs/multi-tenant-platform-design.md` §2.2) — every tenant-scoped
+    /// query goes through `router.begin(tenant)`, never `pool` directly, so a `DedicatedDb`-
+    /// strategy tenant's data (which may live in a completely different physical database) is
+    /// reached correctly. `crud` already holds a private clone of this same `Router` (see
+    /// `CrudService::new` below); this field exists so callers *outside* `CrudService` — the
+    /// `AuthContext`/`AdminContext` extractors (`crate::auth`) and `/auth/login`,
+    /// `/admin/users*` handlers — can reach it too, closing the gap `docs/roadmap.md` Phase 16
+    /// tracked ("role lookup và `PostgresPolicyStore` vẫn dùng `AppState.pool` trực tiếp,
+    /// không qua Router").
+    pub router: Router,
     /// Code-authored entities only (`apps/crm-server/src/entities/*.rs`), fixed after boot —
     /// never touched by a DB-authored publish/rollback. Used to reject a DB-authored draft
     /// whose name collides with a code-authored entity (`docs/roadmap.md` Phase 11 / Phase A
@@ -32,6 +42,13 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// `router` is built by the caller (`apps/crm-server/src/main.rs`), not here — unlike
+    /// before Phase 16's role-lookup/`PostgresPolicyStore` fix (2026-08-20), the composition
+    /// root now needs the same `Router` instance for two things built *before* `AppState::new`
+    /// runs (`PostgresPolicyStore::new(router.clone())`, wrapped into the `permissions` param
+    /// below) as well as for this state — building it internally here, as it used to, would
+    /// mean two different `Router`s (each with their own `RegistryCache`, defeating the point
+    /// of sharing the tenant-lookup cache across every request path).
     pub fn new(
         pool: PgPool,
         metadata_base: Arc<MetadataRegistry>,
@@ -39,20 +56,12 @@ impl AppState {
         permissions: Arc<PermissionService>,
         jwt_decoding_key: DecodingKey,
         jwt_encoding_key_pem: String,
-        secret_store: Arc<dyn SecretStore>,
+        router: Router,
     ) -> Self {
-        // `Router` (`metap-control`, `docs/multi-tenant-platform-design.md` §2.2) is built here,
-        // not passed in — same pattern `CrudService` itself already follows below — so
-        // `apps/crm-server/src/main.rs` doesn't need to know about it. It wraps the same
-        // `pool.clone()`, not a second physical pool. `secret_store` (which `SecretStore` impl
-        // — `EnvStore` or `VaultStore`, Phase 16 Giai đoạn 4) is the caller's call, not this
-        // constructor's — same "wiring inline at the composition root" pattern as everything
-        // else in `apps/crm-server/src/main.rs`.
-        let tenant_registry = Arc::new(PostgresTenantRegistry::new(pool.clone()));
-        let router = Router::new(pool.clone(), RegistryCache::new(tenant_registry), secret_store);
-        let crud = Arc::new(CrudService::new(router, metadata.clone(), permissions.clone()));
+        let crud = Arc::new(CrudService::new(router.clone(), metadata.clone(), permissions.clone()));
         Self {
             pool,
+            router,
             metadata_base,
             metadata,
             permissions,

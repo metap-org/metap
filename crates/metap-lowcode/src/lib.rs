@@ -1,7 +1,9 @@
+pub mod audit;
 pub mod definition;
 pub mod error;
 pub mod store;
 
+pub use audit::{AuditAction, AuditActor, AuditEvent, AuditVersionInfo};
 pub use definition::LowCodeEntityDefinition;
 pub use error::PublishError;
 pub use store::{

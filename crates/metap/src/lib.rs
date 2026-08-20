@@ -30,6 +30,7 @@ pub mod prelude {
     //! them as separate items and refuses to glob-import both under one name) — only one
     //! wins the unqualified name here; reach the others through their namespaced module
     //! (`metap::permission::JsonObject`, `metap::workflow::JsonObject`).
+    pub use metap_control::PostgresPolicyStore;
     pub use metap_crud::{CrudService, JsonObject, RecordCapabilities, RecordDto};
     pub use metap_http::{build_router, AdminContext, AppState, AuthContext, PlatformAdminContext};
     pub use metap_infra::{connect_db, load_config, AppConfig};
@@ -37,5 +38,5 @@ pub mod prelude {
         EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, MetadataRegistry, WorkflowTransition,
     };
     pub use metap_peripherals::{check_metadata_drift, reconcile_indexes};
-    pub use metap_permission::{PermissionService, PolicyCondition, PostgresPolicyStore};
+    pub use metap_permission::{PermissionService, PolicyCondition};
 }

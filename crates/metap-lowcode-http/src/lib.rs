@@ -31,6 +31,7 @@ use axum::{Json, Router};
 use metap_http::auth::AdminContext;
 use metap_http::error::{internal_error_response, service_error_response};
 use metap_http::AppState;
+use metap_lowcode::audit::{self, AuditAction, AuditActor, AuditVersionInfo};
 use metap_lowcode::{LowCodeEntityDefinition, PublishError};
 use metap_metadata::{EntityField, EntityListView, EntityWorkflow, MetadataRegistry};
 use serde::Deserialize;
@@ -131,7 +132,7 @@ struct SetEnabledBody {
 async fn set_enabled(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    AdminContext(_context): AdminContext,
+    AdminContext(context): AdminContext,
     Json(body): Json<SetEnabledBody>,
 ) -> Response {
     if let Err(e) = metap_lowcode::set_enabled(&state.pool, &name, body.enabled).await {
@@ -149,13 +150,29 @@ async fn set_enabled(
         Err(e) => return internal_error_response(e.into()),
     };
     apply_registry(&state, registry).await;
+    let action = if body.enabled {
+        AuditAction::Enabled
+    } else {
+        AuditAction::Disabled
+    };
+    audit::record(
+        &state.pool,
+        &name,
+        action,
+        &AuditActor {
+            user_id: context.user_id.clone(),
+            tenant_id: context.tenant_id.clone(),
+        },
+        AuditVersionInfo::default(),
+    )
+    .await;
     Json(json!({ "data": { "name": name, "enabled": body.enabled } })).into_response()
 }
 
 async fn save_draft(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    AdminContext(_context): AdminContext,
+    AdminContext(context): AdminContext,
     Json(body): Json<DraftBody>,
 ) -> Response {
     let definition = LowCodeEntityDefinition {
@@ -166,7 +183,20 @@ async fn save_draft(
         workflow: body.workflow,
     };
     match metap_lowcode::save_draft(&state.pool, &name, &definition).await {
-        Ok(()) => Json(json!({ "data": definition })).into_response(),
+        Ok(()) => {
+            audit::record(
+                &state.pool,
+                &name,
+                AuditAction::DraftSaved,
+                &AuditActor {
+                    user_id: context.user_id.clone(),
+                    tenant_id: context.tenant_id.clone(),
+                },
+                AuditVersionInfo::default(),
+            )
+            .await;
+            Json(json!({ "data": definition })).into_response()
+        }
         Err(e) => publish_error_response(e),
     }
 }
@@ -186,12 +216,26 @@ async fn get_draft(
 async fn publish(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    AdminContext(_context): AdminContext,
+    AdminContext(context): AdminContext,
 ) -> Response {
     match metap_lowcode::publish(&state.pool, &name, &state.metadata_base).await {
         Ok(outcome) => {
             let version_number = outcome.version_number;
             apply_registry(&state, outcome.registry).await;
+            audit::record(
+                &state.pool,
+                &name,
+                AuditAction::Published,
+                &AuditActor {
+                    user_id: context.user_id.clone(),
+                    tenant_id: context.tenant_id.clone(),
+                },
+                AuditVersionInfo {
+                    version_number: Some(version_number),
+                    restored_from_version: None,
+                },
+            )
+            .await;
             Json(json!({ "data": { "versionNumber": version_number } })).into_response()
         }
         Err(e) => publish_error_response(e),
@@ -223,13 +267,27 @@ async fn preview_publish(
 async fn rollback(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    AdminContext(_context): AdminContext,
+    AdminContext(context): AdminContext,
     Json(body): Json<RollbackBody>,
 ) -> Response {
     match metap_lowcode::rollback(&state.pool, &name, body.to_version_number, &state.metadata_base).await {
         Ok(outcome) => {
             let version_number = outcome.version_number;
             apply_registry(&state, outcome.registry).await;
+            audit::record(
+                &state.pool,
+                &name,
+                AuditAction::RolledBack,
+                &AuditActor {
+                    user_id: context.user_id.clone(),
+                    tenant_id: context.tenant_id.clone(),
+                },
+                AuditVersionInfo {
+                    version_number: Some(version_number),
+                    restored_from_version: Some(body.to_version_number),
+                },
+            )
+            .await;
             Json(json!({ "data": { "versionNumber": version_number } })).into_response()
         }
         Err(e) => publish_error_response(e),
@@ -279,6 +337,34 @@ async fn list_versions(
     }
 }
 
+/// `docs/roadmap.md` Phase 11 Phase C's "audit log cho metadata" — who/when
+/// draft-saved/published/rolled-back/enabled/disabled this entity, newest first.
+async fn list_audit_events(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    AdminContext(_context): AdminContext,
+) -> Response {
+    match audit::list_for_entity(&state.pool, &name).await {
+        Ok(events) => {
+            let data: Vec<_> = events
+                .into_iter()
+                .map(|e| {
+                    json!({
+                        "action": e.action,
+                        "actorUserId": e.actor_user_id,
+                        "actorTenantId": e.actor_tenant_id,
+                        "versionNumber": e.version_number,
+                        "restoredFromVersion": e.restored_from_version,
+                        "occurredAt": e.occurred_at,
+                    })
+                })
+                .collect();
+            Json(json!({ "data": data })).into_response()
+        }
+        Err(e) => internal_error_response(e),
+    }
+}
+
 /// Merge this into `metap_http::build_router`'s `extra_routes` argument to expose the
 /// low-code admin API on a running server — never merged automatically by `metap-http` itself.
 pub fn router() -> Router<AppState> {
@@ -294,4 +380,5 @@ pub fn router() -> Router<AppState> {
         .route("/admin/lowcode/entities/{name}/rollback", axum::routing::post(rollback))
         .route("/admin/lowcode/entities/{name}/published", get(get_published))
         .route("/admin/lowcode/entities/{name}/versions", get(list_versions))
+        .route("/admin/lowcode/entities/{name}/audit", get(list_audit_events))
 }

@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::auth::AdminContext;
-use crate::error::{internal_error_response, service_error_response};
+use crate::error::{internal_error_response, router_unavailable_response, service_error_response};
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -33,6 +33,13 @@ struct CreateUserBody {
 /// Provisions a new local-login user (`docs/roadmap.md` Phase 15) — the admin-driven
 /// counterpart to `dev-tools create-user`'s dev-seeding path; both call
 /// `metap_peripherals::create_user`, so the two can't diverge on how a password gets hashed.
+///
+/// Runs the insert and every role assignment inside one `Router::begin(tenant_id)` transaction
+/// (`docs/roadmap.md` Phase 16 gap, closed 2026-08-20) rather than one connection per call —
+/// besides reaching the right physical database for a `DedicatedDb`-strategy tenant, this also
+/// closes a pre-existing atomicity gap: a role assignment failing partway used to leave a user
+/// row committed with only some of `body.roles` granted, with no way to tell which; now the
+/// whole request commits or rolls back together.
 async fn create_user(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -42,8 +49,12 @@ async fn create_user(
         Ok(id) => id,
         Err(e) => return internal_error_response(e),
     };
+    let mut tx = match state.router.begin(tenant_id.into()).await {
+        Ok(tx) => tx,
+        Err(e) => return router_unavailable_response(e),
+    };
 
-    let user = match metap_peripherals::create_user(&state.pool, tenant_id, &body.email, &body.password).await {
+    let user = match metap_peripherals::create_user(&mut *tx, tenant_id, &body.email, &body.password).await {
         Ok(user) => user,
         Err(e) => {
             let is_duplicate_email = e
@@ -64,9 +75,13 @@ async fn create_user(
 
     let assigned_by = context.user_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
     for role in &body.roles {
-        if let Err(e) = metap_peripherals::assign_role(&state.pool, tenant_id, user.id, role, assigned_by).await {
+        if let Err(e) = metap_peripherals::assign_role(&mut *tx, tenant_id, user.id, role, assigned_by).await {
             return internal_error_response(e);
         }
+    }
+
+    if let Err(e) = tx.commit().await {
+        return internal_error_response(e.into());
     }
 
     (
@@ -95,7 +110,17 @@ async fn list_users(State(state): State<AppState>, AdminContext(context): AdminC
         Ok(id) => id,
         Err(e) => return internal_error_response(e),
     };
-    match metap_peripherals::list_users(&state.pool, tenant_id).await {
+    let mut tx = match state.router.begin(tenant_id.into()).await {
+        Ok(tx) => tx,
+        Err(e) => return router_unavailable_response(e),
+    };
+    let result = metap_peripherals::list_users(&mut *tx, tenant_id).await;
+    if result.is_ok() {
+        if let Err(e) = tx.commit().await {
+            return internal_error_response(e.into());
+        }
+    }
+    match result {
         Ok(users) => {
             let data: Vec<Value> = users
                 .into_iter()
@@ -123,12 +148,22 @@ async fn assign_role(
         Err(e) => return internal_error_response(e),
     };
     let assigned_by = context.user_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
-    match metap_peripherals::assign_role(&state.pool, tenant_id, user_id, &body.role, assigned_by).await {
-        Ok(()) => (
-            StatusCode::CREATED,
-            Json(json!({ "data": { "userId": user_id, "role": body.role } })),
-        )
-            .into_response(),
+    let mut tx = match state.router.begin(tenant_id.into()).await {
+        Ok(tx) => tx,
+        Err(e) => return router_unavailable_response(e),
+    };
+    let result = metap_peripherals::assign_role(&mut *tx, tenant_id, user_id, &body.role, assigned_by).await;
+    match result {
+        Ok(()) => {
+            if let Err(e) = tx.commit().await {
+                return internal_error_response(e.into());
+            }
+            (
+                StatusCode::CREATED,
+                Json(json!({ "data": { "userId": user_id, "role": body.role } })),
+            )
+                .into_response()
+        }
         Err(e) => internal_error_response(e),
     }
 }
@@ -142,8 +177,17 @@ async fn revoke_role(
         Ok(id) => id,
         Err(e) => return internal_error_response(e),
     };
-    match metap_peripherals::revoke_role(&state.pool, tenant_id, user_id, &role).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+    let mut tx = match state.router.begin(tenant_id.into()).await {
+        Ok(tx) => tx,
+        Err(e) => return router_unavailable_response(e),
+    };
+    match metap_peripherals::revoke_role(&mut *tx, tenant_id, user_id, &role).await {
+        Ok(()) => {
+            if let Err(e) = tx.commit().await {
+                return internal_error_response(e.into());
+            }
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(e) => internal_error_response(e),
     }
 }

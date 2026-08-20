@@ -67,16 +67,6 @@ async fn main() -> anyhow::Result<()> {
     reconcile_indexes(&pool, &entities).await;
 
     let metadata = Arc::new(ArcSwap::new(Arc::new(runtime_registry)));
-    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
-
-    let public_key_pem = std::fs::read(&config.auth_jwt_public_key_path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_public_key_path))?;
-    let decoding_key = DecodingKey::from_rsa_pem(&public_key_pem)?;
-
-    // Needed only for POST /auth/login (metap_peripherals::mint_jwt) — crm-server issues
-    // tokens now, not just verifies them, so both halves of the keypair are load-bearing.
-    let private_key_pem = std::fs::read_to_string(&config.auth_jwt_private_key_path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_private_key_path))?;
 
     // Which `SecretStore` resolves a `DedicatedDb` tenant's DSN — decided here, not inside
     // `AppState::new`, same "wiring inline at the composition root" pattern as everything else
@@ -94,6 +84,30 @@ async fn main() -> anyhow::Result<()> {
         None => Arc::new(metap::control::EnvStore),
     };
 
+    // Built once here, not inside `AppState::new`, and shared with `PostgresPolicyStore` below
+    // (`docs/roadmap.md` Phase 16 gap, closed 2026-08-20 — role lookup and RBAC/policy storage
+    // now route through this same `Router` instead of a fixed pool, so a `DedicatedDb`-strategy
+    // tenant's `users`/`user_roles`/`policies` are reached correctly). Sharing one instance
+    // means one `RegistryCache`, not two independently-warming caches for the same
+    // `control.tenants` lookups.
+    let tenant_registry = Arc::new(metap::control::PostgresTenantRegistry::new(pool.clone()));
+    let router = metap::control::Router::new(
+        pool.clone(),
+        metap::control::RegistryCache::new(tenant_registry),
+        secret_store,
+    );
+
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(router.clone())));
+
+    let public_key_pem = std::fs::read(&config.auth_jwt_public_key_path)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_public_key_path))?;
+    let decoding_key = DecodingKey::from_rsa_pem(&public_key_pem)?;
+
+    // Needed only for POST /auth/login (metap_peripherals::mint_jwt) — crm-server issues
+    // tokens now, not just verifies them, so both halves of the keypair are load-bearing.
+    let private_key_pem = std::fs::read_to_string(&config.auth_jwt_private_key_path)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_private_key_path))?;
+
     let state = AppState::new(
         pool,
         metadata_base,
@@ -101,7 +115,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(permissions),
         decoding_key,
         private_key_pem,
-        secret_store,
+        router,
     );
     // `metap::lowcode_http::router()` is the low-code control plane's admin API
     // (`docs/roadmap.md` Phase 11 / Phase A) and `metap::control_http::router()` is the

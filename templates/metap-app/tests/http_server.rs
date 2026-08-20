@@ -112,7 +112,13 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
     let registry = Arc::new(registry);
-    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
+    let tenant_registry = Arc::new(metap::control::PostgresTenantRegistry::new(pool.clone()));
+    let test_router = metap::control::Router::new(
+        pool.clone(),
+        metap::control::RegistryCache::new(tenant_registry),
+        Arc::new(metap::control::EnvStore),
+    );
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router.clone())));
     let decoding_key = jsonwebtoken::DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
     let state = AppState::new(
         pool.clone(),
@@ -121,6 +127,7 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
         Arc::new(permissions),
         decoding_key,
         private_pem.clone(),
+        test_router,
     );
     let router = build_router(state, &[], Router::new());
 

@@ -107,7 +107,22 @@ where
         let user_id =
             Uuid::parse_str(&claims.sub).map_err(|_| AuthError::unauthorized("Token is missing required claims."))?;
 
-        let roles = get_roles_for_user(&app_state.pool, tenant_id, user_id)
+        // Routed through `Router` (`docs/roadmap.md` Phase 16 gap, closed 2026-08-20), not
+        // `app_state.pool` directly — a `DedicatedDb`-strategy tenant's `user_roles` table
+        // lives only in that tenant's own database. `PLATFORM_TENANT_ID` (the sentinel
+        // `PlatformAdminContext` checks for) is never a real `control.tenants` row by design,
+        // so `Router::begin` takes its documented unregistered-tenant fallback
+        // (`{Active, Schema("public")}`) for it — exactly where `users`/`user_roles` for that
+        // sentinel actually live, so no special-casing is needed here.
+        let mut tx = app_state
+            .router
+            .begin(tenant_id.into())
+            .await
+            .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
+        let roles = get_roles_for_user(&mut *tx, tenant_id, user_id)
+            .await
+            .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
+        tx.commit()
             .await
             .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
 

@@ -8,9 +8,10 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
+use uuid::Uuid;
 
 use crate::auth::AuthContext;
-use crate::error::{internal_error_response, service_error_response};
+use crate::error::{internal_error_response, router_unavailable_response, service_error_response};
 use crate::state::AppState;
 
 const TOKEN_TTL_SECONDS: u64 = 3600;
@@ -19,10 +20,38 @@ const TOKEN_TTL_SECONDS: u64 = 3600;
 struct LoginBody {
     email: String,
     password: String,
+    /// Optional (`docs/roadmap.md` Phase 16 gap, closed 2026-08-20) — when the caller knows
+    /// which tenant it's logging into, this routes credential verification through
+    /// `Router::begin(tenantId)`, required for a `DedicatedDb`-strategy tenant whose `users`
+    /// table lives only in that tenant's own database, never in the shared control-plane pool
+    /// the omitted-field path below still checks by email alone. Omitting it keeps today's
+    /// behavior unchanged (global-by-email lookup against the shared pool) — the right default
+    /// for `Schema`-strategy tenants, which currently all share one physical `public` schema
+    /// anyway (`docs/roadmap.md` Phase 16: "schema/trial vẫn ghim public, chưa có isolation
+    /// thật"), so email is already the only practical lookup key for them.
+    #[serde(rename = "tenantId", default)]
+    tenant_id: Option<Uuid>,
 }
 
 async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Response {
-    let user = match metap_peripherals::verify_credentials(&state.pool, &body.email, &body.password).await {
+    let verify_result = match body.tenant_id {
+        Some(tenant_id) => {
+            let mut tx = match state.router.begin(tenant_id.into()).await {
+                Ok(tx) => tx,
+                Err(e) => return router_unavailable_response(e),
+            };
+            let result = metap_peripherals::verify_credentials(&mut *tx, &body.email, &body.password).await;
+            if result.is_ok() {
+                if let Err(e) = tx.commit().await {
+                    return internal_error_response(e.into());
+                }
+            }
+            result
+        }
+        None => metap_peripherals::verify_credentials(&state.pool, &body.email, &body.password).await,
+    };
+
+    let user = match verify_result {
         Ok(Some(user)) => user,
         Ok(None) => {
             return service_error_response(401, "invalid_credentials", Some("Invalid email or password."), None)

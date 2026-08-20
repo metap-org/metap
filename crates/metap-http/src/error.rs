@@ -53,3 +53,22 @@ pub fn internal_error_response(err: anyhow::Error) -> Response {
     )
         .into_response()
 }
+
+/// Maps a `Router::begin` failure to an HTTP response — same mapping
+/// `metap-crud::crud_service`'s `router_unavailable` uses for record CRUD, reused here now that
+/// `POST /auth/login`, role lookup, and `/admin/users`/`/admin/policies` also open a
+/// `Router`-scoped transaction (`docs/roadmap.md` Phase 16 gap, closed 2026-08-20). Falls back
+/// to `internal_error_response` for anything that isn't a `RouterError` (shouldn't happen —
+/// `Router::begin` only ever fails with one) or is `InvalidSchemaName` (a corrupted
+/// `control.tenants` row, not a caller-facing condition).
+pub fn router_unavailable_response(err: anyhow::Error) -> Response {
+    match err.downcast_ref::<metap_control::RouterError>() {
+        Some(metap_control::RouterError::TenantSuspended | metap_control::RouterError::TenantExpired) => {
+            service_error_response(403, "tenant_unavailable", None, None)
+        }
+        Some(metap_control::RouterError::TenantMigrating | metap_control::RouterError::TenantProvisioning) => {
+            service_error_response(503, "tenant_unavailable", None, None)
+        }
+        _ => internal_error_response(err),
+    }
+}

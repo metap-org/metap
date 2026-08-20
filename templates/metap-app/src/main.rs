@@ -33,7 +33,20 @@ async fn main() -> anyhow::Result<()> {
     reconcile_indexes(&pool, &entities).await;
 
     let metadata = Arc::new(ArcSwap::new(metadata_base.clone()));
-    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
+
+    // `Router` (`metap::control`) is the multi-tenant seam every tenant-scoped query goes
+    // through — built once here and shared with `PostgresPolicyStore` below so both use the
+    // same `RegistryCache`. `EnvStore` here, not `VaultStore` — this starter template doesn't
+    // wire in Vault by default; add `metap::control::VaultStore` yourself if you need a
+    // `DedicatedDb`-strategy tenant's DSN to come from Vault instead of an env var.
+    let tenant_registry = Arc::new(metap::control::PostgresTenantRegistry::new(pool.clone()));
+    let router = metap::control::Router::new(
+        pool.clone(),
+        metap::control::RegistryCache::new(tenant_registry),
+        Arc::new(metap::control::EnvStore),
+    );
+
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(router.clone())));
 
     let public_key_pem = std::fs::read(&config.auth_jwt_public_key_path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_public_key_path))?;
@@ -52,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(permissions),
         decoding_key,
         private_key_pem,
+        router,
     );
     // `Router::new()` — this template doesn't wire in `metap-lowcode-http`'s DB-authored
     // entity control plane by default; a single code-authored `example_entity` is the

@@ -1789,9 +1789,11 @@ dependencies = [
  "async-trait",
  "chrono",
  "metap-peripherals",
+ "metap-permission",
  "moka",
  "secrecy",
  "serde",
+ "serde_json",
  "sqlx",
  "tokio",
  "tracing",
@@ -1926,6 +1928,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

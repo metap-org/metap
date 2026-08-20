@@ -20,6 +20,20 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+/// `docs/roadmap.md` Phase 16 gap, closed 2026-08-20: `AppState::new` now takes a `Router`
+/// (shared with `PostgresPolicyStore`) instead of building one internally from a
+/// `SecretStore`. No `control.tenants` row is ever inserted by these tests, so
+/// `Router::begin` always takes the unregistered-tenant fallback (public schema) — same
+/// behavior every route here had before this refactor.
+fn test_router(pool: PgPool) -> metap_control::Router {
+    let registry = Arc::new(metap_control::PostgresTenantRegistry::new(pool.clone()));
+    metap_control::Router::new(
+        pool,
+        metap_control::RegistryCache::new(registry),
+        Arc::new(metap_control::EnvStore),
+    )
+}
+
 fn openssl_genrsa(dir: &std::path::Path) -> (String, String) {
     let private_path = dir.join("private.pem");
     let public_path = dir.join("public.pem");
@@ -143,7 +157,9 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
     let registry = Arc::new(registry);
-    let permissions = PermissionService::new(Box::new(metap_permission::PostgresPolicyStore::new(pool.clone())));
+    let permissions = PermissionService::new(Box::new(metap_control::PostgresPolicyStore::new(test_router(
+        pool.clone(),
+    ))));
     let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
     let state = AppState::new(
         pool.clone(),
@@ -152,7 +168,7 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
         Arc::new(permissions),
         decoding_key,
         private_pem.clone(),
-        Arc::new(metap_control::EnvStore),
+        test_router(pool.clone()),
     );
     // A real origin list, not empty — exercises the `allow_credentials` +
     // explicit-origin/header CORS branch (see `lib.rs`'s doc comment on the panic this
@@ -320,18 +336,20 @@ async fn rate_limit_returns_429_once_the_burst_is_exhausted() {
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
     let registry = Arc::new(registry);
-    let permissions = PermissionService::new(Box::new(metap_permission::PostgresPolicyStore::new(pool.clone())));
+    let permissions = PermissionService::new(Box::new(metap_control::PostgresPolicyStore::new(test_router(
+        pool.clone(),
+    ))));
     let keydir = tempdir();
     let (private_pem, public_pem) = openssl_genrsa(keydir.path());
     let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
     let state = AppState::new(
-        pool,
+        pool.clone(),
         registry.clone(),
         Arc::new(ArcSwap::new(registry)),
         Arc::new(permissions),
         decoding_key,
         private_pem,
-        Arc::new(metap_control::EnvStore),
+        test_router(pool.clone()),
     );
     let router = build_router(state, &[], Router::new());
 
@@ -406,7 +424,9 @@ async fn platform_admin_context_gates_by_sentinel_tenant_and_role() {
     let (private_pem, public_pem) = openssl_genrsa(keydir.path());
 
     let registry = Arc::new(MetadataRegistry::new());
-    let permissions = PermissionService::new(Box::new(metap_permission::PostgresPolicyStore::new(pool.clone())));
+    let permissions = PermissionService::new(Box::new(metap_control::PostgresPolicyStore::new(test_router(
+        pool.clone(),
+    ))));
     let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
     let state = AppState::new(
         pool.clone(),
@@ -415,7 +435,7 @@ async fn platform_admin_context_gates_by_sentinel_tenant_and_role() {
         Arc::new(permissions),
         decoding_key,
         private_pem.clone(),
-        Arc::new(metap_control::EnvStore),
+        test_router(pool.clone()),
     );
     let router = build_router(state, &[], extra_routes);
 

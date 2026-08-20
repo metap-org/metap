@@ -13,4 +13,4 @@ pub use policy_condition::{
     PolicyValue,
 };
 pub use policy_explainer::{explain_policies, Gate, PolicyExplanation, PolicyTraceEntry};
-pub use policy_store::{ExplainOptions, PolicyRow, PolicyStore, PolicySubject, PostgresPolicyStore};
+pub use policy_store::{row_from_sql, ExplainOptions, PolicyRow, PolicyStore, PolicySubject};

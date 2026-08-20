@@ -5,11 +5,11 @@
 //! Migration Order steps 3–6 — the most important place for real, not just unit-tested,
 //! confidence.
 
+use metap_control::PostgresPolicyStore;
 use metap_crud::{CrudService, JsonObject, ServiceResult};
 use metap_metadata::{EntityDefinition, EntityField, EntityWorkflow, FieldKind, MetadataRegistry, WorkflowTransition};
 use metap_permission::{
-    ConditionOp, PermissionService, PolicyCondition, PolicyStore, PolicySubject, PolicyValue, PostgresPolicyStore,
-    RequestContext,
+    ConditionOp, PermissionService, PolicyCondition, PolicyStore, PolicySubject, PolicyValue, RequestContext,
 };
 use metap_query::ListInput;
 use serde_json::json;
@@ -195,7 +195,7 @@ async fn full_lifecycle_create_get_update_transition_delete() {
 
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
-    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
     let crud = CrudService::new(
         test_router(pool.clone()),
         std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
@@ -365,7 +365,7 @@ async fn list_returns_created_records_scoped_to_tenant() {
 
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
-    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
     let crud = CrudService::new(
         test_router(pool.clone()),
         std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
@@ -402,7 +402,7 @@ async fn non_admin_field_write_policy_is_enforced_through_create() {
 
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
-    let store = PostgresPolicyStore::new(pool.clone());
+    let store = PostgresPolicyStore::new(test_router(pool.clone()));
 
     // A "write" policy on "amount" that only sales can write, with no condition —
     // exercises the real PostgresPolicyStore -> PermissionSnapshot -> assertWritableFields
@@ -462,7 +462,7 @@ async fn unique_field_violation_is_a_clean_409_not_a_500() {
 
     let mut registry = MetadataRegistry::new();
     registry.register(unique_field_entity()).unwrap();
-    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(pool.clone())));
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
     let crud = CrudService::new(
         test_router(pool.clone()),
         std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),

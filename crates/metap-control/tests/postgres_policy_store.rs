@@ -1,26 +1,39 @@
 //! E2E test against the repo's real dev Postgres (see `CLAUDE.md`'s Commands section:
 //! `docker compose up -d postgres`). `#[ignore]`d so a plain `cargo test` (unit tests only)
 //! never touches a database — run these explicitly with `cargo test -- --ignored` (or
-//! `--include-ignored`) once the dev DB is up. Unit tests (pure logic, no DB) live in
-//! `src/*.rs`; this file is the DB-dependent counterpart, kept structurally and by-default
-//! separate from them.
+//! `--include-ignored`) once the dev DB is up.
+//!
+//! Moved here from `crates/metap-permission/tests/` (`docs/roadmap.md` Phase 16 gap, closed
+//! 2026-08-20) along with `PostgresPolicyStore` itself — the concrete impl now lives in
+//! `metap-control` (needs `Router`), so this is where its own e2e coverage belongs; the
+//! `PolicyStore` trait it implements still lives in `metap-permission`.
 
-use metap_permission::{PolicyStore, PolicySubject, PostgresPolicyStore};
+use std::sync::Arc;
+
+use metap_control::{EnvStore, PostgresPolicyStore, PostgresTenantRegistry, RegistryCache, Router};
+use metap_permission::{PolicyStore, PolicySubject};
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
+
+async fn connect() -> sqlx::PgPool {
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&database_url)
+        .await
+        .expect("connect to dev postgres")
+}
+
+fn router(pool: sqlx::PgPool) -> Router {
+    let registry = Arc::new(PostgresTenantRegistry::new(pool.clone()));
+    Router::new(pool, RegistryCache::new(registry), Arc::new(EnvStore))
+}
 
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn create_list_and_delete_round_trip_against_real_postgres() {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-
-    let pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&database_url)
-        .await
-        .expect("connect to dev postgres");
-
-    let store = PostgresPolicyStore::new(pool);
+    let pool = connect().await;
+    let store = PostgresPolicyStore::new(router(pool));
     let tenant_id = Uuid::new_v4(); // isolated per test run, nothing to collide with
 
     let created = store
@@ -69,14 +82,8 @@ async fn create_list_and_delete_round_trip_against_real_postgres() {
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn create_policy_with_condition_round_trips_jsonb() {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-
-    let pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&database_url)
-        .await
-        .unwrap();
-    let store = PostgresPolicyStore::new(pool);
+    let pool = connect().await;
+    let store = PostgresPolicyStore::new(router(pool));
     let tenant_id = Uuid::new_v4();
 
     let condition: metap_permission::PolicyCondition = serde_json::from_value(serde_json::json!({
