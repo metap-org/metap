@@ -32,15 +32,27 @@ pub struct AppConfig {
     /// normal split dev workflow (`pnpm dev:web` proxies to the API separately); set by the
     /// `pnpm start` monolith script.
     pub static_dir: Option<String>,
-    /// Opt-in — when set (with `vault_token`), `apps/crm-server/src/main.rs` builds a
-    /// `metap_control::VaultStore` instead of the default `EnvStore` for resolving
-    /// `DedicatedDb` tenant DSNs (`docs/roadmap.md` Phase 16 Giai đoạn 4). Neither var is
-    /// validated here (no format requirement) — `VaultStore::new` surfaces a clear error at
-    /// construction if `vault_addr` isn't a usable Vault address.
+    /// Opt-in — when set, `apps/crm-server/src/main.rs` builds a `metap_control::VaultStore`
+    /// instead of the default `EnvStore` for resolving `DedicatedDb` tenant DSNs
+    /// (`docs/roadmap.md` Phase 16 Giai đoạn 4). Two auth methods, picked by which vars are
+    /// present alongside this one: `vault_token` (plain token) or `vault_role_id` +
+    /// `vault_secret_id` (AppRole, added 2026-08-20 — see `VaultStore`'s doc comment for why
+    /// both exist). Neither is validated here (no format requirement) — `VaultStore::new`/
+    /// `new_with_approle` surface a clear error at construction if `vault_addr` isn't a usable
+    /// Vault address or the credentials are rejected.
     pub vault_addr: Option<String>,
-    /// See `vault_addr`. A plain Vault token today (`VAULT_TOKEN`), not AppRole — see
-    /// `metap_control::VaultStore`'s doc comment for why.
+    /// See `vault_addr`. Takes precedence over `vault_role_id`/`vault_secret_id` if both forms
+    /// are somehow set — an operator picks one auth method, not both.
     pub vault_token: Option<String>,
+    /// See `vault_addr`. AppRole `role_id` — not secret, safe to bake into a deploy manifest.
+    pub vault_role_id: Option<String>,
+    /// See `vault_addr`. AppRole `secret_id` — meant to be short-lived/one-time, injected by
+    /// whatever secrets pipeline the deployment already uses, not hand-carried like
+    /// `vault_token`.
+    pub vault_secret_id: Option<String>,
+    /// See `vault_addr`. AppRole auth backend mount path — defaults to `"approle"` (Vault's own
+    /// default) when `vault_role_id`/`vault_secret_id` are set but this isn't.
+    pub vault_approle_mount: Option<String>,
 }
 
 impl AppConfig {
@@ -113,6 +125,9 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
 
     let vault_addr = env::var("VAULT_ADDR").ok().filter(|s| !s.is_empty());
     let vault_token = env::var("VAULT_TOKEN").ok().filter(|s| !s.is_empty());
+    let vault_role_id = env::var("VAULT_ROLE_ID").ok().filter(|s| !s.is_empty());
+    let vault_secret_id = env::var("VAULT_SECRET_ID").ok().filter(|s| !s.is_empty());
+    let vault_approle_mount = env::var("VAULT_APPROLE_MOUNT").ok().filter(|s| !s.is_empty());
 
     Ok(AppConfig {
         node_env,
@@ -127,5 +142,8 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         static_dir,
         vault_addr,
         vault_token,
+        vault_role_id,
+        vault_secret_id,
+        vault_approle_mount,
     })
 }

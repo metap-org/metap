@@ -3,6 +3,20 @@
 //! `cargo test` never touches a network — run with `cargo test -p metap-control -- --ignored`.
 //! No `DATABASE_URL` needed here, hence the name doesn't end in `_postgres` like this crate's
 //! other e2e test files.
+//!
+//! The AppRole test below needs a role to already exist in dev Vault — not provisioned by this
+//! file itself (`docker-compose.yml`'s dev Vault starts with no auth methods beyond `token/`),
+//! same "operator sets this up once" posture as everything else Vault-side. One-time setup
+//! against the running dev Vault container:
+//! ```sh
+//! docker compose exec -e VAULT_ADDR=http://localhost:8200 -e VAULT_TOKEN=metap-dev-root-token vault vault auth enable approle
+//! docker compose exec -e VAULT_ADDR=http://localhost:8200 -e VAULT_TOKEN=metap-dev-root-token vault vault policy write metap-dsn-read - <<'EOF'
+//! path "secret/data/metap/dsn/*" { capabilities = ["read"] }
+//! EOF
+//! docker compose exec -e VAULT_ADDR=http://localhost:8200 -e VAULT_TOKEN=metap-dev-root-token vault vault write auth/approle/role/metap-crm-server token_policies="metap-dsn-read" token_ttl=1h token_max_ttl=4h
+//! ```
+//! then export `VAULT_ROLE_ID`/`VAULT_SECRET_ID` from `vault read auth/approle/role/metap-crm-server/role-id`
+//! / `vault write -f auth/approle/role/metap-crm-server/secret-id` before running this test.
 
 use metap_control::{SecretStore, VaultStore};
 use secrecy::ExposeSecret;
@@ -65,4 +79,32 @@ async fn overwriting_an_existing_dsn_is_read_back_as_the_new_value() {
 
     let creds = store.db_credentials(&dsn_secret_ref).await.expect("db_credentials");
     assert_eq!(creds.dsn.expose_secret(), "postgres://second");
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires VAULT_ADDR / a running dev Vault with the AppRole setup in this file's doc comment"]
+async fn approle_login_can_read_a_dsn_written_by_a_token_authed_store() {
+    let role_id = std::env::var("VAULT_ROLE_ID").expect("VAULT_ROLE_ID required for this e2e test");
+    let secret_id = std::env::var("VAULT_SECRET_ID").expect("VAULT_SECRET_ID required for this e2e test");
+
+    // Written with the root-token store — this test only exercises AppRole on the read side,
+    // matching what `Router`/`db_credentials` actually needs from it in production.
+    let token_store = VaultStore::new(&vault_addr(), &vault_token()).expect("construct token-authed VaultStore");
+    let dsn_secret_ref = format!("test_approle_{}", Uuid::new_v4().simple());
+    token_store
+        .put_dsn(&dsn_secret_ref, "postgres://approle-tenant@localhost:5433/tenant_db")
+        .await
+        .expect("put_dsn via token-authed store");
+
+    let approle_store = VaultStore::new_with_default_approle(&vault_addr(), &role_id, &secret_id)
+        .await
+        .expect("AppRole login");
+    let creds = approle_store
+        .db_credentials(&dsn_secret_ref)
+        .await
+        .expect("db_credentials via AppRole-authed store");
+    assert_eq!(
+        creds.dsn.expose_secret(),
+        "postgres://approle-tenant@localhost:5433/tenant_db"
+    );
 }

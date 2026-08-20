@@ -25,7 +25,7 @@ và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, 
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
 | 15. Shared App Shell (UI kit, real login, permission-aware components) | Đã xong |
-| 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4: `VaultStore` xong 2026-08-17, role lookup + RBAC/policy qua Router xong 2026-08-20 (đóng một bug thật — login vỡ hoàn toàn cho mọi tenant `dedicated_db` từ Giai đoạn 2); `schema`/trial vẫn chưa có isolation thật; data-plane/capabilities/FE onboarding/deployment còn lại |
+| 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4: `VaultStore` (token) xong 2026-08-17, AppRole auth xong 2026-08-20, role lookup + RBAC/policy qua Router xong 2026-08-20 (đóng một bug thật — login vỡ hoàn toàn cho mọi tenant `dedicated_db` từ Giai đoạn 2); `schema`/trial vẫn chưa có isolation thật; dynamic Vault creds/data-plane/capabilities/FE onboarding/deployment còn lại |
 
 ## Phase 0: Skeleton
 
@@ -861,9 +861,33 @@ lệ → `GET /auth/me` trả đúng `roles: ["admin"]` (role lookup qua Router 
 `GET /admin/users` liệt kê đúng user của tenant đó → `POST /admin/policies` tạo policy thành
 công — cả bốn đều chạm đúng DB riêng của tenant, không phải pool chung.
 
-Còn lại cho Giai đoạn 4+: AppRole/dynamic creds thật của Vault; template pack; delete/deprovision
-tenant; data-plane evolution (§3-§7); capabilities (§8); FE onboarding (§9); deployment SaaS
-specifics (§11).
+**Vault AppRole auth — Đã xong (2026-08-20).** `metap_control::VaultStore::new_with_approle`
+(cạnh `new` token-based có sẵn) — login một lần lúc construct qua
+`vaultrs::auth::approle::login`, `client.set_token(...)` với client token trả về. Lý do tồn tại
+song song với token-based: `VAULT_TOKEN` nghĩa là phải phân phối tay một credential dùng-được-
+ngay, sống lâu dài; AppRole's `role_id` không nhạy cảm (bake thẳng vào deploy manifest được),
+`secret_id` mới là phần nhạy cảm và có thể để pipeline secret-injection (Vault Agent, một bước
+CI, K8s injector) cấp ngắn hạn thay vì hand-carry một token thô. **Chưa làm, có chủ đích**: auto-
+renew trước khi token hết hạn — token AppRole hết hạn thì mọi call Vault sau đó fail cho tới khi
+restart process hoặc gọi lại constructor; cùng mức "không tự rotate" như token tĩnh vốn có, không
+phải regression mới, nhưng vẫn là gap thật cần một background task hoặc retry-on-fail để đóng.
+`AppConfig` thêm `vault_role_id`/`vault_secret_id`/`vault_approle_mount`
+(`VAULT_ROLE_ID`/`VAULT_SECRET_ID`/`VAULT_APPROLE_MOUNT`, mount mặc định `"approle"`);
+`apps/crm-server/src/main.rs` ưu tiên AppRole nếu cả `vault_role_id`+`vault_secret_id` đều có,
+rồi mới tới token, rồi mới `EnvStore`. Test mới: `approle_login_can_read_a_dsn_written_by_a_token_authed_store`
+(`crates/metap-control/tests/vault_store.rs`, doc comment của file có sẵn các bước `vault` CLI để
+tự setup AppRole role trên dev Vault). Verify live, không chỉ test: enable `approle` + tạo role
+qua `vault` CLI trên dev Vault container → boot `crm-server` thật chỉ với
+`VAULT_ROLE_ID`/`VAULT_SECRET_ID` (không có `VAULT_TOKEN` trong env của chính nó) → provision một
+tenant `dedicated_db` mới, DSN ghi vào Vault qua `dev-tools vault-put-dsn` (dùng root token,
+việc của operator, tách biệt với credential read-only mà server tự dùng) → login vào tenant đó
+→ 200, JWT hợp lệ — xác nhận `Router` resolve đúng DSN qua Vault bằng AppRole token, không phải
+token tĩnh.
+
+Còn lại cho Giai đoạn 4+: dynamic database-credentials engine thật của Vault (rotating creds,
+không phải static DSN); AppRole auto-renewal; template pack; delete/deprovision tenant;
+data-plane evolution (§3-§7); capabilities (§8); FE onboarding (§9); deployment SaaS specifics
+(§11).
 
 Toàn bộ thiết kế nằm ở `docs/multi-tenant-platform-design.md` (hợp nhất từ hai bản nháp brainstorm
 `adr.md`/`adr2.md` ngày 2026-08-15, đã xóa sau khi hợp nhất); các quyết định cốt lõi rút gọn dạng

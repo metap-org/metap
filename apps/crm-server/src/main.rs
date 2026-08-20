@@ -72,15 +72,18 @@ async fn main() -> anyhow::Result<()> {
     // `AppState::new`, same "wiring inline at the composition root" pattern as everything else
     // in this file. `EnvStore` (unchanged default) unless `VAULT_ADDR` is configured
     // (`docs/roadmap.md` Phase 16 Giai đoạn 4) — opt-in, no downstream project is forced to run
-    // a Vault container to develop normally.
+    // a Vault container to develop normally. Two auth methods when Vault is in play: AppRole
+    // (`vault_role_id`/`vault_secret_id`, added 2026-08-20 — preferred, see `VaultStore`'s doc
+    // comment for why) takes precedence over a plain `vault_token` if both are somehow set.
     let secret_store: Arc<dyn metap::control::SecretStore> = match &config.vault_addr {
-        Some(addr) => {
-            let token = config
-                .vault_token
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("VAULT_ADDR is set but VAULT_TOKEN is not"))?;
-            Arc::new(metap::control::VaultStore::new(addr, token)?)
-        }
+        Some(addr) => match (&config.vault_role_id, &config.vault_secret_id, &config.vault_token) {
+            (Some(role_id), Some(secret_id), _) => {
+                let mount = config.vault_approle_mount.as_deref().unwrap_or("approle");
+                Arc::new(metap::control::VaultStore::new_with_approle(addr, mount, role_id, secret_id).await?)
+            }
+            (_, _, Some(token)) => Arc::new(metap::control::VaultStore::new(addr, token)?),
+            _ => anyhow::bail!("VAULT_ADDR is set but neither VAULT_TOKEN nor VAULT_ROLE_ID+VAULT_SECRET_ID is"),
+        },
         None => Arc::new(metap::control::EnvStore),
     };
 
