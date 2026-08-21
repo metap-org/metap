@@ -169,6 +169,61 @@ async fn preview_publish_reports_the_would_be_version_without_writing_anything()
 
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn preview_publish_reports_migration_impact_against_the_currently_published_definition() {
+    use metap_lowcode::ImpactKind;
+
+    let pool = pool().await;
+    let name = entity_name("impact");
+    let registry = MetadataRegistry::new();
+
+    let mut status_field = field("status", FieldKind::Enum);
+    status_field.enum_values = Some(vec!["draft".to_string(), "active".to_string()]);
+    let mut v1_def = definition(&name);
+    v1_def.fields = vec![
+        field("name", FieldKind::String),
+        status_field,
+        field("category", FieldKind::String),
+    ];
+    metap_lowcode::save_draft(&pool, &name, &v1_def)
+        .await
+        .expect("save_draft v1");
+    metap_lowcode::publish(&pool, &name, &registry)
+        .await
+        .expect("publish v1");
+
+    // v2: drop "category" entirely, narrow "status"'s allowed values, and newly require+unique
+    // "name" — one instance of every `ImpactKind` this module knows about.
+    let mut status_field_v2 = field("status", FieldKind::Enum);
+    status_field_v2.enum_values = Some(vec!["active".to_string()]);
+    let mut name_field_v2 = field("name", FieldKind::String);
+    name_field_v2.required = Some(true);
+    name_field_v2.unique = Some(true);
+    let mut v2_def = definition(&name);
+    v2_def.fields = vec![name_field_v2, status_field_v2];
+    metap_lowcode::save_draft(&pool, &name, &v2_def)
+        .await
+        .expect("save_draft v2");
+
+    let preview = metap_lowcode::preview_publish(&pool, &name, &registry)
+        .await
+        .expect("preview_publish");
+
+    let kinds: Vec<ImpactKind> = preview.impact.iter().map(|w| w.kind).collect();
+    assert!(kinds.contains(&ImpactKind::FieldRemoved), "{kinds:?}");
+    assert!(kinds.contains(&ImpactKind::EnumValueRemoved), "{kinds:?}");
+    assert!(kinds.contains(&ImpactKind::FieldMadeRequired), "{kinds:?}");
+    assert!(kinds.contains(&ImpactKind::FieldMadeUnique), "{kinds:?}");
+    assert_eq!(
+        preview.impact.len(),
+        4,
+        "no extra/duplicate warnings expected: {:#?}",
+        preview.impact
+    );
+    assert!(preview.impact.iter().any(|w| w.field == "category"));
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn preview_publish_surfaces_the_same_errors_publish_would() {
     let pool = pool().await;
 

@@ -257,9 +257,10 @@ async fn preview_publish(
     AdminContext(_context): AdminContext,
 ) -> Response {
     match metap_lowcode::preview_publish(&state.pool, &name, &state.metadata_base).await {
-        Ok(preview) => {
-            Json(json!({ "data": { "wouldBeVersion": preview.would_be_version, "valid": true } })).into_response()
-        }
+        Ok(preview) => Json(json!({
+            "data": { "wouldBeVersion": preview.would_be_version, "valid": true, "impact": preview.impact }
+        }))
+        .into_response(),
         Err(e) => publish_error_response(e),
     }
 }

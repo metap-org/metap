@@ -20,7 +20,7 @@ và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, 
 | 8. Hardening | Đang làm — chỉ còn "tích hợp secret manager" (design-only 2026-08-17, chờ chốt target production); load test + backup/restore drill xong 2026-08-17 |
 | 9. Multi-Service Evolution | Trigger-based, đã rà soát lại 2026-08-17 — vẫn chưa trigger nào xảy ra, không có việc để làm |
 | 10. Monorepo, npm publish | Làm một phần |
-| 11. Low-code Platform Backbone Architecture | Phase A + Phase B xong 2026-08-17 (Phase B's "policy editor UI" hoá ra đã có sẵn từ Phase 15); Phase C bắt đầu 2026-08-20 — metadata audit log xong, phần còn lại (approval workflow, schema isolation, migration impact check, import/export) chưa làm |
+| 11. Low-code Platform Backbone Architecture | Phase A + Phase B xong 2026-08-17 (Phase B's "policy editor UI" hoá ra đã có sẵn từ Phase 15); Phase C bắt đầu 2026-08-20 — metadata audit log + migration-impact check xong, phần còn lại (approval workflow, schema isolation, import/export) chưa làm |
 | 12. Rust Core Migration | Đã quyết định; Migration Order (bước 1-9) đã xong trong `crates/`; chưa cut over sang production |
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
@@ -601,9 +601,15 @@ Verify live qua HTTP thật (không chỉ build/clippy sạch): draft → publis
 → `GET .../audit` trả đúng 3 event `draft_saved`/`published`/`disabled`, đúng thứ tự mới nhất
 trước, đúng `actorUserId`/`actorTenantId`/`versionNumber`.
 
+**Migration-impact check — Đã xong (2026-08-21).** `metap_lowcode::impact::diff_impact` so draft
+sắp publish với bản đang live, cảnh báo (không chặn publish) 4 loại thay đổi phá huỷ: field bị
+xoá, đổi `kind`, field mới `required`, field mới `unique`, và enum value bị xoá. Trả về trong
+`POST /admin/lowcode/entities/{name}/publish/preview`'s response (`impact: [...]`). Verify live
+qua HTTP thật: publish 1 entity, sửa draft xoá field + thu hẹp enum + thêm required/unique, gọi
+preview → đúng cả 4 cảnh báo.
+
 Các deliverable còn lại của Phase C (publish approval workflow, quy tắc cô lập schema cấp tenant,
-kiểm tra tác động migration cho thay đổi phá hủy, operational visibility rộng hơn audit log đơn
-lẻ, import/export định nghĩa app) — chưa bắt đầu.
+operational visibility rộng hơn audit log đơn lẻ, import/export định nghĩa app) — chưa bắt đầu.
 
 ## Phase 12: Rust Core Migration
 

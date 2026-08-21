@@ -354,6 +354,11 @@ pub struct PublishPreview {
     /// stale if another publish for the same entity lands between this preview and a real
     /// publish. Good enough for "here's roughly what you're about to do," not a reservation.
     pub would_be_version: i32,
+    /// Migration-impact warnings (`docs/roadmap.md` Phase 11 Phase C) — field-level changes
+    /// vs. the currently-published definition that can leave existing records inconsistent.
+    /// Empty on a first-ever publish (nothing published yet to diff against). Advisory only —
+    /// never blocks publish.
+    pub impact: Vec<crate::impact::ImpactWarning>,
 }
 
 /// Runs every check `publish` would, without writing anything — no new `low_code_entity_versions`
@@ -364,15 +369,20 @@ pub async fn preview_publish(
     entity_name: &str,
     base_registry: &MetadataRegistry,
 ) -> Result<PublishPreview, PublishError> {
-    validate_for_publish(pool, entity_name, base_registry).await?;
+    let (draft, _check) = validate_for_publish(pool, entity_name, base_registry).await?;
     let max: Option<i32> =
         sqlx::query_scalar("SELECT MAX(version_number) FROM low_code_entity_versions WHERE entity_name = $1")
             .bind(entity_name)
             .fetch_one(pool)
             .await
             .map_err(PublishError::from)?;
+    let impact = match get_published(pool, entity_name).await.map_err(PublishError::from)? {
+        Some(published) => crate::impact::diff_impact(&published.definition, &draft),
+        None => Vec::new(),
+    };
     Ok(PublishPreview {
         would_be_version: max.unwrap_or(0) + 1,
+        impact,
     })
 }
 
