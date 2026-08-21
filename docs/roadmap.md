@@ -25,7 +25,7 @@ và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, 
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
 | 15. Shared App Shell (UI kit, real login, permission-aware components) | Đã xong |
-| 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4: `VaultStore` (token) xong 2026-08-17, AppRole auth + role lookup/RBAC qua Router (đóng bug login vỡ cho `dedicated_db`) + delete/deprovision tenant xong 2026-08-20 → 2026-08-21; `schema`/trial vẫn chưa có isolation thật; dynamic Vault creds/data-plane/capabilities/FE onboarding/deployment còn lại |
+| 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4: `VaultStore` (token) xong 2026-08-17, AppRole auth + auto-renewal + role lookup/RBAC qua Router (đóng bug login vỡ cho `dedicated_db`) + delete/deprovision tenant xong 2026-08-20 → 2026-08-21; `schema`/trial vẫn chưa có isolation thật; dynamic Vault creds/data-plane/capabilities/FE onboarding/deployment còn lại |
 
 ## Phase 0: Skeleton
 
@@ -916,9 +916,28 @@ tới được tầng CrudService nơi 404/403 mới thực sự map — hành v
 tenant_not_found` từ `CrudService`'s mapping vẫn đúng và có test riêng (Router-level), chỉ là
 không phải status code một client thật nhìn thấy qua route đã-auth thông thường.
 
+**AppRole auto-renewal — Đã xong (2026-08-21).** Đóng gap đã ghi nhận từ lúc ship AppRole
+(2026-08-20): trước đây token AppRole hết hạn là mọi call Vault sau đó fail cho tới khi restart
+process. `VaultStore` giờ giữ `client`/`expires_at` sau một `tokio::sync::Mutex` chung, và mọi
+method của `SecretStore` (`db_credentials`, cộng `put_dsn`) tự kiểm tra + re-login (cùng
+`role_id`/`secret_id`, một `vaultrs::auth::approle::login` mới) trước khi thực sự gọi Vault, nếu
+còn dưới `RENEW_BUFFER` (60s) là hết hạn — không cần background task/renewal loop riêng, vì
+`db_credentials` vốn đã không phải hot path (`Router` cache pool của tenant `dedicated_db` 10
+phút). `lease_duration == 0` (quy ước "không hết hạn" của Vault) được xử lý riêng, không bị hiểu
+nhầm thành "đã hết hạn ngay" (sẽ ép re-login ở mọi call nếu tính sai). Instance dùng token tĩnh
+(`VaultStore::new`) không bị ảnh hưởng — vẫn không có khái niệm renew, đúng như trước.
+
+Verify live, không chỉ đọc code: tạo một AppRole role riêng cho test với `token_ttl=5s` (ngắn hơn
+nhiều `RENEW_BUFFER`) → login → **đợi thật 6 giây** (token gốc chắc chắn đã hết hạn phía Vault) →
+gọi `db_credentials` → vẫn thành công, chỉ có thể vì code đã tự renew trước đó. Test mới
+`approle_token_auto_renews_before_a_real_expiry` (`crates/metap-control/tests/vault_store.rs`,
+~6s runtime, doc comment của file có sẵn lệnh `vault` CLI để tự tạo role ngắn hạn này). Toàn
+workspace `build`/`clippy -D warnings`/`fmt --check`/`test` sạch, không regression trên 2 test
+AppRole cũ.
+
 Còn lại cho Giai đoạn 4+: dynamic database-credentials engine thật của Vault (rotating creds,
-không phải static DSN); AppRole auto-renewal; template pack; data-plane evolution (§3-§7);
-capabilities (§8); FE onboarding (§9); deployment SaaS specifics (§11).
+không phải static DSN); template pack; data-plane evolution (§3-§7); capabilities (§8); FE
+onboarding (§9); deployment SaaS specifics (§11).
 
 Toàn bộ thiết kế nằm ở `docs/multi-tenant-platform-design.md` (hợp nhất từ hai bản nháp brainstorm
 `adr.md`/`adr2.md` ngày 2026-08-15, đã xóa sau khi hợp nhất); các quyết định cốt lõi rút gọn dạng

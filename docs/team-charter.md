@@ -206,3 +206,32 @@ discipline hiện tại (`docs/architectures/02-constraints.md`'s "Tiến hóa t
     (Workflow engine tách biệt State Machine, chưa nói tới durable runtime) khi chưa có feature
     brief nêu trigger cụ thể — ví dụ một module thật sự cần một chuỗi việc dài-hạn/có thể
     wait-for-event mà state machine transition đơn thuần không mô tả được.
+- **Tách monorepo thành nhiều repo trong một GitHub organization** (platform public, multi-tenancy
+  management + low-code private, và tách hẳn frontend ra thành repo riêng nữa) — ghi lại
+  2026-08-21. Trigger cụ thể: **lúc đổi remote GitHub hiện tại sang một organization** — chưa
+  làm gì trước đó.
+  - **`low-code` (`metap-lowcode`/`metap-lowcode-http`) tách được ngay, không cần refactor** —
+    kiểm tra trực tiếp dependency graph (`Cargo.toml` của từng crate) xác nhận zero-coupling
+    một chiều: `metap-lowcode-http` phụ thuộc `metap-http`, nhưng không chiều ngược lại — đúng
+    chủ đích thiết kế "optional platform capability" đã ghi trong doc comment của chính crate đó
+    từ đầu.
+  - **`metap-control` (multi-tenancy — `Router`, `PostgresPolicyStore`, tenant provisioning)
+    CHƯA tách sạch được** — không phải add-on như low-code, mà đã hàn cứng vào core execution
+    path từ Phase 16 Giai đoạn 1 (`CrudService` mở transaction qua `Router::begin`, không phải
+    `&PgPool` trực tiếp): `metap-crud` và `metap-http` cả hai đều `metap-control = { path = ... }`
+    thẳng trong `Cargo.toml`, không qua trait nào. Tuần 2026-08-20 còn dính chặt hơn nữa —
+    `PostgresPolicyStore` (impl RBAC/policy Postgres duy nhất có thật) chuyển từ
+    `metap-permission` sang sống trong `metap-control` (lý do: né dependency cycle
+    `metap-metadata -> metap-permission`, `metap-peripherals -> metap-metadata`, `metap-control
+    -> metap-peripherals`). Tách repo ngay bây giờ nghĩa là repo "platform public" không tự
+    build được — thiếu `metap-control` là `metap-crud`/`metap-http` compile fail.
+  - **Việc cần làm trước khi tách `metap-control`** (chưa bắt đầu, chờ đúng trigger ở trên): đưa
+    `Router`/`PostgresPolicyStore` ra sau một trait mà `metap-crud`/`metap-http` tự định nghĩa
+    (cùng pattern `EventBus`/`SecretStore` đã dùng) — platform public repo giữ một impl
+    single-tenant "trivial" mặc định, repo multi-tenancy private cung cấp impl SaaS thật implement
+    trait đó. Chi tiết Vault production-readiness (HA/unseal/backup — một mối quan tâm liên quan
+    nhưng khác, thuộc về lúc chọn hạ tầng production) nằm ở
+    `docs/architectures/07-deployment.md`'s "Vault production readiness — open questions".
+  - Tách frontend (`packages/platform-react`/`apps/crm-fe`) ra repo riêng — chưa đánh giá coupling
+    cụ thể (frontend chỉ giao tiếp qua HTTP, nên về nguyên tắc là sạch nhất trong 4 mảnh), để lại
+    đánh giá chi tiết khi trigger thật sự xảy ra thay vì đoán trước.

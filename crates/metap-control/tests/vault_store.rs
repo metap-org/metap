@@ -17,6 +17,13 @@
 //! ```
 //! then export `VAULT_ROLE_ID`/`VAULT_SECRET_ID` from `vault read auth/approle/role/metap-crm-server/role-id`
 //! / `vault write -f auth/approle/role/metap-crm-server/secret-id` before running this test.
+//!
+//! The renewal test below needs a *second* role using the same policy but a short `token_ttl`
+//! (so the test can wait past a real expiry in a few seconds instead of an hour):
+//! ```sh
+//! docker compose exec -e VAULT_ADDR=http://localhost:8200 -e VAULT_TOKEN=metap-dev-root-token vault vault write auth/approle/role/metap-renew-test token_policies="metap-dsn-read" token_ttl=5s token_max_ttl=1h
+//! ```
+//! then export `VAULT_RENEW_ROLE_ID`/`VAULT_RENEW_SECRET_ID` the same way.
 
 use metap_control::{SecretStore, VaultStore};
 use secrecy::ExposeSecret;
@@ -107,4 +114,34 @@ async fn approle_login_can_read_a_dsn_written_by_a_token_authed_store() {
         creds.dsn.expose_secret(),
         "postgres://approle-tenant@localhost:5433/tenant_db"
     );
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires VAULT_ADDR / a running dev Vault, ~6s runtime (waits past a real token expiry)"]
+async fn approle_token_auto_renews_before_a_real_expiry() {
+    let role_id = std::env::var("VAULT_RENEW_ROLE_ID").expect("VAULT_RENEW_ROLE_ID required for this e2e test");
+    let secret_id = std::env::var("VAULT_RENEW_SECRET_ID").expect("VAULT_RENEW_SECRET_ID required for this e2e test");
+
+    let token_store = VaultStore::new(&vault_addr(), &vault_token()).expect("construct token-authed VaultStore");
+    let dsn_secret_ref = format!("test_renew_{}", Uuid::new_v4().simple());
+    token_store
+        .put_dsn(&dsn_secret_ref, "postgres://renewed@localhost:5433/tenant_db")
+        .await
+        .expect("put_dsn via token-authed store");
+
+    // `metap-renew-test`'s role has `token_ttl=5s` — with `RENEW_BUFFER` at 60s, the very first
+    // call after login already takes the renewal path (constructed 5s < 60s buffer), so this
+    // isn't really testing renewal yet on its own; it's the sleep past the *real* 5s TTL below
+    // that proves it. Without auto-renewal, this call would hit Vault with a token it has
+    // already expired server-side and fail.
+    let approle_store = VaultStore::new_with_default_approle(&vault_addr(), &role_id, &secret_id)
+        .await
+        .expect("AppRole login");
+    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+
+    let creds = approle_store
+        .db_credentials(&dsn_secret_ref)
+        .await
+        .expect("db_credentials must succeed past the original token's real expiry, via auto-renewal");
+    assert_eq!(creds.dsn.expose_secret(), "postgres://renewed@localhost:5433/tenant_db");
 }
