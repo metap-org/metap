@@ -24,6 +24,23 @@
 //! docker compose exec -e VAULT_ADDR=http://localhost:8200 -e VAULT_TOKEN=metap-dev-root-token vault vault write auth/approle/role/metap-renew-test token_policies="metap-dsn-read" token_ttl=5s token_max_ttl=1h
 //! ```
 //! then export `VAULT_RENEW_ROLE_ID`/`VAULT_RENEW_SECRET_ID` the same way.
+//!
+//! The single-use-`secret_id` regression test below (`/code-review` finding, fixed 2026-08-21:
+//! renewal used to always re-login with the stored `secret_id`, which permanently broke itself
+//! against a `secret_id_num_uses=1` role — exactly what this module's own doc comment
+//! recommends) needs a *third* role with that restriction set explicitly:
+//! ```sh
+//! docker compose exec -e VAULT_ADDR=http://localhost:8200 -e VAULT_TOKEN=metap-dev-root-token vault vault write auth/approle/role/metap-renew-single-use token_policies="metap-dsn-read" token_ttl=65s token_max_ttl=1h secret_id_num_uses=1
+//! ```
+//! `token_ttl` here is deliberately *longer* than `RENEW_BUFFER` (60s), unlike the other
+//! renewal test's role above — Vault only lets a still-valid token renew itself
+//! (`renew_self`); a token that's gone fully past its own `token_ttl` is already revoked
+//! server-side and cannot be resurrected by renewing, only by a fresh login. `65s` leaves a
+//! ~5s-6s window (past the 60s buffer, short of the 65s hard expiry) where `ensure_fresh_token`
+//! decides to renew *while the token is still genuinely alive* — the actual condition this test
+//! needs to reach to exercise `renew_self` rather than the fresh-login fallback.
+//! then export `VAULT_SINGLE_USE_ROLE_ID`/`VAULT_SINGLE_USE_SECRET_ID` the same way — a fresh
+//! `secret_id` each run, since this test's whole point is consuming its one allowed use.
 
 use metap_control::{SecretStore, VaultStore};
 use secrecy::ExposeSecret;
@@ -129,11 +146,14 @@ async fn approle_token_auto_renews_before_a_real_expiry() {
         .await
         .expect("put_dsn via token-authed store");
 
-    // `metap-renew-test`'s role has `token_ttl=5s` — with `RENEW_BUFFER` at 60s, the very first
-    // call after login already takes the renewal path (constructed 5s < 60s buffer), so this
-    // isn't really testing renewal yet on its own; it's the sleep past the *real* 5s TTL below
-    // that proves it. Without auto-renewal, this call would hit Vault with a token it has
-    // already expired server-side and fail.
+    // `metap-renew-test`'s role has `token_ttl=5s`, *shorter* than `RENEW_BUFFER` (60s) — the
+    // very first call after login already decides to renew, but by the time the sleep below
+    // elapses the token has gone fully past its own real TTL, which `renew_self` genuinely
+    // cannot save (Vault only renews a still-valid token) — this specifically exercises the
+    // fresh-AppRole-login *fallback* path, proving the store recovers even from a token that
+    // died before anything called it. The renew_self-first path (the common case: renewing
+    // *before* real expiry, while the token is still alive) is what
+    // `renewal_survives_past_expiry_twice_without_reusing_a_single_use_secret_id` below proves.
     let approle_store = VaultStore::new_with_default_approle(&vault_addr(), &role_id, &secret_id)
         .await
         .expect("AppRole login");
@@ -144,4 +164,46 @@ async fn approle_token_auto_renews_before_a_real_expiry() {
         .await
         .expect("db_credentials must succeed past the original token's real expiry, via auto-renewal");
     assert_eq!(creds.dsn.expose_secret(), "postgres://renewed@localhost:5433/tenant_db");
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires VAULT_ADDR / a running dev Vault, ~12s runtime — renews twice past a real expiry"]
+async fn renewal_survives_past_expiry_twice_without_reusing_a_single_use_secret_id() {
+    let role_id =
+        std::env::var("VAULT_SINGLE_USE_ROLE_ID").expect("VAULT_SINGLE_USE_ROLE_ID required for this e2e test");
+    let secret_id =
+        std::env::var("VAULT_SINGLE_USE_SECRET_ID").expect("VAULT_SINGLE_USE_SECRET_ID required for this e2e test");
+
+    let token_store = VaultStore::new(&vault_addr(), &vault_token()).expect("construct token-authed VaultStore");
+    let dsn_secret_ref = format!("test_single_use_{}", Uuid::new_v4().simple());
+    token_store
+        .put_dsn(&dsn_secret_ref, "postgres://single-use@localhost:5433/tenant_db")
+        .await
+        .expect("put_dsn via token-authed store");
+
+    // `metap-renew-single-use`'s role has `secret_id_num_uses=1` — this login is the one and
+    // only time this `secret_id` can ever be used to log in again. If renewal ever fell back to
+    // a fresh AppRole login (the pre-fix behavior), the *second* renew below would fail, because
+    // Vault would reject the already-consumed `secret_id`. `renew_self` needs no `secret_id` at
+    // all, so renewing twice in a row (each time comfortably before the token's actual 65s
+    // expiry, per the role-setup doc comment above) must still succeed.
+    let approle_store = VaultStore::new_with_default_approle(&vault_addr(), &role_id, &secret_id)
+        .await
+        .expect("AppRole login (consumes the single-use secret_id)");
+
+    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+    approle_store
+        .db_credentials(&dsn_secret_ref)
+        .await
+        .expect("first call (remaining TTL now under RENEW_BUFFER) must succeed via renew_self, not a fresh login");
+
+    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+    let creds = approle_store
+        .db_credentials(&dsn_secret_ref)
+        .await
+        .expect("second renewal must also succeed via renew_self, still without touching secret_id");
+    assert_eq!(
+        creds.dsn.expose_secret(),
+        "postgres://single-use@localhost:5433/tenant_db"
+    );
 }

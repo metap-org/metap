@@ -935,6 +935,30 @@ gọi `db_credentials` → vẫn thành công, chỉ có thể vì code đã t�
 workspace `build`/`clippy -D warnings`/`fmt --check`/`test` sạch, không regression trên 2 test
 AppRole cũ.
 
+**`/code-review` trên commit trên tìm ra 2 finding thật, cả hai đã fix cùng ngày (2026-08-21):**
+
+1. **Renewal tiêu mất `secret_id` một-lần-dùng** — bản đầu tiên luôn re-login bằng
+   `vaultrs::auth::approle::login` (cùng `secret_id` đã lưu) mỗi lần renew, tự phá chính nó ngay
+   lần renew đầu tiên nếu role được cấu hình `secret_id_num_uses=1` — đúng khuyến nghị chính
+   module doc comment đưa ra ("issued short-lived/one-time"). Fix: `ensure_fresh_token` giờ thử
+   `vaultrs::token::renew_self` trước (gia hạn token hiện có, không cần `secret_id`), chỉ fallback
+   về login lại khi `renew_self` fail (token vượt `max_ttl`). Verify live: tạo role với
+   `secret_id_num_uses=1`, `token_ttl=65s` (dài hơn `RENEW_BUFFER` để `renew_self` chạy trong lúc
+   token còn sống thật, không phải sau khi đã chết hẳn) → login (tiêu hết `secret_id`) → renew
+   2 lần liên tiếp (mỗi lần cách nhau 6s) → cả 2 đều thành công, không đụng lại `secret_id` đã
+   dùng. Test mới `renewal_survives_past_expiry_twice_without_reusing_a_single_use_secret_id`.
+2. **Giữ lock qua trọn network call, serialize hết mọi tenant** — `Mutex` bọc `client` bị giữ
+   suốt cả round-trip HTTP tới Vault, trong khi `VaultStore` là một `Arc<dyn SecretStore>` dùng
+   chung cho `Router` của mọi tenant `dedicated_db` — N tenant cold-start/idle-evict cùng lúc sẽ
+   xếp hàng qua đúng 1 lock thay vì chạy song song. Fix: `fresh_client()` chỉ giữ lock cho phần
+   kiểm tra/renew (rẻ, hiếm khi cần I/O), rồi build một `VaultClient` mới (cùng `addr`/token hiện
+   tại, qua `build_client` có sẵn) để gọi Vault **ngoài** lock — đánh đổi chấp nhận được (mất
+   connection-pool reuse giữa các lần gọi, đổi lấy không serialize hoá cross-tenant) vì Vault
+   không phải hot path ở đây.
+
+Toàn workspace `build`/`clippy -D warnings`/`fmt --check`/`test` sạch lại sau cả 2 fix, 6/6 test
+`vault_store.rs` pass trên dev Vault thật.
+
 Còn lại cho Giai đoạn 4+: dynamic database-credentials engine thật của Vault (rotating creds,
 không phải static DSN); template pack; data-plane evolution (§3-§7); capabilities (§8); FE
 onboarding (§9); deployment SaaS specifics (§11).
