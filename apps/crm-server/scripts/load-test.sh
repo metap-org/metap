@@ -48,7 +48,11 @@ section "health check"
 curl -sf "$BASE_URL/health" > /dev/null || { fail "server not reachable at $BASE_URL — is 'pnpm dev:rs' running?"; exit 1; }
 ok "server reachable"
 
-section "mint dev token"
+section "seed admin + mint dev token"
+# PermissionService denies by default when an entity/action has no policy (docs/roadmap.md's
+# permission-review findings, 2026-08-21) — the default dev tenant/user need the "admin" role
+# (which bypasses policy checks entirely) or every request below 403s.
+(cd "$REPO_ROOT" && pnpm seed:admin 00000000-0000-0000-0000-000000000001 00000000-0000-0000-0000-000000000002 >/dev/null 2>&1)
 TOKEN=$(cd "$REPO_ROOT" && pnpm mint-token 2>/dev/null | tail -1)
 [ -n "$TOKEN" ] && ok "token minted" || { fail "mint-token failed"; exit 1; }
 

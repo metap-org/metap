@@ -9,6 +9,38 @@ use uuid::Uuid;
 
 use crate::policy_condition::PolicyCondition;
 
+/// `Deny` overrides `Allow` (`docs/roadmap.md`'s permission-review findings, 2026-08-21) — if
+/// any matching policy on a call is `Deny`, the call is forbidden regardless of how many
+/// `Allow` policies also match. Solves the one thing a purely-additive OR-of-allow model
+/// structurally can't: excluding one specific role/condition even though some *other*,
+/// independently-authored policy would otherwise allow it. Defaults to `Allow` everywhere (DB
+/// column default, `parse`'s fallback) so every policy written before this existed keeps
+/// meaning exactly what it always meant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolicyEffect {
+    Allow,
+    Deny,
+}
+
+impl PolicyEffect {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PolicyEffect::Allow => "allow",
+            PolicyEffect::Deny => "deny",
+        }
+    }
+
+    /// Anything other than exactly `"deny"` parses as `Allow` — a defensive default matching
+    /// the DB column's own default, not a validated enum at the SQL layer.
+    pub fn parse(s: &str) -> Self {
+        if s == "deny" {
+            PolicyEffect::Deny
+        } else {
+            PolicyEffect::Allow
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PolicyRow {
     pub id: Uuid,
@@ -20,6 +52,7 @@ pub struct PolicyRow {
     pub roles: Option<Vec<String>>,
     pub condition: Option<PolicyCondition>,
     pub created_by: Option<Uuid>,
+    pub effect: PolicyEffect,
 }
 
 /// `pub` (not crate-private) so `metap-control::PostgresPolicyStore` — which implements this
@@ -40,6 +73,7 @@ pub fn row_from_sql(row: &sqlx::postgres::PgRow) -> anyhow::Result<PolicyRow> {
             .try_get::<Option<Json<PolicyCondition>>, _>("condition")?
             .map(|Json(v)| v),
         created_by: row.try_get("created_by")?,
+        effect: PolicyEffect::parse(&row.try_get::<String, _>("effect")?),
     })
 }
 
@@ -96,6 +130,7 @@ pub trait PolicyStore: Send + Sync {
         created_by: Option<Uuid>,
         field: Option<&str>,
         subject: Option<PolicySubject>,
+        effect: PolicyEffect,
     ) -> anyhow::Result<PolicyRow>;
 
     async fn delete_policy(&self, tenant_id: Uuid, id: Uuid) -> anyhow::Result<()>;

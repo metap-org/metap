@@ -12,7 +12,7 @@
 //! needed, only the storage backing it.
 
 use async_trait::async_trait;
-use metap_permission::{row_from_sql, ExplainOptions, PolicyRow, PolicyStore, PolicySubject};
+use metap_permission::{row_from_sql, ExplainOptions, PolicyEffect, PolicyRow, PolicyStore, PolicySubject};
 use sqlx::types::Json;
 use uuid::Uuid;
 
@@ -122,12 +122,13 @@ impl PolicyStore for PostgresPolicyStore {
         created_by: Option<Uuid>,
         field: Option<&str>,
         subject: Option<PolicySubject>,
+        effect: PolicyEffect,
     ) -> anyhow::Result<PolicyRow> {
         let subject = subject.unwrap_or(PolicySubject::Context).as_str();
         let mut tx = self.router.begin(tenant_id.into()).await?;
         let row = sqlx::query(
-            "INSERT INTO policies (tenant_id, entity, action, roles, condition, created_by, field, subject) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
+            "INSERT INTO policies (tenant_id, entity, action, roles, condition, created_by, field, subject, effect) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
         )
         .bind(tenant_id)
         .bind(entity)
@@ -137,6 +138,7 @@ impl PolicyStore for PostgresPolicyStore {
         .bind(created_by)
         .bind(field)
         .bind(subject)
+        .bind(effect.as_str())
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;

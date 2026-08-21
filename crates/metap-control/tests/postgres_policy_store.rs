@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use metap_control::{EnvStore, PostgresPolicyStore, PostgresTenantRegistry, RegistryCache, Router};
-use metap_permission::{PolicyStore, PolicySubject};
+use metap_permission::{PolicyEffect, PolicyStore, PolicySubject};
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
@@ -46,6 +46,7 @@ async fn create_list_and_delete_round_trip_against_real_postgres() {
             None,
             None,
             Some(PolicySubject::Context),
+            PolicyEffect::Allow,
         )
         .await
         .expect("create_policy");
@@ -103,6 +104,7 @@ async fn create_policy_with_condition_round_trips_jsonb() {
             None,
             None,
             Some(PolicySubject::Record),
+            PolicyEffect::Allow,
         )
         .await
         .expect("create_policy with condition");

@@ -9,7 +9,8 @@ use metap_control::PostgresPolicyStore;
 use metap_crud::{CrudService, JsonObject, ServiceResult};
 use metap_metadata::{EntityDefinition, EntityField, EntityWorkflow, FieldKind, MetadataRegistry, WorkflowTransition};
 use metap_permission::{
-    ConditionOp, PermissionService, PolicyCondition, PolicyStore, PolicySubject, PolicyValue, RequestContext,
+    ConditionOp, PermissionService, PolicyCondition, PolicyEffect, PolicyStore, PolicySubject, PolicyValue,
+    RequestContext,
 };
 use metap_query::ListInput;
 use serde_json::json;
@@ -404,6 +405,26 @@ async fn non_admin_field_write_policy_is_enforced_through_create() {
     registry.register(test_entity()).unwrap();
     let store = PostgresPolicyStore::new(test_router(pool.clone()));
 
+    // Entity-level "create" policy open to "support" too — otherwise `check_action`'s
+    // default-deny-when-unconfigured (`docs/roadmap.md`'s permission-review findings,
+    // 2026-08-21) would reject this request before the field-level check below ever runs, and
+    // this test would observe a generic entity-level 403 instead of the field-specific one it's
+    // actually testing.
+    store
+        .create_policy(
+            tenant_id,
+            "test.orders",
+            "create",
+            Some(vec!["support".to_string(), "sales".to_string()]),
+            None,
+            None,
+            None,
+            Some(PolicySubject::Context),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+
     // A "write" policy on "amount" that only sales can write, with no condition —
     // exercises the real PostgresPolicyStore -> PermissionSnapshot -> assertWritableFields
     // path through CrudService.create, not just the pure logic in isolation.
@@ -417,6 +438,7 @@ async fn non_admin_field_write_policy_is_enforced_through_create() {
             None,
             Some("amount"),
             Some(PolicySubject::Context),
+            PolicyEffect::Allow,
         )
         .await
         .unwrap();

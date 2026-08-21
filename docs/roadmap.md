@@ -133,6 +133,27 @@ Các điểm lệch/gap đã biết, có chủ đích để lại chứ không �
 - Record-level read enforcement chỉ chạy qua `list()` — chưa có endpoint
   `GET /api/:entity/:id` cho một record đơn để nó bao phủ.
 
+**Review 2026-08-21 (chủ dự án yêu cầu), đã fix:**
+- `check_action` đổi từ fail-open sang **deny-by-default cho non-admin** khi entity/action chưa
+  có policy nào (admin không đổi, vẫn luôn bypass). Kèm endpoint mới
+  `POST /admin/policies/seed-defaults` (bulk-tạo policy cho nhiều action cùng lúc, thay vì gọi
+  `create_policy` 5 lần) để đỡ chậm lúc mới onboard role/entity.
+- Thêm `EntityAction::Transition`, tách khỏi `Update` — quyền sửa field và quyền chuyển state giờ
+  là hai policy riêng.
+- **Đã fix (2026-08-21):** thêm `PolicyEffect::Deny` (migration `0014_policy_effect.sql`, cột
+  `policies.effect`, mặc định `"allow"`) — deny-overrides-allow, áp dụng ở cả 4 điểm quyết định:
+  `check_action` (entity-level), `filterReadableFields`/`writableFields` (field-level),
+  `can_perform_record_condition` (record-level, đã fetch record), và `record_policy_where_clause`
+  (SQL-generation cho `list()` — build `(allow) AND NOT (deny)` thay vì OR tất cả vào nhau, tránh
+  một deny row vô tình *mở rộng* thay vì thu hẹp kết quả). Đã verify sống qua HTTP thật cả 2 lớp:
+  entity-level (role bị deny đọc dù có policy allow chung cũng match) và record-level/SQL (user
+  có allow-record-policy nhưng bị deny khi `status=blocked` — record đó biến mất khỏi `list()`,
+  admin vẫn thấy đủ vì luôn bypass).
+- Còn để ngỏ, chưa quyết: condition không traverse được sang record khác (permission phân cấp
+  kiểu Jira project→issue) — thiết kế đã chốt (dotted attribute path, `CrudService` fetch record
+  liên quan 1-hop rồi merge vào subject trước khi gọi `metap-permission`, chỉ áp dụng cho
+  single-record operation, không áp dụng cho `list()`), chưa triển khai.
+
 Đã bugfix từ đó (2026-08-01), cả hai được phát hiện trong lần verify E2E thủ
 công của Phase 3 và được xác nhận bằng regression test trong
 `src/core/crud/crud-service.test.ts`:
@@ -744,10 +765,9 @@ gọi, chưa có khái niệm "platform superadmin" xuyên tenant). Hai nhánh:
   `Router::begin` mở transaction đúng trên DB riêng. Đã verify end-to-end qua HTTP thật: record
   tạo qua tenant `dedicated_db` chỉ nằm trong DB riêng, không xuất hiện ở DB chính.
 
-Cả hai nhánh in cảnh báo: `PermissionService::check_action` mặc định **allow** khi entity/action
-chưa có policy nào (`crates/metap-permission/src/permission_service.rs:52-59`) — tenant mới
-không tự động có policy hạn chế nào, seed "starter policy" chung chung không khả thi (thư viện
-platform không được biết business entity cụ thể).
+**Đã fix 2026-08-21** (xem Phase 3): `check_action` giờ deny-by-default cho non-admin khi
+entity/action chưa có policy — admin vẫn luôn bypass, và `POST /admin/policies/seed-defaults`
+là công cụ nhanh để gán quyền cho role của tenant mới, tránh phải gọi `create_policy` từng cái.
 
 **Giai đoạn 3 (HTTP tenant provisioning + platform-superadmin) đã triển khai (2026-08-17)** —
 trigger đi theo hướng B đã chốt. Mô hình "platform superadmin" tái dùng 100% hạ tầng JWT/role

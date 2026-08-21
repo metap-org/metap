@@ -193,7 +193,7 @@ impl CrudService {
         tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision = snapshot.can_update_record_condition(context, &existing.data, EntityAction::Read);
+        let record_decision = snapshot.can_perform_record_condition(context, &existing.data, EntityAction::Read);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
@@ -338,7 +338,7 @@ impl CrudService {
         precheck_tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision = snapshot.can_update_record_condition(context, &existing.data, EntityAction::Update);
+        let record_decision = snapshot.can_perform_record_condition(context, &existing.data, EntityAction::Update);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
@@ -450,7 +450,7 @@ impl CrudService {
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
 
-        let decision = self.permissions.can_update_entity(context, &entity.name).await?;
+        let decision = self.permissions.can_transition_entity(context, &entity.name).await?;
         if !decision.allowed {
             return Ok(forbidden(decision));
         }
@@ -472,7 +472,7 @@ impl CrudService {
         precheck_tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision = snapshot.can_update_record_condition(context, &existing.data, EntityAction::Update);
+        let record_decision = snapshot.can_perform_record_condition(context, &existing.data, EntityAction::Transition);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
@@ -609,7 +609,7 @@ impl CrudService {
         precheck_tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision = snapshot.can_update_record_condition(context, &existing.data, EntityAction::Delete);
+        let record_decision = snapshot.can_perform_record_condition(context, &existing.data, EntityAction::Delete);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
@@ -804,8 +804,13 @@ fn compute_capabilities(
     let all_field_names: Vec<String> = entity.fields.iter().map(|f| f.name.clone()).collect();
     let writable_fields = snapshot.writable_fields(context, &all_field_names, Some(existing_data));
 
-    let record_decision = snapshot.can_update_record_condition(context, existing_data, EntityAction::Update);
+    let record_decision = snapshot.can_perform_record_condition(context, existing_data, EntityAction::Update);
     let can_update = record_decision.allowed;
+    // Separate from `can_update` (`docs/roadmap.md`'s permission-review findings, 2026-08-21):
+    // "can edit fields" and "can change state" are now two different policy-gated actions, so
+    // a caller who can update fields but not transition (or vice versa) sees the right
+    // capability hint instead of one standing in for the other.
+    let transition_decision = snapshot.can_perform_record_condition(context, existing_data, EntityAction::Transition);
 
     let mut transitions = Vec::new();
     let current_state = entity
@@ -820,11 +825,11 @@ fn compute_capabilities(
                 continue;
             }
 
-            if !can_update {
+            if !transition_decision.allowed {
                 transitions.push(TransitionAvailability {
                     action: transition.action.clone(),
                     available: false,
-                    reason: record_decision.reason.clone(),
+                    reason: transition_decision.reason.clone(),
                 });
                 continue;
             }

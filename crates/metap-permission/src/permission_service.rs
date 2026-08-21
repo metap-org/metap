@@ -4,9 +4,9 @@ use uuid::Uuid;
 
 use crate::context::{EntityAction, PermissionDecision, RequestContext};
 use crate::permission_snapshot::PermissionSnapshot;
-use crate::policy_condition::{evaluate_policy_row, PolicyCondition};
+use crate::policy_condition::{evaluate_policies, PolicyCondition, PolicyVerdict};
 use crate::policy_explainer::{explain_policies, PolicyExplanation};
-use crate::policy_store::{ExplainOptions, PolicyRow, PolicyStore, PolicySubject};
+use crate::policy_store::{ExplainOptions, PolicyEffect, PolicyRow, PolicyStore, PolicySubject};
 
 pub struct PermissionService {
     store: Box<dyn PolicyStore>,
@@ -54,34 +54,35 @@ impl PermissionService {
             .find_context_policies(tenant_id, entity_name, action.as_str())
             .await?;
 
-        if rows.is_empty() {
-            tracing::debug!(
-                entity = entity_name,
-                action = action_str,
-                user_id,
-                "allowed: no policy scoped to this entity/action"
-            );
-            return Ok(PermissionDecision::allowed());
-        }
-
-        let passed = rows.iter().any(|policy| evaluate_policy_row(policy, context, None));
-        if passed {
-            tracing::debug!(
-                entity = entity_name,
-                action = action_str,
-                user_id,
-                "allowed: policy matched"
-            );
-            Ok(PermissionDecision::allowed())
-        } else {
-            tracing::warn!(
-                entity = entity_name,
-                action = action_str,
-                user_id,
-                policy_count = rows.len(),
-                "denied: no policy condition matched"
-            );
-            Ok(PermissionDecision::forbidden())
+        match evaluate_policies(&rows, context, None) {
+            PolicyVerdict::Allow => {
+                tracing::debug!(
+                    entity = entity_name,
+                    action = action_str,
+                    user_id,
+                    "allowed: policy matched"
+                );
+                Ok(PermissionDecision::allowed())
+            }
+            PolicyVerdict::Deny => {
+                tracing::warn!(
+                    entity = entity_name,
+                    action = action_str,
+                    user_id,
+                    "denied: an explicit deny policy matched"
+                );
+                Ok(PermissionDecision::forbidden())
+            }
+            PolicyVerdict::NoMatch => {
+                tracing::warn!(
+                    entity = entity_name,
+                    action = action_str,
+                    user_id,
+                    policy_count = rows.len(),
+                    "denied: no policy matched (default-deny for non-admin)"
+                );
+                Ok(PermissionDecision::forbidden())
+            }
         }
     }
 
@@ -113,6 +114,14 @@ impl PermissionService {
         self.check_action(context, entity, EntityAction::Delete).await
     }
 
+    pub async fn can_transition_entity(
+        &self,
+        context: &RequestContext,
+        entity: &str,
+    ) -> anyhow::Result<PermissionDecision> {
+        self.check_action(context, entity, EntityAction::Transition).await
+    }
+
     pub async fn load_snapshot(&self, tenant_id: Uuid, entity: &str) -> anyhow::Result<PermissionSnapshot> {
         PermissionSnapshot::load(self.store.as_ref(), tenant_id, entity).await
     }
@@ -132,9 +141,12 @@ impl PermissionService {
         created_by: Option<Uuid>,
         field: Option<&str>,
         subject: Option<PolicySubject>,
+        effect: PolicyEffect,
     ) -> anyhow::Result<PolicyRow> {
         self.store
-            .create_policy(tenant_id, entity, action, roles, condition, created_by, field, subject)
+            .create_policy(
+                tenant_id, entity, action, roles, condition, created_by, field, subject, effect,
+            )
             .await
     }
 

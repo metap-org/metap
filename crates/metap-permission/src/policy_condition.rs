@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::context::RequestContext;
-use crate::policy_store::PolicyRow;
+use crate::policy_store::{PolicyEffect, PolicyRow};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -99,6 +99,50 @@ pub fn evaluate_policy_row(
     evaluate_condition(condition, &subject, context) == ConditionResult::Passed
 }
 
+/// Result of evaluating a whole set of policies together, with `Deny`-overrides-`Allow`
+/// semantics — see `PolicyEffect`'s doc comment. `NoMatch` (nothing in the set matched at all)
+/// is deliberately distinct from `Deny` (something matched and explicitly refused) purely so a
+/// caller can log/report the two differently; both mean "not allowed".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolicyVerdict {
+    Allow,
+    Deny,
+    NoMatch,
+}
+
+impl PolicyVerdict {
+    pub fn is_allowed(&self) -> bool {
+        matches!(self, PolicyVerdict::Allow)
+    }
+}
+
+/// Aggregates every policy in `policies` that actually matches `context`/`subject_kind_subject`
+/// (role gate + condition, via `evaluate_policy_row`) into one verdict: any matching `Deny`
+/// wins outright; otherwise `Allow` if at least one matching `Allow`; otherwise `NoMatch`. This
+/// is the one place deny-overrides-allow is decided — `check_action`,
+/// `PermissionSnapshot::filter_readable_fields`/`writable_fields`/`can_perform_record_condition`
+/// all route through this instead of each re-implementing the same fold.
+pub fn evaluate_policies<'a>(
+    policies: impl IntoIterator<Item = &'a PolicyRow>,
+    context: &RequestContext,
+    record_subject: Option<&serde_json::Value>,
+) -> PolicyVerdict {
+    let mut any_allow = false;
+    for policy in policies {
+        if evaluate_policy_row(policy, context, record_subject) {
+            match policy.effect {
+                PolicyEffect::Deny => return PolicyVerdict::Deny,
+                PolicyEffect::Allow => any_allow = true,
+            }
+        }
+    }
+    if any_allow {
+        PolicyVerdict::Allow
+    } else {
+        PolicyVerdict::NoMatch
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConditionResult {
     Passed,
@@ -180,6 +224,15 @@ mod tests {
     }
 
     fn policy(roles: Option<Vec<&str>>, condition: Option<PolicyCondition>, subject: &str) -> PolicyRow {
+        policy_with_effect(roles, condition, subject, PolicyEffect::Allow)
+    }
+
+    fn policy_with_effect(
+        roles: Option<Vec<&str>>,
+        condition: Option<PolicyCondition>,
+        subject: &str,
+        effect: PolicyEffect,
+    ) -> PolicyRow {
         PolicyRow {
             id: Uuid::new_v4(),
             tenant_id: Uuid::new_v4(),
@@ -190,6 +243,7 @@ mod tests {
             roles: roles.map(|r| r.into_iter().map(String::from).collect()),
             condition,
             created_by: None,
+            effect,
         }
     }
 
@@ -341,5 +395,36 @@ mod tests {
         });
         let cond: PolicyCondition = serde_json::from_value(raw).unwrap();
         assert!(matches!(cond, PolicyCondition::Attribute { .. }));
+    }
+
+    #[test]
+    fn deny_overrides_allow_even_when_an_allow_policy_also_matches() {
+        let ctx = context("t1", Some(vec!["sales"]));
+        let allow = policy(Some(vec!["sales"]), None, "context");
+        let deny = policy_with_effect(Some(vec!["sales"]), None, "context", PolicyEffect::Deny);
+        assert_eq!(evaluate_policies([&allow, &deny], &ctx, None), PolicyVerdict::Deny);
+        // Order must not matter — deny wins regardless of which is evaluated first.
+        assert_eq!(evaluate_policies([&deny, &allow], &ctx, None), PolicyVerdict::Deny);
+    }
+
+    #[test]
+    fn deny_policy_that_does_not_match_the_caller_does_not_block_a_matching_allow() {
+        let ctx = context("t1", Some(vec!["sales"]));
+        let allow = policy(Some(vec!["sales"]), None, "context");
+        let deny_for_someone_else = policy_with_effect(Some(vec!["ops"]), None, "context", PolicyEffect::Deny);
+        assert_eq!(
+            evaluate_policies([&allow, &deny_for_someone_else], &ctx, None),
+            PolicyVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn no_matching_policy_at_all_is_no_match_not_deny() {
+        let ctx = context("t1", Some(vec!["sales"]));
+        let allow_for_someone_else = policy(Some(vec!["ops"]), None, "context");
+        assert_eq!(
+            evaluate_policies([&allow_for_someone_else], &ctx, None),
+            PolicyVerdict::NoMatch
+        );
     }
 }

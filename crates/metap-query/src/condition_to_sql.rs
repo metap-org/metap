@@ -7,7 +7,9 @@
 //! `anyhow::Error` at query-build time rather than a silent wrong-type comparison — a
 //! stricter, more honest failure mode than the original, not a weaker one.
 
-use metap_permission::{role_gate_passed, ConditionOp, PolicyCondition, PolicyRow, PolicyValue, RequestContext};
+use metap_permission::{
+    role_gate_passed, ConditionOp, PolicyCondition, PolicyEffect, PolicyRow, PolicyValue, RequestContext,
+};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -136,8 +138,17 @@ pub fn condition_to_sql(
 
 /// Every other permission-decision entry point in this codebase bypasses policy evaluation
 /// for admin (see `PermissionSnapshot`'s `filter_readable_fields`/`assert_writable_fields`/
-/// `can_update_record_condition`) — this is the one that builds record-level read policies
+/// `can_perform_record_condition`) — this is the one that builds record-level read policies
 /// into SQL, so it needs the same bypass.
+///
+/// Deny-overrides-allow (`PolicyEffect`, `docs/roadmap.md`'s permission-review findings,
+/// 2026-08-21) needs its own handling here, separate from `metap_permission::evaluate_policies`
+/// — that helper evaluates one already-fetched record; this one has to build a WHERE clause
+/// that filters *many* rows in the database without fetching them first, so `deny`/`allow`
+/// conditions both become SQL fragments: `(allow1 OR allow2 OR ...) AND NOT (deny1 OR deny2 OR
+/// ...)`, not the "either effect ORs together" bug this file had before deny existed (folding a
+/// matching `deny` row into the same `OR` as `allow` rows would have *widened* access instead
+/// of narrowing it).
 pub fn record_policy_where_clause(
     rows: &[PolicyRow],
     context: &RequestContext,
@@ -147,24 +158,49 @@ pub fn record_policy_where_clause(
         return Ok(None);
     }
 
-    let passing_rows: Vec<&PolicyRow> = rows
+    let matching_rows: Vec<&PolicyRow> = rows
         .iter()
         .filter(|row| role_gate_passed(row.roles.as_deref(), context.roles.as_deref()))
         .collect();
 
-    if passing_rows.is_empty() {
+    let allow_rows: Vec<&&PolicyRow> = matching_rows
+        .iter()
+        .filter(|r| r.effect == PolicyEffect::Allow)
+        .collect();
+    if allow_rows.is_empty() {
+        // Same semantics this function always had for "nothing matched": the mere existence of
+        // record-level policies for this entity/action switches from "unrestricted" to "must
+        // match an allow to be visible" — a deny-only match still grants nothing.
         return Ok(Some("false".to_string()));
     }
 
-    let mut clauses = Vec::with_capacity(passing_rows.len());
-    for row in passing_rows {
-        clauses.push(match &row.condition {
+    let mut allow_clauses = Vec::with_capacity(allow_rows.len());
+    for row in &allow_rows {
+        allow_clauses.push(match &row.condition {
             Some(condition) => condition_to_sql(condition, context, params)?,
             None => "true".to_string(),
         });
     }
+    let allow_sql = format!("({})", allow_clauses.join(" OR "));
 
-    Ok(Some(format!("({})", clauses.join(" OR "))))
+    let deny_rows: Vec<&&PolicyRow> = matching_rows
+        .iter()
+        .filter(|r| r.effect == PolicyEffect::Deny)
+        .collect();
+    if deny_rows.is_empty() {
+        return Ok(Some(allow_sql));
+    }
+
+    let mut deny_clauses = Vec::with_capacity(deny_rows.len());
+    for row in &deny_rows {
+        deny_clauses.push(match &row.condition {
+            Some(condition) => condition_to_sql(condition, context, params)?,
+            None => "true".to_string(),
+        });
+    }
+    let deny_sql = format!("({})", deny_clauses.join(" OR "));
+
+    Ok(Some(format!("({allow_sql} AND NOT {deny_sql})")))
 }
 
 #[cfg(test)]
@@ -182,6 +218,14 @@ mod tests {
     }
 
     fn policy(roles: Option<Vec<&str>>, condition: Option<PolicyCondition>) -> PolicyRow {
+        policy_with_effect(roles, condition, PolicyEffect::Allow)
+    }
+
+    fn policy_with_effect(
+        roles: Option<Vec<&str>>,
+        condition: Option<PolicyCondition>,
+        effect: PolicyEffect,
+    ) -> PolicyRow {
         PolicyRow {
             id: Uuid::new_v4(),
             tenant_id: Uuid::new_v4(),
@@ -192,6 +236,7 @@ mod tests {
             roles: roles.map(|r| r.into_iter().map(String::from).collect()),
             condition,
             created_by: None,
+            effect,
         }
     }
 
@@ -293,5 +338,36 @@ mod tests {
             },
         };
         assert_eq!(condition_to_sql(&cond, &ctx, &mut params).unwrap(), "true");
+    }
+
+    #[test]
+    fn deny_row_narrows_the_where_clause_with_and_not_instead_of_widening_it_via_or() {
+        let ctx = context(None);
+        let mut params = ParamBuilder::new();
+        let allow = policy(None, None); // unconditional allow
+        let deny = policy_with_effect(
+            None,
+            Some(PolicyCondition::Attribute {
+                attribute: "status".to_string(),
+                op: ConditionOp::Eq,
+                value: PolicyValue::Literal {
+                    literal: serde_json::json!("archived"),
+                },
+            }),
+            PolicyEffect::Deny,
+        );
+        let clause = record_policy_where_clause(&[allow, deny], &ctx, &mut params).unwrap();
+        let sql = clause.unwrap();
+        assert!(sql.contains("AND NOT"), "expected AND NOT, got: {sql}");
+        assert!(!sql.contains(" OR status"), "deny condition must not be OR'd in: {sql}");
+    }
+
+    #[test]
+    fn deny_only_rows_with_no_allow_still_yield_false_not_unrestricted() {
+        let ctx = context(None);
+        let mut params = ParamBuilder::new();
+        let deny_only = policy_with_effect(None, None, PolicyEffect::Deny);
+        let clause = record_policy_where_clause(&[deny_only], &ctx, &mut params).unwrap();
+        assert_eq!(clause, Some("false".to_string()));
     }
 }

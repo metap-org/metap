@@ -72,6 +72,9 @@ pub enum EntityAction {
     Create,
     Update,
     Delete,
+    /// A workflow transition — previously checked as `Update`, split out so a policy can grant
+    /// "edit fields" without also granting "change state" (or vice versa).
+    Transition,
 }
 
 impl EntityAction {
@@ -81,6 +84,7 @@ impl EntityAction {
             EntityAction::Create => "create",
             EntityAction::Update => "update",
             EntityAction::Delete => "delete",
+            EntityAction::Transition => "transition",
         }
     }
 }

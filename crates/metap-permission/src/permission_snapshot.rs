@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::context::{EntityAction, PermissionDecision, RequestContext};
-use crate::policy_condition::evaluate_policy_row;
+use crate::policy_condition::{evaluate_policies, PolicyVerdict};
 use crate::policy_store::{PolicyRow, PolicyStore};
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
@@ -68,10 +68,7 @@ impl PermissionSnapshot {
                     result.insert(key.clone(), value.clone());
                 }
                 Some(policies) => {
-                    let passed = policies
-                        .iter()
-                        .any(|policy| evaluate_policy_row(policy, context, Some(&record_value)));
-                    if passed {
+                    if evaluate_policies(policies.iter().copied(), context, Some(&record_value)).is_allowed() {
                         result.insert(key.clone(), value.clone());
                     }
                 }
@@ -105,9 +102,9 @@ impl PermissionSnapshot {
             .iter()
             .filter(|field| match write_policies_by_field.get(field.as_str()) {
                 None => true,
-                Some(policies) => policies
-                    .iter()
-                    .any(|policy| evaluate_policy_row(policy, context, existing_value.as_ref())),
+                Some(policies) => {
+                    evaluate_policies(policies.iter().copied(), context, existing_value.as_ref()).is_allowed()
+                }
             })
             .cloned()
             .collect()
@@ -135,7 +132,7 @@ impl PermissionSnapshot {
         }
     }
 
-    pub fn can_update_record_condition(
+    pub fn can_perform_record_condition(
         &self,
         context: &RequestContext,
         record: &JsonObject,
@@ -148,18 +145,22 @@ impl PermissionSnapshot {
         }
 
         let record_value = serde_json::Value::Object(record.clone());
-        let passed = record_policies
-            .iter()
-            .any(|policy| evaluate_policy_row(policy, context, Some(&record_value)));
-
-        if passed {
-            PermissionDecision::allowed()
-        } else {
-            tracing::warn!(
-                action = action.as_str(),
-                "denied: no record-level policy condition matched"
-            );
-            PermissionDecision::forbidden()
+        match evaluate_policies(record_policies, context, Some(&record_value)) {
+            PolicyVerdict::Allow => PermissionDecision::allowed(),
+            PolicyVerdict::Deny => {
+                tracing::warn!(
+                    action = action.as_str(),
+                    "denied: an explicit deny record-level policy matched"
+                );
+                PermissionDecision::forbidden()
+            }
+            PolicyVerdict::NoMatch => {
+                tracing::warn!(
+                    action = action.as_str(),
+                    "denied: no record-level policy condition matched"
+                );
+                PermissionDecision::forbidden()
+            }
         }
     }
 }

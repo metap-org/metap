@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use metap_permission::{PolicyCondition, PolicyRow, PolicySubject};
+use metap_permission::{PolicyCondition, PolicyEffect, PolicyRow, PolicySubject};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -102,6 +102,7 @@ fn policy_to_json(row: &PolicyRow) -> Value {
         "roles": row.roles,
         "condition": row.condition,
         "createdBy": row.created_by,
+        "effect": row.effect.as_str(),
     })
 }
 
@@ -219,6 +220,9 @@ struct CreatePolicyBody {
     condition: Option<PolicyCondition>,
     field: Option<String>,
     subject: Option<String>,
+    /// `"allow"` (default) or `"deny"` — see `PolicyEffect`'s doc comment (`metap-permission`)
+    /// for what `"deny"` actually does (overrides any matching `allow`, regardless of order).
+    effect: Option<String>,
 }
 
 async fn create_policy(
@@ -235,6 +239,11 @@ async fn create_policy(
         Some("record") => PolicySubject::Record,
         _ => PolicySubject::Context,
     };
+    let effect = body
+        .effect
+        .as_deref()
+        .map(PolicyEffect::parse)
+        .unwrap_or(PolicyEffect::Allow);
     match state
         .permissions
         .create_policy(
@@ -246,12 +255,88 @@ async fn create_policy(
             created_by,
             body.field.as_deref(),
             Some(subject),
+            effect,
         )
         .await
     {
         Ok(row) => (StatusCode::CREATED, Json(json!({ "data": policy_to_json(&row) }))).into_response(),
         Err(e) => internal_error_response(e),
     }
+}
+
+const KNOWN_ACTIONS: [&str; 5] = ["read", "create", "update", "delete", "transition"];
+
+#[derive(Deserialize)]
+struct SeedDefaultPoliciesBody {
+    entity: String,
+    roles: Vec<String>,
+    /// Defaults to all 5 known actions when omitted/empty — the common "grant this role
+    /// everything on this entity" case right after onboarding it.
+    #[serde(default)]
+    actions: Vec<String>,
+}
+
+/// Bulk-creates one context-subject, no-condition (pure RBAC) policy per action for `roles` on
+/// `entity` — the ergonomic counterpart to `create_policy` now that `PermissionService` denies
+/// by default when an entity/action has no policy at all (`docs/roadmap.md`'s permission-review
+/// findings, 2026-08-21): a fresh entity or a fresh tenant used to just work for every role
+/// until an operator restricted it; now an operator has to grant *something* before any
+/// non-admin role can touch a new entity at all. One call here instead of up to 5 separate
+/// `POST /admin/policies` calls. Idempotent per action in spirit but not in fact — calling this
+/// twice with the same `entity`/`roles` creates duplicate policy rows (each still evaluates the
+/// same OR-combined result, so it's harmless, just untidy); `DELETE /admin/policies/:id` is how
+/// an operator cleans that up.
+async fn seed_default_policies(
+    State(state): State<AppState>,
+    AdminContext(context): AdminContext,
+    Json(body): Json<SeedDefaultPoliciesBody>,
+) -> Response {
+    let tenant_id = match state.permissions.scoped_tenant(&context) {
+        Ok(id) => id,
+        Err(e) => return internal_error_response(e),
+    };
+    if body.roles.is_empty() {
+        return service_error_response(400, "validation_failed", Some("`roles` must not be empty."), None);
+    }
+    let actions: Vec<&str> = if body.actions.is_empty() {
+        KNOWN_ACTIONS.to_vec()
+    } else {
+        body.actions.iter().map(String::as_str).collect()
+    };
+    if let Some(unknown) = actions.iter().find(|a| !KNOWN_ACTIONS.contains(a)) {
+        return service_error_response(
+            400,
+            "validation_failed",
+            Some(&format!(
+                "Unknown action \"{unknown}\" — must be one of {KNOWN_ACTIONS:?}."
+            )),
+            None,
+        );
+    }
+
+    let created_by = context.user_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
+    let mut created = Vec::with_capacity(actions.len());
+    for action in actions {
+        match state
+            .permissions
+            .create_policy(
+                tenant_id,
+                &body.entity,
+                action,
+                Some(body.roles.clone()),
+                None,
+                created_by,
+                None,
+                Some(PolicySubject::Context),
+                PolicyEffect::Allow,
+            )
+            .await
+        {
+            Ok(row) => created.push(policy_to_json(&row)),
+            Err(e) => return internal_error_response(e),
+        }
+    }
+    (StatusCode::CREATED, Json(json!({ "data": created }))).into_response()
 }
 
 async fn delete_policy(
@@ -304,6 +389,7 @@ pub fn router() -> Router<AppState> {
         .route("/admin/users/{userId}/roles", post(assign_role))
         .route("/admin/users/{userId}/roles/{role}", axum::routing::delete(revoke_role))
         .route("/admin/policies", get(list_policies).post(create_policy))
+        .route("/admin/policies/seed-defaults", post(seed_default_policies))
         .route("/admin/policies/explain", post(explain_policy))
         .route("/admin/policies/{id}", axum::routing::delete(delete_policy))
 }

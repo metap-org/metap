@@ -49,6 +49,7 @@ impl PolicyStore for UnusedPolicyStore {
         _: Option<Uuid>,
         _: Option<&str>,
         _: Option<PolicySubject>,
+        _: metap_permission::PolicyEffect,
     ) -> anyhow::Result<PolicyRow> {
         unreachable!("plan_list never calls this")
     }

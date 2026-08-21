@@ -202,10 +202,22 @@ discipline hiện tại (`docs/architectures/02-constraints.md`'s "Tiến hóa t
     guard + audit, không có gì persist execution state giữa các bước); (5) distributed workflow
     platform. Metap hôm nay đứng ở level 1, mới bắt đầu chạm level 2 qua Phase 11 (low-code
     metadata).
-  - Cùng kỷ luật với mọi mục khác trong danh sách này: **không bắt đầu code level 3 trở lên**
-    (Workflow engine tách biệt State Machine, chưa nói tới durable runtime) khi chưa có feature
-    brief nêu trigger cụ thể — ví dụ một module thật sự cần một chuỗi việc dài-hạn/có thể
-    wait-for-event mà state machine transition đơn thuần không mô tả được.
+  - **Trigger đã xảy ra — quyết định ưu tiên trực tiếp từ chủ dự án, 2026-08-21.** Rà lại code
+    thật trước khi lên kế hoạch (không đoán): State Machine hiện tại
+    (`crates/metap-workflow/src/lib.rs`, 272 dòng) chỉ là 3 hàm thuần
+    (`get_initial_status`/`find_transition`/`run_guard`) — không giữ execution state riêng,
+    transition là một UPDATE atomic trong `CrudService::transition`. Không cần refactor gì để
+    "tách" nó — nó vốn đã không biết gì về trigger/schedule/activity. Bất ngờ hơn: `metap-cron`
+    (Phase 13) đã là ~70% hạ tầng Workflow cần — trigger schedule (`cron_jobs`), activity gọi
+    transition/webhook, reliable dispatch qua outbox, audit (`cron_job_runs`). Cái thật sự thiếu:
+    (1) trigger "on state transition" (subscribe `<entity>.workflow.transitioned`, chưa ai lắng
+    nghe ngoài `notification-worker` chỉ log), (2) chuỗi nhiều activity (`cron_jobs` mỗi job chỉ
+    1 target), (3) `wait_event`/durable pause (phần khó nhất — cần bảng lưu "đang dừng ở đâu"),
+    (4) retry-with-backoff cho activity (gap đã ghi từ Phase 5). Kế hoạch chi tiết + phạm vi
+    tăng-dần (increment 1: on-transition trigger tái dùng dispatch có sẵn; increment 2: chuỗi
+    activity tuần tự; increment 3: wait_event) nằm ở feature brief
+    `docs/features/02-workflow-engine.md` (trạng thái `approved` — kiến trúc "tiến hoá
+    `metap-cron`" đã chốt 2026-08-21, sẵn sàng bắt đầu code Increment 1).
 - **Tách monorepo thành nhiều repo trong một GitHub organization** (platform public, multi-tenancy
   management + low-code private, và tách hẳn frontend ra thành repo riêng nữa) — ghi lại
   2026-08-21. Trigger cụ thể: **lúc đổi remote GitHub hiện tại sang một organization** — chưa
