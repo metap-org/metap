@@ -55,6 +55,67 @@ fn resolve_value(value: &PolicyValue, context: &RequestContext) -> serde_json::V
     }
 }
 
+/// `attribute` may be a dotted path (e.g. `"project.ownerId"`) to reach into a related
+/// record's data that `CrudService` has merged onto `subject` under the relation field's own
+/// name (see `required_relation_fields` below) — a single-segment path is just one `.get()`
+/// call, unchanged from before cross-record conditions existed.
+fn resolve_attribute_path(subject: &serde_json::Value, attribute: &str) -> serde_json::Value {
+    let mut current = subject;
+    for segment in attribute.split('.') {
+        match current.get(segment) {
+            Some(next) => current = next,
+            None => return serde_json::Value::Null,
+        }
+    }
+    current.clone()
+}
+
+/// The top-level relation field name of a dotted attribute path (`"project.ownerId"` ->
+/// `"project"`), or `None` for a plain, same-record attribute. Only one hop is ever resolved —
+/// a path with more than one dot still only names its first segment as the relation to fetch,
+/// matching the one-hop-only scope `CrudService`'s enrichment implements.
+fn relation_field_of(attribute: &str) -> Option<&str> {
+    attribute.split_once('.').map(|(head, _)| head)
+}
+
+fn collect_relation_fields(condition: &PolicyCondition, out: &mut Vec<String>) {
+    match condition {
+        PolicyCondition::Attribute { attribute, .. } => {
+            if let Some(field) = relation_field_of(attribute) {
+                if !out.iter().any(|f| f == field) {
+                    out.push(field.to_string());
+                }
+            }
+        }
+        PolicyCondition::All { all } => {
+            for inner in all {
+                collect_relation_fields(inner, out);
+            }
+        }
+        PolicyCondition::Any { any } => {
+            for inner in any {
+                collect_relation_fields(inner, out);
+            }
+        }
+    }
+}
+
+/// Every relation field name referenced by a dotted attribute path (`"project.ownerId"`) across
+/// `policies`' conditions — the set `CrudService` needs to fetch and merge onto the record
+/// subject before evaluating these policies. Deliberately cheap and synchronous (no I/O, no
+/// entity-metadata lookup): a caller with no cross-record conditions at all gets an empty `Vec`
+/// back and does zero extra work, which is the whole point of resolving this per-action instead
+/// of unconditionally fetching every `Reference` field on every record-level permission check.
+pub fn required_relation_fields(policies: &[PolicyRow]) -> Vec<String> {
+    let mut out = Vec::new();
+    for policy in policies {
+        if let Some(condition) = &policy.condition {
+            collect_relation_fields(condition, &mut out);
+        }
+    }
+    out
+}
+
 fn match_operator(op: ConditionOp, actual: &serde_json::Value, expected: &serde_json::Value) -> bool {
     match op {
         ConditionOp::Eq => actual == expected,
@@ -189,7 +250,7 @@ pub fn evaluate_condition(
             ConditionResult::Failed(last_failure.unwrap_or_else(|| "no condition in 'any' matched".to_string()))
         }
         PolicyCondition::Attribute { attribute, op, value } => {
-            let actual = subject.get(attribute).cloned().unwrap_or(serde_json::Value::Null);
+            let actual = resolve_attribute_path(subject, attribute);
             let expected = resolve_value(value, context);
             if match_operator(*op, &actual, &expected) {
                 ConditionResult::Passed
@@ -416,6 +477,81 @@ mod tests {
             evaluate_policies([&allow, &deny_for_someone_else], &ctx, None),
             PolicyVerdict::Allow
         );
+    }
+
+    #[test]
+    fn dotted_attribute_path_resolves_into_a_merged_relation_field() {
+        let ctx = context("t1", None);
+        let subject = json!({ "project": { "ownerId": "u1" } });
+        let cond = PolicyCondition::Attribute {
+            attribute: "project.ownerId".to_string(),
+            op: ConditionOp::Eq,
+            value: PolicyValue::Literal { literal: json!("u1") },
+        };
+        assert!(evaluate_condition(&cond, &subject, &ctx).is_passed());
+    }
+
+    #[test]
+    fn dotted_attribute_path_is_null_when_the_relation_was_never_merged_in() {
+        let ctx = context("t1", None);
+        let subject = json!({ "status": "active" });
+        let cond = PolicyCondition::Attribute {
+            attribute: "project.ownerId".to_string(),
+            op: ConditionOp::Eq,
+            value: PolicyValue::Literal { literal: json!("u1") },
+        };
+        assert!(!evaluate_condition(&cond, &subject, &ctx).is_passed());
+    }
+
+    #[test]
+    fn required_relation_fields_collects_distinct_first_segments_across_nested_conditions() {
+        let deep = PolicyCondition::Any {
+            any: vec![
+                PolicyCondition::Attribute {
+                    attribute: "project.ownerId".to_string(),
+                    op: ConditionOp::Eq,
+                    value: PolicyValue::Literal { literal: json!("u1") },
+                },
+                PolicyCondition::Attribute {
+                    attribute: "project.status".to_string(),
+                    op: ConditionOp::Eq,
+                    value: PolicyValue::Literal { literal: json!("open") },
+                },
+            ],
+        };
+        let cond = PolicyCondition::All {
+            all: vec![
+                deep,
+                PolicyCondition::Attribute {
+                    attribute: "team.leadId".to_string(),
+                    op: ConditionOp::Eq,
+                    value: PolicyValue::Literal { literal: json!("u2") },
+                },
+                // Plain same-record attribute — must not show up as a relation.
+                PolicyCondition::Attribute {
+                    attribute: "status".to_string(),
+                    op: ConditionOp::Eq,
+                    value: PolicyValue::Literal {
+                        literal: json!("active"),
+                    },
+                },
+            ],
+        };
+        let row = policy(None, Some(cond), "record");
+        let mut fields = required_relation_fields(&[row]);
+        fields.sort();
+        assert_eq!(fields, vec!["project".to_string(), "team".to_string()]);
+    }
+
+    #[test]
+    fn required_relation_fields_is_empty_when_no_condition_uses_a_dotted_path() {
+        let cond = PolicyCondition::Attribute {
+            attribute: "ownerId".to_string(),
+            op: ConditionOp::Eq,
+            value: PolicyValue::Literal { literal: json!("u1") },
+        };
+        let row = policy(None, Some(cond), "record");
+        assert!(required_relation_fields(&[row]).is_empty());
     }
 
     #[test]

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use metap_control::{Router, RouterError};
-use metap_metadata::{EntityDefinition, MetadataRegistry};
+use metap_metadata::{EntityDefinition, FieldKind, MetadataRegistry};
 use metap_permission::{EntityAction, PermissionDecision, PermissionService, PermissionSnapshot, RequestContext};
 use metap_query::{apply_params, encode_cursor, plan_list, Cursor, InvalidCursorError, ListInput, SortDir};
 use metap_workflow::{
@@ -58,6 +58,68 @@ impl CrudService {
 
     fn get_entity(&self, entity_name: &str) -> Option<EntityDefinition> {
         self.metadata.load().get_entity(entity_name).cloned()
+    }
+
+    /// Cross-record permission conditions (`docs/roadmap.md`'s permission-review findings,
+    /// 2026-08-21, item #3): a record-level policy's condition may reference a related record
+    /// via a dotted attribute path (e.g. `"project.ownerId"`), resolved one hop through a
+    /// `FieldKind::Reference` field. Builds a *copy* of `record` with each such relation field's
+    /// value replaced by the related record's own data (never mutates the caller's copy — other
+    /// call-site logic, e.g. workflow guards or `writable_fields`, still needs the original
+    /// reference-id value, not the expanded object) — used only as the subject passed into
+    /// `PermissionSnapshot::can_perform_record_condition`.
+    ///
+    /// Only runs when `snapshot.required_relation_fields(action)` (for the union of `actions`)
+    /// is non-empty, so an entity with no cross-record conditions pays zero extra query cost —
+    /// this only ever runs for single-record operations (get/update/delete/transition), never
+    /// `list()`, which has no way to resolve a relation inside a SQL `WHERE` clause (see
+    /// `metap_query::condition_to_sql`'s doc comment on why that's rejected there instead of
+    /// silently mismatching).
+    async fn enrich_record_for_actions(
+        &self,
+        entity: &EntityDefinition,
+        snapshot: &PermissionSnapshot,
+        actions: &[EntityAction],
+        tenant_id: Uuid,
+        record: &JsonObject,
+    ) -> anyhow::Result<JsonObject> {
+        let mut relation_fields: Vec<String> = Vec::new();
+        for &action in actions {
+            for field in snapshot.required_relation_fields(action) {
+                if !relation_fields.contains(&field) {
+                    relation_fields.push(field);
+                }
+            }
+        }
+        if relation_fields.is_empty() {
+            return Ok(record.clone());
+        }
+
+        let mut enriched = record.clone();
+        let mut tx = self.router.begin(tenant_id.into()).await?;
+        for field_name in relation_fields {
+            let Some(field) = entity.fields.iter().find(|f| f.name == field_name) else {
+                continue;
+            };
+            if field.kind != FieldKind::Reference {
+                continue;
+            }
+            let Some(ref_entity) = &field.ref_entity else {
+                continue;
+            };
+            let Some(ref_id) = record
+                .get(&field_name)
+                .and_then(Value::as_str)
+                .and_then(|s| Uuid::parse_str(s).ok())
+            else {
+                continue;
+            };
+            if let Some(related_data) = fetch_related_data(&mut *tx, ref_id, tenant_id, ref_entity).await? {
+                enriched.insert(field_name, Value::Object(related_data));
+            }
+        }
+        tx.commit().await?;
+        Ok(enriched)
     }
 
     pub async fn list(
@@ -193,12 +255,24 @@ impl CrudService {
         tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision = snapshot.can_perform_record_condition(context, &existing.data, EntityAction::Read);
+        // Enriched once for every record-level action `get` cares about (the Read check below,
+        // plus Update/Transition inside `compute_capabilities`) so a cross-record fetch never
+        // runs twice for the same relation within one call.
+        let enriched = self
+            .enrich_record_for_actions(
+                &entity,
+                &snapshot,
+                &[EntityAction::Read, EntityAction::Update, EntityAction::Transition],
+                tenant_id,
+                &existing.data,
+            )
+            .await?;
+        let record_decision = snapshot.can_perform_record_condition(context, &enriched, EntityAction::Read);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
 
-        let capabilities = compute_capabilities(&entity, context, &snapshot, &existing.data);
+        let capabilities = compute_capabilities(&entity, context, &snapshot, &enriched);
         let masked = mask_record_for_read(&entity, context, &snapshot, existing);
         Ok(ServiceResult::ok((masked, capabilities)))
     }
@@ -338,7 +412,10 @@ impl CrudService {
         precheck_tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision = snapshot.can_perform_record_condition(context, &existing.data, EntityAction::Update);
+        let enriched = self
+            .enrich_record_for_actions(&entity, &snapshot, &[EntityAction::Update], tenant_id, &existing.data)
+            .await?;
+        let record_decision = snapshot.can_perform_record_condition(context, &enriched, EntityAction::Update);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
@@ -472,7 +549,16 @@ impl CrudService {
         precheck_tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision = snapshot.can_perform_record_condition(context, &existing.data, EntityAction::Transition);
+        let enriched = self
+            .enrich_record_for_actions(
+                &entity,
+                &snapshot,
+                &[EntityAction::Transition],
+                tenant_id,
+                &existing.data,
+            )
+            .await?;
+        let record_decision = snapshot.can_perform_record_condition(context, &enriched, EntityAction::Transition);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
@@ -609,7 +695,10 @@ impl CrudService {
         precheck_tx.commit().await?;
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
-        let record_decision = snapshot.can_perform_record_condition(context, &existing.data, EntityAction::Delete);
+        let enriched = self
+            .enrich_record_for_actions(&entity, &snapshot, &[EntityAction::Delete], tenant_id, &existing.data)
+            .await?;
+        let record_decision = snapshot.can_perform_record_condition(context, &enriched, EntityAction::Delete);
         if !record_decision.allowed {
             return Ok(forbidden(record_decision));
         }
@@ -746,6 +835,31 @@ async fn fetch_existing<'e, E: PgExecutor<'e>>(
     .fetch_optional(executor)
     .await?;
     row.map(row_to_dto).transpose()
+}
+
+/// Raw `data` fetch for one hop of cross-record permission enrichment (see
+/// `CrudService::enrich_record_for_actions`) — deliberately not `fetch_existing` (no need for
+/// the full `RecordDto`/`RECORD_COLUMNS` shape, just the JSONB blob to merge into a subject)
+/// and deliberately no permission check on the related record: this never leaves the server as
+/// a response, it's only ever fed into `PolicyCondition` evaluation for the *current* record.
+async fn fetch_related_data<'e, E: PgExecutor<'e>>(
+    executor: E,
+    id: Uuid,
+    tenant_id: Uuid,
+    entity_name: &str,
+) -> anyhow::Result<Option<JsonObject>> {
+    let row =
+        sqlx::query("SELECT data FROM records WHERE id = $1 AND tenant_id = $2 AND entity = $3 AND deleted = false")
+            .bind(id)
+            .bind(tenant_id)
+            .bind(entity_name)
+            .fetch_optional(executor)
+            .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let data_value: Value = row.try_get("data")?;
+    Ok(data_value.as_object().cloned())
 }
 
 fn row_to_dto(row: sqlx::postgres::PgRow) -> anyhow::Result<RecordDto> {

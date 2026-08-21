@@ -46,6 +46,17 @@ impl PermissionSnapshot {
             .unwrap_or(&[])
     }
 
+    /// Relation field names (`"project"`, not `"project.ownerId"`) that `action`'s record-level
+    /// policies reference via a dotted attribute path — see
+    /// `crate::policy_condition::required_relation_fields`'s doc comment for why this stays
+    /// cheap when nothing needs it. `CrudService` calls this before evaluating record-level
+    /// policies for a single-record operation, fetches only the named relations, and merges
+    /// them onto the subject; `list()` has no equivalent (would need `QueryPlanner` JOIN
+    /// support), so those conditions never resolve when pushed into SQL.
+    pub fn required_relation_fields(&self, action: EntityAction) -> Vec<String> {
+        crate::policy_condition::required_relation_fields(self.get_record_policies(action))
+    }
+
     pub fn filter_readable_fields(&self, context: &RequestContext, record: &JsonObject) -> JsonObject {
         if context.is_admin() {
             return record.clone();

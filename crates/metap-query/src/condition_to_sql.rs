@@ -21,8 +21,26 @@ enum ColType {
     Timestamptz,
 }
 
-fn field_expression(field_name: &str, params: &mut ParamBuilder) -> (String, ColType) {
-    match field_name {
+/// A dotted attribute path (`"project.ownerId"`) names a cross-record condition —
+/// `metap-permission`'s `required_relation_fields`/`CrudService`'s enrichment resolve those by
+/// fetching the related record and merging it onto an already-fetched subject, which only
+/// single-record operations (get/update/delete/transition) do. `list()`'s SQL-generation path
+/// has no equivalent (would need `QueryPlanner` JOIN support, not built), so treating the whole
+/// path as one literal JSONB key here would silently look up a key that can never exist —
+/// `jsonb_extract_path_text(data, 'project.ownerId')` returns SQL `NULL`, which makes an `eq`
+/// condition simply never match and a `deny` condition never fire, wrong in the *unsafe*
+/// direction (a policy author's deny quietly does nothing). Reject it explicitly instead,
+/// matching this file's existing "clear error over silent wrong-type comparison" convention
+/// (see the top doc comment).
+fn field_expression(field_name: &str, params: &mut ParamBuilder) -> anyhow::Result<(String, ColType)> {
+    if field_name.contains('.') {
+        anyhow::bail!(
+            "policy condition attribute {field_name:?} is a cross-record path, not supported in \
+             list() queries — cross-record conditions only apply to single-record operations \
+             (get/update/delete/transition)"
+        );
+    }
+    Ok(match field_name {
         "createdBy" => ("created_by".to_string(), ColType::Uuid),
         "updatedBy" => ("updated_by".to_string(), ColType::Uuid),
         "status" => ("status".to_string(), ColType::Text),
@@ -32,7 +50,7 @@ fn field_expression(field_name: &str, params: &mut ParamBuilder) -> (String, Col
             let ph = params.push(BindValue::Text(field_name.to_string()));
             (format!("jsonb_extract_path_text(data, {ph})"), ColType::Text)
         }
-    }
+    })
 }
 
 fn resolve_value(value: &PolicyValue, context: &RequestContext) -> Value {
@@ -97,7 +115,7 @@ pub fn condition_to_sql(
             Ok(format!("({})", clauses.join(" OR ")))
         }
         PolicyCondition::Attribute { attribute, op, value } => {
-            let (expr, col_type) = field_expression(attribute, params);
+            let (expr, col_type) = field_expression(attribute, params)?;
             let expected = resolve_value(value, context);
 
             match op {
@@ -338,6 +356,21 @@ mod tests {
             },
         };
         assert_eq!(condition_to_sql(&cond, &ctx, &mut params).unwrap(), "true");
+    }
+
+    #[test]
+    fn dotted_cross_record_attribute_is_a_clear_error_not_a_silent_no_op() {
+        let ctx = context(None);
+        let mut params = ParamBuilder::new();
+        let cond = PolicyCondition::Attribute {
+            attribute: "project.ownerId".to_string(),
+            op: ConditionOp::Eq,
+            value: PolicyValue::Literal {
+                literal: serde_json::json!("u1"),
+            },
+        };
+        let err = condition_to_sql(&cond, &ctx, &mut params).unwrap_err();
+        assert!(err.to_string().contains("cross-record"), "unexpected error: {err}");
     }
 
     #[test]

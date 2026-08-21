@@ -149,10 +149,24 @@ Các điểm lệch/gap đã biết, có chủ đích để lại chứ không �
   entity-level (role bị deny đọc dù có policy allow chung cũng match) và record-level/SQL (user
   có allow-record-policy nhưng bị deny khi `status=blocked` — record đó biến mất khỏi `list()`,
   admin vẫn thấy đủ vì luôn bypass).
-- Còn để ngỏ, chưa quyết: condition không traverse được sang record khác (permission phân cấp
-  kiểu Jira project→issue) — thiết kế đã chốt (dotted attribute path, `CrudService` fetch record
-  liên quan 1-hop rồi merge vào subject trước khi gọi `metap-permission`, chỉ áp dụng cho
-  single-record operation, không áp dụng cho `list()`), chưa triển khai.
+- **Đã fix (2026-08-21):** cross-record/hierarchical condition (permission phân cấp kiểu Jira
+  project→issue) — attribute path dạng dotted (`"project.ownerId"`) giờ resolve được.
+  `metap-permission::policy_condition` tự nó vẫn thuần túy/đồng bộ, không I/O: `evaluate_condition`
+  traverse path lồng nhau trên `subject` đã có sẵn; `required_relation_fields`
+  (`PermissionSnapshot::required_relation_fields`) chỉ đọc segment đầu tiên của path để biết cần
+  fetch quan hệ nào, trả `Vec` rỗng (không tốn gì) khi entity không có condition kiểu này.
+  `CrudService::enrich_record_for_actions` (`metap-crud`) là nơi duy nhất có I/O: với action đang
+  xét, nếu snapshot báo có relation field cần, fetch đúng 1-hop qua field `FieldKind::Reference`
+  (`ref_entity`) rồi merge `data` của record liên quan vào một **bản sao** subject (không đụng
+  record gốc — guard/`writable_fields` vẫn cần giá trị id gốc, không phải object đã mở rộng), chỉ
+  chạy ở 4 method single-record (`get`/`update`/`transition`/`delete`), không chạy ở `list()`.
+  `list()` không hỗ trợ (đúng theo thiết kế đã chốt — cần `QueryPlanner` JOIN, chưa xây): thay vì
+  âm thầm sai (dotted path bị coi là một key JSONB literal, không bao giờ khớp — nguy hiểm với
+  policy `deny`, vì nghĩa là deny không bao giờ kích hoạt), `metap_query::condition_to_sql` giờ
+  reject rõ ràng attribute có dấu chấm với lỗi mô tả rõ lý do. Verify sống qua HTTP thật cả
+  `get()` lẫn `update()`: policy `allow` record-level với condition `referredBy.status eq active`
+  — record có `referredBy` trỏ tới customer `active` thì đọc/sửa được (200), record không có
+  `referredBy` (path resolve về `null`) thì bị từ chối (403).
 
 Đã bugfix từ đó (2026-08-01), cả hai được phát hiện trong lần verify E2E thủ
 công của Phase 3 và được xác nhận bằng regression test trong
