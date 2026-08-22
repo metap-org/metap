@@ -189,6 +189,22 @@ pub async fn list_enabled_published(pool: &PgPool) -> anyhow::Result<Vec<(String
         .collect()
 }
 
+/// Every published entity (enabled or not) whose name is in `names`, or every published entity
+/// if `names` is `None` — the read side of "import/export định nghĩa app" (`docs/roadmap.md`
+/// Phase 11 Phase C). Deliberately built on `list_all_published` rather than
+/// `list_enabled_published`: an export snapshot should be an exact copy of what's published,
+/// disabled entities included, not a filtered view of the runtime-serving registry.
+pub async fn export_entities(
+    pool: &PgPool,
+    names: Option<&[String]>,
+) -> anyhow::Result<Vec<(String, LowCodeEntityDefinition)>> {
+    let all = list_all_published(pool).await?;
+    Ok(match names {
+        None => all,
+        Some(names) => all.into_iter().filter(|(name, _)| names.contains(name)).collect(),
+    })
+}
+
 fn version_from_row(row: sqlx::postgres::PgRow) -> anyhow::Result<PublishedVersion> {
     let Json(definition) = row.try_get::<Json<LowCodeEntityDefinition>, _>("definition")?;
     Ok(PublishedVersion {

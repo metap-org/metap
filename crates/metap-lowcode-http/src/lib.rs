@@ -22,9 +22,10 @@
 //! sub-project 2) — any request after the response comes back is guaranteed to see the new
 //! registry.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -368,6 +369,92 @@ async fn list_audit_events(
 
 /// Merge this into `metap_http::build_router`'s `extra_routes` argument to expose the
 /// low-code admin API on a running server — never merged automatically by `metap-http` itself.
+/// `docs/roadmap.md` Phase 11 Phase C's "import/export định nghĩa app" — portable snapshot of
+/// published entity definitions, for moving a low-code app between deployments (definitions
+/// are global to a deployment, not tenant-scoped — see this file's top doc comment — so this
+/// is not a cross-tenant copy). `?entities=a,b,c` filters to those names, omitted exports
+/// everything published; a requested name with no published version is reported under
+/// `notFound` instead of erroring the whole request.
+async fn export_entities(
+    State(state): State<AppState>,
+    AdminContext(_context): AdminContext,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let requested: Option<Vec<String>> = params.get("entities").map(|s| {
+        s.split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_string)
+            .collect()
+    });
+
+    let found = match metap_lowcode::export_entities(&state.pool, requested.as_deref()).await {
+        Ok(entities) => entities,
+        Err(e) => return internal_error_response(e),
+    };
+    let found_names: HashSet<&str> = found.iter().map(|(name, _)| name.as_str()).collect();
+    let not_found: Vec<&str> = requested
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !found_names.contains(name))
+        .collect();
+    let entities: Vec<_> = found
+        .into_iter()
+        .map(|(name, definition)| json!({ "name": name, "definition": definition }))
+        .collect();
+
+    Json(json!({ "data": { "entities": entities, "notFound": not_found } })).into_response()
+}
+
+#[derive(Deserialize)]
+struct ImportEntity {
+    name: String,
+    definition: LowCodeEntityDefinition,
+}
+
+#[derive(Deserialize)]
+struct ImportBody {
+    entities: Vec<ImportEntity>,
+}
+
+/// The write side of import/export — writes each entity in the bundle as a *draft*
+/// (`metap_lowcode::save_draft`, same shape validation an operator authoring through the admin
+/// UI gets), never auto-publishes. Publishing stays a deliberate, per-entity next step through
+/// the existing `POST .../publish` (with its full name-reservation/cross-reference/
+/// migration-impact checks) — import intentionally doesn't bypass any of that. Best-effort like
+/// `bulk_query_action` cron targets: one bad entity in the batch doesn't fail the rest, the
+/// response reports each name's outcome individually.
+async fn import_entities(
+    State(state): State<AppState>,
+    AdminContext(context): AdminContext,
+    Json(body): Json<ImportBody>,
+) -> Response {
+    let mut imported = Vec::new();
+    let mut failed = Vec::new();
+    for item in body.entities {
+        match metap_lowcode::save_draft(&state.pool, &item.name, &item.definition).await {
+            Ok(()) => {
+                audit::record(
+                    &state.pool,
+                    &item.name,
+                    AuditAction::DraftSaved,
+                    &AuditActor {
+                        user_id: context.user_id.clone(),
+                        tenant_id: context.tenant_id.clone(),
+                    },
+                    AuditVersionInfo::default(),
+                )
+                .await;
+                imported.push(item.name);
+            }
+            Err(e) => failed.push(json!({ "name": item.name, "error": e.to_string() })),
+        }
+    }
+    Json(json!({ "data": { "imported": imported, "failed": failed } })).into_response()
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/admin/lowcode/entities", get(list_entities))
@@ -382,4 +469,6 @@ pub fn router() -> Router<AppState> {
         .route("/admin/lowcode/entities/{name}/published", get(get_published))
         .route("/admin/lowcode/entities/{name}/versions", get(list_versions))
         .route("/admin/lowcode/entities/{name}/audit", get(list_audit_events))
+        .route("/admin/lowcode/export", get(export_entities))
+        .route("/admin/lowcode/import", axum::routing::post(import_entities))
 }

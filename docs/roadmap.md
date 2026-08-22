@@ -643,8 +643,32 @@ xoá, đổi `kind`, field mới `required`, field mới `unique`, và enum valu
 qua HTTP thật: publish 1 entity, sửa draft xoá field + thu hẹp enum + thêm required/unique, gọi
 preview → đúng cả 4 cảnh báo.
 
+**Import/export định nghĩa app — Đã xong (2026-08-22).** `metap_lowcode::export_entities(pool,
+names: Option<&[String]>)` — đọc từ `list_all_published` (không phải
+`list_enabled_published`: một snapshot export phải là bản sao chính xác của những gì đã publish,
+gồm cả entity đang disable, không phải view đã lọc theo registry đang phục vụ runtime), lọc
+theo tên nếu có truyền `names`. Route mới: `GET /admin/lowcode/export` (query `?entities=a,b,c`
+lọc theo tên, bỏ trống export tất cả; tên không tồn tại trả về trong `notFound`, không lỗi cả
+request) và `POST /admin/lowcode/import` (body cùng shape `entities: [{name, definition}]` với
+output của export — ghép được thẳng output export vào import). Vì định nghĩa entity DB-authored
+là global theo deployment, không theo tenant (xem đầu file `metap-lowcode-http/src/lib.rs`),
+đây là cơ chế mang một "app" (tập entity definition) giữa các **deployment** khác nhau (dev →
+staging → prod, hoặc chia sẻ một app mẫu), không phải copy cross-tenant trong cùng một
+deployment. Import chỉ ghi mỗi entity như một **draft** (`save_draft`, cùng validate shape một
+operator tự tay author qua admin UI nhận được) — không bao giờ tự publish; publish vẫn là một
+bước riêng, tường minh, qua đúng `POST .../publish` đã có (đầy đủ check name-reservation/
+cross-reference/migration-impact), import cố tình không bypass bất kỳ check nào trong số đó.
+Best-effort như target `bulk_query_action` của cron: một entity lỗi trong batch không làm hỏng
+cả batch, response báo `imported`/`failed` riêng từng entity. Verify live qua HTTP thật: publish
+2 entity mẫu → export không filter thấy cả 2 → export có filter + 1 tên không tồn tại → đúng
+`notFound` → import 1 entity hợp lệ (tên mới) + 1 entity sai tên (mismatch `definition.name`) →
+đúng `imported: [...]`/`failed: [{name, error}]` tách biệt → entity import xong nằm ở draft,
+`GET .../published` vẫn 404 (chưa tự publish). 3 test e2e mới
+(`crates/metap-lowcode/tests/store.rs`: export không filter, export có filter, export gồm cả
+entity disabled).
+
 Các deliverable còn lại của Phase C (publish approval workflow, quy tắc cô lập schema cấp tenant,
-operational visibility rộng hơn audit log đơn lẻ, import/export định nghĩa app) — chưa bắt đầu.
+operational visibility rộng hơn audit log đơn lẻ) — chưa bắt đầu.
 
 ## Phase 12: Rust Core Migration
 
@@ -710,7 +734,12 @@ Mục tiêu:
 
 Chưa làm:
 
-- **Retry policy / alert khi fail lặp lại** — một run fail được ghi nhận (`status = "failed"`, `error`) nhưng không có gì retry nó hay báo cho ai; phụ thuộc vào việc kênh notification thật cuối cùng sẽ là gì (`crates/notification-worker` hiện chỉ stdout).
+- **Alert khi fail lặp lại** — retry-with-backoff đã xong (Phase 17 Increment 1, 2026-08-21):
+  `cron_jobs.maxAttempts`/`retryBackoffSeconds` áp dụng cho mọi job (cả `schedule` lẫn
+  `on_transition`), `finish_run_with_retry` tự lên lịch lần thử tiếp theo khi còn attempt, ticker
+  claim qua `claim_due_retries`. Phần còn thiếu chỉ còn *alert* khi một run fail hết attempt —
+  chưa có gì báo cho ai, phụ thuộc vào việc kênh notification thật cuối cùng sẽ là gì
+  (`crates/notification-worker` hiện chỉ stdout).
 - **Multi-tenant executor routing** — xem ràng buộc `CRON_SERVICE_JWT` ở trên.
 
 ## Phase 14: Multi-language (i18n)

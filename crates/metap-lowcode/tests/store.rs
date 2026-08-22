@@ -570,3 +570,85 @@ async fn workflow_with_guard_round_trips_through_draft_and_publish() {
         "publish must carry the guard, not just the workflow shape"
     );
 }
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn export_entities_with_no_filter_returns_every_published_entity() {
+    let pool = pool().await;
+    let name_a = entity_name("export_all_a");
+    let name_b = entity_name("export_all_b");
+    let registry = MetadataRegistry::new();
+
+    metap_lowcode::save_draft(&pool, &name_a, &definition(&name_a))
+        .await
+        .expect("save_draft a");
+    metap_lowcode::publish(&pool, &name_a, &registry)
+        .await
+        .expect("publish a");
+    metap_lowcode::save_draft(&pool, &name_b, &definition(&name_b))
+        .await
+        .expect("save_draft b");
+    metap_lowcode::publish(&pool, &name_b, &registry)
+        .await
+        .expect("publish b");
+
+    let exported = metap_lowcode::export_entities(&pool, None)
+        .await
+        .expect("export_entities");
+    let names: Vec<&str> = exported.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(names.contains(&name_a.as_str()));
+    assert!(names.contains(&name_b.as_str()));
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn export_entities_with_a_filter_returns_only_the_requested_names() {
+    let pool = pool().await;
+    let name_a = entity_name("export_filter_a");
+    let name_b = entity_name("export_filter_b");
+    let registry = MetadataRegistry::new();
+
+    metap_lowcode::save_draft(&pool, &name_a, &definition(&name_a))
+        .await
+        .expect("save_draft a");
+    metap_lowcode::publish(&pool, &name_a, &registry)
+        .await
+        .expect("publish a");
+    metap_lowcode::save_draft(&pool, &name_b, &definition(&name_b))
+        .await
+        .expect("save_draft b");
+    metap_lowcode::publish(&pool, &name_b, &registry)
+        .await
+        .expect("publish b");
+
+    let exported = metap_lowcode::export_entities(&pool, Some(std::slice::from_ref(&name_a)))
+        .await
+        .expect("export_entities");
+    assert_eq!(exported.len(), 1);
+    assert_eq!(exported[0].0, name_a);
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn export_entities_includes_disabled_entities() {
+    let pool = pool().await;
+    let name = entity_name("export_disabled");
+    let registry = MetadataRegistry::new();
+
+    metap_lowcode::save_draft(&pool, &name, &definition(&name))
+        .await
+        .expect("save_draft");
+    metap_lowcode::publish(&pool, &name, &registry).await.expect("publish");
+    metap_lowcode::set_enabled(&pool, &name, false)
+        .await
+        .expect("set_enabled");
+
+    let exported = metap_lowcode::export_entities(&pool, None)
+        .await
+        .expect("export_entities");
+    let names: Vec<&str> = exported.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(
+        names.contains(&name.as_str()),
+        "a disabled-but-published entity must still appear in an export snapshot"
+    );
+}

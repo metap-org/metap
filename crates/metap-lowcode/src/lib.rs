@@ -9,7 +9,7 @@ pub use definition::LowCodeEntityDefinition;
 pub use error::PublishError;
 pub use impact::{ImpactKind, ImpactWarning};
 pub use store::{
-    get_draft, get_published, list_all_published, list_draft_statuses, list_enabled_published, list_versions,
-    preview_publish, publish, rollback, save_draft, set_enabled, PublishOutcome, PublishPreview, PublishedVersion,
-    VersionSummary,
+    export_entities, get_draft, get_published, list_all_published, list_draft_statuses, list_enabled_published,
+    list_versions, preview_publish, publish, rollback, save_draft, set_enabled, PublishOutcome, PublishPreview,
+    PublishedVersion, VersionSummary,
 };
