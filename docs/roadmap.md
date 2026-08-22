@@ -1078,12 +1078,17 @@ riêng).
 
 ## Định hướng chưa lên phase (chưa có trigger)
 
-Bảy ý nảy sinh từ thảo luận kiến trúc, hợp lý về sản phẩm nhưng chưa có trigger cụ thể nên chưa
+Tám ý nảy sinh từ thảo luận kiến trúc, hợp lý về sản phẩm nhưng chưa có trigger cụ thể nên chưa
 được lên thành phase: workflow hai chế độ (in-process + cross-module), workflow
 visualize/hướng BPM nhẹ, Tiny deployment profile (single binary, không RabbitMQ), migration
-path generic-table-sang-bảng-riêng, computed/derived field, schema versioning cho entity, và
-entity variant kiểu polymorphic/discriminated-union. Chi tiết và lý do chưa lên phase ở
-`docs/team-charter.md`'s "Định hướng đang ghi nhận, chưa có trigger". Không bắt đầu việc nào
-trong số này mà chưa có feature brief (`docs/features/`) nêu trigger cụ thể.
+path generic-table-sang-bảng-riêng, computed/derived field, schema versioning cho entity, entity
+variant kiểu polymorphic/discriminated-union, và Organization & Identity layer (org structure +
+role scope — `docs/features/03-organization-identity.md`, đề xuất 2026-08-22: phần lớn Organization
+structure định nghĩa được ngay hôm nay như entity thường qua low-code builder có sẵn, không cần
+core mới; gap thật duy nhất là `RequestContext` chưa mang được attribute của caller ngoài
+role/tenant để `PolicyCondition`'s `fromContext` dùng cho policy "role scoped theo phòng ban" —
+RBAC/ABAC hiện có đã đủ biểu đạt lực, chưa cần một subsystem Scope riêng). Chi tiết và lý do chưa
+lên phase ở `docs/team-charter.md`'s "Định hướng đang ghi nhận, chưa có trigger". Không bắt đầu
+việc nào trong số này mà chưa có feature brief (`docs/features/`) nêu trigger cụ thể.
 
 
