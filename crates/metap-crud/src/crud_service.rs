@@ -15,7 +15,9 @@ use arc_swap::ArcSwap;
 use metap_control::{Router, RouterError};
 use metap_metadata::{EntityDefinition, FieldKind, MetadataRegistry};
 use metap_permission::{EntityAction, PermissionDecision, PermissionService, PermissionSnapshot, RequestContext};
-use metap_query::{apply_params, encode_cursor, plan_list, Cursor, InvalidCursorError, ListInput, SortDir};
+use metap_query::{
+    apply_params, encode_cursor, plan_list, Cursor, InvalidCursorError, ListInput, SortDir, UnknownListViewError,
+};
 use metap_workflow::{
     emit_created, emit_deleted, emit_transitioned, emit_updated, find_transition, get_initial_status, record_event,
     run_guard,
@@ -159,6 +161,9 @@ impl CrudService {
             Err(e) => {
                 if e.downcast_ref::<InvalidCursorError>().is_some() {
                     return Ok(ServiceResult::err_with_message(400, "invalid_cursor", e.to_string()));
+                }
+                if e.downcast_ref::<UnknownListViewError>().is_some() {
+                    return Ok(ServiceResult::err_with_message(400, "unknown_list_view", e.to_string()));
                 }
                 return Err(e);
             }

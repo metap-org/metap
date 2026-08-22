@@ -25,6 +25,21 @@ impl std::fmt::Display for InvalidCursorError {
 }
 impl std::error::Error for InvalidCursorError {}
 
+/// `?listView=<name>` requested a list view that doesn't exist on this entity
+/// (`docs/features/01-fe-platform-overhaul.md`'s first scoped gap — `plan_list` used to only
+/// ever look at `list_views.first()`, with no way to reach a second list view like
+/// `accounting.journal`'s `ledger` through the API at all). Downcast to a clean `400` by
+/// `CrudService::list`, same pattern as `InvalidCursorError`.
+#[derive(Debug)]
+pub struct UnknownListViewError(pub String);
+
+impl std::fmt::Display for UnknownListViewError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unknown list view: {}", self.0)
+    }
+}
+impl std::error::Error for UnknownListViewError {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedSort {
     pub field: String,
@@ -40,6 +55,15 @@ pub struct ListInput {
     /// arrive in a stable order).
     pub filters: Vec<(String, String)>,
     pub cursor: Option<String>,
+    /// Selects which of an entity's `list_views` to use for `max_limit`/`filters`/`default_sort`
+    /// — `None` (the default, and every caller before this field existed) keeps the original
+    /// behavior of always using `list_views.first()`. An unknown name is a `400`
+    /// (`UnknownListViewError`) rather than a silent fallback to `first()` (unlike an
+    /// unrecognized `sort`/filter field, which `plan_list` tolerates by falling back/ignoring):
+    /// silently switching a caller to a different list view than the one they asked for could
+    /// mean a totally different filter/column set with no indication anything went wrong,
+    /// whereas one extra ignored filter is a much smaller degradation.
+    pub list_view: Option<String>,
 }
 
 pub struct PlannedListQuery {
@@ -106,7 +130,21 @@ pub fn plan_list(
     })?;
 
     let tenant_id = permissions.scoped_tenant(context)?;
-    let list_view = entity.list_views.first();
+    let list_view = match &input.list_view {
+        Some(name) => {
+            let found = entity.list_views.iter().find(|lv| &lv.name == name);
+            if found.is_none() {
+                tracing::debug!(
+                    entity = entity.name,
+                    list_view = name,
+                    "list rejected: unknown list view"
+                );
+                return Err(UnknownListViewError(name.clone()).into());
+            }
+            found
+        }
+        None => entity.list_views.first(),
+    };
     let limit = input.limit.min(list_view.map(|lv| lv.max_limit as i64).unwrap_or(100));
 
     let mut params = ParamBuilder::new();

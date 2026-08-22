@@ -85,14 +85,28 @@ fn test_entity() -> EntityDefinition {
             field("status", FieldKind::String, false, false),
             field("score", FieldKind::Number, true, false),
         ],
-        list_views: vec![EntityListView {
-            name: "default".to_string(),
-            label: "Default".to_string(),
-            fields: vec!["name".to_string(), "status".to_string()],
-            filters: vec!["status".to_string(), "name".to_string()],
-            default_sort: Some("-createdAt".to_string()),
-            max_limit: 50,
-        }],
+        list_views: vec![
+            EntityListView {
+                name: "default".to_string(),
+                label: "Default".to_string(),
+                fields: vec!["name".to_string(), "status".to_string()],
+                filters: vec!["status".to_string(), "name".to_string()],
+                default_sort: Some("-createdAt".to_string()),
+                max_limit: 50,
+            },
+            // A second list view (`docs/features/01-fe-platform-overhaul.md`'s scoped gap —
+            // `plan_list` used to only ever look at `list_views.first()`) with a deliberately
+            // different `max_limit`/`default_sort`/`filters` set from "default", so a test can
+            // tell whether `ListInput.list_view` actually changed which one was used.
+            EntityListView {
+                name: "by_score".to_string(),
+                label: "By Score".to_string(),
+                fields: vec!["name".to_string(), "score".to_string()],
+                filters: vec!["score".to_string()],
+                default_sort: Some("-score".to_string()),
+                max_limit: 10,
+            },
+        ],
         workflow: None,
     }
 }
@@ -408,4 +422,45 @@ async fn cursor_mismatched_with_current_sort_is_rejected() {
     };
     let result = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]);
     assert!(result.is_err());
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn list_view_query_param_selects_a_non_default_list_view() {
+    let h = setup().await;
+    let a = insert_fixture(&h.pool, h.tenant_id, "alpha", "active", 1, false).await;
+    let b = insert_fixture(&h.pool, h.tenant_id, "beta", "active", 2, false).await;
+
+    // "by_score" (unlike "default") sorts by score descending, has its own max_limit, and
+    // doesn't allow filtering by "status" at all.
+    let input = ListInput {
+        limit: 50,
+        list_view: Some("by_score".to_string()),
+        filters: vec![("status".to_string(), "inactive".to_string())],
+        ..Default::default()
+    };
+    let planned = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]).unwrap();
+    assert_eq!(planned.limit, 10, "by_score's own max_limit, not default's 50");
+    let ids = run_plan(&h.pool, &planned).await;
+    assert_eq!(
+        ids,
+        vec![b, a],
+        "by_score's own default sort (-score); the status filter must be ignored (not in by_score's filters)"
+    );
+
+    h.cleanup(&[a, b]).await;
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn list_view_query_param_unknown_name_is_rejected() {
+    let h = setup().await;
+
+    let input = ListInput {
+        list_view: Some("does_not_exist".to_string()),
+        ..Default::default()
+    };
+    let result = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]);
+    let err = result.err().expect("unknown list view must be rejected");
+    assert!(err.downcast_ref::<metap_query::UnknownListViewError>().is_some());
 }

@@ -52,7 +52,7 @@ Khi viết brief, tự hỏi: thay đổi này có ảnh hưởng gì tới mộ
 
 | Tính năng | Trạng thái | Track | Phase liên quan |
 |---|---|---|---|
-| [Nâng cấp Frontend Platform](01-fe-platform-overhaul.md) | proposed | Frontend Platform | chưa gắn |
+| [Nâng cấp Frontend Platform](01-fe-platform-overhaul.md) | proposed (1 trong 4 gap đã xong) | Frontend Platform | chưa gắn |
 | [Metadata-driven Workflow Engine](02-workflow-engine.md) | Increment 1 done | Backend Core | Phase 17 |
 | [Organization & Identity Layer](03-organization-identity.md) | P0 done | Backend Core | Phase 18 |
 | [Table-per-entity — readiness brief](04-table-per-entity.md) | proposed | Backend Core | không thuộc phase nào (chưa có trigger) |

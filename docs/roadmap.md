@@ -23,7 +23,7 @@ và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, 
 | 11. Low-code Platform Backbone Architecture | Phase A + Phase B xong 2026-08-17 (Phase B's "policy editor UI" hoá ra đã có sẵn từ Phase 15); Phase C bắt đầu 2026-08-20 — metadata audit log, migration-impact check, import/export, operational visibility (cross-entity audit feed) xong (2026-08-22); còn lại approval workflow ("nếu cần", chưa có trigger) và schema isolation cấp tenant (chặn bởi quyết định kiến trúc lớn hơn — xem `docs/team-charter.md`'s "Metadata low-code theo từng Tenant") |
 | 12. Rust Core Migration | Đã quyết định; Migration Order (bước 1-9) đã xong trong `crates/`; chưa cut over sang production |
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
-| 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
+| 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation hướng đã chốt (translation-key/override table, 2026-08-22), chưa code — chưa có trigger |
 | 15. Shared App Shell (UI kit, real login, permission-aware components) | Đã xong |
 | 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4: `VaultStore` (token) xong 2026-08-17, AppRole auth + auto-renewal + role lookup/RBAC qua Router (đóng bug login vỡ cho `dedicated_db`) + delete/deprovision tenant xong 2026-08-20 → 2026-08-21; `schema`/trial vẫn chưa có isolation thật; dynamic Vault creds/data-plane/capabilities/FE onboarding/deployment còn lại |
 | 17. Metadata-driven Workflow Engine | Increment 1 (on-transition trigger cho `metap-cron`) xong 2026-08-21; Increment 2 (chuỗi activity, `workflow_runs`) và Increment 3 (`wait_event` durable pause) vẫn approved, chưa code — chờ Increment 1 chạy thật lộ ra nhu cầu cụ thể |
@@ -766,15 +766,15 @@ Chưa làm:
 
 ## Phase 14: Multi-language (i18n)
 
-**Trạng thái: UI chrome đã xong (2026-08-09); metadata-label translation chưa bắt đầu.** Hai mối quan tâm tách biệt nhau:
+**Trạng thái: UI chrome đã xong (2026-08-09); metadata-label translation — hướng đã chốt 2026-08-22, chưa code.** Hai mối quan tâm tách biệt nhau:
 
 - **Frontend UI chrome** (`packages/platform-react`, `apps/crm-fe`) — đã xong. `react-i18next`/`i18next` được wire vào `platform-react` (`src/i18n/`: `resources.ts` giữ bảng string `en`/`vi`, `i18n.ts` tạo một instance i18next riêng — không phải singleton cấp module, để một app embed `platform-react` cùng với setup i18next của riêng nó không bị đụng độ). `LocaleProvider` (phải nest bên trong `AuthProvider`) load locale của caller từ `GET /preferences` mới lúc mount và bọc `I18nextProvider`; `useLocale()`/`LocaleSwitcher` ghi ngược lại qua `PUT /preferences`. Mọi string chrome tĩnh trong `GeneratedForm`/`GeneratedList`/`RecordDetail`/`WorkflowActionBar`/`ApiErrorMessage` và các route guard `DevLoginPage`/`EntitiesPage`/`App.tsx` của `crm-fe` giờ đều đi qua `useTranslation()` — label entity/field không bị đụng đến (xem bên dưới, vẫn single-locale từ metadata).
 - **Backend locale storage** — đã xong. Bảng `user_preferences` (`crates/migrations/0007_user_preferences.sql`, primary key `tenant_id`+`user_id`) qua `metap_peripherals::preferences` (`get_locale`/`set_locale`, theo cùng phong cách plain-function của `role_assignment.rs`) và `GET/PUT /preferences` (`crates/metap-http/src/routes/preferences.rs`, self-service gated bởi `AuthContext`, không phải `/api/preferences` — sẽ đụng độ với wildcard `/api/{entity}` của `routes::records`). Locale được validate theo một allowlist nhỏ `SUPPORTED_LOCALES` (`en`, `vi` hiện nay — phải giữ đồng bộ với `SUPPORTED_LOCALES` của `packages/platform-react/src/i18n/resources.ts`, kiểm tra thủ công, chưa có single source of truth chung).
-- **Nội dung được author qua metadata (label entity/field/list-view, tên workflow action, validation message)** — chưa bắt đầu. Vẫn là string single-locale hard-code trong `EntityDefinition`/`EntityField`/v.v. (xem `apps/crm-server/src/entities/customer_entity.rs`). Làm cho những cái này dịch được nghĩa là hoặc thêm một shape `Record<locale, string>` trên mọi label field (breaking change với `EntityField` và các type OpenAPI-generated trong `crates/metap-metadata/src/openapi.rs`) hoặc một lớp gián tiếp translation-key riêng — cần một quyết định thiết kế trước khi implement, scope cùng với công việc low-code metadata của Phase 11 thay vì gắn thêm riêng lẻ.
+- **Nội dung được author qua metadata (label entity/field/list-view, tên workflow action, validation message)** — hướng đã chốt (2026-08-22), **chưa code, chưa có trigger**. Vẫn là string single-locale hard-code trong `EntityDefinition`/`EntityField`/v.v. (xem `apps/crm-server/src/entities/customer_entity.rs`). **Chọn hướng translation-key/override table**, không phải đổi `label` thành `Record<locale, string>` — nhất quán với chính mẫu Phase 14 đã dùng cho UI chrome (`resources.ts`: bảng resource *tách khỏi* string gốc, không nhét map vào từng chỗ dùng string). Cụ thể: `EntityField`/`EntityDefinition`/`EntityListView`/`WorkflowTransition`'s `label: String` **giữ nguyên** (vẫn là text mặc định/fallback) — zero breaking change, cả 4 entity code-authored hiện có và OpenAPI generator/`generated-types.ts` không cần sửa; một bảng override mới (`metadata_label_translations(entity_name, field_name?, locale, text)`, phác thảo) tra cứu lúc render — có override cho locale đó thì dùng, không có thì fallback về `label` gốc (hỗ trợ tự nhiên việc dịch từng phần, không lỗi khi thiếu). Hoạt động đồng nhất cho cả entity code-authored lẫn DB-authored (bảng override không quan tâm entity định nghĩa ở đâu). Đánh đổi: hai chỗ phải nhìn khi debug label (gốc hay override), cần một màn quản lý translation riêng (không phải sửa ngay trong field editor low-code hiện có).
 
 Chưa làm:
 
-- Shape của metadata-label translation (xem ở trên — block bởi metadata storage design của Phase 11, `docs/low-code-metadata-storage-design.md`).
+- Implementation của hướng đã chốt ở trên — chưa có trigger nhu cầu đa ngôn ngữ thật cho metadata label.
 - Chỉ có hai locale có resource đã dịch (`en`/`vi`); thêm một locale thứ ba nghĩa là cần cả một entry mới trong `resources.ts` lẫn thêm vào `SUPPORTED_LOCALES` của backend.
 - `data` của record (giá trị field do user nhập) và locale: có chủ đích nằm ngoài scope — đó là dữ liệu business của tenant, không phải nội dung platform sở hữu — nhưng đáng nói rõ ra để không bị ai giả định sau này.
 
@@ -1136,6 +1136,17 @@ không lỗi, không chặn. Giờ quét toàn registry tìm mọi field `Refere
 transaction với chính lệnh xoá — Restrict mặc định, chưa có per-field override. Verify sống qua
 HTTP thật (`crm.customers.referredBy`): xoá A khi B còn trỏ tới → 409, A vẫn nguyên; xoá B trước
 rồi xoá A → 200. 2 e2e test mới (`crates/metap-crud/tests/crud_service_postgres.rs`).
+
+**Fix (2026-08-22, gap đầu tiên đã ghi trong `docs/features/01-fe-platform-overhaul.md`, tự bản
+thân feature đó vẫn `proposed`/chưa scope xong):** `plan_list`
+(`crates/metap-query/src/query_planner.rs`) trước đây luôn dùng `entity.list_views.first()` —
+list view thứ hai của một entity (vd `accounting.journal`'s `ledger`) không gọi được qua API list
+dù đã khai báo đầy đủ trong metadata. Thêm `ListInput.list_view: Option<String>` +
+`GET /api/:entity?listView=<name>` (`crates/metap-http/src/routes/records.rs`); không truyền giữ
+nguyên hành vi cũ, tên không tồn tại trả `400 unknown_list_view` (không âm thầm fallback về view
+mặc định). 2 e2e test mới (`crates/metap-query/tests/query_planner_postgres.rs`), verify sống
+qua HTTP thật trên `accounting.journal`'s `ledger`. Xoá hàng risk tương ứng ở
+`docs/architectures/11-risks.md` (đã resolve).
 
 ## Phase 18: Organization & Identity — P0 (2026-08-22)
 

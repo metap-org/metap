@@ -20,10 +20,17 @@ gap), chỉ là *chưa được scope* để biết chính xác cần làm gì.
 **Chưa chốt — cần một vòng scoping riêng trước khi implement.** Ghi lại ở đây các gap cụ thể đã
 biết tính đến 2026-08-10, để vòng scoping đó có điểm bắt đầu thay vì từ số 0:
 
-- List view thứ hai (`ledger` của `accounting.journal`) hiện **không gọi được** qua API list —
-  `plan_list` luôn dùng `list_views.first()` (xem `docs/architectures/11-risks.md`'s risk mới).
-  Nếu FE cần hiển thị nhiều list view, đây là việc phải làm ở `metap-query`/`metap-http` trước,
-  không chỉ ở FE.
+- ~~List view thứ hai (`ledger` của `accounting.journal`) hiện không gọi được qua API list~~ —
+  **Đã xong (2026-08-22)**: `plan_list` (`crates/metap-query/src/query_planner.rs`) nhận thêm
+  `ListInput.list_view: Option<String>`, route `GET /api/:entity?listView=<name>`
+  (`crates/metap-http/src/routes/records.rs`) truyền qua tham số query cùng tên. Không truyền
+  giữ nguyên hành vi cũ (`list_views.first()`); tên không tồn tại trả `400 unknown_list_view`
+  (không âm thầm fallback về view mặc định — đổi view mà không báo lỗi dễ khiến FE hiển thị nhầm
+  cột/filter mà không biết). 2 test e2e mới
+  (`crates/metap-query/tests/query_planner_postgres.rs`), verify sống qua HTTP thật trên
+  `accounting.journal`'s `ledger`. 3 gap còn lại (pagination admin UI kit, render field
+  Reference/Money/Date, điều hướng entity trong demo app) cần nhìn qua browser thật để scope —
+  ngoài khả năng tự verify của backend track.
 - Admin UI kit (Phase 15) chưa có pagination trên list nào, `PolicyCondition`/cron
   `targetConfig` là raw-JSON thay vì structured builder, chưa có bộ chuyển tenant.
 - Chưa rõ `GeneratedList`/`GeneratedForm` hiện render field `Reference`/`Money`/`Date` (3 kind
