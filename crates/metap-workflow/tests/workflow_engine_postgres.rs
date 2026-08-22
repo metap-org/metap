@@ -41,6 +41,7 @@ async fn record_event_writes_an_append_only_audit_row() {
         user_id: Some(Uuid::new_v4().to_string()),
         roles: None,
         function_id: None,
+        context_attributes: None,
     };
 
     record_event(&pool, &entity, record_id, "activate", "draft", "active", &ctx)

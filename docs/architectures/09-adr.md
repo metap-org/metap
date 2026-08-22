@@ -94,3 +94,21 @@ việc đó là thừa.
   nguyên trên đĩa để khôi phục thủ công nếu cần. Chọn vì `DROP DATABASE`/xoá hàng loạt qua một lời
   gọi API là hành động không thể hoàn tác — quyết định đó nên là một thao tác vận hành tường minh,
   riêng biệt, không phải side effect ẩn của một endpoint xoá tenant.
+- **Enrich `RequestContext` bằng attribute ngoài field cố định: opt-in qua config
+  (`AUTH_CONTEXT_ENTITY`), có cache — khác nguyên tắc "role không bao giờ cache".**
+  (`docs/features/03-organization-identity.md`, 2026-08-22.) Organization & Identity (phòng
+  ban, chức vụ...) không cần bảng lõi mới — vẫn là business entity thường qua low-code, chỉ
+  thiếu một chỗ để ABAC đọc được attribute đó (`departmentId` của caller) trong điều kiện
+  `fromContext`. Chọn: một biến env đặt tên đúng một entity quy ước có field `userId` trỏ tới
+  user hiện tại (`AuthContext` tự tra record đó, generic — không biết `entity_name` là gì, giữ
+  đúng ranh giới "không crate nào biết business entity"); `None` (mặc định) là no-op tuyệt đối,
+  không query thêm, không đổi hành vi cho mọi deployment hiện tại. Khác với role (`get_roles_for_user`,
+  luôn tra mới mỗi request, không bao giờ cache — giữ nguyên) — `context_attributes` **được
+  cache** (`metap_http::cache::ContextAttributesCache`, cùng mẫu `metap-control::RegistryCache`:
+  `moka::future::Cache`, TTL cố định `AUTH_CONTEXT_CACHE_TTL_SECONDS`, `try_get_with` de-dupe
+  concurrent miss) vì đây đọc một record nghiệp vụ thường, không phải role — cache để tránh một
+  round-trip DB thêm trên *mọi* request khi bật tính năng. Đánh đổi chấp nhận: một thay đổi
+  `departmentId` của user có độ trễ hiệu lực tối đa bằng TTL — bù lại bằng đường invalidate tường
+  minh (`POST /admin/users/{userId}/context/invalidate`) để admin ép hiệu lực ngay sau khi sửa.
+  Best-effort: lỗi lookup không chặn login, vì đây là enrichment bổ sung, không phải điều kiện
+  xác thực.

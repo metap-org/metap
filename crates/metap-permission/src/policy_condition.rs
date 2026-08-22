@@ -281,6 +281,7 @@ mod tests {
             user_id: None,
             roles: roles.map(|r| r.into_iter().map(String::from).collect()),
             function_id: None,
+            context_attributes: None,
         }
     }
 

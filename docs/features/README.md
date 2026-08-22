@@ -54,7 +54,8 @@ Khi viết brief, tự hỏi: thay đổi này có ảnh hưởng gì tới mộ
 |---|---|---|---|
 | [Nâng cấp Frontend Platform](01-fe-platform-overhaul.md) | proposed | Frontend Platform | chưa gắn |
 | [Metadata-driven Workflow Engine](02-workflow-engine.md) | Increment 1 done | Backend Core | Phase 17 |
-| [Organization & Identity Layer](03-organization-identity.md) | proposed | Backend Core | đề xuất Phase 18 |
+| [Organization & Identity Layer](03-organization-identity.md) | P0 done | Backend Core | Phase 18 |
+| [Table-per-entity — readiness brief](04-table-per-entity.md) | proposed | Backend Core | không thuộc phase nào (chưa có trigger) |
 
 **Demo app** (`apps/crm-server`, `apps/crm-fe` — xem `demo/`):
 

@@ -212,6 +212,7 @@ fn admin_context(tenant_id: Uuid) -> RequestContext {
         user_id: Some(Uuid::new_v4().to_string()),
         roles: Some(vec!["admin".to_string()]),
         function_id: None,
+        context_attributes: None,
     }
 }
 
@@ -506,6 +507,7 @@ async fn non_admin_field_write_policy_is_enforced_through_create() {
         user_id: Some(Uuid::new_v4().to_string()),
         roles: Some(vec!["support".to_string()]), // not "sales" — must be denied on "amount"
         function_id: None,
+        context_attributes: None,
     };
 
     let mut payload = JsonObject::new();
@@ -629,7 +631,11 @@ async fn delete_is_rejected_when_another_record_still_references_it() {
     child_payload.insert("parentId".to_string(), json!(parent.id));
     crud.create("test.children", &child_payload, &ctx).await.unwrap();
 
-    match crud.delete("test.parents", parent.id, parent.version, &ctx).await.unwrap() {
+    match crud
+        .delete("test.parents", parent.id, parent.version, &ctx)
+        .await
+        .unwrap()
+    {
         ServiceResult::Err { status, error, .. } => {
             assert_eq!(status, 409);
             assert_eq!(error, "record_referenced");
@@ -678,10 +684,16 @@ async fn delete_succeeds_once_the_referencing_record_is_gone() {
     };
 
     // delete the referencing child first
-    crud.delete("test.children", child.id, child.version, &ctx).await.unwrap();
+    crud.delete("test.children", child.id, child.version, &ctx)
+        .await
+        .unwrap();
 
     // parent delete now succeeds — no live reference left
-    match crud.delete("test.parents", parent.id, parent.version, &ctx).await.unwrap() {
+    match crud
+        .delete("test.parents", parent.id, parent.version, &ctx)
+        .await
+        .unwrap()
+    {
         ServiceResult::Ok { .. } => {}
         other => panic!("expected delete to succeed once the referencing child is gone, got {other:?}"),
     }

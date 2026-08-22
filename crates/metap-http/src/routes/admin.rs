@@ -193,6 +193,26 @@ async fn revoke_role(
     }
 }
 
+/// Explicit invalidation for `AUTH_CONTEXT_ENTITY`'s cache
+/// (`docs/features/03-organization-identity.md`) — an operator's second option alongside just
+/// waiting out the TTL (`metap_http::cache::ContextAttributesCache`) after editing a user's
+/// membership record (e.g. `departmentId`), so an org-scoped policy takes effect on that user's
+/// very next request instead of up to `AUTH_CONTEXT_CACHE_TTL_SECONDS` later. No-op (still
+/// `204`) if the cache had nothing for this user — invalidating something that was never cached,
+/// or already expired, isn't an error.
+async fn invalidate_context(
+    State(state): State<AppState>,
+    Path(user_id): Path<Uuid>,
+    AdminContext(context): AdminContext,
+) -> Response {
+    let tenant_id = match state.permissions.scoped_tenant(&context) {
+        Ok(id) => id,
+        Err(e) => return internal_error_response(e),
+    };
+    state.context_attributes_cache.invalidate(tenant_id, user_id).await;
+    StatusCode::NO_CONTENT.into_response()
+}
+
 async fn list_policies(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
@@ -388,6 +408,7 @@ pub fn router() -> Router<AppState> {
         .route("/admin/users", get(list_users).post(create_user))
         .route("/admin/users/{userId}/roles", post(assign_role))
         .route("/admin/users/{userId}/roles/{role}", axum::routing::delete(revoke_role))
+        .route("/admin/users/{userId}/context/invalidate", post(invalidate_context))
         .route("/admin/policies", get(list_policies).post(create_policy))
         .route("/admin/policies/seed-defaults", post(seed_default_policies))
         .route("/admin/policies/explain", post(explain_policy))

@@ -53,6 +53,19 @@ pub struct AppConfig {
     /// See `vault_addr`. AppRole auth backend mount path — defaults to `"approle"` (Vault's own
     /// default) when `vault_role_id`/`vault_secret_id` are set but this isn't.
     pub vault_approle_mount: Option<String>,
+    /// Opt-in — when set, names the entity `metap-http`'s `AuthContext` extractor reads a
+    /// caller's own record from (matched by a `userId` field) to enrich `RequestContext` with
+    /// attributes beyond identity/role, e.g. `"hr.employees"` so a `departmentId` field becomes
+    /// readable via `PolicyCondition`'s `fromContext` (`docs/features/03-organization-identity.md`).
+    /// `None` (default) is a full no-op — no extra query, no behavior change.
+    pub auth_context_entity: Option<String>,
+    /// See `auth_context_entity`. How long a resolved (or absent) result stays cached
+    /// (`metap_http::cache::ContextAttributesCache`) before the next request re-queries —
+    /// unlike role lookup (always fresh, never cached), this is deliberately cached since it
+    /// reads an ordinary business record, not a security-critical role assignment.
+    /// `POST /admin/users/{userId}/context/invalidate` clears an entry immediately instead of
+    /// waiting out this window. Defaults to 30s, matching `metap-control::RegistryCache`.
+    pub auth_context_cache_ttl_seconds: u64,
 }
 
 impl AppConfig {
@@ -129,6 +142,12 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
     let vault_secret_id = env::var("VAULT_SECRET_ID").ok().filter(|s| !s.is_empty());
     let vault_approle_mount = env::var("VAULT_APPROLE_MOUNT").ok().filter(|s| !s.is_empty());
 
+    let auth_context_entity = env::var("AUTH_CONTEXT_ENTITY").ok().filter(|s| !s.is_empty());
+    let auth_context_cache_ttl_seconds: u64 = env::var("AUTH_CONTEXT_CACHE_TTL_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
+
     Ok(AppConfig {
         node_env,
         host,
@@ -145,5 +164,7 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         vault_role_id,
         vault_secret_id,
         vault_approle_mount,
+        auth_context_entity,
+        auth_context_cache_ttl_seconds,
     })
 }

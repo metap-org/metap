@@ -15,9 +15,40 @@ use jsonwebtoken::{decode, Algorithm, Validation};
 use metap_peripherals::{get_roles_for_user, JWT_AUDIENCE, JWT_ISSUER};
 use metap_permission::RequestContext;
 use serde::{Deserialize, Serialize};
+use sqlx::{PgExecutor, Row};
 use uuid::Uuid;
 
 use crate::state::AppState;
+
+/// The read side of `AUTH_CONTEXT_ENTITY` (`docs/features/03-organization-identity.md`) —
+/// looks up the caller's own record on the configured entity by a `userId` field, generic over
+/// entity shape (this never becomes aware of what `entity_name` actually is, matching the
+/// "no `metap-*` crate knows business entities" boundary — `metap-http` only ever sees a
+/// configured *name*, same as `metap-crud`'s reference-integrity guard does for `Reference`
+/// fields). Not a `CrudService::get` call — that would run the *target's own* permission check
+/// against the very context being built, which is circular; this is a raw, unauthenticated read
+/// of the caller's own identity data, same trust level as `get_roles_for_user`.
+async fn fetch_context_attributes<'e, E: PgExecutor<'e>>(
+    executor: E,
+    tenant_id: Uuid,
+    entity_name: &str,
+    user_id: Uuid,
+) -> anyhow::Result<Option<serde_json::Map<String, serde_json::Value>>> {
+    let row = sqlx::query(
+        "SELECT data FROM records \
+         WHERE tenant_id = $1 AND entity = $2 AND deleted = false AND data ->> 'userId' = $3 LIMIT 1",
+    )
+    .bind(tenant_id)
+    .bind(entity_name)
+    .bind(user_id.to_string())
+    .fetch_optional(executor)
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let data: serde_json::Value = row.try_get("data")?;
+    Ok(data.as_object().cloned())
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
@@ -126,11 +157,37 @@ where
             .await
             .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
 
+        // `AUTH_CONTEXT_ENTITY` opt-in (`docs/features/03-organization-identity.md`) — cached
+        // (`context_attributes_cache`, unlike `roles` above, which is always fresh). Best-effort:
+        // a lookup/cache error here must never block login, since this is supplementary ABAC
+        // context, not an identity/role check.
+        let context_attributes = match &app_state.auth_context_entity {
+            Some(entity_name) => {
+                let entity_name = entity_name.clone();
+                let router = app_state.router.clone();
+                app_state
+                    .context_attributes_cache
+                    .get_with(tenant_id, user_id, move || async move {
+                        let mut tx = router.begin(tenant_id.into()).await?;
+                        let result = fetch_context_attributes(&mut *tx, tenant_id, &entity_name, user_id).await?;
+                        tx.commit().await?;
+                        Ok(result)
+                    })
+                    .await
+                    .unwrap_or_else(|err| {
+                        tracing::warn!(%tenant_id, %user_id, error = %err, "failed to resolve context attributes");
+                        None
+                    })
+            }
+            None => None,
+        };
+
         Ok(AuthContext(RequestContext {
             tenant_id: claims.tenant_id,
             user_id: Some(claims.sub),
             roles: Some(roles),
             function_id: claims.function_id,
+            context_attributes,
         }))
     }
 }

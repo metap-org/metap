@@ -1887,6 +1887,7 @@ dependencies = [
  "metap-peripherals",
  "metap-permission",
  "metap-query",
+ "moka",
  "reqwest",
  "serde",
  "serde_json",

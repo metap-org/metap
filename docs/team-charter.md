@@ -171,37 +171,19 @@ discipline hiện tại (`docs/architectures/02-constraints.md`'s "Tiến hóa t
   trong `records` (`crates/migrations/0000_*.sql`, đang dùng cho optimistic locking) để tránh
   đụng độ tên. Trigger: một entity thật sự cần đổi field shape mà không muốn migrate toàn bộ
   record cũ ngay lập tức.
-- **Organization & Identity layer** (org structure — department/team/position/employee/manager
-  hierarchy — cộng role có scope, vd "Sales Manager chỉ áp dụng trong phòng Sales") — ghi nhận
-  2026-08-22 từ phân tích trực tiếp của chủ dự án: mỗi tenant Metap là một business, nhưng
-  `user_roles` hôm nay phẳng (`tenant_id, user_id, role`), không diễn tả được ai thuộc phòng ban
-  nào hay role áp dụng trong phạm vi nào. Rà code thật trước khi lên kế hoạch (không đoán): RBAC
-  (`PolicyRow.roles`) + ABAC (`PolicyCondition`, hỗ trợ `fromContext`) trong `metap-permission`
-  **đã đủ biểu đạt lực cho "role có scope"** — một policy dạng `{roles: ["sales_manager"],
-  condition: {attribute: "departmentId", op: "eq", value: {fromContext: "departmentId"}}}` chạy
-  được ngay hôm nay về cơ chế, chỉ thiếu đúng một thứ: `RequestContext`
-  (`crates/metap-permission/src/context.rs`) không có chỗ mang attribute của caller ngoài
-  `tenantId`/`userId`/`roles`. Tương tự, Department/Team/Position/Employee tự nhiên là **business
-  entity** (có field, list view, có thể có workflow riêng) — biến chúng thành bảng core platform
-  mới sẽ phá nguyên tắc "không `metap-*` crate nào biết business entity"; định nghĩa được ngay
-  hôm nay qua low-code builder có sẵn (Phase 11), không cần trigger hay core code mới. Manager
-  hierarchy (`Employee.managerId`) dùng đúng cross-record condition đã build (Phase 3, #3,
-  2026-08-21, chứng minh bằng `crm.customers.referredBy` tự tham chiếu) — không cần gì mới. Gap
-  thật, hẹp, và là điểm chưa có câu trả lời chắc chắn: enrich `RequestContext` với attribute
-  caller (vd `departmentId`) mà không phá nguyên tắc "`metap-http` không biết business entity" —
-  ba hướng đã nghĩ tới (convention-based entity-agnostic fetch qua `CrudService`; khai báo trong
-  JWT lúc mint — đối lập nguyên tắc "role luôn tra mới, không cache trên JWT"; cột JSONB generic
-  sync riêng) đều có đánh đổi, **chưa hướng nào được chọn**. Chi tiết đầy đủ + phân kỳ P0/P1/P2 ở
-  feature brief `docs/features/03-organization-identity.md` (trạng thái `proposed`, chưa duyệt để
-  bắt đầu code). **Nghiên cứu thêm 2026-08-22** (theo yêu cầu chủ dự án, đối chiếu với hướng
-  table-per-entity): Organization data **không** phải trigger cho table-per-entity (volume quá
-  thấp so với ngưỡng 10M/entity đã ghim; nhu cầu lookup nhanh theo `userId` đã được giải bởi
-  `IndexReconciler`'s partial index có sẵn, không cần tách bảng) — nhưng phân tích lộ ra một gap
-  reference-integrity **có thật, độc lập với table-per-entity**: `CrudService::delete()` không
-  quét/chặn record nào đang tham chiếu tới record bị xoá (đã xác nhận bằng code, không phải suy
-  đoán), và xoá Department còn Employee nghĩa là gap này sẽ va phải thật trong thực tế. Ghi
-  thành hàng riêng ở [11. Risks and Technical Debt](architectures/11-risks.md). Chi tiết đầy đủ
-  ở `docs/features/03-organization-identity.md`'s mục "Quan hệ với table-per-entity".
+- **Organization & Identity layer — P1/P2 còn lại** (P0 đã xong, xem `docs/roadmap.md` Phase 18
+  và `docs/architectures/09-adr.md`; mục này chỉ còn giữ phần chưa code). P0 đóng đúng gap hẹp đã
+  phát hiện 2026-08-22: RBAC+ABAC (`metap-permission`) đã đủ biểu đạt lực cho "role có scope" (vd
+  "Sales Manager chỉ áp dụng trong phòng Sales"), chỉ thiếu chỗ để `RequestContext` mang attribute
+  của caller — nay đã có (`context_attributes`, opt-in qua `AUTH_CONTEXT_ENTITY`, có cache). Còn
+  lại, chưa có trigger để code: `hr.positions`/`hr.locations` (P1), `Employee.managerId`
+  self-reference + policy "chỉ manager trực tiếp" (P1, dùng cross-record condition đã có — Phase
+  3 #3, 2026-08-21), Legal Entity/Business Unit/Cost Center/Approval Authority/Org Chart
+  visualize (P2). Chi tiết phân kỳ đầy đủ ở `docs/features/03-organization-identity.md`.
+  Nghiên cứu 2026-08-22 (đối chiếu với table-per-entity) cũng lộ ra một gap reference-integrity
+  độc lập, đã đóng cùng ngày (`docs/roadmap.md`'s fix note trước Phase 18) —
+  `docs/features/03-organization-identity.md`'s mục "Quan hệ với table-per-entity" giữ chi tiết
+  nghiên cứu đó.
 - **Entity variant kiểu polymorphic/discriminated-union** (một entity logic chứa nhiều "hình
   dạng" record khác nhau trong cùng một logical collection, kiểu MongoDB) — rủi ro cao nhất
   trong ba ý mới này, vì `EntityDefinition.fields` hôm nay là một danh sách phẳng dùng chung

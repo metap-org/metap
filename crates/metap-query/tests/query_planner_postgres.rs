@@ -161,6 +161,7 @@ impl Harness {
             user_id: None,
             roles: None,
             function_id: None,
+            context_attributes: None,
         }
     }
 

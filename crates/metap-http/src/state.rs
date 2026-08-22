@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
@@ -7,6 +8,8 @@ use metap_crud::CrudService;
 use metap_metadata::MetadataRegistry;
 use metap_permission::PermissionService;
 use sqlx::PgPool;
+
+use crate::cache::ContextAttributesCache;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -39,6 +42,18 @@ pub struct AppState {
     /// rarely enough that re-parsing per request is not worth holding a second key type in
     /// state for. See `metap_peripherals::mint_jwt`, the only thing that reads this.
     pub jwt_encoding_key_pem: Arc<str>,
+    /// Opt-in caller-attributes entity name (`AUTH_CONTEXT_ENTITY`,
+    /// `docs/features/03-organization-identity.md`) — `None` by default (set by `new`), the
+    /// composition root (`apps/crm-server/src/main.rs`) assigns this directly after
+    /// construction (every `AppState` field is `pub`) rather than threading two more
+    /// constructor parameters through every call site, most of which don't use this feature.
+    pub auth_context_entity: Option<Arc<str>>,
+    /// Always constructed (cheap — an empty `moka` cache costs nothing until used), even when
+    /// `auth_context_entity` is `None`, so `AuthContext` never has to branch on "does the cache
+    /// exist" — only on "is the feature configured". `new` builds it with the default TTL (30s,
+    /// matching `metap-control::RegistryCache`); the composition root rebuilds it with a
+    /// configured TTL if `AUTH_CONTEXT_CACHE_TTL_SECONDS` overrides the default.
+    pub context_attributes_cache: ContextAttributesCache,
 }
 
 impl AppState {
@@ -68,6 +83,8 @@ impl AppState {
             crud,
             jwt_decoding_key: Arc::new(jwt_decoding_key),
             jwt_encoding_key_pem: Arc::from(jwt_encoding_key_pem),
+            auth_context_entity: None,
+            context_attributes_cache: ContextAttributesCache::new(Duration::from_secs(30)),
         }
     }
 }

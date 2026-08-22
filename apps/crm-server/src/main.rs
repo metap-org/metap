@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
+use metap::http::cache::ContextAttributesCache;
 use metap::infra::{EventBus, RabbitEventBus};
 use metap::prelude::*;
 use tower_http::services::{ServeDir, ServeFile};
@@ -111,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
     let private_key_pem = std::fs::read_to_string(&config.auth_jwt_private_key_path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_private_key_path))?;
 
-    let state = AppState::new(
+    let mut state = AppState::new(
         pool,
         metadata_base,
         metadata,
@@ -120,6 +121,12 @@ async fn main() -> anyhow::Result<()> {
         private_key_pem,
         router,
     );
+    // `AUTH_CONTEXT_ENTITY` opt-in (`docs/features/03-organization-identity.md`) — `AppState::new`
+    // leaves both fields at their no-op defaults; the composition root assigns them here since
+    // most deployments never set this env var and don't need it threaded through the constructor.
+    state.auth_context_entity = config.auth_context_entity.as_deref().map(Arc::from);
+    state.context_attributes_cache =
+        ContextAttributesCache::new(std::time::Duration::from_secs(config.auth_context_cache_ttl_seconds));
     // `metap::lowcode_http::router()` is the low-code control plane's admin API
     // (`docs/roadmap.md` Phase 11 / Phase A) and `metap::control_http::router()` is the
     // platform-tenant provisioning API (Phase 16 Giai đoạn 3) — both optional platform

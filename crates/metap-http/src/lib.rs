@@ -19,6 +19,7 @@
 //! Docker image, CI checks, load tests, backup/restore drill.
 
 pub mod auth;
+pub mod cache;
 pub mod error;
 pub mod request_context;
 pub mod request_id;

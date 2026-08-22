@@ -13,6 +13,18 @@ pub struct RequestContext {
     pub roles: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function_id: Option<String>,
+    /// Caller attributes beyond identity/role — populated by `metap-http`'s `AuthContext`
+    /// extractor from a configured "membership" entity's record when `AUTH_CONTEXT_ENTITY` is
+    /// set (`docs/features/03-organization-identity.md`), e.g. `{"departmentId": "..."}` for an
+    /// org-scoped policy's `fromContext` to read. `#[serde(flatten)]` so `to_value()` exposes
+    /// these keys at the top level, same as the fixed fields — avoid naming an attribute
+    /// `tenantId`/`userId`/`roles`/`functionId` (undefined precedence with the fixed field of
+    /// the same name, not an error but not something to rely on). `None` when the feature is
+    /// off or the caller has no matching record — this crate
+    /// stays entity-agnostic, it never queries the record itself, only carries what
+    /// `metap-http` already resolved.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub context_attributes: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl RequestContext {
@@ -86,5 +98,39 @@ impl EntityAction {
             EntityAction::Delete => "delete",
             EntityAction::Transition => "transition",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base(context_attributes: Option<serde_json::Map<String, serde_json::Value>>) -> RequestContext {
+        RequestContext {
+            tenant_id: "t1".to_string(),
+            user_id: Some("u1".to_string()),
+            roles: Some(vec!["employee".to_string()]),
+            function_id: None,
+            context_attributes,
+        }
+    }
+
+    #[test]
+    fn context_attributes_none_produces_no_extra_keys() {
+        let value = base(None).to_value();
+        assert_eq!(
+            value,
+            serde_json::json!({ "tenantId": "t1", "userId": "u1", "roles": ["employee"] })
+        );
+    }
+
+    #[test]
+    fn context_attributes_are_flattened_to_the_top_level() {
+        let mut attrs = serde_json::Map::new();
+        attrs.insert("departmentId".to_string(), serde_json::json!("dept-sales"));
+        let value = base(Some(attrs)).to_value();
+        assert_eq!(value["departmentId"], serde_json::json!("dept-sales"));
+        // fixed fields must still be present, untouched
+        assert_eq!(value["tenantId"], serde_json::json!("t1"));
     }
 }

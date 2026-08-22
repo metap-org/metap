@@ -515,6 +515,259 @@ async fn platform_admin_context_gates_by_sentinel_tenant_and_role() {
         .ok();
 }
 
+fn string_field(name: &str) -> EntityField {
+    EntityField {
+        name: name.to_string(),
+        label: name.to_string(),
+        kind: FieldKind::String,
+        required: None,
+        indexed: None,
+        unique: None,
+        enum_values: None,
+        ref_entity: None,
+        ref_display_field: None,
+        searchable: None,
+        search_mode: None,
+        sortable: None,
+    }
+}
+
+fn plain_string_entity(name: &str, field_names: &[&str]) -> EntityDefinition {
+    EntityDefinition {
+        name: name.to_string(),
+        label: name.to_string(),
+        table_name: "records".to_string(),
+        fields: field_names.iter().map(|f| string_field(f)).collect(),
+        list_views: vec![],
+        workflow: None,
+    }
+}
+
+/// Live verification of A4/A4b (`docs/features/03-organization-identity.md`): `AUTH_CONTEXT_ENTITY`
+/// enriches `RequestContext` from the caller's own record on a configured entity (`test.profiles`
+/// here, standing in for `hr.employees`), an org-scoped ABAC policy on `test.tasks` reads that
+/// enrichment via `fromContext`, and the enrichment is cached — a stale cached value persists
+/// until `POST /admin/users/{userId}/context/invalidate` clears it explicitly (a long TTL is used
+/// so this test doesn't race a timer).
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_cache_invalidation() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let admin_user_id = Uuid::new_v4();
+    let employee_user_id = Uuid::new_v4();
+
+    sqlx::query("INSERT INTO user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')")
+        .bind(tenant_id)
+        .bind(admin_user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'employee')")
+        .bind(tenant_id)
+        .bind(employee_user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let keydir = tempdir();
+    let (private_pem, public_pem) = openssl_genrsa(keydir.path());
+    let admin_token = mint_token(&private_pem, tenant_id, admin_user_id);
+    let employee_token = mint_token(&private_pem, tenant_id, employee_user_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry
+        .register(plain_string_entity("test.profiles", &["userId", "deptId"]))
+        .unwrap();
+    registry
+        .register(plain_string_entity("test.tasks", &["deptId", "title"]))
+        .unwrap();
+    let registry = Arc::new(registry);
+    let permissions = PermissionService::new(Box::new(metap_control::PostgresPolicyStore::new(test_router(
+        pool.clone(),
+    ))));
+    let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
+    let mut state = AppState::new(
+        pool.clone(),
+        registry.clone(),
+        Arc::new(ArcSwap::new(registry)),
+        Arc::new(permissions),
+        decoding_key,
+        private_pem.clone(),
+        test_router(pool.clone()),
+    );
+    state.auth_context_entity = Some(Arc::from("test.profiles"));
+    state.context_attributes_cache =
+        metap_http::cache::ContextAttributesCache::new(std::time::Duration::from_secs(3600));
+    let router = build_router(state, &[], Router::new());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = reqwest::Client::new();
+
+    // employee's own "profile" record — this is what AUTH_CONTEXT_ENTITY reads.
+    sqlx::query("INSERT INTO records (tenant_id, entity, data, version) VALUES ($1, 'test.profiles', $2, 1)")
+        .bind(tenant_id)
+        .bind(json!({ "userId": employee_user_id.to_string(), "deptId": "eng" }))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // admin bypasses policy checks entirely -> seed two task records in different departments
+    let eng_task: serde_json::Value = client
+        .post(format!("{base}/api/test.tasks"))
+        .bearer_auth(&admin_token)
+        .json(&json!({ "data": { "deptId": "eng", "title": "Eng task" } }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let eng_task_id = eng_task["data"]["id"].as_str().unwrap().to_string();
+
+    let sales_task: serde_json::Value = client
+        .post(format!("{base}/api/test.tasks"))
+        .bearer_auth(&admin_token)
+        .json(&json!({ "data": { "deptId": "sales", "title": "Sales task" } }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let sales_task_id = sales_task["data"]["id"].as_str().unwrap().to_string();
+
+    // grant "employee" bare read access (context-subject, RBAC only) ...
+    let policy1 = client
+        .post(format!("{base}/admin/policies"))
+        .bearer_auth(&admin_token)
+        .json(&json!({ "entity": "test.tasks", "action": "read", "roles": ["employee"], "subject": "context" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(policy1.status(), 201);
+    // ... then narrow it to same-department records only (record-subject, ABAC condition reading
+    // the enrichment this whole feature adds).
+    let policy2 = client
+        .post(format!("{base}/admin/policies"))
+        .bearer_auth(&admin_token)
+        .json(&json!({
+            "entity": "test.tasks",
+            "action": "read",
+            "subject": "record",
+            "condition": { "attribute": "deptId", "op": "eq", "value": { "fromContext": "deptId" } }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(policy2.status(), 201);
+
+    // employee (deptId=eng, from their test.profiles record) reads the eng task ...
+    let res = client
+        .get(format!("{base}/api/test.tasks/{eng_task_id}"))
+        .bearer_auth(&employee_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    // ... but not the sales task — deny-by-default, no matching record-level policy.
+    let res = client
+        .get(format!("{base}/api/test.tasks/{sales_task_id}"))
+        .bearer_auth(&employee_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403);
+
+    // move the employee to "sales" ...
+    sqlx::query(
+        "UPDATE records SET data = jsonb_set(data, '{deptId}', '\"sales\"') \
+         WHERE tenant_id = $1 AND entity = 'test.profiles' AND data ->> 'userId' = $2",
+    )
+    .bind(tenant_id)
+    .bind(employee_user_id.to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // ... the cache still holds the stale "eng" attribute (long TTL, no invalidation yet) — the
+    // employee's *next* request still resolves against the old department.
+    let res = client
+        .get(format!("{base}/api/test.tasks/{eng_task_id}"))
+        .bearer_auth(&employee_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        res.status(),
+        200,
+        "cached context_attributes should still be stale (deptId=eng)"
+    );
+
+    // explicit invalidate clears it immediately, without waiting on the TTL.
+    let invalidate_res = client
+        .post(format!("{base}/admin/users/{employee_user_id}/context/invalidate"))
+        .bearer_auth(&admin_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalidate_res.status(), 204);
+
+    // now the employee's context is fresh: eng is no longer reachable, sales is.
+    let res = client
+        .get(format!("{base}/api/test.tasks/{eng_task_id}"))
+        .bearer_auth(&employee_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        res.status(),
+        403,
+        "post-invalidate context should be fresh (deptId=sales)"
+    );
+    let res = client
+        .get(format!("{base}/api/test.tasks/{sales_task_id}"))
+        .bearer_auth(&employee_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        res.status(),
+        200,
+        "post-invalidate context should now see the sales task"
+    );
+
+    sqlx::query("DELETE FROM outbox_events WHERE aggregate_type = 'test.tasks'")
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM policies WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+}
+
 fn tempdir() -> TempDir {
     TempDir::new()
 }

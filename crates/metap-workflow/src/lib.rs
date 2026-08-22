@@ -205,6 +205,7 @@ mod tests {
             user_id: user_id.map(String::from),
             roles: None,
             function_id: None,
+            context_attributes: None,
         }
     }
 

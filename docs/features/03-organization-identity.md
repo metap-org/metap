@@ -1,9 +1,9 @@
 # Organization & Identity Layer (org structure, role scope)
 
-- **Trạng thái:** proposed
+- **Trạng thái:** P0 done (2026-08-22); P1/P2 vẫn proposed, chưa code
 - **Người đề xuất:** chủ dự án, 2026-08-22
 - **Track sở hữu:** Backend Core (phần entity mẫu liên quan track App/Entity)
-- **Phase roadmap liên quan:** chưa gắn — nếu duyệt, đề xuất là Phase 18
+- **Phase roadmap liên quan:** Phase 18 (`docs/roadmap.md`)
 
 ## Vấn đề / động lực
 
@@ -92,19 +92,39 @@ nguyên tắc "`metap-http` không được biết business entity"? Ba hướng
 3. **Cột generic JSONB riêng** (vd `user_context_attributes`, sync bởi nghiệp vụ khi Employee
    record đổi) — thêm state phải giữ đồng bộ, rủi ro lệch dữ liệu.
 
-Hướng 1 nhất quán nhất với triết lý hiện tại (role tra mới, không cache) nhưng cần đo chi phí
-perf trước khi chốt — **không quyết ở đây**, để lại cho lúc brief này được duyệt.
+**Đã chốt (2026-08-22, xem ADR `docs/architectures/09-adr.md`): Hướng 1, opt-in qua config, có
+cache.** Một biến env `AUTH_CONTEXT_ENTITY` đặt tên đúng một entity quy ước có field `userId`
+trỏ tới user hiện tại — `AuthContext` (`crates/metap-http/src/auth.rs`) tự tra record đó sau khi
+role đã resolve, flatten kết quả vào `RequestContext.context_attributes`
+(`crates/metap-permission/src/context.rs`, `#[serde(flatten)]` nên `fromContext` đọc được ngay
+không cần sửa `PolicyCondition`). `None` (mặc định) là no-op tuyệt đối. Khác role (không bao giờ
+cache) — kết quả **được cache** (`metap_http::cache::ContextAttributesCache`, cùng mẫu
+`metap-control::RegistryCache`, TTL cấu hình qua `AUTH_CONTEXT_CACHE_TTL_SECONDS`, mặc định 30s)
+vì đây là một round-trip DB thêm trên *mọi* request khi bật tính năng, không phải một security
+check. Hai đường invalidate: đợi TTL, hoặc gọi tường minh
+`POST /admin/users/{userId}/context/invalidate` (gate `AdminContext`) ngay sau khi sửa
+`departmentId` của một user để có hiệu lực tức thì. Chi phí perf: một `SELECT ... LIMIT 1` có
+index (`userId` nên đặt `indexed: true`) chỉ chạy lúc cache-miss, không phải mọi request — không
+cần benchmark riêng, cache đã loại bỏ chính nỗi lo ban đầu (rủi ro perf mỗi request).
 
-## Phạm vi (nếu duyệt)
+## Phạm vi
 
-**P0 — làm được ngay, không cần trigger, không đụng code core:**
-- Entity mẫu `hr.departments`/`hr.teams`/`hr.employees` (field, list view) — chứng minh
-  Organization structure là business entity bình thường, verify qua HTTP thật.
-- Ví dụ policy "role scoped by department" bằng `PolicyCondition` + `fromContext` có sẵn — chỉ
-  chạy được sau khi P0 tiếp theo (enrich context) xong.
-
-**P0 — cần thiết kế + code:**
-- Chọn 1 trong 3 hướng enrich `RequestContext` ở trên, implement, verify sống qua HTTP.
+**P0 — done (2026-08-22), verify sống qua HTTP thật:**
+- Enrich `RequestContext` (Hướng 1 + cache, mô tả ở trên) — implement, unit test
+  (`context_attributes` flatten đúng), e2e test tự động
+  (`crates/metap-http/tests/http_server.rs`'s
+  `auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_cache_invalidation`,
+  bao phủ cả cache-stale-then-invalidate) và verify sống thủ công qua `curl` trên `crm-server`
+  đang chạy thật.
+- Entity mẫu `hr.departments`/`hr.employees` — tạo qua chính low-code builder
+  (`PUT /admin/lowcode/entities/{name}/draft` + `publish`), không phải Rust module mới —
+  chứng minh đúng thesis "Organization structure = business entity thường". `hr.employees` có
+  field `userId` (`string`) + `departmentId` (`reference` → `hr.departments`).
+- Ví dụ policy "role scoped by department" bằng `PolicyCondition` + `fromContext`: verify sống
+  user A (department Engineering) đọc record `hr.employees` cùng phòng ban → 200, khác phòng ban
+  → 403 (deny-by-default, không cấu hình gì thêm).
+- Deployment không set `AUTH_CONTEXT_ENTITY` (toàn bộ e2e suite hiện có, chạy lại nguyên vẹn) —
+  hành vi y hệt trước thay đổi này, xác nhận qua `cargo test --workspace -- --ignored`.
 
 **P1:**
 - `hr.positions`, `hr.locations` (field thêm trên entity mẫu, không cần core mới).
@@ -125,12 +145,12 @@ khái niệm Scope riêng nếu context được enrich đúng.
 
 ## Ranh giới kiến trúc bị đụng tới
 
-- Nếu chọn hướng 1 (convention-based fetch): `AuthContext` (`crates/metap-http/src/auth.rs`)
-  thêm một lệnh gọi `CrudService` mới vào đường auth của mọi request — cần ADR
+- Hướng 1 (convention-based fetch, đã chọn): `AuthContext` (`crates/metap-http/src/auth.rs`)
+  thêm một lookup (cache-trước) vào đường auth của mọi request khi opt-in bật — ghi nhận ở ADR
   (`docs/architectures/09-adr.md`) vì đây là thay đổi hiệu năng + hành vi ở request path chung,
   không phải một call site đơn lẻ.
-- Không đụng `metap-metadata`/`metap-crud` nếu Organization ở dạng entity thường — đúng ranh giới
-  "core không biết business entity" đã giữ từ đầu.
+- Không đụng `metap-metadata`/`metap-crud` — Organization vẫn ở dạng entity thường qua low-code,
+  đúng ranh giới "core không biết business entity" đã giữ từ đầu.
 
 ## Quan hệ với table-per-entity (Data Model Strategy Step 3) — nghiên cứu 2026-08-22
 
@@ -194,8 +214,6 @@ thường (đã là mặc định hôm nay, `owned` chưa được implement), k
 
 ## Rủi ro / phụ thuộc
 
-- Chi phí perf của việc enrich context mỗi request (hướng 1) chưa đo — cần benchmark trước khi
-  chốt, không suy đoán.
 - Chưa có UI quản lý Organization/Employee — FE track khác lo (theo phân công hiện tại: backend
   ưu tiên, FE có người khác làm).
 - Phụ thuộc gián tiếp `docs/features/02-workflow-engine.md` Increment 2 nếu muốn approval routing
