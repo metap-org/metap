@@ -652,3 +652,87 @@ async fn export_entities_includes_disabled_entities() {
         "a disabled-but-published entity must still appear in an export snapshot"
     );
 }
+
+/// Phase 11C's "operational visibility" — `audit::list_recent` (unlike `list_for_entity`) isn't
+/// scoped to one entity, so unlike every other test in this file it can't isolate on a random
+/// entity name alone: the audit table is global (`docs/roadmap.md`'s note on why entity names
+/// here are randomized doesn't cover this). Asserts relative ordering between this test's own
+/// events instead of asserting exact positions in the full result, since other tests/processes
+/// may be writing to the same table concurrently.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn list_recent_spans_entities_newest_first_and_respects_limit() {
+    let pool = pool().await;
+    let entity_a = entity_name("audit_a");
+    let entity_b = entity_name("audit_b");
+    let actor = metap_lowcode::audit::AuditActor {
+        user_id: Some(Uuid::new_v4().to_string()),
+        tenant_id: Uuid::new_v4().to_string(),
+    };
+
+    metap_lowcode::audit::record(
+        &pool,
+        &entity_a,
+        metap_lowcode::audit::AuditAction::DraftSaved,
+        &actor,
+        Default::default(),
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    metap_lowcode::audit::record(
+        &pool,
+        &entity_b,
+        metap_lowcode::audit::AuditAction::DraftSaved,
+        &actor,
+        Default::default(),
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    metap_lowcode::audit::record(
+        &pool,
+        &entity_a,
+        metap_lowcode::audit::AuditAction::Published,
+        &actor,
+        metap_lowcode::audit::AuditVersionInfo {
+            version_number: Some(1),
+            restored_from_version: None,
+        },
+    )
+    .await;
+
+    // `limit` bounds the query regardless of how many events already exist in the (global,
+    // not tenant-scoped) audit table.
+    let limited = metap_lowcode::audit::list_recent(&pool, 1).await.expect("list_recent");
+    assert_eq!(limited.len(), 1);
+
+    let recent = metap_lowcode::audit::list_recent(&pool, 500)
+        .await
+        .expect("list_recent");
+    let a_published_pos = recent
+        .iter()
+        .position(|e| e.entity_name == entity_a && e.action == "published")
+        .expect("entity_a's published event should be present");
+    let a_draft_pos = recent
+        .iter()
+        .position(|e| e.entity_name == entity_a && e.action == "draft_saved")
+        .expect("entity_a's draft_saved event should be present");
+    let b_draft_pos = recent
+        .iter()
+        .position(|e| e.entity_name == entity_b && e.action == "draft_saved")
+        .expect("entity_b's draft_saved event should be present");
+    assert!(
+        a_published_pos < b_draft_pos,
+        "the most recently recorded event (entity_a published) must sort before an older one"
+    );
+    assert!(
+        b_draft_pos < a_draft_pos,
+        "entity_b's draft (recorded after entity_a's) must sort before entity_a's, older, draft"
+    );
+
+    // entity-scoped listing is unaffected — still only sees its own entity's events.
+    let scoped = metap_lowcode::audit::list_for_entity(&pool, &entity_a)
+        .await
+        .expect("list_for_entity");
+    assert_eq!(scoped.len(), 2);
+    assert!(scoped.iter().all(|e| e.entity_name == entity_a));
+}

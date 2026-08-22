@@ -20,7 +20,7 @@ và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, 
 | 8. Hardening | Đang làm — chỉ còn "tích hợp secret manager" (design-only 2026-08-17, chờ chốt target production); load test + backup/restore drill xong 2026-08-17 |
 | 9. Multi-Service Evolution | Trigger-based, đã rà soát lại 2026-08-17 — vẫn chưa trigger nào xảy ra, không có việc để làm |
 | 10. Monorepo, npm publish | Làm một phần |
-| 11. Low-code Platform Backbone Architecture | Phase A + Phase B xong 2026-08-17 (Phase B's "policy editor UI" hoá ra đã có sẵn từ Phase 15); Phase C bắt đầu 2026-08-20 — metadata audit log, migration-impact check, import/export xong (2026-08-22); phần còn lại (approval workflow, schema isolation cấp tenant, operational visibility rộng hơn) chưa làm |
+| 11. Low-code Platform Backbone Architecture | Phase A + Phase B xong 2026-08-17 (Phase B's "policy editor UI" hoá ra đã có sẵn từ Phase 15); Phase C bắt đầu 2026-08-20 — metadata audit log, migration-impact check, import/export, operational visibility (cross-entity audit feed) xong (2026-08-22); còn lại approval workflow ("nếu cần", chưa có trigger) và schema isolation cấp tenant (chặn bởi quyết định kiến trúc lớn hơn — xem `docs/team-charter.md`'s "Metadata low-code theo từng Tenant") |
 | 12. Rust Core Migration | Đã quyết định; Migration Order (bước 1-9) đã xong trong `crates/`; chưa cut over sang production |
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
@@ -669,8 +669,28 @@ cả batch, response báo `imported`/`failed` riêng từng entity. Verify live 
 (`crates/metap-lowcode/tests/store.rs`: export không filter, export có filter, export gồm cả
 entity disabled).
 
-Các deliverable còn lại của Phase C (publish approval workflow, quy tắc cô lập schema cấp tenant,
-operational visibility rộng hơn audit log đơn lẻ) — chưa bắt đầu.
+**Operational visibility (2026-08-22): cross-entity audit feed.** Audit log trước đó
+(`audit::list_for_entity`, `GET /admin/lowcode/entities/{name}/audit`) chỉ xem được theo từng
+entity — một operator muốn biết "gần đây ai publish gì trên toàn platform" phải query từng entity
+một. Thêm `audit::list_recent(pool, limit)` (`crates/metap-lowcode/src/audit.rs`) — cùng bảng
+`low_code_metadata_audit_events`, không lọc theo entity, `ORDER BY occurred_at DESC LIMIT`.
+`AuditEvent` thêm field `entity_name` (trước đó ngầm định qua tham số hàm, giờ cần tường minh vì
+kết quả trộn nhiều entity) — thay đổi cộng thêm, không phá `list_for_entity` hiện có.
+`GET /admin/lowcode/audit?limit=N` (`crates/metap-lowcode-http`, gate `AdminContext`) — `limit`
+mặc định 50, kẹp tối đa 200 (cùng nguyên tắc "mọi list đều có max limit" của `QueryPlanner`, áp
+dụng thủ công ở đây vì bảng audit không đi qua `QueryPlanner`/`records`). 1 test e2e mới
+(`crates/metap-lowcode/tests/store.rs`: audit event nhiều entity trộn đúng thứ tự mới nhất
+trước, `limit` được tôn trọng, `list_for_entity` không bị ảnh hưởng). Verify sống qua HTTP thật:
+publish 2 entity mới → `GET .../audit?limit=5` trả về đúng 4 event (draft+publish mỗi entity),
+mới nhất trước, kèm `entityName` phân biệt; `limit=99999` bị kẹp, không trả nguyên bảng.
+
+Còn lại của Phase C: **publish approval workflow** — chính spec gốc
+(`docs/low-code-platform-v1.md`) ghi là "nếu cần", chưa có tín hiệu nhu cầu thật (mọi hành động
+draft/publish hôm nay chỉ gate bởi `AdminContext` chung, chưa có nhu cầu tách vai trò soạn/duyệt).
+**Quy tắc cô lập schema cấp tenant** — bị chặn bởi một quyết định kiến trúc lớn hơn nhiều (metadata
+low-code hôm nay GLOBAL, không theo tenant, quyết định tường minh từ Phase A); hướng dài hạn đã
+ghi lại ở `docs/team-charter.md`'s "Metadata low-code theo từng Tenant" (2026-08-22), chưa có
+trigger để bắt đầu.
 
 ## Phase 12: Rust Core Migration
 

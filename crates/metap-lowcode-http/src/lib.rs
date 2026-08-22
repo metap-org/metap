@@ -36,7 +36,7 @@ use metap_lowcode::audit::{self, AuditAction, AuditActor, AuditVersionInfo};
 use metap_lowcode::{LowCodeEntityDefinition, PublishError};
 use metap_metadata::{EntityField, EntityListView, EntityWorkflow, MetadataRegistry};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 
 #[derive(Deserialize)]
 struct DraftBody {
@@ -348,19 +348,47 @@ async fn list_audit_events(
 ) -> Response {
     match audit::list_for_entity(&state.pool, &name).await {
         Ok(events) => {
-            let data: Vec<_> = events
-                .into_iter()
-                .map(|e| {
-                    json!({
-                        "action": e.action,
-                        "actorUserId": e.actor_user_id,
-                        "actorTenantId": e.actor_tenant_id,
-                        "versionNumber": e.version_number,
-                        "restoredFromVersion": e.restored_from_version,
-                        "occurredAt": e.occurred_at,
-                    })
-                })
-                .collect();
+            let data: Vec<_> = events.into_iter().map(audit_event_to_json).collect();
+            Json(json!({ "data": data })).into_response()
+        }
+        Err(e) => internal_error_response(e),
+    }
+}
+
+fn audit_event_to_json(e: audit::AuditEvent) -> Value {
+    json!({
+        "entityName": e.entity_name,
+        "action": e.action,
+        "actorUserId": e.actor_user_id,
+        "actorTenantId": e.actor_tenant_id,
+        "versionNumber": e.version_number,
+        "restoredFromVersion": e.restored_from_version,
+        "occurredAt": e.occurred_at,
+    })
+}
+
+const DEFAULT_RECENT_AUDIT_LIMIT: i64 = 50;
+const MAX_RECENT_AUDIT_LIMIT: i64 = 200;
+
+/// Cross-entity counterpart to `list_audit_events` — "operational visibility" (Phase 11C,
+/// `docs/roadmap.md`): the last deliverable of Phase C without its own admin API surface yet.
+/// `?limit=N` (default 50, clamped to 200) — same "every list has a max limit" convention
+/// `QueryPlanner` follows, applied here since this bypasses `QueryPlanner`/`records` entirely
+/// (a fixed, non-metadata-driven table).
+async fn list_recent_audit_events(
+    State(state): State<AppState>,
+    AdminContext(_context): AdminContext,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let limit = params
+        .get("limit")
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_RECENT_AUDIT_LIMIT)
+        .min(MAX_RECENT_AUDIT_LIMIT);
+    match audit::list_recent(&state.pool, limit).await {
+        Ok(events) => {
+            let data: Vec<_> = events.into_iter().map(audit_event_to_json).collect();
             Json(json!({ "data": data })).into_response()
         }
         Err(e) => internal_error_response(e),
@@ -469,6 +497,7 @@ pub fn router() -> Router<AppState> {
         .route("/admin/lowcode/entities/{name}/published", get(get_published))
         .route("/admin/lowcode/entities/{name}/versions", get(list_versions))
         .route("/admin/lowcode/entities/{name}/audit", get(list_audit_events))
+        .route("/admin/lowcode/audit", get(list_recent_audit_events))
         .route("/admin/lowcode/export", get(export_entities))
         .route("/admin/lowcode/import", axum::routing::post(import_entities))
 }

@@ -50,6 +50,7 @@ pub struct AuditActor {
 
 #[derive(Debug, Clone)]
 pub struct AuditEvent {
+    pub entity_name: String,
     pub action: String,
     pub actor_user_id: Option<String>,
     pub actor_tenant_id: String,
@@ -87,25 +88,54 @@ pub async fn record(pool: &PgPool, entity_name: &str, action: AuditAction, actor
     }
 }
 
+type AuditRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<i32>,
+    Option<i32>,
+    DateTime<Utc>,
+);
+
+fn row_to_event(
+    (entity_name, action, actor_user_id, actor_tenant_id, version_number, restored_from_version, occurred_at): AuditRow,
+) -> AuditEvent {
+    AuditEvent {
+        entity_name,
+        action,
+        actor_user_id,
+        actor_tenant_id,
+        version_number,
+        restored_from_version,
+        occurred_at,
+    }
+}
+
 pub async fn list_for_entity(pool: &PgPool, entity_name: &str) -> anyhow::Result<Vec<AuditEvent>> {
-    let rows = sqlx::query_as::<_, (String, Option<String>, String, Option<i32>, Option<i32>, DateTime<Utc>)>(
-        "SELECT action, actor_user_id, actor_tenant_id, version_number, restored_from_version, occurred_at \
+    let rows = sqlx::query_as::<_, AuditRow>(
+        "SELECT entity_name, action, actor_user_id, actor_tenant_id, version_number, restored_from_version, occurred_at \
          FROM low_code_metadata_audit_events WHERE entity_name = $1 ORDER BY occurred_at DESC",
     )
     .bind(entity_name)
     .fetch_all(pool)
     .await?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(action, actor_user_id, actor_tenant_id, version_number, restored_from_version, occurred_at)| AuditEvent {
-                action,
-                actor_user_id,
-                actor_tenant_id,
-                version_number,
-                restored_from_version,
-                occurred_at,
-            },
-        )
-        .collect())
+    Ok(rows.into_iter().map(row_to_event).collect())
+}
+
+/// Cross-entity counterpart to [`list_for_entity`] — "operational visibility" (Phase 11C,
+/// `docs/roadmap.md`, `docs/low-code-platform-v1.md`): an operator watching the whole low-code
+/// control plane ("who published what, recently, across every entity") without already knowing
+/// which entity to look at. Same table, same append-only/best-effort semantics — just not
+/// filtered by `entity_name`. `limit` is the caller's responsibility to bound (the HTTP handler
+/// clamps it), matching `QueryPlanner`'s "every list has a max limit" convention.
+pub async fn list_recent(pool: &PgPool, limit: i64) -> anyhow::Result<Vec<AuditEvent>> {
+    let rows = sqlx::query_as::<_, AuditRow>(
+        "SELECT entity_name, action, actor_user_id, actor_tenant_id, version_number, restored_from_version, occurred_at \
+         FROM low_code_metadata_audit_events ORDER BY occurred_at DESC LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(row_to_event).collect())
 }
