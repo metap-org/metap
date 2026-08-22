@@ -724,6 +724,42 @@ impl CrudService {
                 return Err(e);
             }
         };
+
+        // Reference-integrity guard (`docs/architectures/11-risks.md`): deleting a record that
+        // another record still points to via a `Reference` field would otherwise leave a
+        // silent orphan reference — no error, no cascade, nothing. Every `Reference` field
+        // across the registry that targets this entity is Restrict-by-default (no per-field
+        // override yet); checked inside the same transaction as the delete itself, right
+        // before it, so this stays consistent with whatever the delete itself observes.
+        let metadata = self.metadata.load();
+        for (ref_entity, ref_field) in referencing_fields(&metadata, &entity.name) {
+            let referenced: Option<i32> = sqlx::query_scalar(
+                "SELECT 1 FROM records \
+                 WHERE tenant_id = $1 AND entity = $2 AND deleted = false AND data ->> $3 = $4 LIMIT 1",
+            )
+            .bind(tenant_id)
+            .bind(&ref_entity)
+            .bind(&ref_field)
+            .bind(id.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+            if referenced.is_some() {
+                tx.rollback().await.ok();
+                tracing::warn!(
+                    entity = entity.name,
+                    record_id = %id,
+                    referencing_entity = ref_entity,
+                    referencing_field = ref_field,
+                    "delete rejected: record is still referenced by another record"
+                );
+                return Ok(ServiceResult::err_with_message(
+                    409,
+                    "record_referenced",
+                    format!("This record is referenced by \"{ref_field}\" on \"{ref_entity}\" and cannot be deleted."),
+                ));
+            }
+        }
+
         let row = sqlx::query(&format!(
             "UPDATE records SET deleted = true, version = version + 1, updated_at = now(), updated_by = $1 \
              WHERE id = $2 AND tenant_id = $3 AND entity = $4 AND version = $5 AND deleted = false \
@@ -827,6 +863,22 @@ fn router_unavailable<T>(error: &anyhow::Error) -> Option<ServiceResult<T>> {
         RouterError::TenantDeleted => Some(ServiceResult::err(404, "tenant_not_found")),
         RouterError::InvalidSchemaName(_) => None,
     }
+}
+
+/// Every `(entity, field)` pair across the whole registry where `field` is a `Reference` kind
+/// pointing at `target_entity` — the set `delete()` checks for orphan references. Includes
+/// self-references (an entity referencing itself, e.g. a manager hierarchy) — deleting a record
+/// other records of the *same* entity still point to is exactly the same orphan-reference risk.
+fn referencing_fields(metadata: &MetadataRegistry, target_entity: &str) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    for summary in metadata.list_entities() {
+        for field in &summary.fields {
+            if field.kind == FieldKind::Reference && field.ref_entity.as_deref() == Some(target_entity) {
+                result.push((summary.name.clone(), field.name.clone()));
+            }
+        }
+    }
+    result
 }
 
 async fn fetch_existing<'e, E: PgExecutor<'e>>(

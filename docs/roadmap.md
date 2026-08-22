@@ -1105,6 +1105,16 @@ lộ ra nhu cầu cụ thể trước khi thiết kế tiếp (trigger-based, kh
 `triggerType: on_transition` không nằm trong phạm vi Increment 1 (backend track, FE track khác lo
 riêng).
 
+**Fix (2026-08-22, phát hiện khi nghiên cứu Organization & Identity × table-per-entity, độc lập
+với cả hai — không phải một phần của feature brief `03-organization-identity.md`, vẫn `proposed`):**
+`CrudService::delete()` (`crates/metap-crud/src/crud_service.rs`) trước đây không quét record nào
+đang tham chiếu tới record bị xoá qua field `Reference` — xoá để lại orphan reference âm thầm,
+không lỗi, không chặn. Giờ quét toàn registry tìm mọi field `Reference` trỏ tới entity đang xoá
+(kể cả self-reference), chặn `409 record_referenced` nếu còn record tham chiếu, trong cùng
+transaction với chính lệnh xoá — Restrict mặc định, chưa có per-field override. Verify sống qua
+HTTP thật (`crm.customers.referredBy`): xoá A khi B còn trỏ tới → 409, A vẫn nguyên; xoá B trước
+rồi xoá A → 200. 2 e2e test mới (`crates/metap-crud/tests/crud_service_postgres.rs`).
+
 ## Định hướng chưa lên phase (chưa có trigger)
 
 Tám ý nảy sinh từ thảo luận kiến trúc, hợp lý về sản phẩm nhưng chưa có trigger cụ thể nên chưa

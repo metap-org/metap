@@ -132,6 +132,66 @@ khái niệm Scope riêng nếu context được enrich đúng.
 - Không đụng `metap-metadata`/`metap-crud` nếu Organization ở dạng entity thường — đúng ranh giới
   "core không biết business entity" đã giữ từ đầu.
 
+## Quan hệ với table-per-entity (Data Model Strategy Step 3) — nghiên cứu 2026-08-22
+
+Câu hỏi đặt ra: Organization data (Department/Team/Employee) có phải trigger tự nhiên cho việc
+tách bảng `records` chung sang table-per-entity không? Rà kỹ hai thiết kế đã có
+(`docs/multi-tenant-platform-design.md` §3, `docs/architectures/05-building-blocks.md`'s Data
+Model Strategy) trước khi trả lời — **câu trả lời là không, ở hai trục đầu, nhưng có một trục thứ
+ba lộ ra một gap thật, độc lập với table-per-entity:**
+
+**1. Trigger theo volume (@10M/entity) — Organization data không chạm tới.** §3.1 của
+`multi-tenant-platform-design.md` ghim rõ ràng: table-per-entity là bắt buộc ở mốc **10 triệu
+row/entity** (lý do: N entity × 10M trong một bảng chung → index phình, autovacuum ác mộng).
+Employee/Department của một tenant thực tế hiếm khi vượt vài trăm nghìn row, kể cả doanh nghiệp
+rất lớn — thấp hơn ngưỡng trigger 1-2 bậc độ lớn. Organization & Identity không kéo table-per-
+entity tới gần hơn.
+
+**2. Trigger theo độ nhạy latency (lookup caller mỗi request) — đã được giải bởi cơ chế có sẵn,
+không cần table-per-entity.** Thiết kế "enrich `RequestContext`" (hướng 1 ở trên) cần tra caller's
+Employee record theo `userId` trên **mỗi** request có auth — nghe có vẻ cần một bảng riêng, tối ưu
+cho lookup nóng. Nhưng cơ chế **đã tồn tại** giải đúng bài toán này ở tier T1 (JSONB + partial
+expression index): `IndexReconciler` (`crates/metap-peripherals`) đã tự động build partial index
+cho field `indexed: true` của một entity, đúng shape `WHERE entity = 'hr.employees' AND ...`
+(`docs/architectures/05-building-blocks.md`'s "Hot field indexes"). Đặt `userId` field trên
+`hr.employees` là `indexed: true` cho tra cứu O(log n) ngay trong bảng `records` chung, không cần
+tier T2/T3 hay tách bảng gì cả. Latency-sensitivity không phải lý do hợp lệ để đẩy sớm
+table-per-entity ở đây.
+
+**3. Reference integrity — gap thật, đã xác nhận bằng code, tồn tại NGAY CẢ SAU khi
+table-per-entity xong (cho bảng chung), và Organization data (Department bị xoá trong khi
+Employee vẫn tham chiếu) làm nó lộ rõ hơn hẳn so với các entity khác trong repo hôm nay.**
+`multi-tenant-platform-design.md` §3.3 giả định "Ref tới bảng chung → fallback check ở
+`CrudService` lúc write" đã tồn tại cho thế giới bảng-chung hiện tại — **kiểm tra trực tiếp
+`CrudService::delete()` (`crates/metap-crud/src/crud_service.rs`) xác nhận điều này SAI**: `delete`
+chỉ là một `UPDATE records SET deleted = true ...` thuần tuý, không quét bất kỳ record nào khác
+đang tham chiếu tới nó qua field `Reference`. Xoá một `hr.departments` record trong khi nhiều
+`hr.employees` vẫn có `departmentId` trỏ tới nó **không báo lỗi, không chặn** — để lại tham chiếu
+treo (orphan reference) âm thầm. `crm.customers.referredBy` (self-reference đã dùng để verify
+cross-record condition #3) hiếm khi lộ bug này vì xoá một customer bị referral tới không phải
+thao tác thường gặp; Department/Employee thì khác — xoá một phòng ban đang có nhân sự là thao tác
+sẽ xảy ra thật. **Gap này độc lập với table-per-entity**: kể cả khi Step 3 triển khai xong, nó chỉ
+cho FK thật với entity **đã tách bảng** — Organization data (dưới ngưỡng 10M) nhiều khả năng vẫn
+ở bảng `records` chung vô thời hạn, nên "chờ table-per-entity" không phải câu trả lời. Cần một
+câu trả lời riêng cho thế giới bảng-chung: `CrudService::delete()` (và có thể `update` khi
+`departmentId` bị đổi) quét `Reference` field nào trỏ tới entity/id đang bị xoá (đọc metadata,
+biết field nào là `Reference` + `refEntity` trỏ tới entity này) — chặn (`Restrict`, mặc định an
+toàn) hoặc cho phép tuỳ chọn theo field (tương lai, không phải bây giờ).
+
+**Kết luận**: Organization & Identity không phải trigger cho table-per-entity — nên tiếp tục coi
+table-per-entity là trigger-based, chưa kích hoạt (đúng kỷ luật hiện tại). Nhưng nó lộ ra một gap
+reference-integrity có thật, đang tồn tại, không phụ thuộc bất kỳ phase nào khác — nên được ghi
+nhận độc lập (xem `docs/architectures/11-risks.md`, hàng mới thêm cùng ngày) và cân nhắc đóng
+**trước** khi P1 (`Employee.managerId`/`departmentId`) đi vào sản xuất thật, nếu không một thao
+tác xoá phòng ban bình thường sẽ để lại dữ liệu hỏng âm thầm.
+
+Điểm phụ, đáng ghi vì liên quan trực tiếp thiết kế entity mẫu ở P0/P1: §3.3 của
+`multi-tenant-platform-design.md` phân biệt `relationMode: referenced` (record riêng, query/
+report được — mặc định) và `relationMode: owned` (nested JSONB, chỉ khi con không cần query độc
+lập). `Employee → Department`/`Employee → Employee (manager)` rõ ràng cần `referenced` (org
+chart, headcount theo phòng ban là truy vấn thật) — entity mẫu ở P0/P1 nên dùng field `Reference`
+thường (đã là mặc định hôm nay, `owned` chưa được implement), không phải lựa chọn cần cân nhắc.
+
 ## Rủi ro / phụ thuộc
 
 - Chi phí perf của việc enrich context mỗi request (hướng 1) chưa đo — cần benchmark trước khi

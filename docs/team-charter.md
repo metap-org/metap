@@ -193,7 +193,15 @@ discipline hiện tại (`docs/architectures/02-constraints.md`'s "Tiến hóa t
   JWT lúc mint — đối lập nguyên tắc "role luôn tra mới, không cache trên JWT"; cột JSONB generic
   sync riêng) đều có đánh đổi, **chưa hướng nào được chọn**. Chi tiết đầy đủ + phân kỳ P0/P1/P2 ở
   feature brief `docs/features/03-organization-identity.md` (trạng thái `proposed`, chưa duyệt để
-  bắt đầu code).
+  bắt đầu code). **Nghiên cứu thêm 2026-08-22** (theo yêu cầu chủ dự án, đối chiếu với hướng
+  table-per-entity): Organization data **không** phải trigger cho table-per-entity (volume quá
+  thấp so với ngưỡng 10M/entity đã ghim; nhu cầu lookup nhanh theo `userId` đã được giải bởi
+  `IndexReconciler`'s partial index có sẵn, không cần tách bảng) — nhưng phân tích lộ ra một gap
+  reference-integrity **có thật, độc lập với table-per-entity**: `CrudService::delete()` không
+  quét/chặn record nào đang tham chiếu tới record bị xoá (đã xác nhận bằng code, không phải suy
+  đoán), và xoá Department còn Employee nghĩa là gap này sẽ va phải thật trong thực tế. Ghi
+  thành hàng riêng ở [11. Risks and Technical Debt](architectures/11-risks.md). Chi tiết đầy đủ
+  ở `docs/features/03-organization-identity.md`'s mục "Quan hệ với table-per-entity".
 - **Entity variant kiểu polymorphic/discriminated-union** (một entity logic chứa nhiều "hình
   dạng" record khác nhau trong cùng một logical collection, kiểu MongoDB) — rủi ro cao nhất
   trong ba ý mới này, vì `EntityDefinition.fields` hôm nay là một danh sách phẳng dùng chung

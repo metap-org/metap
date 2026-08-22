@@ -123,6 +123,57 @@ fn unique_field_entity() -> EntityDefinition {
     }
 }
 
+/// A referenced-by-another-entity pair for the reference-integrity guard tests
+/// (`docs/architectures/11-risks.md`): `test.children.parentId` is a `Reference` field pointing
+/// at `test.parents`.
+fn parent_entity() -> EntityDefinition {
+    EntityDefinition {
+        name: "test.parents".to_string(),
+        label: "Parent".to_string(),
+        table_name: "records".to_string(),
+        fields: vec![EntityField {
+            name: "name".to_string(),
+            label: "Name".to_string(),
+            kind: FieldKind::String,
+            required: None,
+            indexed: None,
+            unique: None,
+            enum_values: None,
+            ref_entity: None,
+            ref_display_field: None,
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+        }],
+        list_views: vec![],
+        workflow: None,
+    }
+}
+
+fn child_entity() -> EntityDefinition {
+    EntityDefinition {
+        name: "test.children".to_string(),
+        label: "Child".to_string(),
+        table_name: "records".to_string(),
+        fields: vec![EntityField {
+            name: "parentId".to_string(),
+            label: "Parent".to_string(),
+            kind: FieldKind::Reference,
+            required: None,
+            indexed: None,
+            unique: None,
+            enum_values: None,
+            ref_entity: Some("test.parents".to_string()),
+            ref_display_field: None,
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+        }],
+        list_views: vec![],
+        workflow: None,
+    }
+}
+
 async fn ensure_sku_unique_index(pool: &PgPool) {
     sqlx::query(
         "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uniq_records_test_unique_orders_sku \
@@ -547,5 +598,93 @@ async fn unique_field_violation_is_a_clean_409_not_a_500() {
     assert_eq!(refetched.version, second.version);
 
     let _ = first;
+    cleanup(&pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn delete_is_rejected_when_another_record_still_references_it() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(parent_entity()).unwrap();
+    registry.register(child_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
+
+    let mut parent_payload = JsonObject::new();
+    parent_payload.insert("name".to_string(), json!("Parent A"));
+    let parent = match crud.create("test.parents", &parent_payload, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    let mut child_payload = JsonObject::new();
+    child_payload.insert("parentId".to_string(), json!(parent.id));
+    crud.create("test.children", &child_payload, &ctx).await.unwrap();
+
+    match crud.delete("test.parents", parent.id, parent.version, &ctx).await.unwrap() {
+        ServiceResult::Err { status, error, .. } => {
+            assert_eq!(status, 409);
+            assert_eq!(error, "record_referenced");
+        }
+        other => panic!("expected record_referenced, got {other:?}"),
+    }
+
+    // the parent must still exist — the rejected delete must not have partially applied
+    match crud.get("test.parents", parent.id, &ctx).await.unwrap() {
+        ServiceResult::Ok { .. } => {}
+        other => panic!("expected parent to still exist after rejected delete, got {other:?}"),
+    }
+
+    cleanup(&pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn delete_succeeds_once_the_referencing_record_is_gone() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(parent_entity()).unwrap();
+    registry.register(child_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
+
+    let mut parent_payload = JsonObject::new();
+    parent_payload.insert("name".to_string(), json!("Parent B"));
+    let parent = match crud.create("test.parents", &parent_payload, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    let mut child_payload = JsonObject::new();
+    child_payload.insert("parentId".to_string(), json!(parent.id));
+    let child = match crud.create("test.children", &child_payload, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    // delete the referencing child first
+    crud.delete("test.children", child.id, child.version, &ctx).await.unwrap();
+
+    // parent delete now succeeds — no live reference left
+    match crud.delete("test.parents", parent.id, parent.version, &ctx).await.unwrap() {
+        ServiceResult::Ok { .. } => {}
+        other => panic!("expected delete to succeed once the referencing child is gone, got {other:?}"),
+    }
+
     cleanup(&pool, tenant_id).await;
 }
