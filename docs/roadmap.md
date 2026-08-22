@@ -402,10 +402,11 @@ Mục tiêu:
   mirror lại credential của `docker-compose.yml`, `db-migrate` trên một DB mới tinh, rồi chạy
   toàn bộ e2e suite `--ignored`), `frontend` (typecheck/lint/format:check/test). Đã verify
   bằng cách thực sự chạy cùng chuỗi đó local trên các container Postgres/RabbitMQ dùng một
-  lần (migration trên DB mới + toàn bộ e2e suite pass) thay vì chỉ tin vào file YAML. Chưa
-  được enforce như một merge gate (chưa configure branch protection) và `clippy`/
-  `fmt --check` chưa strict kiểu `-D warnings` — codebase chưa sạch hoàn toàn dưới cả hai,
-  xem comment trong chính workflow.
+  lần (migration trên DB mới + toàn bộ e2e suite pass) thay vì chỉ tin vào file YAML.
+  `clippy -D warnings`/`fmt --check` đã strict thật từ 2026-08-16 (xem bullet "Clippy chưa gate"
+  bên dưới) — dòng này ban đầu (2026-08-09) nói ngược lại, đã lỗi thời, sửa lại 2026-08-22. Vẫn
+  còn thiếu: chưa enforce như một merge gate thật (chưa configure branch protection trên GitHub —
+  một cấu hình repo, không phải code).
 - ~~Structured logging / observability~~ (không phải mục tiêu gốc của Phase 8 — thêm vào
   2026-08-09 sau khi một audit phát hiện các crate core gần như không có logging:
   `metap-crud`, `metap-permission`, `metap-query`, `metap-workflow` không có gì cả, và nơi
