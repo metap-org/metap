@@ -10,6 +10,7 @@ fn build_index_name(entity_name: &str, field_name: &str, kind: &str) -> String {
     let prefix = match kind {
         "uniq" => "uniq_records",
         "gin" => "gin_records",
+        "trgm" => "trgm_records",
         _ => "idx_records",
     };
     format!("{prefix}_{}_{field_name}", entity_name.replace('.', "_"))
@@ -45,6 +46,13 @@ async fn reconcile_inner(pool: &PgPool, entities: &[EntitySummary]) -> anyhow::R
             }
             if field.search_mode.as_deref() == Some("fts") {
                 ensure_gin_index(pool, &entity.name, &field.name).await?;
+            }
+            // "substring" is the default `search_mode` when `searchable: true` (see
+            // `EntityField::search_mode`'s doc comment) — matches `query_planner.rs`'s
+            // `is_substring_search = searchable && !is_fts`, the same "fts is the only other
+            // option" branching.
+            if field.searchable.unwrap_or(false) && field.search_mode.as_deref() != Some("fts") {
+                ensure_trgm_index(pool, &entity.name, &field.name).await?;
             }
         }
     }
@@ -128,6 +136,41 @@ async fn ensure_gin_index(pool: &PgPool, entity_name: &str, field_name: &str) ->
     Ok(())
 }
 
+/// `search_mode: "substring"` (`ILIKE '%value%'`, `condition_to_sql.rs`/`query_planner.rs`) had
+/// no index support at all before this — a leading-wildcard `ILIKE` can't use a plain B-tree,
+/// so every substring filter was a scan of every row for that `(tenant_id, entity)`. `pg_trgm`
+/// (`crates/migrations/0016_pg_trgm_extension.sql`) is the standard Postgres answer: a GIN index
+/// over trigrams of the expression, using operator class `gin_trgm_ops`, lets the planner use the
+/// index for `ILIKE`/`LIKE`/`%`/`similar to` without requiring the pattern to be a prefix.
+async fn ensure_trgm_index(pool: &PgPool, entity_name: &str, field_name: &str) -> anyhow::Result<()> {
+    let index_name = build_index_name(entity_name, field_name, "trgm");
+
+    if index_exists(pool, &index_name).await? {
+        return Ok(());
+    }
+
+    let field_literal = quote_literal(field_name);
+    let entity_literal = quote_literal(entity_name);
+
+    // Must match QueryPlanner's/condition_to_sql's field_expression() exactly — same reasoning
+    // as ensure_index above.
+    let sql = format!(
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS {} \
+         ON records USING GIN ((jsonb_extract_path_text(data, {field_literal})) gin_trgm_ops) \
+         WHERE entity = {entity_literal} AND deleted = false",
+        quote_identifier(&index_name)
+    );
+    sqlx::query(&sql).execute(pool).await?;
+
+    tracing::info!(
+        entity = entity_name,
+        field = field_name,
+        index = index_name,
+        "trigram index created"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +188,10 @@ mod tests {
         assert_eq!(
             build_index_name("crm.customers", "name", "gin"),
             "gin_records_crm_customers_name"
+        );
+        assert_eq!(
+            build_index_name("crm.customers", "name", "trgm"),
+            "trgm_records_crm_customers_name"
         );
     }
 

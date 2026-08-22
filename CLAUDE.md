@@ -51,6 +51,7 @@ Frontend library (pnpm workspace):
 pnpm install                              # frontend workspace only (apps/crm-fe, packages/platform-react)
 cp apps/crm-server/.env.example apps/crm-server/.env   # full runtime config
 docker compose up -d postgres rabbitmq   # postgres exposed on host port 5433, not 5432
+docker compose --profile observability up -d  # opt-in Grafana/Prometheus for local benchmarking only (docs/local-benchmarking.md), port 3001
 pnpm db:migrate                           # apply crates/migrations/*.sql to a fresh DB (sqlx migrate)
 pnpm auth:dev-keys                        # generate a dev JWT keypair into apps/crm-server/keys/
 pnpm mint-token [tenantId] [userId]       # mint a dev JWT (defaults to fixed dev tenant/user)

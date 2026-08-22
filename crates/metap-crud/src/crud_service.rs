@@ -8,12 +8,12 @@
 //! small; this sidesteps any borrow-across-`.await` friction) that can be revisited if
 //! profiling ever shows it matters, not a performance decision made ahead of evidence.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use metap_control::{Router, RouterError};
-use metap_metadata::{EntityDefinition, FieldKind, MetadataRegistry};
+use metap_metadata::{EntityDefinition, EntityField, FieldKind, MetadataRegistry};
 use metap_permission::{EntityAction, PermissionDecision, PermissionService, PermissionSnapshot, RequestContext};
 use metap_query::{
     apply_params, encode_cursor, plan_list, Cursor, InvalidCursorError, ListInput, SortDir, UnknownListViewError,
@@ -124,6 +124,112 @@ impl CrudService {
         Ok(enriched)
     }
 
+    /// "Mode 2" batch display hydration (`docs/roadmap.md`) — the list-only counterpart to
+    /// `enrich_record_for_actions` above, but for a different purpose: that method resolves
+    /// relations *permission conditions* need, invisibly, never returned to the caller; this
+    /// resolves relations a *list view* wants to display (any `Reference` field that declares
+    /// `refDisplayField`), and its result — `RecordDto.related_display` — is exactly what gets
+    /// serialized back. Solves the same problem a client fetching one relation's display value
+    /// per row (N HTTP round trips for an N-row page) would otherwise hit: one batched
+    /// `WHERE id = ANY($1)` query per such field for the whole page, not per row.
+    ///
+    /// Zero extra cost for the overwhelmingly common case (no `Reference` field declares
+    /// `refDisplayField`, or none of this page's rows have a value for one) — matches every
+    /// other "pay for what you use" mechanism in this file. Runs after field-level read masking
+    /// (`mask_record_for_read`) so a field the caller isn't allowed to see at all can't get a
+    /// display value either, and skips a field entirely if the caller can't read its target
+    /// entity at all (`can_read_entity`, the same coarse gate `list`/`get` already apply to the
+    /// entity being listed) — a display convenience must not become a way to read data otherwise
+    /// denied. Does not evaluate record-level policy conditions on the related records (that
+    /// would need exactly the JOIN support `metap_query::condition_to_sql`'s doc comment says
+    /// isn't built) — an entity-level "can read at all" check, not a per-row one.
+    async fn hydrate_related_display(
+        &self,
+        entity: &EntityDefinition,
+        context: &RequestContext,
+        tenant_id: Uuid,
+        records: Vec<RecordDto>,
+    ) -> anyhow::Result<Vec<RecordDto>> {
+        let display_fields: Vec<&EntityField> = entity
+            .fields
+            .iter()
+            .filter(|f| f.kind == FieldKind::Reference && f.ref_display_field.is_some())
+            .collect();
+        if display_fields.is_empty() {
+            return Ok(records);
+        }
+
+        // field name -> (related record id -> resolved display value)
+        let mut resolved: HashMap<String, HashMap<Uuid, String>> = HashMap::new();
+        let mut tx = self.router.begin(tenant_id.into()).await?;
+        for field in &display_fields {
+            let ref_entity = field
+                .ref_entity
+                .as_deref()
+                .expect("Reference field always has ref_entity");
+            let display_field = field.ref_display_field.as_deref().expect("filtered on is_some above");
+
+            let decision = self.permissions.can_read_entity(context, ref_entity).await?;
+            if !decision.allowed {
+                continue;
+            }
+
+            let ids: Vec<Uuid> = records
+                .iter()
+                .filter_map(|r| {
+                    r.data
+                        .get(&field.name)
+                        .and_then(Value::as_str)
+                        .and_then(|s| Uuid::parse_str(s).ok())
+                })
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            if ids.is_empty() {
+                continue;
+            }
+
+            let values = fetch_display_values_batch(&mut *tx, &ids, tenant_id, ref_entity, display_field).await?;
+            resolved.insert(field.name.clone(), values);
+        }
+        tx.commit().await?;
+
+        if resolved.is_empty() {
+            return Ok(records);
+        }
+
+        Ok(records
+            .into_iter()
+            .map(|record| {
+                let mut display: HashMap<String, String> = HashMap::new();
+                for field in &display_fields {
+                    let Some(values) = resolved.get(&field.name) else {
+                        continue;
+                    };
+                    let Some(id) = record
+                        .data
+                        .get(&field.name)
+                        .and_then(Value::as_str)
+                        .and_then(|s| Uuid::parse_str(s).ok())
+                    else {
+                        continue;
+                    };
+                    if let Some(value) = values.get(&id) {
+                        display.insert(field.name.clone(), value.clone());
+                    }
+                }
+                if display.is_empty() {
+                    record
+                } else {
+                    RecordDto {
+                        related_display: Some(display),
+                        ..record
+                    }
+                }
+            })
+            .collect())
+    }
+
     pub async fn list(
         &self,
         entity_name: &str,
@@ -217,6 +323,7 @@ impl CrudService {
             .into_iter()
             .map(|dto| mask_record_for_read(&entity, context, &snapshot, dto))
             .collect();
+        let data = self.hydrate_related_display(&entity, context, tenant_id, data).await?;
 
         Ok(ServiceResult::ok_with_page(
             data,
@@ -929,6 +1036,37 @@ async fn fetch_related_data<'e, E: PgExecutor<'e>>(
     Ok(data_value.as_object().cloned())
 }
 
+/// Batched counterpart to `fetch_related_data`, for `CrudService::hydrate_related_display` —
+/// one query for every id a whole list page needs from a given related entity, instead of one
+/// query per row. Only ever reads `display_field`'s value, not the whole related record: the
+/// caller only wants a display string, and this result does leave the server (unlike
+/// `fetch_related_data`'s), so it deliberately fetches nothing beyond what's needed.
+async fn fetch_display_values_batch<'e, E: PgExecutor<'e>>(
+    executor: E,
+    ids: &[Uuid],
+    tenant_id: Uuid,
+    entity_name: &str,
+    display_field: &str,
+) -> anyhow::Result<HashMap<Uuid, String>> {
+    let rows = sqlx::query(
+        "SELECT id, data FROM records WHERE id = ANY($1) AND tenant_id = $2 AND entity = $3 AND deleted = false",
+    )
+    .bind(ids)
+    .bind(tenant_id)
+    .bind(entity_name)
+    .fetch_all(executor)
+    .await?;
+    let mut result = HashMap::new();
+    for row in rows {
+        let id: Uuid = row.try_get("id")?;
+        let data: Value = row.try_get("data")?;
+        if let Some(value) = data.get(display_field).and_then(Value::as_str) {
+            result.insert(id, value.to_string());
+        }
+    }
+    Ok(result)
+}
+
 fn row_to_dto(row: sqlx::postgres::PgRow) -> anyhow::Result<RecordDto> {
     let data_value: Value = row.try_get("data")?;
     let data = data_value
@@ -944,6 +1082,7 @@ fn row_to_dto(row: sqlx::postgres::PgRow) -> anyhow::Result<RecordDto> {
         version: row.try_get("version")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
+        related_display: None,
     })
 }
 

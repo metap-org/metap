@@ -1149,6 +1149,93 @@ mặc định). 2 e2e test mới (`crates/metap-query/tests/query_planner_postgr
 qua HTTP thật trên `accounting.journal`'s `ledger`. Xoá hàng risk tương ứng ở
 `docs/architectures/11-risks.md` (đã resolve).
 
+**Fix + benchmark thật (2026-08-22, trigger: chủ dự án yêu cầu bằng chứng số liệu trước khi bắt
+đầu xây một app thật — dạng Jira — trên bảng `records` chung).** Hai phần:
+
+1. **Fix gap `search_mode: "substring"` không có index** — xác nhận bằng code: `ILIKE
+   '%value%'` (`condition_to_sql.rs`/`query_planner.rs`) trước đây không có index nào hỗ trợ
+   (không `pg_trgm` ở đâu trong repo) — mọi filter substring là quét tuần tự trong phạm vi
+   `(tenant_id, entity)`. Thêm `crates/migrations/0016_pg_trgm_extension.sql`
+   (`CREATE EXTENSION pg_trgm`) + `IndexReconciler::ensure_trgm_index`
+   (`crates/metap-peripherals/src/index_reconciler.rs`) — GIN trigram index, cùng field-expression
+   phải khớp chính xác với `QueryPlanner` (nguyên tắc đã có từ index thường/FTS). 1 e2e test mới
+   xác nhận Postgres planner thực sự chọn index này cho đúng dạng `ILIKE` được sinh ra
+   (`crates/metap-peripherals/tests/peripherals_postgres.rs`).
+   - **Phát hiện phụ, đã ghi vào risk row** (`docs/architectures/11-risks.md`): hai lệnh
+     `CREATE INDEX CONCURRENTLY` đồng thời trên cùng bảng `records` từ hai session khác nhau
+     **deadlock thật** — tái hiện trực tiếp qua `psql`. Không phải rủi ro trong một process
+     (`reconcile_inner` tuần tự), nhưng là rủi ro thật khi ≥2 instance `crm-server` cùng boot một
+     lúc (rolling deploy/scale ngang) và cùng cần build index mới — chưa fix (cần
+     `pg_advisory_lock`), chỉ mới ghi nhận.
+2. **Benchmark thật ở 500K record** (không phải 200 record như load test cũ) — seed thẳng qua SQL
+   (`generate_series` + `jsonb_build_object`, ~500K record entity `bench.issues` mô phỏng Jira:
+   `title`/`status` (indexed)/`assignee` (indexed)/`description` (fts)/`priority`), `VACUUM
+   ANALYZE`, đo qua `EXPLAIN (ANALYZE, BUFFERS)` **và** qua HTTP thật trên `crm-server` đang chạy.
+   Kết quả (debug build, một máy dev, không phải production):
+   - Filter chính xác trên field `indexed` (status) + sort + limit 100: **~1.5ms** (SQL), **10-49ms**
+     (HTTP end-to-end, warm request ~10-20ms).
+   - Substring search (title, `ILIKE`) — **trước fix** (không trigram index): Parallel Seq Scan,
+     **177ms**. **Sau fix** (trigram index): Bitmap Index Scan, **~35ms** (SQL), **22-29ms**
+     (HTTP) — ~5x nhanh hơn, đo trực tiếp bằng cách drop rồi tạo lại index trên cùng dataset.
+   - Full-text search (description, độ chọn lọc thật ~2%): **~32ms** (SQL), **27-30ms** (HTTP).
+   - Ghi record mới (`POST`) với 4 index đang phải maintain trên 500K row nền: **9-15ms**.
+   
+   **Kết luận**: ở quy mô 500K row/entity — cao hơn nhiều so với năm đầu vận hành thật của một
+   app kiểu Jira nội bộ — bảng `records` chung + JSONB expression index (không cần table-per-entity,
+   không cần generated column/cột thật) cho latency dưới 50ms cho mọi dạng query thực tế
+   (exact/substring/FTS/sort/write). Không phải bằng chứng "không bao giờ cần table-per-entity" —
+   trigger `@10M/entity` (`docs/architectures/09-adr.md`) giữ nguyên, đây chỉ là bằng chứng số liệu
+   rằng **500K không phải ngưỡng đáng lo**, đủ để bắt đầu xây một app thật mà không cần chờ
+   table-per-entity trước. Benchmark chưa test: concurrent load (nhiều client cùng lúc), release
+   build, deep keyset pagination xa trang đầu, quy mô >1M row.
+
+**Đóng gói benchmark thành tooling tái sử dụng được (2026-08-22)** — benchmark thủ công ở trên
+giờ là 2 script commit vào repo: `apps/crm-server/scripts/seed-bulk.sh` (seed 300K+ row qua SQL
+trực tiếp, nhanh hơn nhiều bậc so với seed qua HTTP của `load-test.sh`) và `bench-queries.sh`
+(chạy 4 dạng query thật, báo cáo cả `EXPLAIN ANALYZE` lẫn latency HTTP). Cộng một stack
+Grafana/Prometheus **opt-in** (`docker compose --profile observability up -d`, KHÔNG thuộc stack
+dev mặc định) xem tài nguyên Postgres realtime lúc benchmark (connections, cache hit ratio,
+transactions/sec, deadlock, temp file spill) — dashboard tự động provision, không setup tay.
+`pg_stat_statements` bật sẵn trên service `postgres` cho truy vấn per-query trực tiếp qua `psql`.
+Verify sống: chạy cả 2 script thật ở 100K row, xác nhận đúng index được chọn (trigram/GIN/B-tree)
+và pipeline metric Postgres → exporter → Prometheus → Grafana dashboard hoạt động end-to-end
+(kiểm từng metric name dùng trong dashboard JSON tồn tại thật qua Prometheus API, không suy đoán).
+
+**Thêm metric cho chính `crm-server` (2026-08-22)** — ban đầu chỉ đo tài nguyên Postgres, thiếu
+phần BE. `GET /metrics` mới (`crates/metap-http/src/metrics.rs`+`routes/metrics.rs`, public,
+cùng quy ước `/health`) — request-level (`axum-prometheus`: count/duration/in-flight theo từng
+route) + process-level (`metrics-process`: CPU/RSS/fd/thread). Một vấn đề thật gặp phải và đã xử
+lý: `PrometheusMetricLayer::pair()` cài global `metrics` recorder — gọi 2 lần trong cùng process
+sẽ panic, đúng kịch bản 3 test e2e trong `crates/metap-http/tests/http_server.rs` mỗi test tự
+gọi `build_router` riêng — sửa bằng `OnceLock` guard (`prometheus_handle()`), verify bằng cách
+chạy cả 4 test e2e cùng lúc, không panic. Prometheus thêm scrape target `crm-server` (chạy trên
+host qua `pnpm dev:rs`, cần `extra_hosts: host-gateway` để container Prometheus reach host trên
+Linux). Dashboard thứ 2 "Metap — crm-server Resource Metrics" — verify sống mọi metric name qua
+Prometheus API trước khi đưa vào dashboard JSON (phát hiện `postgres-exporter` tự nó cũng expose
+metric tên `process_*` giống hệt — phải lọc `job="crm-server"` trong mọi panel để không lẫn).
+FE (`crm-fe`) cố tình không đo — không phải service dài hạn có resource để scrape theo kiểu này.
+Chỉ `crm-server`, chưa làm cho `outbox-publisher`/`notification-worker`/`cron-scheduler` (không
+có HTTP server để gắn `/metrics` vào — chưa có trigger cho việc riêng đo các worker đó).
+
+Chi tiết đầy đủ ở `docs/local-benchmarking.md`.
+
+**Fix + capability mới (2026-08-22, trigger: benchmark ở trên chỉ chứng minh nhanh trong MỘT
+entity — chủ dự án chỉ ra đúng: nghiệp vụ thật trải dài nhiều entity, list Issue kiểu Jira cần
+hiển thị tên Project/Assignee, không chỉ ID thô).** Xác nhận bằng code: `QueryPlanner` không có
+JOIN, và `CrudService::list()` không hề enrich field `Reference` (cơ chế enrich duy nhất có sẵn
+chỉ chạy cho single-record, chỉ phục vụ permission condition, không lộ ra response). Phân tích
+đầy đủ 3 hướng giải quyết (không loại trừ nhau) + implement hướng nhẹ nhất ở
+`docs/features/05-cross-entity-relations.md`:
+
+- **Mode 2 (done)**: `CrudService::hydrate_related_display` — batch-hydrate field `Reference`
+  có khai báo `refDisplayField` sau khi `list()` filter/mask xong, một query `WHERE id = ANY($1)`
+  mỗi entity liên quan cho cả trang (không phải mỗi row). `RecordDto` thêm `related_display`
+  (additive, vắng mặt ở mọi response khác). 1 e2e test mới
+  (`crates/metap-crud/tests/crud_service_postgres.rs`), verify sống qua HTTP thật (`demo.projects`/
+  `demo.tickets` tạo qua low-code — `GET /api/demo.tickets` trả đúng `relatedDisplay.projectId`).
+- **Mode 1 (denormalize lúc ghi) và Mode 3 (JOIN thật, cho filter/sort xuyên entity)** — ghi lại
+  thiết kế sơ bộ + trigger cụ thể, chưa code. Chi tiết đầy đủ ở feature brief trên.
+
 ## Phase 18: Organization & Identity — P0 (2026-08-22)
 
 `docs/features/03-organization-identity.md` P0 done — org structure vẫn không cần bảng lõi mới

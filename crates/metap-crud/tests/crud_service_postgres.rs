@@ -164,7 +164,9 @@ fn child_entity() -> EntityDefinition {
             unique: None,
             enum_values: None,
             ref_entity: Some("test.parents".to_string()),
-            ref_display_field: None,
+            // Exercises `CrudService::hydrate_related_display` ("Mode 2",
+            // `docs/roadmap.md`) — `test.parents` has a `name` field (see `parent_entity()`).
+            ref_display_field: Some("name".to_string()),
             searchable: None,
             search_mode: None,
             sortable: None,
@@ -696,6 +698,93 @@ async fn delete_succeeds_once_the_referencing_record_is_gone() {
     {
         ServiceResult::Ok { .. } => {}
         other => panic!("expected delete to succeed once the referencing child is gone, got {other:?}"),
+    }
+
+    cleanup(&pool, tenant_id).await;
+}
+
+/// "Mode 2" batch display hydration (`docs/roadmap.md`) — `CrudService::list`'s
+/// `hydrate_related_display`. Two parents, three children (two pointing at the same parent, one
+/// at the other, one with no parent at all) — confirms hydration resolves the right value per
+/// row (not just "some value"), batches correctly when multiple rows share a related id, and
+/// leaves a row with no reference value alone rather than erroring.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn list_hydrates_related_display_for_reference_fields_with_display_field() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(parent_entity()).unwrap();
+    registry.register(child_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
+
+    let mut a_payload = JsonObject::new();
+    a_payload.insert("name".to_string(), json!("Parent A"));
+    let parent_a = match crud.create("test.parents", &a_payload, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+    let mut b_payload = JsonObject::new();
+    b_payload.insert("name".to_string(), json!("Parent B"));
+    let parent_b = match crud.create("test.parents", &b_payload, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    let mut child_of_a1 = JsonObject::new();
+    child_of_a1.insert("parentId".to_string(), json!(parent_a.id));
+    crud.create("test.children", &child_of_a1, &ctx).await.unwrap();
+    let mut child_of_a2 = JsonObject::new();
+    child_of_a2.insert("parentId".to_string(), json!(parent_a.id));
+    crud.create("test.children", &child_of_a2, &ctx).await.unwrap();
+    let mut child_of_b = JsonObject::new();
+    child_of_b.insert("parentId".to_string(), json!(parent_b.id));
+    crud.create("test.children", &child_of_b, &ctx).await.unwrap();
+    // no parentId at all — the field isn't required
+    crud.create("test.children", &JsonObject::new(), &ctx).await.unwrap();
+
+    let input = ListInput {
+        limit: 50,
+        ..Default::default()
+    };
+    let page = match crud.list("test.children", &input, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected list to succeed, got {other:?}"),
+    };
+    assert_eq!(page.len(), 4);
+
+    for record in &page {
+        let parent_id = record.data.get("parentId").and_then(|v| v.as_str());
+        match parent_id {
+            Some(id) if id == parent_a.id.to_string() => {
+                assert_eq!(
+                    record.related_display.as_ref().and_then(|d| d.get("parentId")),
+                    Some(&"Parent A".to_string()),
+                    "record {record:?} should have resolved parentId to Parent A's name"
+                );
+            }
+            Some(id) if id == parent_b.id.to_string() => {
+                assert_eq!(
+                    record.related_display.as_ref().and_then(|d| d.get("parentId")),
+                    Some(&"Parent B".to_string()),
+                    "record {record:?} should have resolved parentId to Parent B's name"
+                );
+            }
+            None => {
+                assert!(
+                    record.related_display.is_none(),
+                    "a record with no parentId at all must not get a related_display entry"
+                );
+            }
+            Some(other) => panic!("unexpected parentId {other}"),
+        }
     }
 
     cleanup(&pool, tenant_id).await;

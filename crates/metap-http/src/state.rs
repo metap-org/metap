@@ -10,6 +10,7 @@ use metap_permission::PermissionService;
 use sqlx::PgPool;
 
 use crate::cache::ContextAttributesCache;
+use crate::metrics::{process_collector, prometheus_handle};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -54,6 +55,17 @@ pub struct AppState {
     /// matching `metap-control::RegistryCache`); the composition root rebuilds it with a
     /// configured TTL if `AUTH_CONTEXT_CACHE_TTL_SECONDS` overrides the default.
     pub context_attributes_cache: ContextAttributesCache,
+    /// `GET /metrics` (`crate::routes::metrics`, `docs/local-benchmarking.md`) — HTTP
+    /// request-level metrics (count/duration/in-flight, per route) via `axum-prometheus`.
+    /// `prometheus_handle()` installs the global `metrics` recorder exactly once per process
+    /// (guarded by a `OnceLock` — `PrometheusMetricLayer::pair()` panics if called a second
+    /// time, which every e2e test building its own `AppState` would otherwise trigger) and
+    /// returns a cheap-to-clone handle either way.
+    pub metrics_handle: axum_prometheus::metrics_exporter_prometheus::PrometheusHandle,
+    /// Process-level resource metrics (CPU/RSS/open fds/threads) — `docs/local-benchmarking.md`.
+    /// `.collect()` (called by the `/metrics` handler on every scrape, not on a background
+    /// timer) refreshes the values read from `/proc` just before rendering.
+    pub process_collector: metrics_process::Collector,
 }
 
 impl AppState {
@@ -85,6 +97,8 @@ impl AppState {
             jwt_encoding_key_pem: Arc::from(jwt_encoding_key_pem),
             auth_context_entity: None,
             context_attributes_cache: ContextAttributesCache::new(Duration::from_secs(30)),
+            metrics_handle: prometheus_handle(),
+            process_collector: process_collector(),
         }
     }
 }

@@ -10,6 +10,14 @@ services:
     volumes:
       - metap-postgres:/var/lib/postgresql/data
       - ./docker/postgres-init:/docker-entrypoint-initdb.d
+    # `pg_stat_statements` (docs/local-benchmarking.md) — per-query stats for the `observability`
+    # profile's Grafana dashboard. Always on, not profile-gated: `shared_preload_libraries` is a
+    # Postgres startup flag, not something a docker-compose profile can toggle per-container on
+    # an already-running service, and the overhead is the standard, widely-recommended-always-on
+    # kind (a fixed-size shared-memory ring buffer, not per-query tracing). Changing this on an
+    # *existing* local container needs `docker compose down` then `up` again (recreate, not just
+    # restart) for the new command to take effect.
+    command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all
 
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
@@ -33,6 +41,50 @@ services:
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
     ports:
       - "8200:8200"
+
+  # Opt-in, `observability` profile only (`docs/local-benchmarking.md`) — resource metrics for
+  # a benchmarking session, never part of the default `docker compose up -d postgres rabbitmq`
+  # dev stack. `docker compose --profile observability up -d`. Never for anything but local
+  # benchmarking — Grafana here has anonymous admin access (no login), fine on localhost only.
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    profiles: ["observability"]
+    environment:
+      DATA_SOURCE_NAME: "postgresql://metap:metap@postgres:5432/metap?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["observability"]
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    # crm-server runs on the host (`pnpm dev:rs`), not in this compose file — needs
+    # `host.docker.internal` to resolve from inside the container. Works on Linux (Docker
+    # 20.10+) via `host-gateway`, not just Docker Desktop's built-in Mac/Windows resolution.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - postgres-exporter
+
+  grafana:
+    image: grafana/grafana-oss:11.3.1
+    profiles: ["observability"]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
 
 volumes:
   metap-postgres:

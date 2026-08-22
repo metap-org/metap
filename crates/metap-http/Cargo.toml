@@ -32,6 +32,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 jsonwebtoken = "9"
 chrono = "0.4"
 moka = { version = "0.12", features = ["future"] }
+axum-prometheus = "0.10.1"
+metrics-process = "2.4.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  # crm-server (docs/local-benchmarking.md) — runs on the host via `pnpm dev:rs`, not in this
+  # compose file. `/metrics` is a plain axum route (crates/metap-http/src/routes/metrics.rs),
+  # not a separate port — same host:port `pnpm dev:rs` prints, default 3000.
+  - job_name: crm-server
+    static_configs:
+      - targets: ["host.docker.internal:3000"]

@@ -1,0 +1,103 @@
+{
+  "title": "Metap — Postgres Resource Metrics (benchmarking)",
+  "uid": "metap-postgres-bench",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Postgres up",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [{ "expr": "pg_up", "legendFormat": "up" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Active connections (metap db)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 10, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "pg_stat_database_numbackends{datname=\"metap\"}", "legendFormat": "active connections" },
+        { "expr": "pg_settings_max_connections", "legendFormat": "max_connections" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Cache hit ratio (metap db)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 10, "x": 14, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1, "min": 0 } },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_blks_hit{datname=\"metap\"}[1m]) / (rate(pg_stat_database_blks_hit{datname=\"metap\"}[1m]) + rate(pg_stat_database_blks_read{datname=\"metap\"}[1m]))",
+          "legendFormat": "cache hit ratio"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Transactions / sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "rate(pg_stat_database_xact_commit{datname=\"metap\"}[1m])", "legendFormat": "commit/s" },
+        { "expr": "rate(pg_stat_database_xact_rollback{datname=\"metap\"}[1m])", "legendFormat": "rollback/s" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Row throughput / sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "rate(pg_stat_database_tup_returned{datname=\"metap\"}[1m])", "legendFormat": "returned/s" },
+        { "expr": "rate(pg_stat_database_tup_fetched{datname=\"metap\"}[1m])", "legendFormat": "fetched/s" },
+        { "expr": "rate(pg_stat_database_tup_inserted{datname=\"metap\"}[1m])", "legendFormat": "inserted/s" },
+        { "expr": "rate(pg_stat_database_tup_updated{datname=\"metap\"}[1m])", "legendFormat": "updated/s" },
+        { "expr": "rate(pg_stat_database_tup_deleted{datname=\"metap\"}[1m])", "legendFormat": "deleted/s" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Database size (metap db)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [{ "expr": "pg_database_size_bytes{datname=\"metap\"}", "legendFormat": "size" }]
+    },
+    {
+      "id": 7,
+      "title": "Deadlocks (cumulative)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [{ "expr": "pg_stat_database_deadlocks{datname=\"metap\"}", "legendFormat": "deadlocks" }]
+    },
+    {
+      "id": 8,
+      "title": "Temp file spill (bytes written to disk for large sorts/hashes)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "targets": [{ "expr": "rate(pg_stat_database_temp_bytes{datname=\"metap\"}[1m])", "legendFormat": "temp bytes/s" }]
+    }
+  ]
+}

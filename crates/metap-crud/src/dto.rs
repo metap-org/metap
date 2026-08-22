@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
@@ -15,6 +17,17 @@ pub struct RecordDto {
     pub version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// List-only batch display hydration (`docs/roadmap.md`'s "Mode 2" —
+    /// `CrudService::list`'s `hydrate_related_display`): keyed by the name of each
+    /// `Reference` field on this entity that declares a `refDisplayField`, valued by that
+    /// related record's display value — lets a list response show e.g. an assignee's name
+    /// without the caller making one request per row per relation. `None` for every other
+    /// response (`get`/`create`/`update`/`transition`/`delete`) and for a `list` response on
+    /// an entity with no such field — this is additive, never required reading. A key is
+    /// simply absent (not `null`) when the reference is dangling/unresolvable, or when the
+    /// field itself didn't survive field-level read masking.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_display: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

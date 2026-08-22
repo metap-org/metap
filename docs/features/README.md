@@ -56,6 +56,7 @@ Khi viết brief, tự hỏi: thay đổi này có ảnh hưởng gì tới mộ
 | [Metadata-driven Workflow Engine](02-workflow-engine.md) | Increment 1 done | Backend Core | Phase 17 |
 | [Organization & Identity Layer](03-organization-identity.md) | P0 done | Backend Core | Phase 18 |
 | [Table-per-entity — readiness brief](04-table-per-entity.md) | proposed | Backend Core | không thuộc phase nào (chưa có trigger) |
+| [Cross-entity relations trong list view (3 mode)](05-cross-entity-relations.md) | Mode 2 done | Backend Core | không thuộc phase nào |
 
 **Demo app** (`apps/crm-server`, `apps/crm-fe` — xem `demo/`):
 

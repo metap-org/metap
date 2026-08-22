@@ -21,6 +21,7 @@
 pub mod auth;
 pub mod cache;
 pub mod error;
+pub mod metrics;
 pub mod request_context;
 pub mod request_id;
 pub mod routes;
@@ -133,6 +134,7 @@ pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Rout
 
     Router::new()
         .merge(routes::health::router())
+        .merge(routes::metrics::router())
         .merge(routes::metadata::public_router())
         .merge(routes::metadata::protected_router())
         .merge(routes::records::router())
@@ -146,6 +148,10 @@ pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Rout
         .layer(middleware::from_fn(request_context::request_context))
         .layer(middleware::from_fn(security_headers::security_headers))
         .layer(trace)
+        // Records per-route request count/duration/in-flight (`docs/local-benchmarking.md`) —
+        // must wrap route dispatch (inside `request_id`/outside nothing route-specific) so it
+        // sees the actual matched route and final response status, same positioning as `trace`.
+        .layer(metrics::metric_layer())
         // Outermost: every layer/handler below runs with `RequestIds` already in the request
         // extensions, and — via `trace` above — inside the span built from them.
         .layer(middleware::from_fn(request_id::generate_request_ids))

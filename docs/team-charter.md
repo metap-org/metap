@@ -236,6 +236,16 @@ discipline hiện tại (`docs/architectures/02-constraints.md`'s "Tiến hóa t
     Chưa tenant nào trong repo cần entity/field *khác nhau về shape* so với tenant khác. Khi
     trigger đó xảy ra thật, viết feature brief riêng (`docs/features/`) trước khi code, đúng quy
     trình.
+- **Cross-entity relations trong list view — Mode 1 (denormalize lúc ghi) và Mode 3 (JOIN thật)**
+  (Mode 2 — batch-hydrate `refDisplayField` sau khi list — đã xong 2026-08-22, xem
+  `docs/roadmap.md` và `docs/features/05-cross-entity-relations.md`; mục này chỉ còn giữ 2 hướng
+  chưa code). Mode 1: một cờ metadata denormalize field display vào record lúc ghi — rẻ, nhưng
+  lệch dữ liệu nếu record liên quan đổi giá trị sau đó; trigger là một nghiệp vụ thật cần snapshot
+  (audit trail, hoá đơn), chưa entity nào cần. Mode 3: JOIN thật trong `QueryPlanner` cho phép
+  filter/sort xuyên entity — nặng nhất, đụng cả `metap-query` (module rủi ro cao nhất theo ADR),
+  `metap-permission` (record-level condition cho `list()`, đang cố tình bị chặn vì lý do này), và
+  keyset pagination cursor; trigger là nhu cầu filter/sort thật theo field của entity liên quan
+  (Mode 2 đã đủ cho hiển thị). Chi tiết đầy đủ ở feature brief trên.
 - **Entity variant kiểu polymorphic/discriminated-union** (một entity logic chứa nhiều "hình
   dạng" record khác nhau trong cùng một logical collection, kiểu MongoDB) — rủi ro cao nhất
   trong ba ý mới này, vì `EntityDefinition.fields` hôm nay là một danh sách phẳng dùng chung

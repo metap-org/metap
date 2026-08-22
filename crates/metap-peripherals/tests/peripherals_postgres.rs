@@ -7,7 +7,18 @@ use metap_peripherals::{
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
+use tokio::sync::Mutex;
 use uuid::Uuid;
+
+/// Postgres documents that two concurrent `CREATE INDEX CONCURRENTLY` builds on the *same*
+/// table can deadlock each other (confirmed directly against the dev Postgres here — two
+/// concurrent sessions both building an index on `records` reliably deadlock, one erroring).
+/// `IndexReconciler` itself never triggers this in production (`reconcile_inner` awaits each
+/// `CREATE INDEX` sequentially within one process) — this is purely about two *test functions*
+/// in this file each doing their own `reconcile_indexes` call and, by default, the test harness
+/// running them on separate tokio tasks at the same time. Held only around the `reconcile_indexes`
+/// call, not the whole test, so the (fast) assertions/cleanup after it still run concurrently.
+static INDEX_BUILD_LOCK: Mutex<()> = Mutex::const_new(());
 
 async fn connect() -> PgPool {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
@@ -126,6 +137,23 @@ fn fts_field(name: &str) -> EntityField {
     }
 }
 
+fn substring_field(name: &str) -> EntityField {
+    EntityField {
+        name: name.to_string(),
+        label: name.to_string(),
+        kind: FieldKind::String,
+        required: None,
+        indexed: None,
+        unique: None,
+        enum_values: None,
+        ref_entity: None,
+        ref_display_field: None,
+        searchable: Some(true),
+        search_mode: None, // "substring" is the default when searchable: true and not "fts"
+        sortable: None,
+    }
+}
+
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn reconcile_creates_an_index_postgres_actually_selects_for_the_exact_query_form() {
@@ -152,7 +180,10 @@ async fn reconcile_creates_an_index_postgres_actually_selects_for_the_exact_quer
         version: "v1".to_string(),
     };
 
-    reconcile_indexes(&pool, &[entity]).await;
+    {
+        let _guard = INDEX_BUILD_LOCK.lock().await;
+        reconcile_indexes(&pool, &[entity]).await;
+    }
 
     let index_name = format!("idx_records_{}_sku", entity_name.replace('.', "_"));
     let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM pg_indexes WHERE indexname = $1")
@@ -196,7 +227,10 @@ async fn reconcile_creates_an_index_postgres_actually_selects_for_the_exact_quer
         workflow: None,
         version: "v1".to_string(),
     };
-    reconcile_indexes(&pool, &[entity_again]).await;
+    {
+        let _guard = INDEX_BUILD_LOCK.lock().await;
+        reconcile_indexes(&pool, &[entity_again]).await;
+    }
     let gin_index_name = format!("gin_records_{}_description", entity_name.replace('.', "_"));
     let gin_exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM pg_indexes WHERE indexname = $1")
         .bind(&gin_index_name)
@@ -208,6 +242,64 @@ async fn reconcile_creates_an_index_postgres_actually_selects_for_the_exact_quer
         "expected GIN index {gin_index_name} to have been created"
     );
     sqlx::query(&format!("DROP INDEX CONCURRENTLY IF EXISTS {gin_index_name}"))
+        .execute(&pool)
+        .await
+        .ok();
+}
+
+/// `searchable: true` with no `search_mode` (or `search_mode: "substring"`) used to have zero
+/// index support — a leading-wildcard `ILIKE '%value%'` can't use a plain B-tree. Confirms
+/// `reconcile_indexes` builds a `pg_trgm` GIN index (`crates/migrations/0016_pg_trgm_extension.sql`)
+/// that Postgres's planner actually picks for the exact `ILIKE` form `condition_to_sql.rs` emits.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn reconcile_creates_a_trigram_index_postgres_actually_selects_for_ilike() {
+    let pool = connect().await;
+    let entity_name = format!("test.idx{:x}", Uuid::new_v4().as_u128() % 0xFFFFFF);
+
+    let entity = EntitySummary {
+        name: entity_name.clone(),
+        label: "Test".to_string(),
+        fields: vec![substring_field("title")],
+        list_views: vec![],
+        workflow: None,
+        version: "v1".to_string(),
+    };
+
+    {
+        let _guard = INDEX_BUILD_LOCK.lock().await;
+        reconcile_indexes(&pool, &[entity]).await;
+    }
+
+    let index_name = format!("trgm_records_{}_title", entity_name.replace('.', "_"));
+    let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM pg_indexes WHERE indexname = $1")
+        .bind(&index_name)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(
+        exists.is_some(),
+        "expected trigram index {index_name} to have been created"
+    );
+
+    let explain_rows = sqlx::query(&format!(
+        "EXPLAIN SELECT id FROM records WHERE entity = '{entity_name}' AND deleted = false \
+         AND jsonb_extract_path_text(data, 'title') ILIKE '%widget%'"
+    ))
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let plan: String = explain_rows
+        .iter()
+        .map(|r| r.get::<String, _>(0))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan.contains(&index_name),
+        "expected query plan to use {index_name}, got:\n{plan}"
+    );
+
+    sqlx::query(&format!("DROP INDEX CONCURRENTLY IF EXISTS {index_name}"))
         .execute(&pool)
         .await
         .ok();
