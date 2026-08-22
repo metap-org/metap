@@ -184,6 +184,58 @@ discipline hiện tại (`docs/architectures/02-constraints.md`'s "Tiến hóa t
   độc lập, đã đóng cùng ngày (`docs/roadmap.md`'s fix note trước Phase 18) —
   `docs/features/03-organization-identity.md`'s mục "Quan hệ với table-per-entity" giữ chi tiết
   nghiên cứu đó.
+- **Metadata low-code theo từng Tenant** (tenant tự định nghĩa entity riêng, thay vì mọi tenant
+  dùng chung một tập entity DB-authored như hôm nay) — ghi lại 2026-08-22 từ thảo luận sau khi
+  Phase 18 xong, không phải yêu cầu cấp thiết, mà chốt hướng dài hạn cho Phase 11C's "quy tắc cô
+  lập schema cấp Tenant" (mục đã ghi ở Phase 11, `docs/roadmap.md`, hiện chưa có trigger). Rà
+  code thật trước khi phác hướng (không đoán):
+  - **Chỉ tầng DB-authored (`metap-lowcode`) đổi, code-authored giữ nguyên global.** Quyết định
+    Phase A (`docs/low-code-metadata-storage-design.md`: "Metadata toàn cục, không phải theo
+    từng tenant, cho Phase A... hoãn lại một cách tường minh") đã tự đóng khung đúng ranh giới
+    này — không cần đảo `apps/crm-server/src/entities/*.rs`, chỉ mở rộng cơ chế `merge_with`
+    (base cố định + extra) đã có, đổi "extra" từ một tập entity toàn cục thành một tập theo từng
+    tenant.
+  - **Storage**: `low_code_entity_drafts`/`low_code_entity_versions`
+    (`crates/migrations/0010_low_code_entities.sql`) thêm cột `tenant_id`, khóa chính/unique đổi
+    từ `entity_name` sang `(tenant_id, entity_name)` — kéo theo sửa mọi hàm public của
+    `metap-lowcode::store` (draft/publish/rollback/list/export/import) để nhận thêm tham số
+    `tenant_id`, một diff cơ học không nhỏ (tương tự quy mô diff mà `audit.rs`'s doc comment đã
+    né khi không thread `actor` qua transaction của `store.rs`).
+  - **Registry resolution — phần khó thật.** `AppState.metadata` hôm nay là MỘT
+    `Arc<ArcSwap<MetadataRegistry>>` toàn cục, build một lần bằng cách merge `metadata_base` với
+    toàn bộ low-code entity đã publish. Theo tenant nghĩa là mỗi tenant cần registry riêng —
+    build tươi mỗi request (theo đúng triết lý "role luôn tra mới") quá đắt cho việc này (một
+    lần merge phải validate lại toàn bộ field/list-view của mọi entity tenant đó, nặng hơn nhiều
+    một role lookup). Hướng hợp lý hơn: một cache theo tenant, cùng mẫu
+    `metap-control::RegistryCache`/`metap_http::cache::ContextAttributesCache` đã có hai lần
+    trong repo — nhưng khác `ContextAttributesCache` ở chỗ invalidate nên là **explicit-trên-ghi
+    là chính, TTL chỉ là backstop**: `publish`/`rollback` đã đi qua đúng một code path, gọi
+    `.invalidate(tenant_id)` ngay tại đó cho hiệu lực tức thì hợp lý hơn nhiều so với chấp nhận
+    độ trễ TTL như `context_attributes` (ở đó operator sửa dữ liệu qua ghi record thường, không
+    có một hàm "publish" duy nhất để móc vào).
+  - **`metap-lowcode-http` hôm nay dùng thẳng `state.pool`, không qua `Router`** (đã kiểm tra
+    trực tiếp: mọi handler trong `crates/metap-lowcode-http/src/lib.rs` gọi
+    `metap_lowcode::*(&state.pool, ...)`) — **đúng** cho thế giới global hôm nay (metadata sống ở
+    control-plane DB, không thuộc riêng tenant nào). Nếu metadata theo tenant, đây sẽ tái hiện
+    đúng loại gap Phase 16 đã đóng một lần cho role lookup/`PostgresPolicyStore` ("vẫn dùng
+    `AppState.pool` trực tiếp, không qua Router") — nghĩa là mọi handler này cũng cần đi qua
+    `Router::begin(tenant_id)`, và một câu hỏi thiết kế chưa trả lời: bảng metadata theo tenant
+    nên sống Ở ĐÂU — cùng chỗ `Router` đã route dữ liệu của tenant đó (tự nhiên với tenant
+    `DedicatedDb`, nhưng metadata giờ nằm rải rác nhiều DB vật lý), hay tập trung một bảng ở
+    control-plane DB kèm cột `tenant_id` (đơn giản hơn để truy vấn tổng hợp, nhưng phá bất biến
+    "dữ liệu tenant `DedicatedDb` sống trong DB riêng của họ" mà control plane đang giữ cho dữ
+    liệu nghiệp vụ). Chưa quyết — để lại cho lúc có trigger thật.
+  - **Blast radius ra ngoài backend**: `GET /metadata/openapi.json` hôm nay là MỘT schema toàn
+    cục, public, không cần token — pipeline codegen frontend
+    (`pnpm --filter @metap/platform-react generate:types`) giả định đúng một schema duy nhất.
+    Theo tenant nghĩa là endpoint này cần biết "hỏi cho tenant nào", và bước codegen (chạy lúc
+    dev, không phải lúc runtime của một tenant cụ thể) cần một câu trả lời riêng — chưa nghĩ tới,
+    không hand-wave ở đây.
+  - **Trigger: chưa có.** Tầng data (bảng `records` JSONB) đã cho mỗi tenant dữ liệu hoàn toàn
+    riêng trên cùng một schema — "mỗi tenant là một business" hôm nay đã đúng ở mức dữ liệu.
+    Chưa tenant nào trong repo cần entity/field *khác nhau về shape* so với tenant khác. Khi
+    trigger đó xảy ra thật, viết feature brief riêng (`docs/features/`) trước khi code, đúng quy
+    trình.
 - **Entity variant kiểu polymorphic/discriminated-union** (một entity logic chứa nhiều "hình
   dạng" record khác nhau trong cùng một logical collection, kiểu MongoDB) — rủi ro cao nhất
   trong ba ý mới này, vì `EntityDefinition.fields` hôm nay là một danh sách phẳng dùng chung

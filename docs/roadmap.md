@@ -5,7 +5,7 @@ Tài liệu này chỉ theo dõi trạng thái ở cấp độ phase. Với mộ
 và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, xem
 `docs/frontend-checklist.md`.
 
-## Trạng thái hiện tại (cập nhật 2026-08-17)
+## Trạng thái hiện tại (cập nhật 2026-08-22)
 
 | Phase | Status |
 |---|---|
@@ -20,12 +20,14 @@ và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, 
 | 8. Hardening | Đang làm — chỉ còn "tích hợp secret manager" (design-only 2026-08-17, chờ chốt target production); load test + backup/restore drill xong 2026-08-17 |
 | 9. Multi-Service Evolution | Trigger-based, đã rà soát lại 2026-08-17 — vẫn chưa trigger nào xảy ra, không có việc để làm |
 | 10. Monorepo, npm publish | Làm một phần |
-| 11. Low-code Platform Backbone Architecture | Phase A + Phase B xong 2026-08-17 (Phase B's "policy editor UI" hoá ra đã có sẵn từ Phase 15); Phase C bắt đầu 2026-08-20 — metadata audit log + migration-impact check xong, phần còn lại (approval workflow, schema isolation, import/export) chưa làm |
+| 11. Low-code Platform Backbone Architecture | Phase A + Phase B xong 2026-08-17 (Phase B's "policy editor UI" hoá ra đã có sẵn từ Phase 15); Phase C bắt đầu 2026-08-20 — metadata audit log, migration-impact check, import/export xong (2026-08-22); phần còn lại (approval workflow, schema isolation cấp tenant, operational visibility rộng hơn) chưa làm |
 | 12. Rust Core Migration | Đã quyết định; Migration Order (bước 1-9) đã xong trong `crates/`; chưa cut over sang production |
 | 13. Dynamic Cron Jobs | Backend đã xong; admin UI đã xong (Phase 15) |
 | 14. Multi-language (i18n) | UI chrome + locale storage đã xong; metadata-label translation chưa bắt đầu |
 | 15. Shared App Shell (UI kit, real login, permission-aware components) | Đã xong |
 | 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4: `VaultStore` (token) xong 2026-08-17, AppRole auth + auto-renewal + role lookup/RBAC qua Router (đóng bug login vỡ cho `dedicated_db`) + delete/deprovision tenant xong 2026-08-20 → 2026-08-21; `schema`/trial vẫn chưa có isolation thật; dynamic Vault creds/data-plane/capabilities/FE onboarding/deployment còn lại |
+| 17. Metadata-driven Workflow Engine | Increment 1 (on-transition trigger cho `metap-cron`) xong 2026-08-21; Increment 2 (chuỗi activity, `workflow_runs`) và Increment 3 (`wait_event` durable pause) vẫn approved, chưa code — chờ Increment 1 chạy thật lộ ra nhu cầu cụ thể |
+| 18. Organization & Identity — P0 | Done 2026-08-22 — `RequestContext.context_attributes` (opt-in `AUTH_CONTEXT_ENTITY`, cache + invalidate endpoint), entity mẫu `hr.departments`/`hr.employees` qua low-code, org-scoped policy verify sống qua HTTP thật. P1 (`hr.positions`/`hr.locations`, `managerId` self-reference)/P2 (Legal Entity, Approval Authority...) vẫn proposed, chưa có trigger |
 
 ## Phase 0: Skeleton
 
@@ -1152,12 +1154,13 @@ P2 (Legal Entity/Business Unit/Approval Authority...) vẫn `proposed`, chưa c�
 
 ## Định hướng chưa lên phase (chưa có trigger)
 
-Bảy ý nảy sinh từ thảo luận kiến trúc, hợp lý về sản phẩm nhưng chưa có trigger cụ thể nên chưa
+Tám ý nảy sinh từ thảo luận kiến trúc, hợp lý về sản phẩm nhưng chưa có trigger cụ thể nên chưa
 được lên thành phase: workflow hai chế độ (in-process + cross-module), workflow
 visualize/hướng BPM nhẹ, Tiny deployment profile (single binary, không RabbitMQ), migration
 path generic-table-sang-bảng-riêng, computed/derived field, schema versioning cho entity, entity
-variant kiểu polymorphic/discriminated-union. Chi tiết và lý do chưa lên phase ở
-`docs/team-charter.md`'s "Định hướng đang ghi nhận, chưa có trigger". Không bắt đầu việc nào
-trong số này mà chưa có feature brief (`docs/features/`) nêu trigger cụ thể.
+variant kiểu polymorphic/discriminated-union, và metadata low-code theo từng Tenant (hướng dài
+hạn cho Phase 11C's "quy tắc cô lập schema cấp Tenant", ghi lại 2026-08-22). Chi tiết và lý do
+chưa lên phase ở `docs/team-charter.md`'s "Định hướng đang ghi nhận, chưa có trigger". Không bắt
+đầu việc nào trong số này mà chưa có feature brief (`docs/features/`) nêu trigger cụ thể.
 
 
