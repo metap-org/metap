@@ -74,10 +74,13 @@ async fn emit_transitioned_and_emit_created_enqueue_outbox_rows_with_correct_top
     let pool = connect().await;
     let entity = entity();
     let record_id = Uuid::new_v4();
+    let tenant_id = Uuid::new_v4();
 
-    emit_transitioned(&pool, &entity, record_id, "activate", "draft", "active", None)
-        .await
-        .expect("emit_transitioned");
+    emit_transitioned(
+        &pool, &entity, tenant_id, record_id, "activate", "draft", "active", None,
+    )
+    .await
+    .expect("emit_transitioned");
 
     let mut data = JsonObject::new();
     data.insert("name".to_string(), json!("Acme"));
@@ -96,6 +99,8 @@ async fn emit_transitioned_and_emit_created_enqueue_outbox_rows_with_correct_top
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].get::<String, _>("topic"), "test.widgets.workflow.transitioned");
     assert_eq!(rows[1].get::<String, _>("topic"), "test.widgets.record.created");
+    let transitioned_payload: serde_json::Value = rows[0].get("payload");
+    assert_eq!(transitioned_payload["tenantId"], tenant_id.to_string());
     let created_payload: serde_json::Value = rows[1].get("payload");
     assert_eq!(created_payload["data"]["name"], "Acme");
 

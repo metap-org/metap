@@ -57,3 +57,40 @@ việc đó là thừa.
   audit/outbox/lock). Tách một mảnh cụ thể khi có tín hiệu cụ thể — cùng tinh thần trigger-based
   của Phase 9 ([04. Solution Strategy](04-strategy.md)), không phải quyết định trả trước. Chi
   tiết: `docs/multi-tenant-platform-design.md` §10.
+- **Permission engine: deny-by-default cho non-admin, deny-overrides-allow, không phải
+  opt-in-restriction fail-open.** (Review 2026-08-21, do chủ dự án yêu cầu.) Mô hình cũ ("chưa có
+  policy nào = ai cũng được phép") là một khoảng hở fail-open thật — một tenant/entity mới, chưa
+  kịp cấu hình policy, mặc định mở toang thay vì đóng. Đổi sang: một `(entity, action)` chưa có
+  policy nào cho non-admin thì bị từ chối; kèm `POST /admin/policies/seed-defaults` (bulk-tạo
+  policy allow cho nhiều action cùng lúc) làm escape hatch nhanh lúc onboard, để tránh đánh đổi
+  "an toàn hơn" lấy "chậm cấu hình". Mỗi policy thêm một cột `effect` (`allow`/`deny`, mặc định
+  `allow` — dữ liệu cũ không cần migrate ý nghĩa) — chọn deny-overrides-allow (không phải một
+  `PolicyCondition::Not`, vốn không giải được phủ định *xuyên* nhiều policy độc lập, chỉ phủ định
+  được điều kiện *trong* một policy) vì đây là ngữ nghĩa quen thuộc kiểu IAM, dễ suy luận khi
+  nhiều policy chồng nhau. Kèm tách `EntityAction::Transition` khỏi `Update` — sửa field và chuyển
+  workflow state giờ là hai quyền độc lập. Chi tiết: [05. Building Block View](05-building-blocks.md#permission-service), `docs/roadmap.md` Phase 3.
+- **Cross-record permission condition: dotted attribute path, resolve 1-hop ở `CrudService`, `metap-permission` giữ nguyên thuần túy/đồng bộ.** (Cùng review 2026-08-21 — "cách tốt nhất cho
+  tương lai, performance ưu tiên hàng đầu".) Cân nhắc để `metap-permission` tự làm I/O (fetch
+  record liên quan bên trong khi evaluate) nhưng bác bỏ — sẽ phá vỡ tính pure-function của toàn bộ
+  crate, thứ mọi call site khác (bao gồm cả bản dịch sang SQL của `metap-query`) đang dựa vào.
+  Chọn: `metap-permission` chỉ báo tên field quan hệ cần (`required_relation_fields`, đọc segment
+  đầu của path, không I/O); `CrudService` là nơi duy nhất fetch, chỉ 1-hop qua field kiểu
+  `Reference`, chỉ khi thật sự cần (rỗng thì không tốn gì), chỉ cho 4 method single-record — không
+  áp dụng `list()` vì cần `QueryPlanner` JOIN (chưa xây, không phải mục tiêu của thay đổi này).
+  Chi tiết: [05. Building Block View](05-building-blocks.md#permission-service).
+- **Vault AppRole auth ưu tiên `renew_self`, chỉ fallback login lại khi renew thất bại.**
+  (`VaultStore`, Phase 16 Giai đoạn 4.) Renewal ban đầu luôn login lại bằng AppRole + `secret_id`
+  đã lưu — tự vỡ với một role cấu hình `secret_id_num_uses=1` (secret_id một lần dùng, login lại
+  lần hai sẽ bị Vault từ chối). Đổi sang thử `vaultrs::token::renew_self` trước (không tốn
+  `secret_id`), chỉ login lại từ đầu khi renew thất bại thật (token đã hết hạn cứng, không thể
+  renew). Client Vault chỉ được build mới bên ngoài phạm vi giữ lock — lock chỉ giữ trong lúc kiểm
+  tra "token có sắp hết hạn không", tránh serialize hoá mọi lần resolve DSN đồng thời của nhiều
+  tenant `dedicated_db` qua cùng một round-trip HTTP tới Vault.
+- **Tenant delete chỉ detach routing, không tự động xoá dữ liệu vật lý.** (`DELETE
+  /platform/tenants/{id}`, Phase 16.) Với `dedicated_db`: không tự `DROP DATABASE`. Với `schema`:
+  không tự xoá row nào trong bảng `records`/`users`/... Chỉ set `status: Deleted` (terminal,
+  không đảo ngược qua API) và đóng dedicated pool đang cache nếu có — một request tới tenant đó
+  sau khi xoá bị từ chối ngay ở `Router::begin` (404 `tenant_not_found`), nhưng dữ liệu vẫn còn
+  nguyên trên đĩa để khôi phục thủ công nếu cần. Chọn vì `DROP DATABASE`/xoá hàng loạt qua một lời
+  gọi API là hành động không thể hoàn tác — quyết định đó nên là một thao tác vận hành tường minh,
+  riêng biệt, không phải side effect ẩn của một endpoint xoá tenant.

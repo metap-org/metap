@@ -86,9 +86,11 @@ pub async fn record_event<'c, E: PgExecutor<'c>>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn emit_transitioned<'c, E: PgExecutor<'c>>(
     executor: E,
     entity: &EntityDefinition,
+    tenant_id: Uuid,
     record_id: Uuid,
     action: &str,
     from_state: &str,
@@ -100,6 +102,7 @@ pub async fn emit_transitioned<'c, E: PgExecutor<'c>>(
         aggregate_type: entity.name.clone(),
         aggregate_id: record_id,
         payload: json!({
+            "tenantId": tenant_id,
             "recordId": record_id,
             "action": action,
             "from": from_state,

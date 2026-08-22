@@ -160,7 +160,7 @@ async fn provision_tenant(args: &[String]) -> anyhow::Result<()> {
                 "Provisioned tenant {tenant_id} (trial, schema=public), admin user {} ({email}).",
                 provisioned.admin_user_id
             );
-            print_default_allow_warning();
+            print_deny_by_default_note();
         }
         Some("dedicated_db") => {
             let (Some(tenant_id), Some(dsn_secret_ref), Some(dedicated_url), Some(email), Some(password)) =
@@ -191,7 +191,7 @@ async fn provision_tenant(args: &[String]) -> anyhow::Result<()> {
                 "Before this tenant can be routed to, set env var {dsn_secret_ref}={dedicated_url} \
                  for the crm-server process (Router's EnvStore looks it up by this exact name)."
             );
-            print_default_allow_warning();
+            print_deny_by_default_note();
         }
         _ => {
             eprintln!("Usage: dev-tools provision-tenant <tenantId> <schema|dedicated_db> ...");
@@ -249,11 +249,12 @@ async fn vault_put_dsn(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn print_default_allow_warning() {
+fn print_deny_by_default_note() {
     println!(
-        "Note: no policies exist yet for this tenant — PermissionService allows any action on \
-         an entity/action pair with zero policies (default-allow-when-empty). Every authenticated \
-         user in this tenant can read/write every entity until you add restrictive policies via \
-         POST /admin/policies."
+        "Note: no policies exist yet for this tenant — PermissionService denies any action on \
+         an entity/action pair with zero policies for non-admin callers (deny-by-default, \
+         admin always bypasses). The admin user just created can already do everything; any \
+         other user in this tenant is denied everything until you grant policies, e.g. \
+         POST /admin/policies/seed-defaults."
     );
 }

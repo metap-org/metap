@@ -19,25 +19,34 @@ C4Container
 
   Person(user, "Người dùng cuối")
   Person(admin, "Admin")
+  Person(platformadmin, "Platform Admin", "Superadmin xuyên tenant — tenant sentinel PLATFORM_TENANT_ID + role platform_admin")
 
   System_Boundary(metap, "Metap") {
     Container(web, "Web Frontend", "React, Vite, TanStack Query", "Dev harness SPA — apps/crm-fe, dùng packages/platform-react qua workspace:*")
-    Container(api, "API Server", "Rust, axum", "apps/crm-server: module duy nhất được deploy hiện nay, phụ thuộc vào crates/metap-* (auth, CRUD, metadata, query planning)")
-    Container(worker, "Outbox Publisher", "Rust", "crates/outbox-publisher, một binary riêng gọi outbox drain/publish loop của metap-infra")
+    Container(api, "API Server", "Rust, axum", "apps/crm-server: một process, router gộp 3 crate — metap-http (/api, /auth, /admin, /metadata), metap-lowcode-http (/admin/lowcode), metap-control-http (/platform/tenants)")
+    Container(outboxworker, "Outbox Publisher", "Rust", "crates/outbox-publisher, binary riêng — outbox drain/publish loop của metap-infra")
+    Container(cronworker, "Cron Scheduler", "Rust", "crates/cron-scheduler, binary riêng — ticker (poll cron_jobs) + executor (workflow_transition/bulk_query_action gọi lại API Server, webhook gọi ngoài)")
+    Container(notifworker, "Notification Worker", "Rust", "crates/notification-worker, binary riêng theo mặc định — hoặc chạy inline trong API Server khi NOTIFICATION_WORKER_INLINE=true; subscribe EventBus, log mọi workflow transition")
   }
 
-  ContainerDb(db, "PostgreSQL", "Postgres 16", "records, metadata_versions, policies, outbox_events, workflow_events, user_roles")
-  ContainerQueue(mq, "RabbitMQ", "AMQP 0-9-1", "Reliable event delivery đến các downstream consumer trong tương lai")
+  ContainerDb(db, "PostgreSQL", "Postgres 16", "records, control.tenants, policies, outbox_events, workflow_events, user_roles, cron_jobs, low_code_*")
+  ContainerQueue(mq, "RabbitMQ", "AMQP 0-9-1", "Reliable event delivery đến các downstream consumer")
+  System_Ext(vault, "Vault", "HashiCorp Vault — secret KV v2, resolve DSN cho tenant dedicated_db (tùy chọn, EnvStore là fallback không có Vault)")
 
   Rel(user, web, "Sử dụng", "HTTPS")
   Rel(admin, web, "Sử dụng", "HTTPS")
+  Rel(platformadmin, api, "Provision/suspend/xóa tenant", "REST/JSON, Bearer JWT, PlatformAdminContext")
   Rel(web, api, "Gọi", "REST/JSON, Bearer JWT")
-  Rel(api, db, "Đọc/ghi records, metadata, policies; ghi outbox rows trong cùng transaction với business write", "sqlx/SQL")
-  Rel(worker, db, "Poll các outbox row đang pending", "SQL, ~1s loop, FOR UPDATE SKIP LOCKED")
-  Rel(worker, mq, "Publish", "AMQP")
+  Rel(api, db, "Đọc/ghi records, metadata, policies, control.tenants; ghi outbox rows trong cùng transaction với business write — mọi transaction tenant-scoped đi qua metap-control::Router", "sqlx/SQL")
+  Rel(api, vault, "Resolve DSN cho tenant dedicated_db (VaultStore, token hoặc AppRole)", "HTTPS")
+  Rel(outboxworker, db, "Poll các outbox row đang pending", "SQL, ~1s loop, FOR UPDATE SKIP LOCKED")
+  Rel(outboxworker, mq, "Publish", "AMQP")
+  Rel(cronworker, db, "Poll cron_jobs đến hạn (FOR UPDATE SKIP LOCKED), ghi cron_job_runs", "SQL")
+  Rel(cronworker, api, "Gọi lại /api/:entity/... với service JWT (workflow_transition/bulk_query_action)", "REST/JSON")
+  Rel(notifworker, mq, "Subscribe #.workflow.transitioned", "AMQP")
 ```
 
-API Server và Outbox Publisher là hai process tách biệt một cách có chủ ý (`pnpm dev:rs` so với `pnpm worker:outbox:rs`) — khi RabbitMQ gặp sự cố, chỉ worker bị ngưng trệ, API không bị ảnh hưởng, vì transactional outbox write đã commit xong rồi. `apps/crm-server` có thể tùy chọn phục vụ luôn static files đã build của `apps/crm-fe` trên cùng process/port (`pnpm start`, cấu hình `STATIC_DIR`) — đây chỉ là một tiện lợi khi triển khai, không làm thay đổi sự tách biệt này; worker vẫn luôn là một process riêng biệt.
+API Server, Outbox Publisher, Cron Scheduler, và Notification Worker (khi không chạy inline) là các process tách biệt một cách có chủ ý — khi RabbitMQ gặp sự cố, chỉ các worker bị ngưng trệ, API không bị ảnh hưởng, vì transactional outbox write đã commit xong rồi. `apps/crm-server` có thể tùy chọn phục vụ luôn static files đã build của `apps/crm-fe` trên cùng process/port (`pnpm start`, cấu hình `STATIC_DIR`) — đây chỉ là một tiện lợi khi triển khai, không làm thay đổi sự tách biệt này; các worker vẫn luôn là process riêng biệt (Notification Worker là ngoại lệ duy nhất, có thể chạy inline như một background task trong chính API Server qua `NOTIFICATION_WORKER_INLINE=true` — cả hai chế độ gọi chung một hàm `notification_worker::run`, nên không thể lệch hành vi nhau).
 
 ## C4 Level 3: Components (inside the API Server)
 
@@ -46,10 +55,13 @@ C4Component
   title Component diagram — API Server
 
   Container_Boundary(api, "API Server") {
-    Component(routes, "HTTP Routes", "axum handlers", "records / metadata / health — crates/metap-http/src/routes")
+    Component(routes, "HTTP Routes", "axum handlers", "records / metadata / admin / health — crates/metap-http/src/routes")
     Component(crud, "CrudService", "Rust struct", "permission -> validate -> plan -> write -> workflow -> outbox")
-    Component(metadata, "MetadataRegistry", "Rust struct", "Entity definitions; được validate + hash lúc boot (MetadataCompiler)")
-    Component(perm, "PermissionService", "Rust struct", "RBAC/ABAC, field/record enforcement, PolicyExplainer")
+    Component(router, "Router", "Rust struct", "metap-control — mở transaction tenant-scoped: SET LOCAL search_path (Schema) hoặc pool riêng theo dsn_secret_ref (DedicatedDb)")
+    Component(tenantreg, "TenantRegistry + RegistryCache", "Rust struct", "metap-control — đọc control.tenants, cache TTL 30s (moka)")
+    Component(secretstore, "SecretStore", "trait", "metap-control — EnvStore hoặc VaultStore, resolve DSN cho DedicatedDb")
+    Component(metadata, "MetadataRegistry", "Rust struct", "Entity definitions; được validate + hash lúc boot (MetadataCompiler); ArcSwap để publish/rollback hot-reload không cần restart")
+    Component(perm, "PermissionService", "Rust struct", "RBAC/ABAC, field/record/cross-record enforcement, deny-overrides-allow, PolicyExplainer")
     Component(query, "QueryPlanner", "Rust functions", "Metadata-constrained filter/sort/cursor -> SQL (plan_list)")
     Component(workflow, "Workflow functions", "Rust functions", "State machine transitions + audit log (metap-workflow)")
     Component(outbox, "Outbox", "Rust functions", "Transactional outbox writes (metap-infra::outbox::enqueue)")
@@ -58,6 +70,7 @@ C4Component
   }
 
   ContainerDb(db, "PostgreSQL", "", "")
+  System_Ext(vault, "Vault", "")
 
   Rel(routes, crud, "Gọi")
   Rel(crud, metadata, "Đọc entity definitions")
@@ -65,10 +78,15 @@ C4Component
   Rel(crud, query, "Lập kế hoạch list query")
   Rel(crud, workflow, "Gán initial status / chạy transitions")
   Rel(crud, outbox, "Enqueue events (cùng DB transaction)")
+  Rel(crud, router, "Router::begin(tenant_id) mở mọi transaction thay vì bare PgPool")
   Rel(query, perm, "AND record-level policy WHERE clause")
+  Rel(perm, crud, "required_relation_fields(action) — CrudService fetch record liên quan 1-hop, merge vào subject trước khi evaluate")
+  Rel(router, tenantreg, "Tra strategy/status của tenant")
+  Rel(router, secretstore, "Resolve DSN khi strategy=DedicatedDb")
+  Rel(secretstore, vault, "KV v2 read (VaultStore, tùy chọn)")
   Rel(idxr, metadata, "Đọc các flag indexed / unique / searchMode")
   Rel(drift, metadata, "Đọc entity hash (version)")
-  Rel(crud, db, "Đọc/ghi", "sqlx")
+  Rel(router, db, "SET LOCAL search_path / pool riêng theo dsn_secret_ref", "sqlx")
   Rel(idxr, db, "CREATE INDEX CONCURRENTLY", "DDL, best-effort")
 ```
 
@@ -79,10 +97,14 @@ Mô hình object đứng sau component diagram ở trên — các type và cách
 ```mermaid
 classDiagram
   class AppState {
-    +pool: PgPool
-    +metadata: Arc~MetadataRegistry~
+    +router: Router
+    +metadata: Arc~ArcSwap~MetadataRegistry~~
     +permissions: Arc~PermissionService~
     +decoding_key: DecodingKey
+  }
+  class Router {
+    <<metap-control>>
+    +begin(tenant_id) Transaction
   }
   class MetadataRegistry {
     -entities: HashMap~String, EntityDefinition~
@@ -98,24 +120,43 @@ classDiagram
     +workflow: Option~EntityWorkflow~
   }
   class CrudService {
+    -router: Router
+    -metadata: Arc~ArcSwap~MetadataRegistry~~
+    -permissions: Arc~PermissionService~
     +list(entity, input, context)
+    +get(entity, id, context)
     +create(entity, data, context)
     +update(entity, id, version, data, context)
     +transition(entity, id, action, version, context)
-    +delete(entity, id, context)
+    +delete(entity, id, version, context)
+    -enrich_record_for_actions(entity, snapshot, actions, tenant_id, record) JsonObject
   }
   class PermissionService {
     +can_read_entity(context, entity)
     +can_create_entity(context, entity)
     +can_update_entity(context, entity)
+    +can_transition_entity(context, entity)
+    +can_delete_entity(context, entity)
     +load_snapshot(tenant_id, entity) PermissionSnapshot
     +scoped_tenant(context)
   }
   class PermissionSnapshot {
     +filter_readable_fields(context, data)
     +assert_writable_fields(context, fields, existing)
-    +can_update_record_condition(context, record)
-    +get_record_policies(action)
+    +can_perform_record_condition(context, record, action) PermissionDecision
+    +get_record_policies(action) Vec~PolicyRow~
+    +required_relation_fields(action) Vec~String~
+  }
+  class PolicyEffect {
+    <<enum>>
+    Allow
+    Deny
+  }
+  class PolicyVerdict {
+    <<enum>>
+    Allow
+    Deny
+    NoMatch
   }
   class QueryPlannerFns {
     <<module: metap-query>>
@@ -134,9 +175,11 @@ classDiagram
   class EventBus {
     <<trait>>
     +publish(topic, payload)
+    +subscribe(topic, handler)
   }
   class RabbitEventBus {
     +publish(topic, payload)
+    +subscribe(topic, handler)
   }
   class IndexReconciler {
     <<module: metap-peripherals>>
@@ -147,15 +190,19 @@ classDiagram
     +check_metadata_drift(pool, entities)
   }
 
+  AppState --> Router
   AppState --> MetadataRegistry
   AppState --> PermissionService
   MetadataRegistry --> EntityDefinition : holds
+  CrudService --> Router
   CrudService --> MetadataRegistry
   CrudService --> PermissionService
   CrudService --> QueryPlannerFns
   CrudService --> WorkflowFns
   CrudService --> OutboxFns
   PermissionService --> PermissionSnapshot : creates per call
+  PermissionSnapshot ..> PolicyEffect : evaluate_policies decides via
+  PermissionSnapshot ..> PolicyVerdict : evaluate_policies decides via
   QueryPlannerFns --> PermissionService
   IndexReconciler --> MetadataRegistry
   MetadataDriftService --> MetadataRegistry
@@ -176,6 +223,19 @@ Sở hữu các entity definition:
 
 Metap validate và compile metadata như một runtime artifact hạng nhất, thay vì coi nó là một mô tả schema thụ động. `MetadataCompiler` thực thi điều này tại thời điểm `MetadataRegistry::register()` — field trùng lặp, tham chiếu field/filter/sort của listView bị treo (dangling), giá trị enum thiếu, và workflow shape sai định dạng đều khiến quá trình khởi động thất bại, chứ không phải đợi đến request đầu tiên. Mỗi entity có một hash xác định (deterministic) cho hình dạng của nó (`MetadataCompiler::hash`, gồm cả guard condition của từng workflow transition kể từ 2026-08-17), được expose dưới dạng `version` tại `GET /metadata/entities`; `MetadataDriftService` so sánh hash đó với hash được ghi nhận lần gần nhất mỗi khi boot và chỉ cảnh báo — không bao giờ crash — khi có drift, phản ánh đúng tinh thần graceful-degradation của health check. Cùng bản chiếu metadata an toàn đó cũng là nguồn cho tài liệu OpenAPI được sinh ra tại `GET /metadata/openapi.json` (viết tay trong `metap-metadata/src/openapi.rs`, được đồng bộ thủ công với các struct trong `entity.rs` — Rust không có bước runtime-reflection tương đương Zod).
 
+### Control Plane (Router, Multi-Tenancy)
+
+`metap-control` (`docs/multi-tenant-platform-design.md` §2.2, `docs/roadmap.md` Phase 16) — control plane cho SaaS multi-tenancy, sở hữu:
+
+- **`control.tenants`** — registry một dòng mỗi tenant (`id`, `tier`, `strategy`, `schema_name`/`dsn_secret_ref`, `status`, `trial_expires_at`), qua `TenantRegistry` trait (`PostgresTenantRegistry` là impl duy nhất) + `RegistryCache` (moka, TTL 30s) phía trước để tránh query lại mỗi request.
+- **`TenantStatus`** — `Provisioning`/`Active`/`Migrating`/`Suspended`/`Expired`/`Deleted` (terminal, chỉ set qua `DELETE /platform/tenants/{id}`, không bao giờ set qua `PATCH .../status`). Mỗi status không phải `Active` map sang một mã lỗi HTTP cụ thể ở `CrudService` (`router_unavailable`) — `Suspended`/`Expired` → 403, `Migrating`/`Provisioning` → 503, `Deleted` → 404 — thay vì rơi vào nhánh lỗi 500 chung.
+- **`TenantStrategy`** — `Schema { schema_name }` (trial, thực tế luôn ghim `"public"` — isolation thật cần data-plane table-per-entity, chưa xây) hoặc `DedicatedDb { dsn_secret_ref }` (paid, đã có isolation vật lý thật).
+- **`Router::begin(tenant_id)`** — điểm duy nhất mở một transaction tenant-scoped, thay cho `CrudService` nhận thẳng một `PgPool`. Với `Schema`: `SET LOCAL search_path` trên connection mượn từ pool chung, scoped theo transaction (không thể rò sang request tiếp theo dùng lại cùng connection — bẫy nghiêm trọng nhất của thiết kế này, đã fix explicit). Với `DedicatedDb`: mở/tái dùng một `PgPool` riêng cho tenant đó, cache theo `dsn_secret_ref` (moka, idle TTL 10 phút). Một tenant chưa có row `control.tenants` fallback về hành vi tương thích ngược: `{status: Active, strategy: Schema("public")}`.
+- **`SecretStore`** trait (`EnvStore`/`VaultStore`) — resolve DSN cho `DedicatedDb`. `EnvStore` đọc thẳng biến môi trường tên đúng bằng `dsn_secret_ref`. `VaultStore` (`crates/metap-control/src/vault_store.rs`) gọi Vault KV v2 qua HTTP, hỗ trợ token tĩnh hoặc AppRole (ưu tiên AppRole nếu có cả hai) kèm auto-renewal (`renew_self` trước, fallback login lại bằng AppRole chỉ khi renew thất bại — tránh lỗi với role có `secret_id_num_uses=1`). Chi tiết vận hành + các câu hỏi production còn bỏ ngỏ ở [07. Deployment View](07-deployment.md#secret-manager--secretstore--vaultstore-2026-08-17--2026-08-21).
+- **`PostgresPolicyStore`** — sống ở `metap-control` chứ không phải `metap-permission` (thuần lý do dependency-cycle: `metap-permission -> metap-control` sẽ khép vòng lặp `metap-control -> metap-peripherals -> metap-metadata -> metap-permission`; trait `PolicyStore` vẫn ở `metap-permission`), mỗi lời gọi route qua `Router::begin`.
+- **Provisioning** — `provision_schema_tenant`/`provision_dedicated_db_tenant` (ghi row `control.tenants`, chạy migration lên DB riêng khi `dedicated_db`, tạo admin user đầu tiên) dùng chung giữa `dev-tools provision-tenant` (CLI) và `POST /platform/tenants` (`metap-control-http`, gate bởi `PlatformAdminContext` — tenant sentinel `PLATFORM_TENANT_ID` + role `"platform_admin"`, khác `AdminContext` chỉ ủy quyền trong tenant của chính người gọi).
+- **Delete/deprovision** (`DELETE /platform/tenants/{id}`) — chỉ detach routing (set `status: Deleted`, đóng dedicated pool nếu có), **không** tự động `DROP DATABASE` cho tenant `dedicated_db`, **không** tự động xóa data cho tenant `schema` — quyết định có chủ ý, tránh mất dữ liệu không thể hoàn tác qua một lời gọi API.
+
 ### CRUD Service
 
 CRUD tổng quát cho các metadata entity (`metap-crud::CrudService`), là thứ duy nhất mà routes gọi để thao tác trên record.
@@ -185,6 +245,7 @@ Trách nhiệm:
 - validate dữ liệu bằng validator dẫn xuất từ field metadata (`metap-crud/src/validation.rs`, thay thế cho các Zod schema riêng theo từng entity — không có một object validation-schema viết tay riêng biệt)
 - thực thi permission thông qua `PermissionService`
 - gọi query planner (`metap-query::plan_list`) cho list/search
+- mở mọi transaction qua `Router::begin(tenant_id)` (xem "Control Plane" ở trên), không bao giờ nhận thẳng một `PgPool`
 - lưu trữ record
 - enqueue outbox event
 - gọi các workflow function khi cần
@@ -195,13 +256,15 @@ Lớp permission (`metap-permission::PermissionService`) sở hữu:
 
 - tenant scope
 - role assignment — động, lưu trong DB theo từng `(tenant_id, user_id)`, được grant/revoke ngay tại runtime qua HTTP API có bảo vệ admin (`crates/metap-http/src/routes/admin.rs`, bọc `metap-peripherals::assign_role`/`revoke_role`/`list_users`); bản thân JWT chỉ là một khẳng định danh tính trần trụi (bare identity assertion), không mang theo role
-- policy storage — một allow-list theo role kết hợp với một attribute condition tùy chọn (`PolicyCondition`), các policy khớp được OR với nhau, không có deny rule, đứng sau trait `PolicyStore` (`PostgresPolicyStore` là implementation duy nhất hiện nay)
+- policy storage — một allow-list theo role kết hợp với một attribute condition tùy chọn (`PolicyCondition`), đứng sau trait `PolicyStore` (`PostgresPolicyStore`, sống ở `metap-control` — xem "Control Plane" ở trên — là implementation duy nhất hiện nay). Mỗi policy còn mang một `effect` (`allow`/`deny`, cột `policies.effect`, mặc định `"allow"`) — `metap_permission::evaluate_policies` fold mọi policy khớp (role gate + condition) thành một `PolicyVerdict`: **`Deny` nếu có ít nhất một policy `deny` khớp** (thắng tuyệt đối, bất kể có bao nhiêu `allow` cũng khớp), ngược lại `Allow` nếu có ít nhất một `allow` khớp, ngược lại `NoMatch`. **Deny-by-default cho non-admin** (đổi từ opt-in-restriction ngày 2026-08-21): một `(entity, action)` chưa có policy nào thì `NoMatch` → bị từ chối, không phải được phép mặc định như trước — `admin` luôn bypass toàn bộ; `POST /admin/policies/seed-defaults` là công cụ bulk-tạo policy allow cho một role/entity mới, tránh việc onboard chậm.
+- action ở entity-level có 5 giá trị: `read`/`create`/`update`/`delete`/`transition` — sửa field (`update`) và chuyển workflow state (`transition`) là hai action tách biệt (trước 2026-08-21 dùng chung `update`, gộp hai quyền lại làm một).
 - field-level permission — che (mask) khi đọc và chặn khi ghi, được gắn vào mọi call site của `CrudService` (`list`/`create`/`update`/`transition`)
-- record-level permission — attribute condition được dịch thành mệnh đề `WHERE` (`metap-query::condition_to_sql::record_policy_where_clause`) và AND vào `plan_list` khi đọc, cộng thêm một kiểm tra cùng hình dạng trước khi ghi
+- record-level permission — attribute condition được dịch thành mệnh đề `WHERE` (`metap-query::condition_to_sql::record_policy_where_clause`, `(allow1 OR allow2...) AND NOT (deny1 OR deny2...)` khi có cả hai effect) và AND vào `plan_list` khi đọc, cộng thêm một kiểm tra cùng hình dạng (`PermissionSnapshot::can_perform_record_condition`) trước khi ghi.
+- **cross-record condition** (2026-08-21) — một điều kiện record-level có thể tham chiếu sang record khác qua dotted attribute path (vd `"referredBy.status"`). `metap-permission` vẫn thuần túy/đồng bộ: `evaluate_condition` traverse path lồng nhau trên subject đã có sẵn; `PermissionSnapshot::required_relation_fields(action)` chỉ đọc segment đầu path để báo cần fetch quan hệ nào, trả rỗng khi không cần (không tốn gì). `CrudService::enrich_record_for_actions` là nơi duy nhất có I/O — fetch đúng 1-hop qua field `FieldKind::Reference` rồi merge vào một **bản sao** subject, chỉ chạy ở 4 method single-record (`get`/`update`/`transition`/`delete`); `list()` không hỗ trợ (cần `QueryPlanner` JOIN, chưa xây) — `metap-query` reject rõ ràng nếu policy dùng cho `list()` chứa dotted attribute, thay vì âm thầm không bao giờ khớp (nguy hiểm với policy `deny`).
 - giải thích/debug policy — `PolicyExplainer` tạo ra một trace chỉ-đọc của mọi policy đã được xét và lý do, được expose qua endpoint mô phỏng `POST /admin/policies/explain` có bảo vệ admin
 - một `PermissionSnapshot` theo từng call gom các policy của một tenant/entity vào một lần fetch DB duy nhất, dùng lại xuyên suốt một lần gọi `CrudService` — cố ý không phải là cache theo kiểu cross-request/TTL
 
-Ban đầu chỉ là một scaffold cho phép mọi thứ để kiến trúc có thể chạy được (trong codebase TS gốc); ranh giới service đã được cố định ngay từ đầu và logic thật sự ở trên giờ đã lấp đầy nó, được port lại 1:1 sang Rust.
+Ban đầu chỉ là một scaffold cho phép mọi thứ để kiến trúc có thể chạy được (trong codebase TS gốc); ranh giới service đã được cố định ngay từ đầu và logic thật sự ở trên giờ đã lấp đầy nó, được port lại 1:1 sang Rust, rồi được siết lại đáng kể ngày 2026-08-21 (deny-by-default, effect, cross-record — ba gap được tìm ra qua một lần review permission engine, xem [09. Architecture Decisions](09-adr.md)).
 
 ### Query Planner
 
@@ -324,8 +387,42 @@ erDiagram
     varchar subject
     jsonb roles
     jsonb condition
+    varchar effect
     timestamptz created_at
     uuid created_by
+  }
+  CONTROL_TENANTS {
+    uuid id PK
+    text tier
+    text strategy
+    text schema_name
+    text dsn_secret_ref
+    text status
+    timestamptz trial_expires_at
+    timestamptz created_at
+  }
+  LOW_CODE_ENTITY_DRAFTS {
+    varchar entity_name PK
+    jsonb definition
+    timestamptz updated_at
+  }
+  LOW_CODE_ENTITY_VERSIONS {
+    uuid id PK
+    varchar entity_name
+    jsonb definition
+    integer version_number
+    timestamptz published_at
+    integer restored_from_version
+  }
+  LOW_CODE_METADATA_AUDIT_EVENTS {
+    uuid id PK
+    varchar entity_name
+    varchar action
+    text actor_user_id
+    text actor_tenant_id
+    integer version_number
+    integer restored_from_version
+    timestamptz occurred_at
   }
   METADATA_VERSIONS {
     varchar entity_name PK
@@ -382,14 +479,18 @@ erDiagram
   USERS ||--o{ USER_ROLES : "user_id (app-enforced)"
   USERS ||--o| USER_PREFERENCES : "user_id (app-enforced)"
   CRON_JOBS ||--o{ CRON_JOB_RUNS : "job_id (real FK, ON DELETE CASCADE)"
+  LOW_CODE_ENTITY_DRAFTS ||--o{ LOW_CODE_ENTITY_VERSIONS : "entity_name (app-enforced)"
+  LOW_CODE_ENTITY_DRAFTS ||--o{ LOW_CODE_METADATA_AUDIT_EVENTS : "entity_name (app-enforced)"
 ```
 
 Ghi chú:
 
 - `records.data` là payload dẫn xuất từ metadata; `code`/`status` là các cột top-level denormalized phản chiếu hai field bên trong `data` (`code` luôn luôn, `status` phản chiếu giá trị của `entity.workflow.stateField`) chỉ nhằm mục đích để chúng có thể được index/query như các cột thật.
 - `outbox_events`/`workflow_events` tham chiếu tới các row của `records` theo id (`aggregate_id`/`record_id`) nhưng trên *toàn bộ* bảng tổng quát, không phải theo từng bảng riêng cho mỗi entity — một bảng outbox duy nhất phục vụ mọi entity.
-- `policies.roles` là một mảng JSONB được đối chiếu với role của caller tại thời điểm đánh giá (`role_gate_passed`), không phải một relational join tới `user_roles`.
+- `policies.roles` là một mảng JSONB được đối chiếu với role của caller tại thời điểm đánh giá (`role_gate_passed`), không phải một relational join tới `user_roles`. `policies.effect` (`"allow"`/`"deny"`, thêm 2026-08-21) quyết định deny-overrides-allow — xem "Permission Service" ở trên.
 - `users` (Phase 15, local login) chỉ giữ danh tính (email + `password_hash` argon2id) — **không** giữ role. Role luôn nằm ở `user_roles`, tra mới cho mỗi request, không bao giờ cache trên JWT (xem sequence diagram "Tạo user, đăng nhập, kiểm tra quyền" ở [06. Runtime View](06-runtime.md)).
+- `control.tenants` sống ở schema Postgres riêng (`control`, không phải `public`) — cố ý tách khỏi mọi bảng nghiệp vụ/platform khác ở trên, vì nó phải đọc được *trước khi* biết tenant nào đang gọi (chính nó là nơi tra `strategy`/`status` để `Router` quyết định route đi đâu). Không có FK từ bảng nào khác tới nó.
+- `low_code_entity_drafts`/`low_code_entity_versions`/`low_code_metadata_audit_events` **không có cột `tenant_id`** — định nghĩa entity (kể cả loại DB-authored qua low-code builder) là *toàn cục*, dùng chung cho mọi tenant trong cùng một deployment, không phải per-tenant. Đây là một giới hạn kiến trúc thật của trạng thái hiện tại (multi-tenant SaaS + low-code per-tenant schema là hai trục chưa giao nhau), chưa có trigger để giải quyết.
 - Các index thật ngoài các primary key nêu trên được đề cập trong phần "Hot field indexes"/"Full-text search" ở trên — đó là các partial expression index theo từng entity được sinh ra từ metadata, không phải một phần của schema cố định này.
 
 ## Service Boundaries
@@ -421,25 +522,30 @@ graph TD
   subgraph cratesmetap["crates/metap-* (Cargo workspace members) — thư viện entity-agnostic"]
     infra["metap-infra<br/>db pool, EventBus trait, config, outbox enqueue"]
     metadata["metap-metadata<br/>EntityDefinition, MetadataCompiler, MetadataRegistry, OpenAPI gen"]
-    permission["metap-permission<br/>PolicyStore, PermissionService, PolicyExplainer"]
+    permission["metap-permission<br/>PolicyCondition, PermissionService, PermissionSnapshot, PolicyExplainer<br/>(trait PolicyStore — impl PostgresPolicyStore sống ở metap-control)"]
+    control["metap-control<br/>control.tenants registry, Router, SecretStore/EnvStore/VaultStore,<br/>PostgresPolicyStore, provisioning"]
     query["metap-query<br/>plan_list, cursor, condition-to-sql"]
     workflow["metap-workflow<br/>initial status, transitions, guards, audit"]
-    crud["metap-crud<br/>CrudService: list/get/create/update/transition/delete"]
-    http["metap-http<br/>axum router: /api/:entity*, /metadata/*, /health, JWT extractor<br/>build_router nhận extra_routes: Router&lt;AppState&gt; — không phụ thuộc lowcode(-http)"]
-    peripherals["metap-peripherals<br/>index reconciler, drift check, role assignment"]
+    cron["metap-cron<br/>cron_jobs/cron_job_runs storage, next_run_at, claim_due_jobs"]
+    crud["metap-crud<br/>CrudService: list/get/create/update/transition/delete<br/>(mở transaction qua metap-control::Router)"]
+    http["metap-http<br/>axum router: /api/:entity*, /admin/*, /auth/*, /metadata/*, /health, JWT extractor<br/>build_router nhận extra_routes: Router&lt;AppState&gt; — không phụ thuộc lowcode(-http)/control(-http)"]
+    peripherals["metap-peripherals<br/>index reconciler, drift check, role assignment, auth (create_user/verify_credentials)"]
     lowcode["metap-lowcode<br/>draft/publish/rollback storage cho DB-authored entity (Phase 11)"]
     lowcodehttp["metap-lowcode-http<br/>/admin/lowcode/entities/* — crate riêng, opt-in qua extra_routes"]
+    controlhttp["metap-control-http<br/>/platform/tenants/* — crate riêng, opt-in qua extra_routes"]
   end
 
   subgraph opsbin["ops binaries (Cargo workspace members, built trên metap-*)"]
     outboxpub["outbox-publisher<br/>drain/publish worker loop"]
+    cronsched["cron-scheduler<br/>ticker (poll metap-cron) + executor<br/>(workflow_transition/bulk_query_action gọi lại API, webhook gọi ngoài)"]
+    notifworker["notification-worker<br/>subscribe #.workflow.transitioned, log — chạy độc lập hoặc inline trong crm-server"]
     dbmigrate["db-migrate<br/>sqlx::migrate! over crates/migrations"]
-    devtools["dev-tools<br/>gen-keys / mint-token / seed-admin"]
+    devtools["dev-tools<br/>gen-keys / mint-token / seed-admin / create-user /<br/>provision-tenant / bootstrap-platform-admin"]
   end
 
   subgraph appscrmserver["apps/crm-server (Cargo + pnpm member) — module duy nhất được deploy hiện nay"]
-    customerentity["src/customer_entity.rs"]
-    mainrs["src/main.rs<br/>inline wiring, boot sequence"]
+    customerentity["src/entities/customer_entity.rs"]
+    mainrs["src/main.rs<br/>inline wiring, boot sequence — gộp cả metap-http + lowcode-http + control-http"]
   end
 
   subgraph pkgplatform["packages/platform-react (pnpm workspace member)"]
@@ -456,18 +562,29 @@ graph TD
   crud --> query
   crud --> workflow
   crud --> infra
+  crud --> control
+  control --> permission
+  control --> peripherals
   lowcode --> metadata
+  lowcode --> permission
   lowcodehttp --> lowcode
-  lowcodehttp -.đọc/ghi AppState.metadata qua metap-http, không import ngược.-> http
+  lowcodehttp -.->|"đọc/ghi AppState metadata qua metap-http, không import ngược"| http
+  controlhttp --> control
+  controlhttp -.->|"đọc AppState router qua metap-http, không import ngược"| http
   mainrs -->|"phụ thuộc vào"| http
   mainrs -->|"phụ thuộc vào"| infra
-  mainrs -.opt-in: merge metap::lowcode_http::router vào build_router.-> lowcodehttp
-  customerentity -.entity definition, không có business knowledge của metap-*.-> mainrs
+  mainrs -.->|"opt-in: merge metap::lowcode_http::router + control_http::router vào build_router"| lowcodehttp
+  mainrs -.->|"opt-in"| controlhttp
+  customerentity -.->|"entity definition, không có business knowledge của metap-*"| mainrs
   outboxpub --> infra
+  cronsched --> cron
+  cronsched -.->|"gọi lại /api/:entity qua HTTP với service JWT, không link metap-crud/metap-metadata trực tiếp"| mainrs
+  notifworker --> infra
   dbmigrate --> infra
   devtools --> infra
+  devtools --> control
   demoapp -->|"workspace:*"| platform
-  demoapp -.chỉ qua HTTP, không bao giờ import Rust code.-> http
+  demoapp -.->|"chỉ qua HTTP, không bao giờ import Rust code"| http
 ```
 
-`apps/crm-server` phụ thuộc vào `crates/metap-*`; không có crate `metap-*` nào có đường phụ thuộc quay ngược lại `apps/crm-server` hay bất kỳ package `apps/*` nào khác — chính hướng phụ thuộc này giữ cho `metap-*` thực sự entity-agnostic, chứ không chỉ mang tính quy ước. `apps/crm-fe` là phần tương đương bên frontend: nó chỉ có thể tiếp cận backend qua HTTP (đường nét đứt), không bao giờ bằng cách import backend code, và nó dùng `packages/platform-react` theo cùng cách `apps/crm-server` dùng `crates/metap-*`.
+`apps/crm-server` phụ thuộc vào `crates/metap-*`; không có crate `metap-*` nào có đường phụ thuộc quay ngược lại `apps/crm-server` hay bất kỳ package `apps/*` nào khác — chính hướng phụ thuộc này giữ cho `metap-*` thực sự entity-agnostic, chứ không chỉ mang tính quy ước. `apps/crm-fe` là phần tương đương bên frontend: nó chỉ có thể tiếp cận backend qua HTTP (đường nét đứt), không bao giờ bằng cách import backend code, và nó dùng `packages/platform-react` theo cùng cách `apps/crm-server` dùng `crates/metap-*`. `metap-control` (control plane multi-tenancy) phụ thuộc `metap-peripherals` để có `Router::begin` khớp với cùng hạ tầng user/role — chiều phụ thuộc `metap-permission -> metap-control` sẽ khép vòng lặp, đó là lý do `PostgresPolicyStore` sống ở `metap-control` dù trait `PolicyStore` nó implement thì ở `metap-permission`.

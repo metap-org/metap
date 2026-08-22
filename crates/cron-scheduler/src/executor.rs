@@ -90,7 +90,7 @@ pub async fn execute(pool: &PgPool, http: &reqwest::Client, config: &ExecutorCon
         tracing::info!(job_id = %payload.job_id, run_id = %payload.run_id, "cron job executed");
     }
 
-    if let Err(err) = metap_cron::finish_run(pool, payload.run_id, status, error.as_deref(), summary).await {
+    if let Err(err) = metap_cron::finish_run_with_retry(pool, payload, status, error.as_deref(), summary).await {
         tracing::error!(run_id = %payload.run_id, error = %err, "failed to record cron job run result");
     }
 }

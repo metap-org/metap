@@ -7,30 +7,38 @@ graph TB
   subgraph compose["docker compose"]
     PG[("PostgreSQL 16<br/>host :5433 -> 5432")]
     MQ[["RabbitMQ<br/>:5672 AMQP, :15672 mgmt UI"]]
+    VaultBox[("Vault<br/>:8200, dev mode — tùy chọn, chỉ cần cho tenant dedicated_db qua VaultStore")]
   end
 
   subgraph procs["Rust processes"]
-    API["API Server<br/>pnpm dev:rs (apps/crm-server)<br/>:3000"]
-    Worker["Outbox Publisher<br/>pnpm worker:outbox:rs"]
+    API["API Server<br/>pnpm dev:rs (apps/crm-server)<br/>:3000 — gộp /api, /admin, /auth, /metadata, /admin/lowcode, /platform/tenants"]
+    OutboxW["Outbox Publisher<br/>pnpm worker:outbox:rs"]
+    CronW["Cron Scheduler<br/>pnpm worker:cron:rs"]
+    NotifW["Notification Worker<br/>pnpm worker:notification:rs<br/>(hoặc inline trong API Server, NOTIFICATION_WORKER_INLINE=true)"]
   end
 
   subgraph vite["Vite dev server"]
-    Web["Web Frontend<br/>:5173, proxies /api /metadata /health"]
+    Web["Web Frontend<br/>:5173, proxies /api /metadata /health /preferences"]
   end
 
   Web --> API
   API --> PG
   API --> MQ
-  Worker --> PG
-  Worker --> MQ
+  API -.->|"tùy chọn, chỉ khi VAULT_ADDR được set"| VaultBox
+  OutboxW --> PG
+  OutboxW --> MQ
+  CronW --> PG
+  CronW -.->|"gọi lại /api/:entity với service JWT"| API
+  NotifW --> MQ
 ```
 
 ## Ghi chú
 
-- API Server và Outbox Publisher hiện là hai binary/process riêng biệt, chưa phải hai container riêng — mỗi cái đều có thể được đóng container độc lập mà không cần sửa code, vì chúng vốn đã chỉ giao tiếp qua PostgreSQL/RabbitMQ.
-- **Phương án chạy đơn process**: `pnpm start` build `apps/crm-fe` rồi trỏ config `STATIC_DIR` của `apps/crm-server` vào thư mục output build đó, để API server tự phục vụ luôn các static file của frontend, chạy đơn process/đơn port. Đây là một chế độ tiện lợi khi triển khai, không phải phương án thay thế cho workflow dev tách rời ở trên (`pnpm dev:web` + `pnpm dev:rs`) — Outbox Publisher không bao giờ bị gộp vào chế độ này, nó luôn là một process riêng biệt dù chạy theo cách nào.
-- Chưa có tài liệu mô tả topology triển khai production — chưa có orchestrator (Kubernetes, ECS, v.v.), chưa có load balancer, chưa có autoscaling, chưa có secrets manager. Đây là khoản nợ kỹ thuật có thật, đã được ghi nhận — xem [11. Risks and Technical Debt](11-risks.md).
-- `docker compose` ở đây chỉ là tiện ích cho local dev, không phải mục tiêu triển khai — `docker-compose.yml` chỉ chạy `postgres` và `rabbitmq`; API/worker/frontend đều chạy dưới dạng process thuần trên host.
+- API Server, Outbox Publisher, Cron Scheduler, và Notification Worker hiện là các binary/process riêng biệt, chưa phải các container riêng — mỗi cái đều có thể được đóng container độc lập mà không cần sửa code, vì chúng vốn đã chỉ giao tiếp qua PostgreSQL/RabbitMQ/HTTP.
+- **Phương án chạy đơn process**: `pnpm start` build `apps/crm-fe` rồi trỏ config `STATIC_DIR` của `apps/crm-server` vào thư mục output build đó, để API server tự phục vụ luôn các static file của frontend, chạy đơn process/đơn port. Đây là một chế độ tiện lợi khi triển khai, không phải phương án thay thế cho workflow dev tách rời ở trên (`pnpm dev:web` + `pnpm dev:rs`) — Outbox Publisher/Cron Scheduler không bao giờ bị gộp vào chế độ này, luôn là process riêng biệt dù chạy theo cách nào; Notification Worker là ngoại lệ duy nhất, có thể chạy inline trong API Server (`NOTIFICATION_WORKER_INLINE=true`) hoặc như process riêng — cả hai gọi chung một hàm `notification_worker::run` nên không lệch hành vi.
+- Chưa có tài liệu mô tả topology triển khai production — chưa có orchestrator (Kubernetes, ECS, v.v.), chưa có load balancer, chưa có autoscaling. Đây là khoản nợ kỹ thuật có thật, đã được ghi nhận — xem [11. Risks and Technical Debt](11-risks.md).
+- `docker compose` ở đây chỉ là tiện ích cho local dev, không phải mục tiêu triển khai — `docker-compose.yml` chạy `postgres`, `rabbitmq`, và (tùy chọn, cho việc dev/test `VaultStore`) `vault`; API/worker/frontend đều chạy dưới dạng process thuần trên host.
+- Mỗi tenant `dedicated_db` cần đúng một `CRON_SERVICE_JWT`/executor để Cron Scheduler thực thi job của tenant đó — claim `tenantId` của service JWT cố định tenant nào một executor chạy được (ràng buộc đã biết, không phải lỗ hổng bảo mật — một job có `tenant_id` không khớp fail lúc thực thi, không tìm thấy record/entity).
 
 ### Secret manager — `SecretStore` + `VaultStore` (2026-08-17 → 2026-08-21)
 

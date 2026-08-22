@@ -1,9 +1,9 @@
 # Metadata-driven Workflow Engine (State Machine + Workflow composition)
 
-- **Trạng thái:** approved (2026-08-21 — quyết định kiến trúc "tiến hoá `metap-cron`" đã chốt)
+- **Trạng thái:** Increment 1 done (2026-08-21); Increment 2/3 vẫn approved, chưa code
 - **Người đề xuất:** chủ dự án, 2026-08-21
 - **Track sở hữu:** Backend Core
-- **Phase roadmap liên quan:** chưa gắn — nếu duyệt, đề xuất là Phase 17
+- **Phase roadmap liên quan:** Phase 17
 
 ## Vấn đề / động lực
 
@@ -68,22 +68,51 @@ Jira/Confluence cần ở tầng automation.
 - Cross-module workflow (một workflow chạy qua nhiều service/deployable unit) — trigger riêng
   (Phase 9), chưa xảy ra.
 
-## Tiêu chí chấp nhận (cho Increment 1 — phần sẽ code trước)
+## Tiêu chí chấp nhận (Increment 1) — Đã xong (2026-08-21)
 
-- Một `workflow_definitions` row với `triggerType: on_transition` khớp `{entity: "crm.customers",
-  action: "activate"}` được tạo qua admin API.
-- Transition thật (`POST /api/crm.customers/:id/transitions/activate`) khớp trigger đó tự động
-  dispatch đúng target đã cấu hình (vd `workflow_transition` sang một entity/action khác), không
-  cần polling — latency tương đương cơ chế outbox hiện có.
+- Một `cron_jobs` row với `triggerType: "on_transition"` khớp `{entity: "crm.customers", action:
+  "block"}` được tạo qua `POST /admin/cron-jobs` (`cronExpr`/`nextRunAt` đều `null` — không có
+  schedule). Đã verify.
+- Transition thật (`POST /api/crm.customers/:id/transitions/block`) khớp trigger đó tự động
+  dispatch đúng target đã cấu hình (`workflow_transition` sang một record khác), không cần
+  polling. Verify sống qua HTTP + RabbitMQ + Postgres thật (không phải test giả lập): tạo record
+  C (draft) + job trigger `on_transition` khi record khác bị `block` → target activate C; tạo
+  record B, activate (không khớp trigger, không dispatch) rồi block (khớp trigger) → log
+  `cron-scheduler` ghi "cron job triggered on transition" rồi "cron job executed" → record C
+  chuyển `draft` → `active` thành công, `cron_job_runs` ghi `status: "success"`. Toàn bộ round
+  trip: `emit_transitioned` (mang `tenantId`, field mới thêm) → outbox → `outbox-publisher` →
+  RabbitMQ → `cron-scheduler`'s consumer mới trên `#.workflow.transitioned` →
+  `dispatch_on_transition_matches` → outbox `cron.job.due` → RabbitMQ → executor → gọi lại HTTP
+  API thật của `crm-server`.
 - Một transition **không** khớp `entity`/`action` nào đã đăng ký thì không dispatch gì cả, không
-  lỗi.
-- `dispatchMode: "outbox"` sống sót qua một lần scheduler crash giữa lúc nhận event và lúc dispatch
-  (at-least-once, cùng bảo chứng `cron-scheduler` đã có) — verify bằng test e2e kiểu
-  `cron_job` hiện tại, không phải suy đoán.
-- Activity fail có retry-with-backoff (số lần thử + delay cấu hình được), không còn "chỉ ghi
-  `status: failed` rồi bỏ đó" như `cron_job_runs` hiện tại.
+  lỗi — verify bằng e2e test (`on_transition_job_does_not_fire_for_a_non_matching_action`) và bằng
+  live test ở trên (activate B không kích hoạt job đăng ký cho action `block`).
+- Một job đăng ký cho tenant này không bao giờ fire cho tenant khác — verify bằng e2e test
+  (`on_transition_job_does_not_fire_for_another_tenant`), khả năng đã có sẵn nhờ `tenantId` giờ
+  nằm trong payload `<entity>.workflow.transitioned`.
+- `dispatchMode: "outbox"` dùng đúng cùng cơ chế `cron.job.due` đã proven của `cron_jobs` gốc
+  (at-least-once) — không cần cơ chế riêng.
+- Activity fail có retry-with-backoff: `cron_jobs.maxAttempts`/`retryBackoffSeconds` (mặc định 1
+  lần thử/30s, không đổi hành vi job cũ khi không set), backoff nhân đôi mỗi lần
+  (`retryBackoffSeconds * 2^(attempt-1)`). Một `finish_run_with_retry` thất bại còn attempt sẽ tự
+  ghi một `cron_job_runs` row mới (`attempt+1`, `scheduled_for` = giờ + backoff);
+  `cron-scheduler`'s ticker poll thêm `claim_due_retries` mỗi tick để claim khi tới hạn. Verify
+  bằng 2 e2e test (`failed_run_with_attempts_remaining_schedules_a_retry_that_claim_due_retries_picks_up`,
+  `failed_run_with_no_attempts_remaining_does_not_schedule_a_retry`).
 - Không có `metap-*` crate nào biết tên entity cụ thể (giữ đúng nguyên tắc CLAUDE.md) — consumer
-  mới chỉ đọc `entity`/`action` như chuỗi cấu hình, giống `cron-scheduler` đã làm.
+  mới (`cron-scheduler::trigger`) chỉ đọc `entity`/`action` như chuỗi cấu hình/payload, giống
+  `cron-scheduler::executor` đã làm; verify bằng grep thủ công (không có `use metap_metadata`/
+  entity-specific import nào trong `cron-scheduler`/`metap-cron`).
+
+**Migration**: `crates/migrations/0015_cron_jobs_trigger_and_retry.sql` — `cron_jobs` thêm
+`trigger_type`/`trigger_config`/`max_attempts`/`retry_backoff_seconds`, `cron_expr`/`next_run_at`
+đổi thành nullable; `cron_job_runs` thêm `attempt`.
+
+**Đã đổi thêm ngoài scope ban đầu (bắt buộc để trigger hoạt động đúng multi-tenant)**:
+`metap_workflow::emit_transitioned` giờ nhận thêm `tenant_id: Uuid`, ghi vào payload outbox
+(`{"tenantId": ..., "recordId": ..., ...}`) — trước đây payload không mang tenant, nên một
+consumer subscribe `#.workflow.transitioned` không có cách nào biết event thuộc tenant nào để
+scope lookup đúng. Cập nhật 1 call site (`CrudService::transition`) + 1 e2e test.
 
 ## Ranh giới kiến trúc bị đụng tới
 

@@ -53,7 +53,7 @@ Khi viết brief, tự hỏi: thay đổi này có ảnh hưởng gì tới mộ
 | Tính năng | Trạng thái | Track | Phase liên quan |
 |---|---|---|---|
 | [Nâng cấp Frontend Platform](01-fe-platform-overhaul.md) | proposed | Frontend Platform | chưa gắn |
-| [Metadata-driven Workflow Engine](02-workflow-engine.md) | approved | Backend Core | đề xuất Phase 17 |
+| [Metadata-driven Workflow Engine](02-workflow-engine.md) | Increment 1 done | Backend Core | Phase 17 |
 
 **Demo app** (`apps/crm-server`, `apps/crm-fe` — xem `demo/`):
 

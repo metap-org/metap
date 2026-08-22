@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use metap_cron::CronJobDuePayload;
+use metap_cron::{ClaimedDirectJob, CronJobDuePayload};
 use sqlx::PgPool;
 
 use crate::executor::{execute, ExecutorConfig};
@@ -56,29 +56,53 @@ async fn tick(
     executor_config: &ExecutorConfig,
     batch_size: i64,
 ) -> anyhow::Result<()> {
-    let result = metap_cron::claim_due_jobs(pool, chrono::Utc::now(), batch_size).await?;
-    if result.claimed > 0 {
+    let due = metap_cron::claim_due_jobs(pool, chrono::Utc::now(), batch_size).await?;
+    if due.claimed > 0 {
         tracing::info!(
-            claimed = result.claimed,
-            direct = result.direct_jobs.len(),
+            claimed = due.claimed,
+            direct = due.direct_jobs.len(),
             "cron ticker claimed due jobs"
         );
     }
+    run_direct_jobs(pool, http, executor_config, due.direct_jobs).await;
 
-    // `Direct`-mode jobs never touch the outbox/RabbitMQ — run them right here, sequentially.
-    // A slow direct job delays the next tick's claim, which is the fire-and-forget tradeoff
-    // this dispatch mode signs up for (see `metap_cron::DispatchMode`'s doc comment); a job
-    // that can't tolerate that delay should use `DispatchMode::Outbox` instead.
-    for direct_job in result.direct_jobs {
+    // Retries scheduled by a prior failed attempt (`finish_run_with_retry`) — same claim/dispatch
+    // shape as `claim_due_jobs`, just sourced from `cron_job_runs` instead of `cron_jobs`.
+    let retries = metap_cron::claim_due_retries(pool, chrono::Utc::now(), batch_size).await?;
+    if retries.claimed > 0 {
+        tracing::info!(
+            claimed = retries.claimed,
+            direct = retries.direct_jobs.len(),
+            "cron ticker claimed due retries"
+        );
+    }
+    run_direct_jobs(pool, http, executor_config, retries.direct_jobs).await;
+
+    Ok(())
+}
+
+// `Direct`-mode jobs never touch the outbox/RabbitMQ — run them right here, sequentially. A
+// slow direct job delays the next tick's claim, which is the fire-and-forget tradeoff this
+// dispatch mode signs up for (see `metap_cron::DispatchMode`'s doc comment); a job that can't
+// tolerate that delay should use `DispatchMode::Outbox` instead.
+async fn run_direct_jobs(
+    pool: &PgPool,
+    http: &reqwest::Client,
+    executor_config: &ExecutorConfig,
+    direct_jobs: Vec<ClaimedDirectJob>,
+) {
+    for direct_job in direct_jobs {
         let payload = CronJobDuePayload {
             run_id: direct_job.run_id,
             job_id: direct_job.job_id,
             tenant_id: direct_job.tenant_id,
             target_type: direct_job.target_type,
             target_config: direct_job.target_config,
+            attempt: direct_job.attempt,
+            max_attempts: direct_job.max_attempts,
+            retry_backoff_seconds: direct_job.retry_backoff_seconds,
+            dispatch_mode: direct_job.dispatch_mode,
         };
         execute(pool, http, executor_config, &payload).await;
     }
-
-    Ok(())
 }

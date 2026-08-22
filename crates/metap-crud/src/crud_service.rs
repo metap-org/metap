@@ -645,7 +645,17 @@ impl CrudService {
         let record = row_to_dto(row)?;
 
         record_event(&mut *tx, &entity, record.id, action, &from_state, &to_state, context).await?;
-        emit_transitioned(&mut *tx, &entity, record.id, action, &from_state, &to_state, user_id).await?;
+        emit_transitioned(
+            &mut *tx,
+            &entity,
+            tenant_id,
+            record.id,
+            action,
+            &from_state,
+            &to_state,
+            user_id,
+        )
+        .await?;
         tx.commit().await?;
         tracing::info!(
             entity = entity.name,

@@ -81,6 +81,48 @@ impl DispatchMode {
     }
 }
 
+/// What fires a job. `Schedule` (default) is the original cron-expression firing this crate
+/// shipped with. `OnTransition` (`docs/features/02-workflow-engine.md` Increment 1) fires
+/// instead when a `<entity>.workflow.transitioned` event matches `trigger_config`'s
+/// `entity`/`action` for this job's `tenant_id` — `cron_expr`/`next_run_at` are meaningless for
+/// it and stay `None`. Same `cron_jobs` row, same `target_type`/`target_config`/`dispatch_mode`
+/// dispatch path either way — only what *causes* the firing differs, matching the "evolve
+/// metap-cron in place, don't fork a parallel system" decision recorded in that brief.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerType {
+    #[default]
+    Schedule,
+    OnTransition,
+}
+
+impl TriggerType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TriggerType::Schedule => "schedule",
+            TriggerType::OnTransition => "on_transition",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "schedule" => Some(TriggerType::Schedule),
+            "on_transition" => Some(TriggerType::OnTransition),
+            _ => None,
+        }
+    }
+}
+
+/// `trigger_config` shape when `trigger_type = on_transition` — matched against the entity name
+/// derived from a `<entity>.workflow.transitioned` routing key and the `action` field of its
+/// payload. Exact match only (no wildcards) — a job fires for one specific transition action on
+/// one specific entity, matching how `WorkflowTransition.action` itself is a single fixed string.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnTransitionTriggerConfig {
+    pub entity: String,
+    pub action: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CronJob {
     pub id: Uuid,
@@ -88,8 +130,12 @@ pub struct CronJob {
     pub tenant_id: Uuid,
     pub name: String,
     pub enabled: bool,
+    #[serde(rename = "triggerType")]
+    pub trigger_type: String,
+    #[serde(rename = "triggerConfig")]
+    pub trigger_config: Option<serde_json::Value>,
     #[serde(rename = "cronExpr")]
-    pub cron_expr: String,
+    pub cron_expr: Option<String>,
     pub timezone: String,
     #[serde(rename = "targetType")]
     pub target_type: String,
@@ -97,8 +143,12 @@ pub struct CronJob {
     pub target_config: serde_json::Value,
     #[serde(rename = "dispatchMode")]
     pub dispatch_mode: String,
+    #[serde(rename = "maxAttempts")]
+    pub max_attempts: i32,
+    #[serde(rename = "retryBackoffSeconds")]
+    pub retry_backoff_seconds: i32,
     #[serde(rename = "nextRunAt")]
-    pub next_run_at: DateTime<Utc>,
+    pub next_run_at: Option<DateTime<Utc>>,
     #[serde(rename = "lastRunAt")]
     pub last_run_at: Option<DateTime<Utc>>,
     #[serde(rename = "createdAt")]
@@ -134,6 +184,7 @@ pub struct CronJobRun {
     #[serde(rename = "jobId")]
     pub job_id: Uuid,
     pub status: String,
+    pub attempt: i32,
     #[serde(rename = "scheduledFor")]
     pub scheduled_for: DateTime<Utc>,
     #[serde(rename = "startedAt")]
@@ -149,7 +200,9 @@ pub struct CronJobRun {
 
 /// The `cron.job.due` outbox/RabbitMQ payload shape — `cron-scheduler`'s ticker writes it,
 /// its executor reads it. Kept here (not duplicated in `cron-scheduler`) so the two halves
-/// can't drift apart on field names.
+/// can't drift apart on field names. Carries `max_attempts`/`retry_backoff_seconds`/
+/// `dispatch_mode` alongside the firing itself so the executor can decide whether/how to
+/// schedule a retry on failure without a second DB round-trip to re-fetch the owning job.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronJobDuePayload {
     #[serde(rename = "runId")]
@@ -162,6 +215,13 @@ pub struct CronJobDuePayload {
     pub target_type: String,
     #[serde(rename = "targetConfig")]
     pub target_config: serde_json::Value,
+    pub attempt: i32,
+    #[serde(rename = "maxAttempts")]
+    pub max_attempts: i32,
+    #[serde(rename = "retryBackoffSeconds")]
+    pub retry_backoff_seconds: i32,
+    #[serde(rename = "dispatchMode")]
+    pub dispatch_mode: String,
 }
 
 pub const ROUTING_KEY: &str = "cron.job.due";
@@ -178,4 +238,8 @@ pub struct ClaimedDirectJob {
     pub tenant_id: Uuid,
     pub target_type: String,
     pub target_config: serde_json::Value,
+    pub attempt: i32,
+    pub max_attempts: i32,
+    pub retry_backoff_seconds: i32,
+    pub dispatch_mode: String,
 }

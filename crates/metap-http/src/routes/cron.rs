@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use metap_cron::{DispatchMode, JobUpdate, NewCronJob, TargetType};
+use metap_cron::{DispatchMode, JobUpdate, NewCronJob, OnTransitionTriggerConfig, TargetType, TriggerType};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -27,8 +27,12 @@ fn validation_error(message: &str) -> Response {
 #[derive(Deserialize)]
 struct CreateCronJobBody {
     name: String,
+    #[serde(rename = "triggerType", default = "default_trigger_type")]
+    trigger_type: String,
+    #[serde(rename = "triggerConfig")]
+    trigger_config: Option<Value>,
     #[serde(rename = "cronExpr")]
-    cron_expr: String,
+    cron_expr: Option<String>,
     #[serde(default = "default_timezone")]
     timezone: String,
     #[serde(rename = "targetType")]
@@ -37,8 +41,16 @@ struct CreateCronJobBody {
     target_config: Value,
     #[serde(rename = "dispatchMode", default = "default_dispatch_mode")]
     dispatch_mode: String,
+    #[serde(rename = "maxAttempts", default = "default_max_attempts")]
+    max_attempts: i32,
+    #[serde(rename = "retryBackoffSeconds", default = "default_retry_backoff_seconds")]
+    retry_backoff_seconds: i32,
     #[serde(default = "default_true")]
     enabled: bool,
+}
+
+fn default_trigger_type() -> String {
+    TriggerType::Schedule.as_str().to_string()
 }
 
 fn default_timezone() -> String {
@@ -49,8 +61,59 @@ fn default_dispatch_mode() -> String {
     DispatchMode::Outbox.as_str().to_string()
 }
 
+fn default_max_attempts() -> i32 {
+    1
+}
+
+fn default_retry_backoff_seconds() -> i32 {
+    30
+}
+
 fn default_true() -> bool {
     true
+}
+
+/// Shared by create/update: `triggerType: "schedule"` needs a valid `cronExpr`/`timezone` (the
+/// existing behavior, unchanged); `triggerType: "on_transition"` instead needs `triggerConfig`
+/// to parse as `{entity, action}` with both non-empty — `cronExpr` is meaningless for it and
+/// isn't validated. Returns `Err` with the response to send on the first validation failure.
+fn validate_trigger(
+    trigger_type: &str,
+    trigger_config: Option<&Value>,
+    cron_expr: Option<&str>,
+    timezone: &str,
+) -> Result<(), Box<Response>> {
+    match TriggerType::parse(trigger_type) {
+        Some(TriggerType::Schedule) => {
+            let Some(cron_expr) = cron_expr else {
+                return Err(Box::new(validation_error(
+                    "`cronExpr` is required when `triggerType` is \"schedule\".",
+                )));
+            };
+            metap_cron::validate_schedule(cron_expr, timezone).map_err(|e| Box::new(validation_error(&e.to_string())))
+        }
+        Some(TriggerType::OnTransition) => {
+            let Some(trigger_config) = trigger_config else {
+                return Err(Box::new(validation_error(
+                    "`triggerConfig` ({entity, action}) is required when `triggerType` is \"on_transition\".",
+                )));
+            };
+            let cfg: OnTransitionTriggerConfig = serde_json::from_value(trigger_config.clone()).map_err(|_| {
+                Box::new(validation_error(
+                    "`triggerConfig` must be `{ entity: string, action: string }`.",
+                ))
+            })?;
+            if cfg.entity.trim().is_empty() || cfg.action.trim().is_empty() {
+                return Err(Box::new(validation_error(
+                    "`triggerConfig.entity`/`triggerConfig.action` must not be empty.",
+                )));
+            }
+            Ok(())
+        }
+        None => Err(Box::new(validation_error(
+            "`triggerType` must be one of: schedule, on_transition.",
+        ))),
+    }
 }
 
 async fn create_cron_job(
@@ -68,18 +131,33 @@ async fn create_cron_job(
     if DispatchMode::parse(&body.dispatch_mode).is_none() {
         return validation_error("`dispatchMode` must be one of: outbox, direct.");
     }
-    if let Err(err) = metap_cron::validate_schedule(&body.cron_expr, &body.timezone) {
-        return validation_error(&err.to_string());
+    if body.max_attempts < 1 {
+        return validation_error("`maxAttempts` must be at least 1.");
+    }
+    if body.retry_backoff_seconds < 0 {
+        return validation_error("`retryBackoffSeconds` must be non-negative.");
+    }
+    if let Err(response) = validate_trigger(
+        &body.trigger_type,
+        body.trigger_config.as_ref(),
+        body.cron_expr.as_deref(),
+        &body.timezone,
+    ) {
+        return *response;
     }
 
     let created_by = context.user_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
     let input = NewCronJob {
         name: body.name,
+        trigger_type: body.trigger_type,
+        trigger_config: body.trigger_config,
         cron_expr: body.cron_expr,
         timezone: body.timezone,
         target_type: body.target_type,
         target_config: body.target_config,
         dispatch_mode: body.dispatch_mode,
+        max_attempts: body.max_attempts,
+        retry_backoff_seconds: body.retry_backoff_seconds,
         enabled: body.enabled,
     };
     match metap_cron::create_job(&state.pool, tenant_id, input, created_by).await {
@@ -118,6 +196,10 @@ async fn get_cron_job(
 #[derive(Deserialize, Default)]
 struct UpdateCronJobBody {
     name: Option<String>,
+    #[serde(rename = "triggerType")]
+    trigger_type: Option<String>,
+    #[serde(rename = "triggerConfig")]
+    trigger_config: Option<Value>,
     #[serde(rename = "cronExpr")]
     cron_expr: Option<String>,
     timezone: Option<String>,
@@ -127,6 +209,10 @@ struct UpdateCronJobBody {
     target_config: Option<Value>,
     #[serde(rename = "dispatchMode")]
     dispatch_mode: Option<String>,
+    #[serde(rename = "maxAttempts")]
+    max_attempts: Option<i32>,
+    #[serde(rename = "retryBackoffSeconds")]
+    retry_backoff_seconds: Option<i32>,
     enabled: Option<bool>,
 }
 
@@ -150,28 +236,49 @@ async fn update_cron_job(
             return validation_error("`dispatchMode` must be one of: outbox, direct.");
         }
     }
-    // Validate the *effective* schedule (existing value if the request didn't change it) so
-    // an update can't leave a job with a schedule `metap_cron::next_run_at` can't compute.
-    if body.cron_expr.is_some() || body.timezone.is_some() {
+    if let Some(max_attempts) = body.max_attempts {
+        if max_attempts < 1 {
+            return validation_error("`maxAttempts` must be at least 1.");
+        }
+    }
+    if let Some(retry_backoff_seconds) = body.retry_backoff_seconds {
+        if retry_backoff_seconds < 0 {
+            return validation_error("`retryBackoffSeconds` must be non-negative.");
+        }
+    }
+    // Validate the *effective* trigger (existing value if the request didn't change it) so an
+    // update can't leave a job with a schedule `metap_cron::next_run_at` can't compute, or an
+    // on_transition job with a malformed `triggerConfig`.
+    if body.trigger_type.is_some()
+        || body.trigger_config.is_some()
+        || body.cron_expr.is_some()
+        || body.timezone.is_some()
+    {
         let existing = match metap_cron::get_job(&state.pool, tenant_id, id).await {
             Ok(Some(job)) => job,
             Ok(None) => return not_found(),
             Err(e) => return internal_error_response(e),
         };
-        let cron_expr = body.cron_expr.as_deref().unwrap_or(&existing.cron_expr);
+        let trigger_type = body.trigger_type.as_deref().unwrap_or(&existing.trigger_type);
+        let trigger_config = body.trigger_config.as_ref().or(existing.trigger_config.as_ref());
+        let cron_expr = body.cron_expr.as_deref().or(existing.cron_expr.as_deref());
         let timezone = body.timezone.as_deref().unwrap_or(&existing.timezone);
-        if let Err(err) = metap_cron::validate_schedule(cron_expr, timezone) {
-            return validation_error(&err.to_string());
+        if let Err(response) = validate_trigger(trigger_type, trigger_config, cron_expr, timezone) {
+            return *response;
         }
     }
 
     let update = JobUpdate {
         name: body.name,
+        trigger_type: body.trigger_type,
+        trigger_config: body.trigger_config,
         cron_expr: body.cron_expr,
         timezone: body.timezone,
         target_type: body.target_type,
         target_config: body.target_config,
         dispatch_mode: body.dispatch_mode,
+        max_attempts: body.max_attempts,
+        retry_backoff_seconds: body.retry_backoff_seconds,
         enabled: body.enabled,
     };
     match metap_cron::update_job(&state.pool, tenant_id, id, update).await {

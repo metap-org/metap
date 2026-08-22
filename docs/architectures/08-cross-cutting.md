@@ -14,9 +14,19 @@ Một business write và (các) event nó sinh ra được commit trong cùng m�
 
 Mọi bảng nghiệp vụ đều mang `tenant_id`; mọi lời gọi `QueryPlanner`/`CrudService` đều được scope theo nó (`PermissionService::scoped_tenant`). Không tồn tại đường query xuyên tenant nào trong toàn bộ codebase. `scoped_tenant` nhận vào một `RequestContext` đầy đủ và báo lỗi thay vì âm thầm fallback về một tenant mặc định nếu `tenant_id` từng rỗng — một tenant rỗng tại điểm này chỉ có thể là một bug thật sự ở phía trên (auth extractor luôn suy ra một `tenant_id` thật từ một JWT đã verify trước khi bất kỳ đoạn code query-planning nào chạy), và một giá trị mặc định âm thầm sẽ biến bug đó thành kết quả query sai-nhưng-im-lặng trông giống như xuyên tenant, thay vì một lỗi rõ ràng, ồn ào — xem [09. Architecture Decisions](09-adr.md).
 
+Từ Phase 16 (2026-08-16), `CrudService` không còn mở transaction trực tiếp trên một `PgPool`
+dùng chung — mọi transaction tenant-scoped đi qua `metap-control::Router::begin(tenant_id)`
+(`crates/metap-control`), thứ tự quyết định *bảng nào thực sự lưu row của tenant này*:
+`Schema` (`SET LOCAL search_path`, hiện chỉ chạy `schema_name="public"` trong thực tế — isolation
+thật cần data-plane table-per-entity, chưa xây) hay `DedicatedDb` (một `PgPool` riêng cho
+tenant đó, cache theo `dsn_secret_ref`, DSN được resolve qua `SecretStore`/`VaultStore`). Một
+tenant chưa có row `control.tenants` thì fallback về hành vi tương thích ngược (schema `public`,
+status `Active`). Chi tiết building block ở
+[05. Building Block View](05-building-blocks.md#control-plane-router-multi-tenancy).
+
 ## Permission Enforcement
 
-RBAC (danh sách role được phép) kết hợp với ABAC tùy chọn (điều kiện thuộc tính), được đánh giá phía server, ở ba mức: mức entity (role này có được đụng vào entity này không), mức field (field nào được đọc/ghi), mức record (row cụ thể nào được đọc/ghi, được dịch thành mệnh đề SQL `WHERE`). **Opt-in restriction, không phải default-deny**: chưa có policy nào cho một `(entity, action)` thì ai cũng được phép, tạo policy mới là hành động giới hạn lại — role `admin` luôn bypass. Role được tra mới từ `user_roles` cho mỗi request, không bao giờ cache trên JWT. Sequence diagram đầy đủ (tạo user → đăng nhập → kiểm tra quyền) ở [06. Runtime View](06-runtime.md)'s mục "Tạo user, đăng nhập, và kiểm tra quyền"; building block ở [05. Building Block View](05-building-blocks.md#permission-service).
+RBAC (danh sách role được phép) kết hợp với ABAC tùy chọn (điều kiện thuộc tính), được đánh giá phía server, ở ba mức: mức entity (role này có được đụng vào entity này không, action gồm `read`/`create`/`update`/`delete`/`transition` — sửa field và chuyển workflow state là hai action tách biệt), mức field (field nào được đọc/ghi), mức record (row cụ thể nào được đọc/ghi, được dịch thành mệnh đề SQL `WHERE`). **Deny-by-default cho non-admin, deny-overrides-allow** (đổi từ opt-in-restriction ngày 2026-08-21 — xem [09. Architecture Decisions](09-adr.md)): chưa có policy nào cho một `(entity, action)` thì **không ai được phép**; mỗi policy còn mang một `effect` (`allow`/`deny`) — cần ít nhất một `allow` khớp mới được phép, nhưng chỉ cần một `deny` khớp là bị từ chối ngay bất kể có bao nhiêu `allow` cũng khớp (`metap_permission::evaluate_policies`, seam chung cho cả 4 entry point enforcement). `POST /admin/policies/seed-defaults` bulk-tạo policy allow cho một role mới, tránh việc onboard chậm vì phải tạo policy từng action một. Role `admin` luôn bypass toàn bộ bước này. Một điều kiện record-level có thể tham chiếu sang record khác qua dotted attribute path (1-hop, chỉ cho thao tác trên record đơn — không áp dụng `list()`). Role được tra mới từ `user_roles` cho mỗi request, không bao giờ cache trên JWT. Sequence diagram đầy đủ (tạo user → đăng nhập → kiểm tra quyền) ở [06. Runtime View](06-runtime.md)'s mục "Tạo user, đăng nhập, và kiểm tra quyền"; building block ở [05. Building Block View](05-building-blocks.md#permission-service).
 
 ## Security Principles
 

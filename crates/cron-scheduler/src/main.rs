@@ -1,7 +1,7 @@
 use std::env;
 use std::time::Duration;
 
-use cron_scheduler::{run_executor, run_ticker, ExecutorConfig, TickerConfig};
+use cron_scheduler::{run_executor, run_ticker, run_trigger_listener, ExecutorConfig, TickerConfig};
 use metap_infra::{connect_db, load_config, EventBus, RabbitEventBus};
 
 #[tokio::main]
@@ -55,7 +55,8 @@ async fn main() -> anyhow::Result<()> {
 
     let ticker = run_ticker(&pool, &http, &executor_config, ticker_config, shutdown_signal());
     let executor = run_executor(&bus, &pool, &http, &executor_config, shutdown_signal());
-    let result = tokio::try_join!(ticker, executor);
+    let trigger = run_trigger_listener(&bus, &pool, &http, &executor_config, shutdown_signal());
+    let result = tokio::try_join!(ticker, executor, trigger);
 
     bus.close().await.ok();
     pool.close().await;

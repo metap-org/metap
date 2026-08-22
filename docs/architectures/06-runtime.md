@@ -85,27 +85,45 @@ sequenceDiagram
     Perm-->>ApiRoute: allowed (bypass, không query policies)
   else không phải admin
     Perm->>DB: SELECT policies WHERE tenant_id, entity, action
-    alt không có policy nào khớp (entity, action)
-      Perm-->>ApiRoute: allowed — "opt-in restriction": không có policy = ai cũng được phép
-    else có ít nhất một policy
-      Perm->>Perm: role_gate_passed(policy.roles, context.roles) AND evaluate(condition)
-      Perm-->>ApiRoute: allowed nếu ít nhất một policy pass, ngược lại forbidden
+    Perm->>Perm: evaluate_policies(rows, context) — mọi policy khớp role gate + condition
+    alt có ít nhất một policy effect=deny khớp
+      Perm-->>ApiRoute: forbidden — deny luôn thắng, bất kể có policy allow nào cũng khớp
+    else có ít nhất một policy effect=allow khớp, không có deny nào khớp
+      Perm-->>ApiRoute: allowed
+    else không có policy nào khớp (kể cả khi entity/action chưa có policy nào)
+      Perm-->>ApiRoute: forbidden — deny-by-default cho non-admin
     end
   end
 ```
 
 Ghi chú:
 
-- **Mô hình phân quyền là "opt-in restriction", không phải "default-deny"**: chưa tạo policy
-  nào cho một `(entity, action)` thì ai cũng được phép — tạo policy là hành động *giới hạn* lại,
-  không phải hành động *cấp* quyền. `admin` luôn bypass toàn bộ bước này. Chi tiết ở
+- **Mô hình phân quyền là deny-by-default cho non-admin, với deny-overrides-allow** (đổi từ
+  "opt-in restriction" ngày 2026-08-21, xem [09. Architecture Decisions](09-adr.md)): một
+  `(entity, action)` chưa có policy nào thì **không ai được phép** (trừ `admin`, luôn bypass toàn
+  bộ bước này) — ngược hẳn với hành vi cũ. `POST /admin/policies/seed-defaults` là cách nhanh để
+  bulk-tạo policy allow cho một role mới trên một entity, tránh phải gọi `create_policy` từng
+  action một khi onboard. Mỗi policy còn mang một `effect` (`allow`/`deny`, cột `policies.effect`)
+  — nếu có ít nhất một policy `deny` khớp (role gate + condition) thì bị từ chối ngay, bất kể có
+  bao nhiêu policy `allow` cũng khớp; ngược lại cần ít nhất một `allow` khớp mới được phép. Hàm
+  `metap_permission::evaluate_policies` là nơi duy nhất quyết định thứ tự ưu tiên này — mọi entry
+  point (entity-level `check_action`, field-level `filterReadableFields`/`writableFields`,
+  record-level `can_perform_record_condition`, và bản dịch sang SQL
+  `record_policy_where_clause` cho `list()`) đều đi qua nó. Chi tiết ở
   [08. Cross-cutting Concepts](08-cross-cutting.md#permission-enforcement).
 - Có 3 tầng policy, phân biệt bằng cột `field`/`subject` của bảng `policies` (xem ER diagram ở
   [05. Building Block View](05-building-blocks.md#database-design-er-diagram)): **context-level**
   (`field`/`subject` đều rỗng — gác toàn bộ action trên entity), **field-level** (`field` có giá
   trị, `action` là `"read"` để mask lúc đọc hoặc `"write"` để chặn lúc ghi), **record-level**
   (`subject: "record"` — dịch thành mệnh đề SQL `WHERE` trong `QueryPlanner`, lọc row nào hiện ra
-  trong `list()`).
+  trong `list()`). `action` có 5 giá trị: `read`/`create`/`update`/`delete`/`transition` — sửa
+  field và chuyển workflow state là hai action tách biệt (`transition` != `update`, từ
+  2026-08-21) nên một role có thể sửa field mà không được transition, hoặc ngược lại.
+- Điều kiện của một policy `record`-level có thể tham chiếu sang một record khác qua dotted
+  attribute path (vd `"referredBy.status"`, resolve 1-hop qua field kiểu `Reference`) — chỉ áp
+  dụng cho thao tác trên một record đơn (`get`/`update`/`transition`/`delete`), **không** áp dụng
+  cho `list()` (`metap-query` reject rõ ràng nếu gặp dotted path trong policy dùng cho `list()`,
+  vì SQL path chưa hỗ trợ join). Xem [05. Building Block View](05-building-blocks.md#permission-service).
 - `users` và `user_roles` là hai bảng tách biệt có chủ đích (xem ghi chú ở ER diagram) — một user
   có thể tồn tại (đăng nhập được) mà chưa có role nào, hoặc có nhiều role cùng lúc.
 - **Cách kiểm chứng cả luồng này** — `apps/crm-server/scripts/permission-smoke.sh` chạy qua HTTP

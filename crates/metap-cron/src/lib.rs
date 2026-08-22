@@ -12,10 +12,12 @@ pub mod schedule;
 pub mod store;
 
 pub use model::{
-    ClaimedDirectJob, CronJob, CronJobDuePayload, CronJobRun, DispatchMode, RunStatus, TargetType, ROUTING_KEY,
+    ClaimedDirectJob, CronJob, CronJobDuePayload, CronJobRun, DispatchMode, OnTransitionTriggerConfig, RunStatus,
+    TargetType, TriggerType, ROUTING_KEY,
 };
 pub use schedule::{next_run_at, validate as validate_schedule};
 pub use store::{
-    claim_due_jobs, create_job, delete_job, finish_run, get_job, list_job_runs, list_jobs, start_run, update_job,
-    ClaimResult, JobUpdate, NewCronJob,
+    claim_due_jobs, claim_due_retries, create_job, delete_job, dispatch_on_transition_matches, finish_run,
+    finish_run_with_retry, get_job, list_job_runs, list_jobs, start_run, update_job, ClaimResult, JobUpdate,
+    NewCronJob,
 };

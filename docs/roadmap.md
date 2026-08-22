@@ -1035,6 +1035,47 @@ Findings nhỏ từ cùng đợt review đã tách sang mục tiêu Phase 8 (TS 
 rustfmt gate, JWT `aud`/`iss`, `.gitignore` cho `settings.local.json`) vì không phụ thuộc trigger
 SaaS — làm được ngay, không cần đợi Phase 16 bắt đầu.
 
+## Phase 17: Metadata-driven Workflow Engine
+
+**Trạng thái: Increment 1 đã xong (2026-08-21).** Trigger đi theo yêu cầu trực tiếp của chủ dự án
+("ưu tiên cực cao"), sau khi review thấy `metap-cron` (Phase 13) đã có sẵn ~70% hạ tầng cần thiết
+(claim-safe polling, outbox dispatch, `EventBus::subscribe`). Quyết định kiến trúc: tiến hoá
+`metap-cron`/`cron-scheduler` tại chỗ, không tách crate `metap-orchestration` mới — chi tiết đầy
+đủ + trade-off so sánh ở `docs/features/02-workflow-engine.md` và
+[09. Architecture Decisions](architectures/09-adr.md).
+
+**Increment 1 — trigger "on state transition"**: `cron_jobs` giờ có `triggerType`
+(`schedule`/`on_transition`) + `triggerConfig` (`{entity, action}`), cùng bảng, cùng
+`targetType`/`targetConfig`/`dispatchMode` như job lịch cũ. `cron-scheduler` thêm một consumer
+mới (`trigger.rs`) subscribe `#.workflow.transitioned` — khi một transition thật khớp
+`(tenant, entity, action)` của một job `on_transition` đang enable, job đó tự dispatch qua đúng
+cơ chế outbox/direct đã có, không cần polling. Kèm retry-with-backoff
+(`maxAttempts`/`retryBackoffSeconds`, backoff nhân đôi mỗi lần thất bại, mặc định 1 lần thử = giữ
+nguyên hành vi cũ) cho mọi job (cả `schedule` lẫn `on_transition`) — đóng gap đã ghi từ Phase 5
+("chỉ ghi `status: failed` rồi bỏ đó").
+
+**Đổi kèm ngoài scope gốc, bắt buộc để trigger hoạt động đúng multi-tenant**:
+`metap_workflow::emit_transitioned` giờ nhận thêm `tenant_id`, ghi vào payload outbox — trước đó
+payload `<entity>.workflow.transitioned` không mang tenant, nên không consumer nào subscribe được
+event đó mà biết chắc nó thuộc tenant nào.
+
+**Verify sống qua HTTP + RabbitMQ + Postgres thật** (không phải suy đoán): tạo record C (draft) +
+job `on_transition` khi `crm.customers` bị `block` → target `workflow_transition` activate C; tạo
+record B, activate B (không khớp trigger, không dispatch gì) rồi block B (khớp trigger) → log
+`cron-scheduler` ghi "cron job triggered on transition" rồi "cron job executed" → record C
+`draft` → `active` thành công, `cron_job_runs` ghi `status: "success"`. Cộng 6 e2e test mới
+(`crates/metap-cron/tests/cron_store_postgres.rs`): match đúng entity/action, không match sai
+action, không rò cross-tenant, direct-mode job trả về đúng, retry-with-backoff lên lịch đúng +
+`claim_due_retries` chỉ claim khi tới hạn, hết `maxAttempts` thì không retry nữa.
+
+Migration: `crates/migrations/0015_cron_jobs_trigger_and_retry.sql`.
+
+Còn lại — Increment 2 (chuỗi activity tuần tự, bảng `workflow_runs` mới) và Increment 3
+(`wait_event`, durable pause) — vẫn ở trạng thái approved, chưa code, chờ Increment 1 chạy thật
+lộ ra nhu cầu cụ thể trước khi thiết kế tiếp (trigger-based, không suy đoán trước). Admin UI cho
+`triggerType: on_transition` không nằm trong phạm vi Increment 1 (backend track, FE track khác lo
+riêng).
+
 ## Định hướng chưa lên phase (chưa có trigger)
 
 Bảy ý nảy sinh từ thảo luận kiến trúc, hợp lý về sản phẩm nhưng chưa có trigger cụ thể nên chưa

@@ -5,6 +5,9 @@
 | **Entity** | Một kiểu đối tượng nghiệp vụ được khai báo một lần dưới dạng `EntityDefinition` (một module Rust, ví dụ `apps/crm-server/src/entities/customer_entity.rs`) — field, list view, workflow. Không có bảng database riêng; được lưu trong bảng `records` chung. |
 | **`records` table** | Bảng chung duy nhất mà dữ liệu của mọi entity nằm trong đó — các cột tenant/entity/status/code cùng một cột `data jsonb` cho các field do metadata quyết định. |
 | **Tenant** | Một ranh giới cô lập; mọi row nghiệp vụ, mọi query, mọi permission check đều được scope theo `tenant_id`. |
+| **`Router`** | `metap-control::Router` — điểm duy nhất mở transaction tenant-scoped, thay cho `CrudService` nhận thẳng `PgPool`. Quyết định route đi đâu dựa trên `TenantStrategy` tra từ `control.tenants` (qua `RegistryCache`, TTL 30s). |
+| **`TenantStrategy`** | `Schema { schema_name }` (trial, `SET LOCAL search_path`, thực tế luôn ghim `"public"`) hoặc `DedicatedDb { dsn_secret_ref }` (paid, một `PgPool` riêng resolve DSN qua `SecretStore`) — cột `control.tenants.strategy`. |
+| **`SecretStore`** | Trait của `metap-control` để resolve DSN cho tenant `DedicatedDb` — `EnvStore` (đọc biến môi trường) hoặc `VaultStore` (HashiCorp Vault, KV v2, token hoặc AppRole auth kèm auto-renewal). |
 | **Outbox pattern** | Ghi một event vào một bảng DB trong cùng transaction với thay đổi nghiệp vụ, rồi drain nó sang RabbitMQ (qua trait `EventBus`) từ một process riêng biệt (`outbox-publisher`) — tránh mất event khi broker bị down. |
 | **`EventBus`** | Một trait của `metap-infra` mà event được publish thông qua đó (`RabbitEventBus` là implementation duy nhất) — chính là seam cho phép một broker tương lai (Kafka, NATS, ...) được thay thế vào phía sau `outbox-publisher` mà không cần đụng tới các service enqueue event. |
 | **`MetadataCompiler`** | Kiểm tra hợp lệ một `EntityDefinition` tại thời điểm đăng ký (field trùng lặp, tham chiếu treo, workflow sai định dạng) và tính một hash tất định cho hình dạng của nó. |
@@ -14,6 +17,8 @@
 | **ABAC** | Attribute-Based Access Control — quyền cấp bởi một policy còn phụ thuộc thêm vào một điều kiện thuộc tính (`PolicyCondition`), được đánh giá dựa trên request context hoặc bản thân record. |
 | **`PermissionSnapshot`** | Một batch policy của một tenant/entity, tính theo từng lời gọi `CrudService`, được load một lần rồi tái sử dụng — không phải một cache xuyên request. |
 | **`PolicyExplainer`** | Tạo ra một trace chỉ-đọc của mọi policy được xem xét cho một request giả định, phục vụ debug ở phía admin. |
+| **`PolicyEffect`** | `allow` hoặc `deny` — cột `policies.effect`. Deny-overrides-allow: `metap_permission::evaluate_policies` trả `Deny` nếu có ít nhất một policy `deny` khớp, bất kể có bao nhiêu `allow` cũng khớp. |
+| **Cross-record condition** | Một điều kiện policy record-level tham chiếu sang một record khác qua dotted attribute path (vd `"referredBy.status"`), resolve 1-hop qua field kiểu `Reference`. Chỉ áp dụng cho thao tác trên một record đơn (`get`/`update`/`transition`/`delete`), không áp dụng `list()`. |
 | **Keyset pagination** | Phân trang theo kiểu "cho tôi các row sau giá trị cursor này," không phải theo offset dạng số — vẫn hiệu quả trên bảng lớn và ổn định khi có insert đồng thời, không như `OFFSET`. |
 | **Cursor** | Một token mờ (opaque), mã hóa base64, mã hóa giá trị field sort + id + hướng sort của row cuối cùng, dùng để lấy trang tiếp theo. |
 | **`searchMode: "fts"`** | Cờ opt-in theo từng field, chuyển cách match filter của field đó từ substring (`ILIKE`) sang full-text search thật của Postgres (`tsvector`/`plainto_tsquery`). |
