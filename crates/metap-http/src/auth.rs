@@ -4,7 +4,10 @@
 //! `role-assignment-service.ts`'s read path, Migration Order step 9) rather than
 //! duplicating the query here — roles are looked up fresh from `user_roles` on every
 //! request, never cached on the token, since the JWT is a bare identity assertion
-//! (`docs/roadmap.md` Phase 3).
+//! (`docs/roadmap.md` Phase 3). `AUTH_CONTEXT_ENTITY` lookup (`context_attributes`, below)
+//! delegates to `metap_peripherals::fetch_context_attributes` for the same reason — this crate
+//! must not run `sqlx` queries directly (CLAUDE.md's route/handler boundary rule; a first
+//! version of this file did, fixed in code review 2026-08-22).
 
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
@@ -12,43 +15,12 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use jsonwebtoken::{decode, Algorithm, Validation};
-use metap_peripherals::{get_roles_for_user, JWT_AUDIENCE, JWT_ISSUER};
+use metap_peripherals::{fetch_context_attributes, get_roles_for_user, JWT_AUDIENCE, JWT_ISSUER};
 use metap_permission::RequestContext;
 use serde::{Deserialize, Serialize};
-use sqlx::{PgExecutor, Row};
 use uuid::Uuid;
 
 use crate::state::AppState;
-
-/// The read side of `AUTH_CONTEXT_ENTITY` (`docs/features/03-organization-identity.md`) —
-/// looks up the caller's own record on the configured entity by a `userId` field, generic over
-/// entity shape (this never becomes aware of what `entity_name` actually is, matching the
-/// "no `metap-*` crate knows business entities" boundary — `metap-http` only ever sees a
-/// configured *name*, same as `metap-crud`'s reference-integrity guard does for `Reference`
-/// fields). Not a `CrudService::get` call — that would run the *target's own* permission check
-/// against the very context being built, which is circular; this is a raw, unauthenticated read
-/// of the caller's own identity data, same trust level as `get_roles_for_user`.
-async fn fetch_context_attributes<'e, E: PgExecutor<'e>>(
-    executor: E,
-    tenant_id: Uuid,
-    entity_name: &str,
-    user_id: Uuid,
-) -> anyhow::Result<Option<serde_json::Map<String, serde_json::Value>>> {
-    let row = sqlx::query(
-        "SELECT data FROM records \
-         WHERE tenant_id = $1 AND entity = $2 AND deleted = false AND data ->> 'userId' = $3 LIMIT 1",
-    )
-    .bind(tenant_id)
-    .bind(entity_name)
-    .bind(user_id.to_string())
-    .fetch_optional(executor)
-    .await?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let data: serde_json::Value = row.try_get("data")?;
-    Ok(data.as_object().cloned())
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {

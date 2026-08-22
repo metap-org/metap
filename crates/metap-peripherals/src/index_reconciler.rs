@@ -30,33 +30,73 @@ fn quote_identifier(value: &str) -> String {
 }
 
 pub async fn reconcile(pool: &PgPool, entities: &[EntitySummary]) {
-    if let Err(err) = reconcile_inner(pool, entities).await {
-        tracing::warn!(error = %format!("{err:#}"), "index reconcile skipped, could not reach the database");
+    reconcile_inner(pool, entities).await;
+}
+
+/// One field's index failing to build (e.g. `pg_trgm` not installed yet because a deployment
+/// forgot to run `pnpm db:migrate` before restarting — found in code review, 2026-08-22) must
+/// not abort reconciliation for every other entity/field that comes after it in the loop: the
+/// original per-field `.await?` propagated the very first error straight out of the whole
+/// function, silently skipping reconciliation for everything else that boot. Each `ensure_*`
+/// call is now caught and logged individually right here instead, so one bad field costs one
+/// missing index, not the whole reconcile pass.
+async fn log_if_failed(result: anyhow::Result<()>, entity_name: &str, field_name: &str, kind: &str) {
+    if let Err(err) = result {
+        tracing::warn!(
+            entity = entity_name,
+            field = field_name,
+            kind,
+            error = %format!("{err:#}"),
+            "index reconcile failed for this field — continuing with the rest"
+        );
     }
 }
 
-async fn reconcile_inner(pool: &PgPool, entities: &[EntitySummary]) -> anyhow::Result<()> {
+async fn reconcile_inner(pool: &PgPool, entities: &[EntitySummary]) {
     for entity in entities {
         for field in &entity.fields {
             if field.indexed.unwrap_or(false) {
-                ensure_index(pool, &entity.name, &field.name, false).await?;
+                log_if_failed(
+                    ensure_index(pool, &entity.name, &field.name, false).await,
+                    &entity.name,
+                    &field.name,
+                    "indexed",
+                )
+                .await;
             }
             if field.unique.unwrap_or(false) {
-                ensure_index(pool, &entity.name, &field.name, true).await?;
+                log_if_failed(
+                    ensure_index(pool, &entity.name, &field.name, true).await,
+                    &entity.name,
+                    &field.name,
+                    "unique",
+                )
+                .await;
             }
             if field.search_mode.as_deref() == Some("fts") {
-                ensure_gin_index(pool, &entity.name, &field.name).await?;
+                log_if_failed(
+                    ensure_gin_index(pool, &entity.name, &field.name).await,
+                    &entity.name,
+                    &field.name,
+                    "fts",
+                )
+                .await;
             }
             // "substring" is the default `search_mode` when `searchable: true` (see
             // `EntityField::search_mode`'s doc comment) — matches `query_planner.rs`'s
             // `is_substring_search = searchable && !is_fts`, the same "fts is the only other
             // option" branching.
             if field.searchable.unwrap_or(false) && field.search_mode.as_deref() != Some("fts") {
-                ensure_trgm_index(pool, &entity.name, &field.name).await?;
+                log_if_failed(
+                    ensure_trgm_index(pool, &entity.name, &field.name).await,
+                    &entity.name,
+                    &field.name,
+                    "trgm",
+                )
+                .await;
             }
         }
     }
-    Ok(())
 }
 
 async fn index_exists(pool: &PgPool, index_name: &str) -> anyhow::Result<bool> {

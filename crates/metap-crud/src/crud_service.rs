@@ -16,7 +16,8 @@ use metap_control::{Router, RouterError};
 use metap_metadata::{EntityDefinition, EntityField, FieldKind, MetadataRegistry};
 use metap_permission::{EntityAction, PermissionDecision, PermissionService, PermissionSnapshot, RequestContext};
 use metap_query::{
-    apply_params, encode_cursor, plan_list, Cursor, InvalidCursorError, ListInput, SortDir, UnknownListViewError,
+    apply_params, encode_cursor, plan_list, CrossRecordConditionInListError, Cursor, InvalidCursorError, ListInput,
+    SortDir, UnknownListViewError,
 };
 use metap_workflow::{
     emit_created, emit_deleted, emit_transitioned, emit_updated, find_transition, get_initial_status, record_event,
@@ -131,23 +132,30 @@ impl CrudService {
     /// `refDisplayField`), and its result — `RecordDto.related_display` — is exactly what gets
     /// serialized back. Solves the same problem a client fetching one relation's display value
     /// per row (N HTTP round trips for an N-row page) would otherwise hit: one batched
-    /// `WHERE id = ANY($1)` query per such field for the whole page, not per row.
+    /// `WHERE id = ANY($1)` query per such field for the whole page, not per row. Shares
+    /// `list()`'s own transaction (`tx`) rather than opening a second one — `list()`'s
+    /// `tx.commit()` now happens after this returns, not before.
     ///
     /// Zero extra cost for the overwhelmingly common case (no `Reference` field declares
     /// `refDisplayField`, or none of this page's rows have a value for one) — matches every
     /// other "pay for what you use" mechanism in this file. Runs after field-level read masking
     /// (`mask_record_for_read`) so a field the caller isn't allowed to see at all can't get a
-    /// display value either, and skips a field entirely if the caller can't read its target
-    /// entity at all (`can_read_entity`, the same coarse gate `list`/`get` already apply to the
-    /// entity being listed) — a display convenience must not become a way to read data otherwise
-    /// denied. Does not evaluate record-level policy conditions on the related records (that
-    /// would need exactly the JOIN support `metap_query::condition_to_sql`'s doc comment says
-    /// isn't built) — an entity-level "can read at all" check, not a per-row one.
+    /// display value either, skips a field entirely if the caller can't read its target entity
+    /// at all (`can_read_entity`), and — found in code review, 2026-08-22, since this used to
+    /// stop at that coarse entity-level check — evaluates each related record's own record-level
+    /// read policy (`PermissionSnapshot::can_perform_record_condition`, the same mechanism
+    /// `get()` uses) before including its display value: a display convenience must not leak a
+    /// value the caller would get a `403` for reading directly. Not a SQL-level `JOIN` (that's
+    /// `metap_query::condition_to_sql`'s "not built" gap, Mode 3 in
+    /// `docs/features/05-cross-entity-relations.md`) — the related rows are fetched first, then
+    /// filtered in Rust, same shape `enrich_record_for_actions` already uses for its one-hop
+    /// resolution.
     async fn hydrate_related_display(
         &self,
         entity: &EntityDefinition,
         context: &RequestContext,
         tenant_id: Uuid,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         records: Vec<RecordDto>,
     ) -> anyhow::Result<Vec<RecordDto>> {
         let display_fields: Vec<&EntityField> = entity
@@ -161,7 +169,6 @@ impl CrudService {
 
         // field name -> (related record id -> resolved display value)
         let mut resolved: HashMap<String, HashMap<Uuid, String>> = HashMap::new();
-        let mut tx = self.router.begin(tenant_id.into()).await?;
         for field in &display_fields {
             let ref_entity = field
                 .ref_entity
@@ -189,10 +196,29 @@ impl CrudService {
                 continue;
             }
 
-            let values = fetch_display_values_batch(&mut *tx, &ids, tenant_id, ref_entity, display_field).await?;
+            let related = fetch_related_records_batch(&mut **tx, &ids, tenant_id, ref_entity).await?;
+            if related.is_empty() {
+                continue;
+            }
+
+            // Same record-level enforcement `get()` applies to a single related record
+            // (`enrich_record_for_actions` + `can_perform_record_condition`), just evaluated
+            // per row here instead of per relation-hop — a row this caller couldn't read
+            // directly must not surface its display value through this entity's list either.
+            let related_snapshot = self.permissions.load_snapshot(tenant_id, ref_entity).await?;
+            let mut values: HashMap<Uuid, String> = HashMap::new();
+            for (id, related_data) in related {
+                let record_decision =
+                    related_snapshot.can_perform_record_condition(context, &related_data, EntityAction::Read);
+                if !record_decision.allowed {
+                    continue;
+                }
+                if let Some(value) = related_data.get(display_field).and_then(Value::as_str) {
+                    values.insert(id, value.to_string());
+                }
+            }
             resolved.insert(field.name.clone(), values);
         }
-        tx.commit().await?;
 
         if resolved.is_empty() {
             return Ok(records);
@@ -271,6 +297,17 @@ impl CrudService {
                 if e.downcast_ref::<UnknownListViewError>().is_some() {
                     return Ok(ServiceResult::err_with_message(400, "unknown_list_view", e.to_string()));
                 }
+                // Deterministic/permanent (an entity read-policy misconfiguration, not
+                // something this specific request can fix) — still a `5xx`, but with its own
+                // `code` and message rather than falling through to a generic, indistinguishable
+                // `internal_error` (found in code review, 2026-08-22).
+                if e.downcast_ref::<CrossRecordConditionInListError>().is_some() {
+                    return Ok(ServiceResult::err_with_message(
+                        500,
+                        "unsupported_policy_condition",
+                        e.to_string(),
+                    ));
+                }
                 return Err(e);
             }
         };
@@ -292,7 +329,6 @@ impl CrudService {
         };
         let query = apply_params(sqlx::query(&sql), &planned.params);
         let rows = query.fetch_all(&mut *tx).await?;
-        tx.commit().await?;
 
         let has_more = rows.len() as i64 > planned.limit;
         let page_rows: Vec<_> = if has_more {
@@ -323,7 +359,10 @@ impl CrudService {
             .into_iter()
             .map(|dto| mask_record_for_read(&entity, context, &snapshot, dto))
             .collect();
-        let data = self.hydrate_related_display(&entity, context, tenant_id, data).await?;
+        let data = self
+            .hydrate_related_display(&entity, context, tenant_id, &mut tx, data)
+            .await?;
+        tx.commit().await?;
 
         Ok(ServiceResult::ok_with_page(
             data,
@@ -842,34 +881,26 @@ impl CrudService {
         // silent orphan reference — no error, no cascade, nothing. Every `Reference` field
         // across the registry that targets this entity is Restrict-by-default (no per-field
         // override yet); checked inside the same transaction as the delete itself, right
-        // before it, so this stays consistent with whatever the delete itself observes.
+        // before it, so this stays consistent with whatever the delete itself observes. One
+        // combined query for every referencing `(entity, field)` pair, not one query per pair
+        // (found in code review, 2026-08-22 — an entity referenced by K fields used to cost K
+        // sequential round trips on every delete).
         let metadata = self.metadata.load();
-        for (ref_entity, ref_field) in referencing_fields(&metadata, &entity.name) {
-            let referenced: Option<i32> = sqlx::query_scalar(
-                "SELECT 1 FROM records \
-                 WHERE tenant_id = $1 AND entity = $2 AND deleted = false AND data ->> $3 = $4 LIMIT 1",
-            )
-            .bind(tenant_id)
-            .bind(&ref_entity)
-            .bind(&ref_field)
-            .bind(id.to_string())
-            .fetch_optional(&mut *tx)
-            .await?;
-            if referenced.is_some() {
-                tx.rollback().await.ok();
-                tracing::warn!(
-                    entity = entity.name,
-                    record_id = %id,
-                    referencing_entity = ref_entity,
-                    referencing_field = ref_field,
-                    "delete rejected: record is still referenced by another record"
-                );
-                return Ok(ServiceResult::err_with_message(
-                    409,
-                    "record_referenced",
-                    format!("This record is referenced by \"{ref_field}\" on \"{ref_entity}\" and cannot be deleted."),
-                ));
-            }
+        let refs = referencing_fields(&metadata, &entity.name);
+        if let Some((ref_entity, ref_field)) = find_referencing_record(&mut tx, tenant_id, id, &refs).await? {
+            tx.rollback().await.ok();
+            tracing::warn!(
+                entity = entity.name,
+                record_id = %id,
+                referencing_entity = ref_entity,
+                referencing_field = ref_field,
+                "delete rejected: record is still referenced by another record"
+            );
+            return Ok(ServiceResult::err_with_message(
+                409,
+                "record_referenced",
+                format!("This record is referenced by \"{ref_field}\" on \"{ref_entity}\" and cannot be deleted."),
+            ));
         }
 
         let row = sqlx::query(&format!(
@@ -993,6 +1024,53 @@ fn referencing_fields(metadata: &MetadataRegistry, target_entity: &str) -> Vec<(
     result
 }
 
+/// One combined query for every `(ref_entity, ref_field)` pair `referencing_fields` returns,
+/// instead of `delete()`'s original one-query-per-pair loop (found in code review, 2026-08-22 —
+/// an entity referenced by K different fields cost K sequential round trips on every delete).
+/// `AND id != $2` excludes the record's own row (self-references, e.g.
+/// `crm.customers.referredBy`, are deliberately included in `refs` — without this exclusion a
+/// record whose self-reference points at itself would match its own row and could never be
+/// deleted, a second bug found in the same review pass).
+///
+/// Returns the first matching `(ref_entity, ref_field)` pair, resolved from the matched row's
+/// own `entity` column back into `refs` — if the same `ref_entity` appears more than once (two
+/// different `Reference` fields on the same entity both pointing at this target), the field
+/// reported is whichever of that entity's pairs appears first in `refs`; a rare edge case, not
+/// worth a second round trip to disambiguate exactly which field actually matched.
+async fn find_referencing_record(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tenant_id: Uuid,
+    id: Uuid,
+    refs: &[(String, String)],
+) -> anyhow::Result<Option<(String, String)>> {
+    if refs.is_empty() {
+        return Ok(None);
+    }
+
+    let mut sql =
+        String::from("SELECT entity FROM records WHERE tenant_id = $1 AND deleted = false AND id != $2 AND (");
+    let mut clauses = Vec::with_capacity(refs.len());
+    let mut param_idx = 3;
+    for _ in refs {
+        clauses.push(format!(
+            "(entity = ${} AND data ->> ${} = ${})",
+            param_idx,
+            param_idx + 1,
+            param_idx + 2
+        ));
+        param_idx += 3;
+    }
+    sql.push_str(&clauses.join(" OR "));
+    sql.push_str(") LIMIT 1");
+
+    let mut query = sqlx::query_scalar::<_, String>(&sql).bind(tenant_id).bind(id);
+    for (ref_entity, ref_field) in refs {
+        query = query.bind(ref_entity).bind(ref_field).bind(id.to_string());
+    }
+    let matched_entity: Option<String> = query.fetch_optional(&mut **tx).await?;
+    Ok(matched_entity.and_then(|matched| refs.iter().find(|(e, _)| *e == matched).cloned()))
+}
+
 async fn fetch_existing<'e, E: PgExecutor<'e>>(
     executor: E,
     id: Uuid,
@@ -1038,16 +1116,17 @@ async fn fetch_related_data<'e, E: PgExecutor<'e>>(
 
 /// Batched counterpart to `fetch_related_data`, for `CrudService::hydrate_related_display` —
 /// one query for every id a whole list page needs from a given related entity, instead of one
-/// query per row. Only ever reads `display_field`'s value, not the whole related record: the
-/// caller only wants a display string, and this result does leave the server (unlike
-/// `fetch_related_data`'s), so it deliberately fetches nothing beyond what's needed.
-async fn fetch_display_values_batch<'e, E: PgExecutor<'e>>(
+/// query per row. Returns each related record's *whole* `data` (not just the display field, the
+/// original, narrower version of this function did) — `hydrate_related_display` needs to run
+/// `can_perform_record_condition` per row before deciding whether the display value is even
+/// allowed to leave the server, and a record-level condition can reference any field, not just
+/// the one being displayed.
+async fn fetch_related_records_batch<'e, E: PgExecutor<'e>>(
     executor: E,
     ids: &[Uuid],
     tenant_id: Uuid,
     entity_name: &str,
-    display_field: &str,
-) -> anyhow::Result<HashMap<Uuid, String>> {
+) -> anyhow::Result<HashMap<Uuid, JsonObject>> {
     let rows = sqlx::query(
         "SELECT id, data FROM records WHERE id = ANY($1) AND tenant_id = $2 AND entity = $3 AND deleted = false",
     )
@@ -1060,8 +1139,8 @@ async fn fetch_display_values_batch<'e, E: PgExecutor<'e>>(
     for row in rows {
         let id: Uuid = row.try_get("id")?;
         let data: Value = row.try_get("data")?;
-        if let Some(value) = data.get(display_field).and_then(Value::as_str) {
-            result.insert(id, value.to_string());
+        if let Some(obj) = data.as_object() {
+            result.insert(id, obj.clone());
         }
     }
     Ok(result)

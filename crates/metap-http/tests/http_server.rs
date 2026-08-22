@@ -768,6 +768,202 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
         .ok();
 }
 
+/// Regression test for a real gap found in code review (2026-08-22): the *only* invalidation
+/// path exercised above is an admin remembering to call
+/// `POST /admin/users/{userId}/context/invalidate` after editing the underlying record — an
+/// easy step to forget. Editing the same `AUTH_CONTEXT_ENTITY` record through the ordinary
+/// `PATCH /api/:entity/:id` path must invalidate the cache automatically, no separate call
+/// needed. Reuses the same `test.profiles`/`test.tasks`/org-scoped-policy shape as the test
+/// above, but changes `deptId` via a real `PATCH` instead of raw SQL, and never calls the
+/// explicit invalidate endpoint at all.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn updating_the_auth_context_entity_record_via_patch_invalidates_the_cache_automatically() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let admin_user_id = Uuid::new_v4();
+    let employee_user_id = Uuid::new_v4();
+
+    sqlx::query("INSERT INTO user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')")
+        .bind(tenant_id)
+        .bind(admin_user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'employee')")
+        .bind(tenant_id)
+        .bind(employee_user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let keydir = tempdir();
+    let (private_pem, public_pem) = openssl_genrsa(keydir.path());
+    let admin_token = mint_token(&private_pem, tenant_id, admin_user_id);
+    let employee_token = mint_token(&private_pem, tenant_id, employee_user_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry
+        .register(plain_string_entity("test.profiles", &["userId", "deptId"]))
+        .unwrap();
+    registry
+        .register(plain_string_entity("test.tasks", &["deptId", "title"]))
+        .unwrap();
+    let registry = Arc::new(registry);
+    let permissions = PermissionService::new(Box::new(metap_control::PostgresPolicyStore::new(test_router(
+        pool.clone(),
+    ))));
+    let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
+    let mut state = AppState::new(
+        pool.clone(),
+        registry.clone(),
+        Arc::new(ArcSwap::new(registry)),
+        Arc::new(permissions),
+        decoding_key,
+        private_pem.clone(),
+        test_router(pool.clone()),
+    );
+    state.auth_context_entity = Some(Arc::from("test.profiles"));
+    // Long TTL, same reasoning as the test above: proves invalidation is automatic, not that
+    // it happened to occur right as a short TTL also expired.
+    state.context_attributes_cache =
+        metap_http::cache::ContextAttributesCache::new(std::time::Duration::from_secs(3600));
+    let router = build_router(state, &[], Router::new());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = reqwest::Client::new();
+
+    // employee's own "profile" record, created through the API (not raw SQL) so its id/version
+    // are on hand for the PATCH below.
+    let profile: serde_json::Value = client
+        .post(format!("{base}/api/test.profiles"))
+        .bearer_auth(&admin_token)
+        .json(&json!({ "data": { "userId": employee_user_id.to_string(), "deptId": "eng" } }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let profile_id = profile["data"]["id"].as_str().unwrap().to_string();
+    let profile_version = profile["data"]["version"].as_i64().unwrap();
+
+    let eng_task: serde_json::Value = client
+        .post(format!("{base}/api/test.tasks"))
+        .bearer_auth(&admin_token)
+        .json(&json!({ "data": { "deptId": "eng", "title": "Eng task" } }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let eng_task_id = eng_task["data"]["id"].as_str().unwrap().to_string();
+
+    let sales_task: serde_json::Value = client
+        .post(format!("{base}/api/test.tasks"))
+        .bearer_auth(&admin_token)
+        .json(&json!({ "data": { "deptId": "sales", "title": "Sales task" } }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let sales_task_id = sales_task["data"]["id"].as_str().unwrap().to_string();
+
+    client
+        .post(format!("{base}/admin/policies"))
+        .bearer_auth(&admin_token)
+        .json(&json!({ "entity": "test.tasks", "action": "read", "roles": ["employee"], "subject": "context" }))
+        .send()
+        .await
+        .unwrap();
+    client
+        .post(format!("{base}/admin/policies"))
+        .bearer_auth(&admin_token)
+        .json(&json!({
+            "entity": "test.tasks",
+            "action": "read",
+            "subject": "record",
+            "condition": { "attribute": "deptId", "op": "eq", "value": { "fromContext": "deptId" } }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // employee (deptId=eng) can reach the eng task, primes the cache.
+    let res = client
+        .get(format!("{base}/api/test.tasks/{eng_task_id}"))
+        .bearer_auth(&employee_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+
+    // an ordinary PATCH to the profile record — not raw SQL, not the explicit invalidate
+    // endpoint — moves the employee to "sales".
+    let patch_res = client
+        .patch(format!("{base}/api/test.profiles/{profile_id}"))
+        .bearer_auth(&admin_token)
+        .json(&json!({ "version": profile_version, "data": { "deptId": "sales" } }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(patch_res.status(), 200);
+
+    // the employee's *very next* request already sees the new department — no explicit
+    // invalidate call, no waiting on the TTL.
+    let res = client
+        .get(format!("{base}/api/test.tasks/{eng_task_id}"))
+        .bearer_auth(&employee_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        res.status(),
+        403,
+        "PATCH to the profile record should have auto-invalidated the cache (deptId=sales now)"
+    );
+    let res = client
+        .get(format!("{base}/api/test.tasks/{sales_task_id}"))
+        .bearer_auth(&employee_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200, "employee should now reach the sales task instead");
+
+    sqlx::query("DELETE FROM outbox_events WHERE aggregate_type IN ('test.tasks', 'test.profiles')")
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM policies WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+}
+
 fn tempdir() -> TempDir {
     TempDir::new()
 }

@@ -21,6 +21,23 @@ enum ColType {
     Timestamptz,
 }
 
+/// A record-level policy's condition uses a dotted cross-record attribute path (e.g.
+/// `"project.ownerId"`) that `list()` can't resolve (see `field_expression`'s doc comment).
+/// Deterministic and permanent for as long as the policy stays configured this way — every
+/// `list()` call against the entity/action it applies to fails identically, not a transient
+/// error — so `CrudService::list()` downcasts for this specifically (found in code review,
+/// 2026-08-22: it used to fall through to a generic, indistinguishable-from-any-other-bug
+/// `500`), same pattern as `InvalidCursorError`/`UnknownListViewError`.
+#[derive(Debug)]
+pub struct CrossRecordConditionInListError(pub String);
+
+impl std::fmt::Display for CrossRecordConditionInListError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for CrossRecordConditionInListError {}
+
 /// A dotted attribute path (`"project.ownerId"`) names a cross-record condition —
 /// `metap-permission`'s `required_relation_fields`/`CrudService`'s enrichment resolve those by
 /// fetching the related record and merging it onto an already-fetched subject, which only
@@ -34,11 +51,12 @@ enum ColType {
 /// (see the top doc comment).
 fn field_expression(field_name: &str, params: &mut ParamBuilder) -> anyhow::Result<(String, ColType)> {
     if field_name.contains('.') {
-        anyhow::bail!(
+        return Err(CrossRecordConditionInListError(format!(
             "policy condition attribute {field_name:?} is a cross-record path, not supported in \
              list() queries — cross-record conditions only apply to single-record operations \
              (get/update/delete/transition)"
-        );
+        ))
+        .into());
     }
     Ok(match field_name {
         "createdBy" => ("created_by".to_string(), ColType::Uuid),
@@ -372,6 +390,13 @@ mod tests {
         };
         let err = condition_to_sql(&cond, &ctx, &mut params).unwrap_err();
         assert!(err.to_string().contains("cross-record"), "unexpected error: {err}");
+        // Typed, not just a message match — `CrudService::list()` downcasts on this exact type
+        // (found missing in code review, 2026-08-22) to give it its own error code instead of
+        // falling through to a generic, indistinguishable `internal_error`.
+        assert!(
+            err.downcast_ref::<CrossRecordConditionInListError>().is_some(),
+            "expected a CrossRecordConditionInListError, got: {err:?}"
+        );
     }
 
     #[test]

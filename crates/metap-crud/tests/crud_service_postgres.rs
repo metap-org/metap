@@ -176,6 +176,61 @@ fn child_entity() -> EntityDefinition {
     }
 }
 
+/// A *second*, distinct entity referencing `test.parents` — for testing that
+/// `find_referencing_record`'s combined single-query check (`docs/roadmap.md`, code review
+/// 2026-08-22) catches a reference through *either* `test.children` or this entity, not just
+/// whichever one happens to be first in `referencing_fields`'s result.
+fn grandchild_entity() -> EntityDefinition {
+    EntityDefinition {
+        name: "test.grandchildren".to_string(),
+        label: "Grandchild".to_string(),
+        table_name: "records".to_string(),
+        fields: vec![EntityField {
+            name: "grandparentId".to_string(),
+            label: "Grandparent".to_string(),
+            kind: FieldKind::Reference,
+            required: None,
+            indexed: None,
+            unique: None,
+            enum_values: None,
+            ref_entity: Some("test.parents".to_string()),
+            ref_display_field: None,
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+        }],
+        list_views: vec![],
+        workflow: None,
+    }
+}
+
+/// Self-referencing entity (like `crm.customers.referredBy`) for the reference-integrity
+/// guard's self-reference regression test — a record whose own `Reference` field points at
+/// itself must not be blocked from deleting itself.
+fn self_ref_entity() -> EntityDefinition {
+    EntityDefinition {
+        name: "test.nodes".to_string(),
+        label: "Node".to_string(),
+        table_name: "records".to_string(),
+        fields: vec![EntityField {
+            name: "parentNodeId".to_string(),
+            label: "Parent Node".to_string(),
+            kind: FieldKind::Reference,
+            required: None,
+            indexed: None,
+            unique: None,
+            enum_values: None,
+            ref_entity: Some("test.nodes".to_string()),
+            ref_display_field: None,
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+        }],
+        list_views: vec![],
+        workflow: None,
+    }
+}
+
 async fn ensure_sku_unique_index(pool: &PgPool) {
     sqlx::query(
         "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uniq_records_test_unique_orders_sku \
@@ -785,6 +840,108 @@ async fn list_hydrates_related_display_for_reference_fields_with_display_field()
             }
             Some(other) => panic!("unexpected parentId {other}"),
         }
+    }
+
+    cleanup(&pool, tenant_id).await;
+}
+
+/// Regression test for a real bug found in code review (2026-08-22): the reference-integrity
+/// guard's `referencing_fields` deliberately includes self-referencing fields (like
+/// `crm.customers.referredBy`), but the guard's SELECT didn't exclude the record's own row —
+/// so a record whose self-reference pointed at itself matched itself and could never be
+/// deleted.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn delete_succeeds_for_a_record_whose_self_reference_points_at_itself() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(self_ref_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
+
+    let node = match crud.create("test.nodes", &JsonObject::new(), &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    let mut self_ref_payload = JsonObject::new();
+    self_ref_payload.insert("parentNodeId".to_string(), json!(node.id));
+    let node = match crud
+        .update("test.nodes", node.id, node.version, &self_ref_payload, &ctx)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected update to succeed, got {other:?}"),
+    };
+
+    match crud.delete("test.nodes", node.id, node.version, &ctx).await.unwrap() {
+        ServiceResult::Ok { .. } => {}
+        other => panic!("expected delete to succeed for a record whose self-reference points at itself, got {other:?}"),
+    }
+
+    cleanup(&pool, tenant_id).await;
+}
+
+/// Regression test for the reference-integrity guard's combined single-query check (found
+/// missing test coverage in code review, 2026-08-22, alongside the N-sequential-queries fix
+/// itself): a parent referenced by *two different* entities must still be blocked from
+/// deletion no matter which one holds the live reference.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn delete_is_rejected_when_referenced_by_any_of_multiple_referencing_entities() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(parent_entity()).unwrap();
+    registry.register(child_entity()).unwrap();
+    registry.register(grandchild_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
+
+    let mut parent_payload = JsonObject::new();
+    parent_payload.insert("name".to_string(), json!("Parent A"));
+    let parent = match crud.create("test.parents", &parent_payload, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    // only the grandchild references the parent — no child does.
+    let mut grandchild_payload = JsonObject::new();
+    grandchild_payload.insert("grandparentId".to_string(), json!(parent.id));
+    crud.create("test.grandchildren", &grandchild_payload, &ctx)
+        .await
+        .unwrap();
+
+    match crud
+        .delete("test.parents", parent.id, parent.version, &ctx)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Err {
+            status, error, message, ..
+        } => {
+            assert_eq!(status, 409);
+            assert_eq!(error, "record_referenced");
+            assert!(
+                message.is_some_and(|m| m.contains("test.grandchildren")),
+                "error message should name the actual referencing entity"
+            );
+        }
+        other => panic!("expected record_referenced, got {other:?}"),
     }
 
     cleanup(&pool, tenant_id).await;

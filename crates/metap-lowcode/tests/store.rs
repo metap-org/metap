@@ -701,11 +701,13 @@ async fn list_recent_spans_entities_newest_first_and_respects_limit() {
     .await;
 
     // `limit` bounds the query regardless of how many events already exist in the (global,
-    // not tenant-scoped) audit table.
-    let limited = metap_lowcode::audit::list_recent(&pool, 1).await.expect("list_recent");
+    // entity-wise) audit table.
+    let limited = metap_lowcode::audit::list_recent(&pool, &actor.tenant_id, 1)
+        .await
+        .expect("list_recent");
     assert_eq!(limited.len(), 1);
 
-    let recent = metap_lowcode::audit::list_recent(&pool, 500)
+    let recent = metap_lowcode::audit::list_recent(&pool, &actor.tenant_id, 500)
         .await
         .expect("list_recent");
     let a_published_pos = recent
@@ -730,9 +732,59 @@ async fn list_recent_spans_entities_newest_first_and_respects_limit() {
     );
 
     // entity-scoped listing is unaffected — still only sees its own entity's events.
-    let scoped = metap_lowcode::audit::list_for_entity(&pool, &entity_a)
+    let scoped = metap_lowcode::audit::list_for_entity(&pool, &entity_a, &actor.tenant_id)
         .await
         .expect("list_for_entity");
     assert_eq!(scoped.len(), 2);
     assert!(scoped.iter().all(|e| e.entity_name == entity_a));
+}
+
+/// Regression test for a real cross-tenant information disclosure found in code review
+/// (2026-08-22): `list_for_entity`/`list_recent` used to have no `actor_tenant_id` filter at
+/// all — any tenant admin who knew (or, for `list_recent`, didn't even need to know) an entity
+/// name could see every other tenant's admins' activity on it. Entities themselves stay global
+/// (any tenant can act on any entity, by design) — only *actor*-identity visibility is scoped.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn audit_events_are_scoped_to_the_caller_tenant_not_visible_cross_tenant() {
+    let pool = pool().await;
+    let entity = entity_name("audit_tenant_scope");
+    let tenant_a = Uuid::new_v4().to_string();
+    let tenant_b = Uuid::new_v4().to_string();
+    let actor_a = metap_lowcode::audit::AuditActor {
+        user_id: Some(Uuid::new_v4().to_string()),
+        tenant_id: tenant_a.clone(),
+    };
+
+    metap_lowcode::audit::record(
+        &pool,
+        &entity,
+        metap_lowcode::audit::AuditAction::DraftSaved,
+        &actor_a,
+        Default::default(),
+    )
+    .await;
+
+    // tenant A sees its own event...
+    let as_a = metap_lowcode::audit::list_for_entity(&pool, &entity, &tenant_a)
+        .await
+        .expect("list_for_entity");
+    assert_eq!(as_a.len(), 1);
+    let recent_as_a = metap_lowcode::audit::list_recent(&pool, &tenant_a, 500)
+        .await
+        .expect("list_recent");
+    assert!(recent_as_a.iter().any(|e| e.entity_name == entity));
+
+    // ...but tenant B, querying the exact same entity/endpoint, sees nothing from tenant A.
+    let as_b = metap_lowcode::audit::list_for_entity(&pool, &entity, &tenant_b)
+        .await
+        .expect("list_for_entity");
+    assert!(as_b.is_empty(), "tenant B must not see tenant A's audit events");
+    let recent_as_b = metap_lowcode::audit::list_recent(&pool, &tenant_b, 500)
+        .await
+        .expect("list_recent");
+    assert!(
+        recent_as_b.iter().all(|e| e.entity_name != entity),
+        "tenant B's cross-entity feed must not leak tenant A's activity on this entity"
+    );
 }

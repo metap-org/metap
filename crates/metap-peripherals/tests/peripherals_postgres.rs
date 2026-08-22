@@ -304,3 +304,72 @@ async fn reconcile_creates_a_trigram_index_postgres_actually_selects_for_ilike()
         .await
         .ok();
 }
+
+/// Regression test for a real bug found in code review (2026-08-22): `reconcile_inner`'s
+/// per-field `.await?` used to propagate the *first* index-build failure straight out of the
+/// whole function, silently abandoning reconciliation for every entity/field that came after it
+/// in the loop — e.g. a deployment that forgot to run a migration adding a new index type
+/// (like `pg_trgm`) before restarting would lose indexing for the entire rest of that boot, not
+/// just the one field that genuinely needed the missing migration. Forces a deterministic
+/// failure for one entity's index (a same-named table already occupies that relation name —
+/// Postgres shares one namespace for tables/indexes per schema, so `CREATE INDEX` on that name
+/// fails with "relation already exists") and confirms a *second*, unrelated entity later in the
+/// same `reconcile_indexes` call still gets its index built.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn reconcile_continues_past_one_entitys_index_failure() {
+    let pool = connect().await;
+    let entity_a_name = format!("test.idx{:x}", Uuid::new_v4().as_u128() % 0xFFFFFF);
+    let entity_b_name = format!("test.idx{:x}", Uuid::new_v4().as_u128() % 0xFFFFFF);
+
+    let blocked_index_name = format!("idx_records_{}_sku", entity_a_name.replace('.', "_"));
+    let ok_index_name = format!("idx_records_{}_sku", entity_b_name.replace('.', "_"));
+
+    // Occupy entity A's would-be index name with a table instead, so `CREATE INDEX` for it
+    // fails with a real Postgres error ("relation ... already exists").
+    sqlx::query(&format!("CREATE TABLE {blocked_index_name} (id int)"))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let entity_a = EntitySummary {
+        name: entity_a_name.clone(),
+        label: "Test".to_string(),
+        fields: vec![indexed_field("sku")],
+        list_views: vec![],
+        workflow: None,
+        version: "v1".to_string(),
+    };
+    let entity_b = EntitySummary {
+        name: entity_b_name.clone(),
+        label: "Test".to_string(),
+        fields: vec![indexed_field("sku")],
+        list_views: vec![],
+        workflow: None,
+        version: "v1".to_string(),
+    };
+
+    {
+        let _guard = INDEX_BUILD_LOCK.lock().await;
+        reconcile_indexes(&pool, &[entity_a, entity_b]).await;
+    }
+
+    let ok_exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM pg_indexes WHERE indexname = $1")
+        .bind(&ok_index_name)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(
+        ok_exists.is_some(),
+        "entity B's index must still be built even though entity A's failed"
+    );
+
+    sqlx::query(&format!("DROP TABLE IF EXISTS {blocked_index_name}"))
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query(&format!("DROP INDEX CONCURRENTLY IF EXISTS {ok_index_name}"))
+        .execute(&pool)
+        .await
+        .ok();
+}

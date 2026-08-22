@@ -2150,6 +2150,7 @@ dependencies = [
  "jsonwebtoken",
  "metap-metadata",
  "serde",
+ "serde_json",
  "sqlx",
  "tokio",
  "tracing",

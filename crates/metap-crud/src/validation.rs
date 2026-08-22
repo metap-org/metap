@@ -16,6 +16,7 @@ use std::collections::HashMap;
 
 use metap_metadata::{EntityDefinition, FieldKind};
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::dto::JsonObject;
 
@@ -23,7 +24,16 @@ pub type FieldErrors = HashMap<String, Vec<String>>;
 
 fn kind_matches(kind: FieldKind, value: &Value) -> bool {
     match kind {
-        FieldKind::Id | FieldKind::String | FieldKind::Reference => value.is_string(),
+        FieldKind::Id | FieldKind::String => value.is_string(),
+        // A `Reference` field's value must be a syntactically valid UUID — not just any
+        // string (found in code review, 2026-08-22: the old `is_string()`-only check let a
+        // non-UUID, or a non-canonically-rendered UUID, e.g. uppercase hex, through
+        // unvalidated. `CrudService::delete()`'s reference-integrity guard compares this
+        // value against `id.to_string()` — Rust's `Uuid::to_string()` always renders
+        // lowercase-hyphenated — with plain SQL string equality, so a non-canonical stored
+        // value would silently fail to match a real reference, letting a delete slip through
+        // that should have been rejected).
+        FieldKind::Reference => value.as_str().is_some_and(|s| Uuid::parse_str(s).is_ok()),
         FieldKind::Number | FieldKind::Money => value.is_number(),
         FieldKind::Boolean => value.is_boolean(),
         FieldKind::Date | FieldKind::Datetime => value.is_string(),
@@ -32,12 +42,18 @@ fn kind_matches(kind: FieldKind, value: &Value) -> bool {
     }
 }
 
-/// Validates `data` against `entity.fields` and returns it unchanged on success (this
-/// validator doesn't transform/default values the way Zod's `.default()` can — see the
-/// module doc comment). On failure, returns per-field error messages in the same
-/// `Record<string, string[]>` shape `parsed.error.flatten().fieldErrors` produced.
+/// Validates `data` against `entity.fields`. Returns it unchanged on success for every kind
+/// except `Reference` — this validator otherwise doesn't transform/default values the way
+/// Zod's `.default()` can (see the module doc comment) — where the stored value is
+/// canonicalized to `Uuid::to_string()`'s lowercase-hyphenated form regardless of how the
+/// caller rendered it, so every later exact-string comparison against a `Reference` field
+/// (`CrudService::delete()`'s reference-integrity guard, `hydrate_related_display`'s id
+/// lookups) can rely on a single canonical form having been stored. On failure, returns
+/// per-field error messages in the same `Record<string, string[]>` shape
+/// `parsed.error.flatten().fieldErrors` produced.
 pub fn validate_payload(entity: &EntityDefinition, data: &JsonObject) -> Result<JsonObject, FieldErrors> {
     let mut errors: FieldErrors = FieldErrors::new();
+    let mut result = data.clone();
 
     for field in &entity.fields {
         let value = data.get(&field.name).filter(|v| !v.is_null());
@@ -65,11 +81,18 @@ pub fn validate_payload(entity: &EntityDefinition, data: &JsonObject) -> Result<
                 .entry(field.name.clone())
                 .or_default()
                 .push("invalid_type".to_string());
+            continue;
+        }
+
+        if field.kind == FieldKind::Reference {
+            // `valid` above already confirmed this parses.
+            let canonical = Uuid::parse_str(value.as_str().expect("checked by kind_matches")).unwrap();
+            result.insert(field.name.clone(), Value::String(canonical.to_string()));
         }
     }
 
     if errors.is_empty() {
-        Ok(data.clone())
+        Ok(result)
     } else {
         Err(errors)
     }
@@ -165,5 +188,23 @@ mod tests {
     fn optional_field_absent_is_fine() {
         let e = entity(vec![field("phone", FieldKind::String, false)]);
         assert!(validate_payload(&e, &JsonObject::new()).is_ok());
+    }
+
+    #[test]
+    fn reference_field_with_a_non_uuid_string_is_rejected() {
+        let e = entity(vec![field("parentId", FieldKind::Reference, false)]);
+        let data = obj(&[("parentId", json!("not-a-uuid"))]);
+        let errors = validate_payload(&e, &data).unwrap_err();
+        assert_eq!(errors["parentId"], vec!["invalid_type".to_string()]);
+    }
+
+    #[test]
+    fn reference_field_value_is_canonicalized_to_lowercase() {
+        let e = entity(vec![field("parentId", FieldKind::Reference, false)]);
+        // Same UUID as `Uuid::new_v4().to_string()` would render, but uppercase — a client
+        // using a different UUID library, or hand-crafting a request, could send this.
+        let data = obj(&[("parentId", json!("550E8400-E29B-41D4-A716-446655440000"))]);
+        let result = validate_payload(&e, &data).unwrap();
+        assert_eq!(result["parentId"], json!("550e8400-e29b-41d4-a716-446655440000"));
     }
 }

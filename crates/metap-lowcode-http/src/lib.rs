@@ -344,9 +344,9 @@ async fn list_versions(
 async fn list_audit_events(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    AdminContext(_context): AdminContext,
+    AdminContext(context): AdminContext,
 ) -> Response {
-    match audit::list_for_entity(&state.pool, &name).await {
+    match audit::list_for_entity(&state.pool, &name, &context.tenant_id).await {
         Ok(events) => {
             let data: Vec<_> = events.into_iter().map(audit_event_to_json).collect();
             Json(json!({ "data": data })).into_response()
@@ -377,7 +377,7 @@ const MAX_RECENT_AUDIT_LIMIT: i64 = 200;
 /// (a fixed, non-metadata-driven table).
 async fn list_recent_audit_events(
     State(state): State<AppState>,
-    AdminContext(_context): AdminContext,
+    AdminContext(context): AdminContext,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     let limit = params
@@ -386,7 +386,7 @@ async fn list_recent_audit_events(
         .filter(|&n| n > 0)
         .unwrap_or(DEFAULT_RECENT_AUDIT_LIMIT)
         .min(MAX_RECENT_AUDIT_LIMIT);
-    match audit::list_recent(&state.pool, limit).await {
+    match audit::list_recent(&state.pool, &context.tenant_id, limit).await {
         Ok(events) => {
             let data: Vec<_> = events.into_iter().map(audit_event_to_json).collect();
             Json(json!({ "data": data })).into_response()

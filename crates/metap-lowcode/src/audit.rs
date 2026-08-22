@@ -112,12 +112,25 @@ fn row_to_event(
     }
 }
 
-pub async fn list_for_entity(pool: &PgPool, entity_name: &str) -> anyhow::Result<Vec<AuditEvent>> {
+/// `entity_name` alone used to be the only filter — entities are deliberately GLOBAL (any
+/// tenant's admin can draft/publish/rollback any entity, `docs/low-code-metadata-storage-design.md`),
+/// so that part is correct as-is. But the *actor* who performed an action belongs to a specific
+/// tenant, and `actor_tenant_id` was never filtered — any tenant admin who already knew (or
+/// guessed) an entity name could see every other tenant's admins' activity on it, a real
+/// cross-tenant information disclosure (found in code review, 2026-08-22). `caller_tenant_id`
+/// scopes results to "actions taken by *your* tenant's users" — entity visibility stays global,
+/// only actor-identity visibility is scoped.
+pub async fn list_for_entity(
+    pool: &PgPool,
+    entity_name: &str,
+    caller_tenant_id: &str,
+) -> anyhow::Result<Vec<AuditEvent>> {
     let rows = sqlx::query_as::<_, AuditRow>(
         "SELECT entity_name, action, actor_user_id, actor_tenant_id, version_number, restored_from_version, occurred_at \
-         FROM low_code_metadata_audit_events WHERE entity_name = $1 ORDER BY occurred_at DESC",
+         FROM low_code_metadata_audit_events WHERE entity_name = $1 AND actor_tenant_id = $2 ORDER BY occurred_at DESC",
     )
     .bind(entity_name)
+    .bind(caller_tenant_id)
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().map(row_to_event).collect())
@@ -127,13 +140,17 @@ pub async fn list_for_entity(pool: &PgPool, entity_name: &str) -> anyhow::Result
 /// `docs/roadmap.md`, `docs/low-code-platform-v1.md`): an operator watching the whole low-code
 /// control plane ("who published what, recently, across every entity") without already knowing
 /// which entity to look at. Same table, same append-only/best-effort semantics — just not
-/// filtered by `entity_name`. `limit` is the caller's responsibility to bound (the HTTP handler
+/// filtered by `entity_name`. Scoped to `caller_tenant_id` for the same reason
+/// `list_for_entity` is (see its doc comment) — without it this endpoint would need no prior
+/// knowledge at all to read every tenant's activity, the exact gap that made this the more
+/// severe of the two findings. `limit` is the caller's responsibility to bound (the HTTP handler
 /// clamps it), matching `QueryPlanner`'s "every list has a max limit" convention.
-pub async fn list_recent(pool: &PgPool, limit: i64) -> anyhow::Result<Vec<AuditEvent>> {
+pub async fn list_recent(pool: &PgPool, caller_tenant_id: &str, limit: i64) -> anyhow::Result<Vec<AuditEvent>> {
     let rows = sqlx::query_as::<_, AuditRow>(
         "SELECT entity_name, action, actor_user_id, actor_tenant_id, version_number, restored_from_version, occurred_at \
-         FROM low_code_metadata_audit_events ORDER BY occurred_at DESC LIMIT $1",
+         FROM low_code_metadata_audit_events WHERE actor_tenant_id = $1 ORDER BY occurred_at DESC LIMIT $2",
     )
+    .bind(caller_tenant_id)
     .bind(limit)
     .fetch_all(pool)
     .await?;

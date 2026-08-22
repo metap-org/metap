@@ -143,7 +143,10 @@ async fn update_record(
 ) -> Response {
     let data: metap_crud::JsonObject = body.data.into_iter().collect();
     match state.crud.update(&entity, id, body.version, &data, &context).await {
-        Ok(ServiceResult::Ok { data, .. }) => Json(json!({ "data": data })).into_response(),
+        Ok(ServiceResult::Ok { data, .. }) => {
+            invalidate_context_cache_if_auth_context_entity(&state, &context, &entity, &data.data).await;
+            Json(json!({ "data": data })).into_response()
+        }
         Ok(ServiceResult::Err {
             status,
             error,
@@ -152,6 +155,40 @@ async fn update_record(
         }) => service_error_response(status, &error, message.as_deref(), field_errors),
         Err(e) => internal_error_response(e),
     }
+}
+
+/// Closes a real staleness gap found in code review (2026-08-22): editing a user's
+/// `AUTH_CONTEXT_ENTITY` record (e.g. reassigning `departmentId`) through the ordinary
+/// `PATCH /api/:entity/:id` path never invalidated `context_attributes_cache` — only the
+/// explicit `POST /admin/users/{userId}/context/invalidate` endpoint did, an easy step to forget
+/// since it's a separate call an admin has to remember to make. The record being edited isn't
+/// necessarily the *caller's own* — an admin editing another user's employee record is the
+/// common case — so this reads `userId` off the just-updated record's data, not off `context`,
+/// to invalidate the right cache key. Best-effort: a malformed/missing `userId` just means
+/// nothing to invalidate, not an error; this must never fail the request that triggered it.
+async fn invalidate_context_cache_if_auth_context_entity(
+    state: &AppState,
+    context: &metap_permission::RequestContext,
+    entity: &str,
+    data: &metap_crud::JsonObject,
+) {
+    let Some(auth_context_entity) = &state.auth_context_entity else {
+        return;
+    };
+    if entity != auth_context_entity.as_ref() {
+        return;
+    }
+    let Some(user_id) = data
+        .get("userId")
+        .and_then(Value::as_str)
+        .and_then(|s| Uuid::parse_str(s).ok())
+    else {
+        return;
+    };
+    let Ok(tenant_id) = state.permissions.scoped_tenant(context) else {
+        return;
+    };
+    state.context_attributes_cache.invalidate(tenant_id, user_id).await;
 }
 
 #[derive(Deserialize)]
