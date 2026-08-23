@@ -105,6 +105,18 @@ pub fn resolve_field_storage_tier(field: &EntityField) -> FieldStorageTier {
     }
 }
 
+/// Whether `field` gets a real physical column under table-per-entity, independent of
+/// `resolve_field_storage_tier` (most promoted fields stay in `data jsonb`, just with an
+/// expression index — see `crates/metap-reconciler/src/compile.rs`'s doc comment). Only two
+/// cases force a real column: a `Reference` with `ref_entity` set (a FK constraint has to attach
+/// to a real column, not a JSONB path) or an explicit `storage: Some(FieldStorage::Column)`
+/// override. Single source of truth for both `metap-reconciler::compile` (decides DDL) and
+/// `metap-query` (builds SQL against it) so the two can never disagree about which fields have a
+/// real column.
+pub fn field_has_real_column(field: &EntityField) -> bool {
+    (field.kind == FieldKind::Reference && field.ref_entity.is_some()) || field.storage == Some(FieldStorage::Column)
+}
+
 /// `FieldKind` → SQL type a promoted (`FieldStorageTier::GeneratedColumn`) field would use
 /// (`docs/multi-tenant-platform-design.md` §3.2's mapping table). `Money` maps to
 /// `numeric(18,4)`, never a float type, to avoid rounding error on currency amounts;

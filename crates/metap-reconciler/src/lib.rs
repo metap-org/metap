@@ -21,7 +21,7 @@ mod sqlfmt;
 pub mod status;
 pub mod watchdog;
 
-pub use compile::compile;
+pub use compile::{compile, qualified_table_name_for, table_name_for, ENTITY_SCHEMA};
 pub use diff::{diff, DdlOp};
 pub use introspect::introspect;
 pub use migration::{run_migration, MigrationOp, MigrationOutcome, PreflightReport, QuarantinePolicy};

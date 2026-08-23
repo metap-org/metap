@@ -92,7 +92,7 @@ CREATE TABLE control.tenants (
   id               uuid PRIMARY KEY,
   tier             text NOT NULL,          -- 'trial' | 'paid'
   strategy         text NOT NULL,          -- 'schema' | 'dedicated_db'
-  schema_name      text,                   -- 'tenant_ab12'  (strategy=schema)
+  schema_name      text,                   -- 't_ab12'  (strategy=schema)
   dsn_secret_ref   text,                   -- con trỏ tới Vault (strategy=dedicated_db) — KHÔNG chứa password
   status           text NOT NULL,          -- 'provisioning'|'active'|'migrating'|'suspended'|'expired'
   trial_expires_at timestamptz,
@@ -118,7 +118,7 @@ impl Router {
             Strategy::Schema { schema } => {
                 let mut tx = self.shared_pool.begin().await?;
                 // SET LOCAL = transaction-scoped, tự dọn khi commit/rollback.
-                // schema là SchemaName đã whitelist (^tenant_[a-z0-9]+$) → an toàn để format.
+                // schema là SchemaName đã whitelist (^t_[a-z0-9]+$) → an toàn để format.
                 sqlx::query(&format!("SET LOCAL search_path TO {}", schema.as_str()))
                     .execute(&mut *tx).await?;
                 Ok(tx)

@@ -53,11 +53,16 @@ fn entity(name: &str, fields: Vec<EntityField>) -> EntityDefinition {
     }
 }
 
+/// `table` is a bare name — every table-per-entity table lives in `metap_reconciler::ENTITY_SCHEMA`
+/// (`"entities"`), never `public`.
 async fn drop_table_if_exists(pool: &PgPool, table: &str) {
-    sqlx::query(&format!("DROP TABLE IF EXISTS \"{table}\" CASCADE"))
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(&format!(
+        "DROP TABLE IF EXISTS \"{}\".\"{table}\" CASCADE",
+        metap_reconciler::ENTITY_SCHEMA
+    ))
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 /// The single most important correctness property of a level-triggered reconciler
@@ -85,7 +90,7 @@ async fn reconcile_converges_to_zero_ops_on_a_second_pass() {
 
     let first = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
     assert!(first.ops_applied > 0, "first reconcile must actually do work");
-    assert_eq!(first.table, "test_reconciler_convergence");
+    assert_eq!(first.table, "entities.test_reconciler_convergence");
 
     let second = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
     assert_eq!(
@@ -117,7 +122,7 @@ async fn storage_column_backfills_existing_rows_and_syncs_new_ones() {
     reconcile(&pool, tenant_id, &def_v1, &[]).await.unwrap();
 
     for amount in ["12.50", "7.25", "100.00"] {
-        sqlx::query("INSERT INTO test_reconciler_storage_column (tenant_id, data) VALUES ($1, jsonb_build_object('amount', $2::text))")
+        sqlx::query("INSERT INTO entities.test_reconciler_storage_column (tenant_id, data) VALUES ($1, jsonb_build_object('amount', $2::text))")
             .bind(tenant_id)
             .bind(amount)
             .execute(&pool)
@@ -134,7 +139,7 @@ async fn storage_column_backfills_existing_rows_and_syncs_new_ones() {
     assert!(outcome.ops_applied > 0);
 
     let backfilled: Vec<(f64,)> =
-        sqlx::query_as("SELECT amount::float8 FROM test_reconciler_storage_column ORDER BY amount")
+        sqlx::query_as("SELECT amount::float8 FROM entities.test_reconciler_storage_column ORDER BY amount")
             .fetch_all(&pool)
             .await
             .unwrap();
@@ -146,13 +151,13 @@ async fn storage_column_backfills_existing_rows_and_syncs_new_ones() {
 
     // A new row written directly (bypassing any application code that might know about the
     // promoted column) must still end up with the real column populated, via the sync trigger.
-    sqlx::query("INSERT INTO test_reconciler_storage_column (tenant_id, data) VALUES ($1, jsonb_build_object('amount', '42.00'))")
+    sqlx::query("INSERT INTO entities.test_reconciler_storage_column (tenant_id, data) VALUES ($1, jsonb_build_object('amount', '42.00'))")
         .bind(tenant_id)
         .execute(&pool)
         .await
         .unwrap();
     let synced: (f64,) =
-        sqlx::query_as("SELECT amount::float8 FROM test_reconciler_storage_column WHERE amount = 42.00")
+        sqlx::query_as("SELECT amount::float8 FROM entities.test_reconciler_storage_column WHERE amount = 42.00")
             .fetch_one(&pool)
             .await
             .unwrap();

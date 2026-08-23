@@ -8,7 +8,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::schema::FkSpec;
-use crate::sqlfmt::{quote_ident, quote_literal};
+use crate::sqlfmt::{quote_ident, quote_literal, quote_qualified_ident};
 use crate::{backfill, quarantine};
 
 #[derive(Debug, Clone)]
@@ -73,7 +73,7 @@ pub async fn preflight(pool: &PgPool, table: &str, op: &MigrationOp) -> anyhow::
     let Some(predicate) = bad_row_predicate(op) else {
         return Ok(PreflightReport { bad_rows: 0 });
     };
-    let quoted_table = quote_ident(table);
+    let quoted_table = quote_qualified_ident(table);
     let bad_rows: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {quoted_table} t WHERE {predicate}"))
         .fetch_one(pool)
         .await?;
@@ -89,7 +89,7 @@ pub async fn preflight(pool: &PgPool, table: &str, op: &MigrationOp) -> anyhow::
 /// touched, error surfaced, entity left for a human).
 pub async fn preflight_fk_orphans(pool: &PgPool, table: &str, fk: &FkSpec) -> anyhow::Result<PreflightReport> {
     let predicate = fk_orphan_predicate(fk);
-    let quoted_table = quote_ident(table);
+    let quoted_table = quote_qualified_ident(table);
     let bad_rows: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {quoted_table} t WHERE {predicate}"))
         .fetch_one(pool)
         .await?;
@@ -98,7 +98,7 @@ pub async fn preflight_fk_orphans(pool: &PgPool, table: &str, fk: &FkSpec) -> an
 
 fn fk_orphan_predicate(fk: &FkSpec) -> String {
     let col = quote_ident(&fk.column);
-    let ref_table = quote_ident(&fk.ref_table);
+    let ref_table = quote_qualified_ident(&fk.ref_table);
     let ref_col = quote_ident(&fk.ref_column);
     format!("t.{col} IS NOT NULL AND NOT EXISTS (SELECT 1 FROM {ref_table} r WHERE r.{ref_col} = t.{col})")
 }

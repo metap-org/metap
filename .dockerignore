@@ -4,5 +4,6 @@ node_modules
 .env
 **/.env
 apps/crm-server/keys
+apps/jira-server/keys
 dist
 .DS_Store

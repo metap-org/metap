@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "apps/crm-server",
+  "apps/jira-server",
   "crates/cron-scheduler",
   "crates/db-migrate",
   "crates/dev-tools",
@@ -19,6 +20,7 @@ members = [
   "crates/metap-permission",
   "crates/metap-query",
   "crates/metap-reconciler",
+  "crates/metap-storage",
   "crates/metap-workflow",
   "crates/notification-worker",
   "crates/outbox-publisher",

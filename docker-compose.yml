@@ -33,6 +33,23 @@ services:
       - "5672:5672"
       - "15672:15672"
 
+  # Opt-in (docs/roadmap.md's storage-evaluation phase) — dev SeaweedFS for
+  # `metap-storage::S3ObjectStore`. NOT part of the default `docker compose up -d postgres
+  # rabbitmq` dev stack. `server -s3` boots master+volume+filer+the S3 gateway all in one
+  # process/container — the right shape for a small self-hosted dev stack (SeaweedFS's own
+  # production topology splits these across multiple nodes, not needed here). No auth (no
+  # `-s3.config`) — anonymous access, fine only because this never leaves localhost, same
+  # posture as this file's Grafana anonymous-admin note below.
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.97
+    command: server -dir=/data -s3 -s3.port=8333 -ip=seaweedfs
+    volumes:
+      - metap-seaweedfs:/data
+    ports:
+      - "8333:8333" # S3 API
+      - "9333:9333" # master UI/API
+      - "8888:8888" # filer UI/API
+
   # Opt-in (docs/roadmap.md Phase 16 Giai đoạn 4) — dev-mode Vault for metap-control::VaultStore.
   # NOT part of the default `docker compose up -d postgres rabbitmq` dev stack; EnvStore stays
   # the default SecretStore. Dev mode = in-memory, unsealed, fixed root token, never for
@@ -120,3 +137,4 @@ services:
 
 volumes:
   metap-postgres:
+  metap-seaweedfs:

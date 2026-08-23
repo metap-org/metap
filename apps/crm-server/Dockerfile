@@ -35,13 +35,16 @@ RUN pnpm --filter @metap/crm-fe build
 # ---- backend build ------------------------------------------------------------
 FROM rust:1-slim-bookworm AS backend-build
 WORKDIR /workspace
-# The root Cargo.toml's `[workspace] members` list every crate under `crates/` plus
-# `apps/crm-server` (see CLAUDE.md's Monorepo Layout) — Cargo needs all of their manifests
-# present to resolve the workspace even though `--locked -p crm-server` only compiles
-# crm-server's own dependency graph, not every member.
+# The root Cargo.toml's `[workspace] members` list every crate under `crates/` plus every app
+# under `apps/` (see CLAUDE.md's Monorepo Layout) — Cargo needs all of their manifests present
+# to resolve the workspace even though `--locked -p crm-server` only compiles crm-server's own
+# dependency graph, not every member. `COPY apps apps` (whole directory, same as `COPY crates
+# crates` below it), not one `COPY apps/<name> apps/<name>` line per app — that would need a new
+# line here every time a new app joins the workspace (found the hard way: `apps/jira-server`
+# joining the workspace broke this build until this was wholesale instead of per-app).
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
-COPY apps/crm-server apps/crm-server
+COPY apps apps
 RUN cargo build --release --locked -p crm-server
 
 # ---- runtime --------------------------------------------------------------------

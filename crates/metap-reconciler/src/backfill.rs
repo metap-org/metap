@@ -10,7 +10,7 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::sqlfmt::{quote_ident, quote_literal};
+use crate::sqlfmt::{quote_ident, quote_literal, quote_qualified_ident};
 
 const BATCH_SIZE: i64 = 5000;
 const THROTTLE: std::time::Duration = std::time::Duration::from_millis(20);
@@ -52,7 +52,7 @@ pub async fn run_batched_update(
         .await?
         .unwrap_or(Uuid::nil());
 
-    let quoted_table = quote_ident(table);
+    let quoted_table = quote_qualified_ident(table);
     let extra = where_extra.map(|w| format!(" AND ({w})")).unwrap_or_default();
     let sql = format!(
         "WITH batch AS (SELECT id FROM {quoted_table} t WHERE id > $1{extra} ORDER BY id LIMIT {BATCH_SIZE}) \

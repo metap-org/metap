@@ -6,7 +6,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::sqlfmt::quote_ident;
+use crate::sqlfmt::quote_qualified_ident;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct QuarantineOutcome {
@@ -25,7 +25,7 @@ pub fn quarantine_table_name(table: &str) -> String {
 }
 
 pub async fn ensure_quarantine_table(pool: &PgPool, table: &str) -> anyhow::Result<()> {
-    let name = quote_ident(&quarantine_table_name(table));
+    let name = quote_qualified_ident(&quarantine_table_name(table));
     let sql = format!(
         "CREATE TABLE IF NOT EXISTS {name} (\
          id uuid PRIMARY KEY, \
@@ -52,8 +52,8 @@ pub async fn quarantine_bad_rows(
     reason: &str,
 ) -> anyhow::Result<QuarantineOutcome> {
     ensure_quarantine_table(pool, table).await?;
-    let quoted_table = quote_ident(table);
-    let quoted_quarantine = quote_ident(&quarantine_table_name(table));
+    let quoted_table = quote_qualified_ident(table);
+    let quoted_quarantine = quote_qualified_ident(&quarantine_table_name(table));
 
     let candidate_ids: Vec<Uuid> =
         sqlx::query_scalar(&format!("SELECT t.id FROM {quoted_table} t WHERE {bad_predicate}"))
@@ -119,8 +119,8 @@ fn is_foreign_key_violation(err: &sqlx::Error) -> bool {
 /// applied historically to replay, so resolving means the corrected data must already be valid
 /// for the table's *current* schema; the caller is responsible for that, not this function.
 pub async fn resolve(pool: &PgPool, table: &str, quarantine_id: Uuid, corrected_data: Value) -> anyhow::Result<()> {
-    let quoted_table = quote_ident(table);
-    let quoted_quarantine = quote_ident(&quarantine_table_name(table));
+    let quoted_table = quote_qualified_ident(table);
+    let quoted_quarantine = quote_qualified_ident(&quarantine_table_name(table));
     let mut tx = pool.begin().await?;
 
     let tenant_id: Option<Uuid> = sqlx::query_scalar(&format!(

@@ -74,24 +74,24 @@ async fn unregistered_tenant_falls_back_to_public_schema() {
 async fn registered_schema_tenant_routes_to_its_schema_and_does_not_leak() {
     let pool = connect().await;
     let tenant_id = Uuid::new_v4();
-    insert_tenant(&pool, tenant_id, "schema", Some("tenant_test1"), "active").await;
-    sqlx::query("CREATE SCHEMA IF NOT EXISTS tenant_test1")
+    insert_tenant(&pool, tenant_id, "schema", Some("t_test1"), "active").await;
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS t_test1")
         .execute(&pool)
         .await
         .expect("create schema");
 
     let router = router(pool.clone());
     let mut tx = router.begin(TenantId(tenant_id)).await.expect("begin");
-    assert!(search_path(&mut tx).await.contains("tenant_test1"));
+    assert!(search_path(&mut tx).await.contains("t_test1"));
     tx.commit().await.expect("commit");
 
     // A transaction opened directly on the same pool, bypassing Router, must NOT see the
     // previous transaction's `SET LOCAL search_path` — proves it was transaction-scoped, not
     // leaked onto the pooled physical connection (the design's "bẫy #1").
     let mut plain_tx = pool.begin().await.expect("begin plain tx");
-    assert!(!search_path(&mut plain_tx).await.contains("tenant_test1"));
+    assert!(!search_path(&mut plain_tx).await.contains("t_test1"));
 
-    sqlx::query("DROP SCHEMA tenant_test1")
+    sqlx::query("DROP SCHEMA t_test1")
         .execute(&pool)
         .await
         .expect("cleanup schema");

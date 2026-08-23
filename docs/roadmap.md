@@ -1662,6 +1662,222 @@ baseline/nightly tự động của Trụ Performance** (criterion micro-benchma
 benchmark direct-mode đã đo, chưa có seed/nightly workflow tự động so lệch. Semgrep cũng chưa wire
 vào CI (đang chỉ dừng ở local theo đúng yêu cầu ban đầu).
 
+## Phase 21: `apps/jira-server` — table-per-entity thật, lần đầu `reconcile()` chạy trong boot sequence (2026-08-23)
+
+Quay lại việc bị pause trước Phase 20 (test kit): "bước 6" đã chốt — không chỉ dựng app jira mẫu,
+mà sửa thật `CrudService`/`QueryPlanner` để một entity có thể dùng bảng riêng thay vì bảng
+`records` chung, và gọi `metap_reconciler::reconcile()` từ một boot sequence thật lần đầu tiên.
+
+**Khảo sát trước khi sửa xác nhận `EntityDefinition.table_name` chết hoàn toàn**: mọi entity
+hiện có hardcode `table_name: "records".to_string()`, `CrudService`/`QueryPlanner` không bao giờ
+đọc field này — luôn `FROM records` + filter `entity = $n`. `metap-reconciler` (đã "code-complete"
+5 bước) sẵn sàng compile một `EntityDefinition` thành bảng riêng thật (`FRAMEWORK_COLUMNS` — cùng
+hình dạng `records` trừ cột `entity`, cộng cột thật/FK/trigger-sync cho field `Reference` hoặc
+`storage: Column`), nhưng chưa binary nào từng gọi `reconcile()`.
+
+**Phát hiện quan trọng đổi nhẹ phạm vi**: `compile()` luôn build FK thẳng vào
+`table_name_for(ref_entity)` bất kể entity đó có bảng riêng thật hay không (xác nhận bằng test có
+sẵn `reference_field_gets_a_real_fk_once_both_entities_are_tables`) — nên quyết định cho **cả**
+`jira.projects` lẫn `jira.issues` dùng bảng riêng (không chỉ Issue như thoả thuận gốc), để FK
+`issue.project → jira_projects(id)` hợp lệ, đồng thời cho demo FK thật giữa 2 bảng riêng.
+
+**Sửa core (không đổi hành vi entity cũ)**:
+- `crates/metap-metadata/src/entity.rs`: `field_has_real_column()` (dùng chung bởi
+  `metap-reconciler::compile` và `metap-query`, không lệch nhau về field nào có cột thật) +
+  validate `table_name` phải là `"records"` hoặc khớp `^[a-z][a-z0-9_]*$` (nội suy thẳng vào SQL,
+  Postgres không parameterize identifier được).
+- `crates/metap-reconciler/src/compile.rs`: re-export `table_name_for`; **fix một bug thật lộ ra
+  lúc build jira.issues** — `compile()` `bail!` khi field trùng tên cột framework, nhưng
+  `code`/`status` LÀ những field một entity được kỳ vọng khai báo (workflow's `state_field`
+  thường chính là `"status"`) — `CrudService` đã tự mirror 2 field này vào cột framework từ
+  trước (`data.get("code")`, `get_initial_status`), độc lập với cơ chế trigger-sync của
+  reconciler. Sửa: cho phép `code`/`status` đi qua (skip, không tạo cột trùng), mọi tên cột
+  framework khác vẫn `bail!` như cũ.
+- `crates/metap-query/src/query_planner.rs`: field có cột thật (Reference/`storage: Column`) trên
+  bảng riêng dùng thẳng tên cột (có cast `::uuid` khi cần), field thường vẫn
+  `jsonb_extract_path_text(data, ...)` như cũ dù trên bảng riêng (đa số field promoted chỉ được
+  expression index, không phải cột thật — xem doc comment `compile.rs`); bỏ `entity = $n` khi
+  bảng riêng.
+- `crates/metap-crud/src/crud_service.rs`: mọi query (`list`/`create`/`update`/`transition`/
+  `delete`/`fetch_existing`/`fetch_related_data`/`fetch_related_records_batch`) route theo
+  `entity.table_name`, nhánh `records` giữ nguyên 100% logic/SQL cũ. `find_referencing_record`
+  (guard tham chiếu trước khi xoá) viết lại: nhóm entity tham chiếu theo bảng vật lý của chính
+  chúng, 1 query/bảng thay vì luôn gộp vào `records` — bắt buộc phải làm để chính MVP đúng (xoá
+  `jira.projects` phải kiểm tra được bảng `jira_issues`).
+- `condition_to_sql.rs` (ABAC field-level) **cố ý không đổi** — vẫn đúng vì `data` luôn là nguồn
+  authoritative (trigger đồng bộ 2 chiều), chỉ mất lợi ích hiệu năng cột thật cho path này, không
+  phải bug.
+
+**`apps/jira-server`** (app mới, mirror boot sequence `apps/crm-server/src/main.rs`, bớt bước
+merge low-code/lowcode_http/control_http/static-file/inline-worker vì PoC không cần):
+`jira.projects` (key/name/description, không workflow) + `jira.issues` (title/description/
+priority/`project` Reference thật/assigneeEmail/reporterEmail/status, workflow todo→in_progress→
+done, cộng reopen). `assigneeEmail`/`reporterEmail` là text thường, không phải Reference — `users`
+là bảng platform/auth, không phải `EntityDefinition` đã đăng ký.
+
+**Sửa lỗi boundary thật sau khi chủ dự án review** (bản đầu tiên của phase này dùng tenant dev cố
+định `00000000-...-0001` — cùng tenant `pnpm seed:admin` của `crm-server` — và `reconcile()` ghi
+thẳng vào `pool` platform (`config.database_url`). Đúng như chủ dự án chỉ ra: nhầm lẫn "DB sandbox
+của chính platform low-code" với "DB của một tenant khách hàng thật" — nếu KH đăng ký subscription
+để build custom Jira riêng, họ phải là 1 tenant thật (`my-jira`) trỏ DB riêng, không phải dùng
+chung DB/tenant dev của platform):
+- `Router` (`crates/metap-control/src/router.rs`) trước đó chỉ có `begin()` (transaction-scoped) —
+  không có cách nào lấy `PgPool` đã resolve theo tenant cho `reconcile()`'s DDL không-transaction.
+  Thêm `Router::pool_for(tenant) -> anyhow::Result<PgPool>`, tách phần resolve
+  status/strategy dùng chung với `begin()` qua hàm private `resolve()` (không đổi hành vi
+  `begin()`, verify bằng `router_postgres.rs`'s 7 test + `tenant_isolation_postgres.rs` đều pass).
+- Provision tenant **thật** qua đúng cơ chế multi-tenant sẵn có: tạo database Postgres riêng
+  (`CREATE DATABASE metap_myjira`), `dev-tools provision-tenant <uuid> dedicated_db MY_JIRA_DSN
+  postgres://.../metap_myjira admin@my-jira.example ...` (ghi `control.tenants` row thật, migrate
+  toàn bộ schema nền tảng vào DB riêng, tạo admin user trên DB riêng đó).
+- `apps/jira-server/src/main.rs`: build `Router` trước, đọc `JIRA_TENANT_ID` bắt buộc từ env (lỗi
+  rõ ràng nếu chưa provision — không còn fallback "tenant chưa đăng ký = public schema" như
+  `Router::begin` vẫn giữ cho dev flow cũ), gọi `router.pool_for(jira_tenant_id)` rồi mới
+  `reconcile()` — bảng `jira_projects`/`jira_issues` giờ nằm đúng trong `metap_myjira`, không phải
+  DB platform. **Verify sống**: dọn sạch 2 bảng jira còn sót lại trong DB platform từ lần chạy sai
+  trước đó (bằng chứng cụ thể của đúng loại bug vừa sửa); chạy lại — `\dt` xác nhận
+  `jira_projects`/`jira_issues` chỉ tồn tại trong `metap_myjira`, `metap` (platform) sạch; tạo
+  Project qua HTTP thật với token mint cho user admin của `my-jira` — row landed đúng
+  `metap_myjira`, không lẫn vào DB platform.
+- **Giới hạn còn lại, ghi rõ trong doc comment `main.rs`, chưa sửa (ngoài phạm vi fix này)**:
+  `AppState.pool` (login/`preferences`/cron routes) vẫn luôn dùng pool platform, chưa
+  `Router`-resolve theo tenant — gap có sẵn từ trước ở `crm-server`, không phải do phase này gây
+  ra, nhưng nghĩa là `/auth/login` cho user của tenant `DedicatedDb` chưa hoạt động (user tồn tại
+  trên DB riêng, không phải DB platform); dùng `dev-tools mint-token` (chỉ cần keypair, không query
+  DB) để xác minh thay cho `/auth/login` cho tới khi gap này được sửa riêng. `reconcile()` vẫn là
+  gọi trực tiếp 1 tenant lúc boot, không phải orchestrator đa-tenant (`claim_due`/wave rollout vẫn
+  chưa binary nào chạy) — tenant mới đăng ký sau khi process đã chạy sẽ không tự được reconcile.
+
+**Kiểm chứng sống** (không chỉ đọc code suy luận): build release + chạy thật `jira-server` —
+boot log xác nhận `reconcile()` tạo `jira_projects`/`jira_issues`; `\d jira_issues` qua psql xác
+nhận cột `project` (uuid) thật + `FOREIGN KEY ... REFERENCES jira_projects(id) ON DELETE RESTRICT`
++ trigger `trg_sync_jira_issues_project`. Tạo Project + Issue thật qua HTTP: filter list theo
+`project` (cột thật, có cast `::uuid`) trả đúng; Reference hydration (`relatedDisplay.project`)
+đọc đúng từ bảng riêng khác; transition `todo→in_progress` qua `POST .../transitions/start` đúng;
+xoá Project đang bị Issue tham chiếu → `409 record_referenced` đúng thông điệp; xoá Issue trước
+rồi Project → cả 2 thành công. `cargo test --workspace` (57 suite) + e2e thật
+(`crud_service_postgres`/`query_planner_postgres`/`reconcile_postgres`) không regression cho 4
+entity `records`-table cũ của crm-server. `cargo fmt --check`/`clippy --workspace --all-targets
+-D warnings` sạch.
+
+**Chưa làm**: orchestrator đa-tenant thật (vẫn đúng như ghi nhận cũ, không phải việc phase này);
+`jira.issues` chưa có endpoint/scenario nào trong bộ test kit (`testing/`) — có thể thêm sau nếu
+cần benchmark bảng riêng so với `records`.
+
+**Đổi tiền tố schema-per-tenant từ `tenant_*` sang `t_*`** (yêu cầu riêng, cùng đợt review): đổi
+`Router::validate_schema_name`'s whitelist (`^tenant_[a-z0-9]+$` → `^t_[a-z0-9]+$`), cập nhật
+đồng bộ `docs/multi-tenant-platform-design.md`'s ví dụ (`tenant_ab12` → `t_ab12`) và toàn bộ tên
+schema dùng trong test (`router_postgres.rs`, `tenant_isolation_postgres.rs`). Không đụng những
+chỗ `"tenant_"` chỉ là substring của tên khác không liên quan tới schema (`tenant_unavailable`,
+`tenant_not_found` — mã lỗi API, không phải tên schema). Verify sống: cả 8 test liên quan
+(`router_postgres.rs` 7 test + `tenant_isolation_postgres.rs`) pass qua Postgres thật với tiền tố
+mới.
+
+**Sửa boundary schema thật trong chính DB tenant** (chủ dự án review lần 2, sau khi đã có DB
+riêng đúng: "trỏ DB mới có vẻ ok, nhưng nên chia schema... `control` -> thứ chỉ nên có trong
+low-code platform"). Bên trong `metap_myjira`, mọi bảng — cả nền tảng (`users`/`policies`/
+`records`/...) lẫn nghiệp vụ tenant (`jira_issues`/`jira_projects`) — đang nằm chung schema
+`public`, và `control.tenants` (registry toàn cục, chỉ nên tồn tại đúng 1 nơi trong toàn hệ
+thống) bị migrate lẫn vào mọi DB dedicated một cách vô nghĩa (verify sống: đúng là có, `\dn` xác
+nhận schema `control` rỗng nằm trong `metap_myjira`).
+- **`control.tenants` không còn bị migrate vào DB dedicated**: `crates/metap-control/src/
+  provisioning.rs`'s `provision_dedicated_db_tenant` vẫn chạy `sqlx::migrate!` đầy đủ (không có
+  cách chọn lọc migration nào trong 1 lời gọi macro), nhưng `DROP SCHEMA control CASCADE` ngay
+  sau đó trên DB dedicated — `_sqlx_migrations` của DB đó vẫn ghi nhận đã áp dụng đúng, chỉ là
+  schema không tồn tại (không migration nào khác đụng vào `control.tenants` nên an toàn).
+  **Verify sống**: provision tenant throwaway mới hoàn toàn (`metap_verify_test`) — `\dn` chỉ còn
+  `public`, không có `control`; dọn `control` schema thừa còn sót lại trong `metap_myjira` từ
+  trước khi fix.
+- **Bảng nghiệp vụ tenant (table-per-entity) chuyển sang schema `entities`, tách khỏi `public`**:
+  `metap-reconciler` thêm `ENTITY_SCHEMA = "entities"` + `qualified_table_name_for()` (dùng thay
+  `table_name_for()` cho `PhysicalSchema.table`/FK `ref_table`/`EntityDefinition.table_name`) —
+  `table_name_for()` (bare, không schema) vẫn giữ nguyên riêng cho việc đặt tên index/trigger.
+  Đụng tới toàn bộ nơi build SQL nhận diện bảng: `introspect.rs` (3 query hardcode `'public'`
+  trước đó, giờ parse schema động từ chuỗi `schema.table`, kể cả introspect ngược `FkSpec.ref_table`
+  qua join `pg_namespace` để không lệch với `compile()`'s desired state), `executor.rs`/
+  `quarantine.rs`/`backfill.rs`/`migration.rs` (thêm `quote_qualified_ident` — `quote_ident` cũ
+  quote cả chuỗi `"entities.jira_issues"` thành 1 identifier chứa dấu chấm, sai). `metap-metadata`'s
+  validate `table_name` nới ra để chấp nhận dạng `schema.table` an toàn (mỗi đoạn vẫn phải khớp
+  charset cũ). **2 bug thật phát hiện lúc verify sống, không phải suy đoán**:
+  - `compile.rs`'s check "field trùng tên cột framework" từng chỉ áp dụng đúng cho `code`/`status`
+    (đã fix ở lần verify trước) nhưng đó là bug riêng, không liên quan phần này.
+  - `CREATE SCHEMA IF NOT EXISTS` **không an toàn dưới concurrency thật** — 2 lệnh `reconcile()`
+    chạy song song (test suite mặc định chạy test song song) cùng thấy "schema chưa tồn tại" rồi
+    cùng cố tạo, gây lỗi `23505` (`pg_namespace_nspname_index` unique violation) — không phải
+    `42710` như tài liệu Postgres hay mô tả cho trường hợp không-concurrent. Fix: tách bước
+    `ensure_schema_exists()` ra khỏi vòng lặp DDL chung, bắt cả `23505` lẫn `42710` và coi là
+    thành công (đúng nghĩa `IF NOT EXISTS` muốn đảm bảo). Verify: chạy lại toàn bộ
+    `metap-reconciler` e2e suite (chạy song song, đúng điều kiện gây race) 3 lần liên tiếp, sạch
+    cả 3.
+  - Test e2e cũ (`reconcile_postgres.rs`) tự dọn bảng bằng `DROP TABLE IF EXISTS "<bare_name>"`
+    (không schema-qualify) — sau khi bảng chuyển sang `entities.*`, lệnh dọn này âm thầm no-op,
+    để lại rác giữa các lần chạy. Đã sửa cùng lúc.
+  - **Verify sống cuối cùng, đầy đủ vòng đời**: `metap_myjira` giờ chỉ còn 2 schema
+    (`entities` chứa `jira_issues`/`jira_projects`, `public` chứa bảng nền tảng), FK
+    `entities.jira_issues.project → entities.jira_projects(id)` đúng qua schema-qualified name;
+    tạo Project qua HTTP thật, `CrudService` đọc/ghi đúng `entities.jira_projects`. Toàn bộ
+    `cargo test --workspace` + e2e `metap-reconciler`/`metap-control`/`metap-crud` liên quan không
+    regression.
+
+## Phase 22: `metap-storage` — object storage interface swappable, SeaweedFS làm backend đầu tiên (2026-08-23)
+
+Nghiên cứu trước khi làm (không suy đoán): claim "MinIO đã EOL" của chủ dự án **đúng và nghiêm
+trọng hơn tưởng** — không chỉ đổi license, mà 3/2025 gỡ Web Console khỏi bản Community, 12/2025
+chuyển "maintenance mode", 4/2026 **repo chính thức bị archive** (read-only, hết patch bảo mật).
+Khảo sát alternative tự host: SeaweedFS (Apache 2.0, 12+ năm, rất active), Garage (AGPLv3, Rust,
+1 binary nhưng thiếu ACL/versioning), RustFS (Apache 2.0, cùng stack Rust, nhưng còn `rc.3`, tự
+nhận Distributed Mode/Lifecycle "Under Testing"), Ceph RGW (feature-complete nhất nhưng quá nặng
+cho docker-compose nhỏ). Quyết định: **SeaweedFS** làm backend đầu tiên (trưởng thành nhất, tương
+thích S3 API tốt với `aws-sdk-s3` không cần workaround) — nhưng **interface phải tách khỏi
+backend cụ thể** để sau này đổi sang RustFS/Garage/AWS S3 thật dễ dàng, đúng yêu cầu chủ dự án.
+
+**Thiết kế**: `crates/metap-storage` — `ObjectStore` trait (`put`/`get`/`delete`/`exists`, key +
+bytes thuần, cố tình không lộ khái niệm S3 nào ra trait — bucket/ETag/versioning/multipart đều
+không xuất hiện trong signature) + `S3ObjectStore` (impl duy nhất hiện tại, dựng trên `aws-sdk-s3`
+với `endpoint_url` cấu hình được) — cùng hình dạng `SecretStore` (`EnvStore`/`VaultStore`) và
+`EventBus` (`RabbitEventBus`) đã có sẵn trong repo, không phát minh pattern mới. Đổi sang RustFS/
+Garage/AWS S3 thật chỉ cần đổi `S3ObjectStoreConfig` (endpoint/credentials) — cùng 1 impl, vì mọi
+backend đang xét đều nói S3 HTTP API; đổi sang thứ không nói S3 (disk cục bộ, API cloud khác) mới
+cần impl `ObjectStore` mới, không phải sửa lại mọi call site.
+
+**`docker-compose.yml`**: service `seaweedfs` mới (opt-in, không nằm trong `up -d postgres
+rabbitmq` mặc định, cùng quy ước với `vault`) — `chrislusf/seaweedfs:3.97`, chạy `server -s3` (1
+container chứa cả master+volume+filer+S3 gateway, đúng quy mô cho stack dev nhỏ, không cần tách
+nhiều node như topology production của SeaweedFS).
+
+**Chưa wire vào route/feature nào** — thêm trước khi có consumer cụ thể (vd file đính kèm trên
+entity), đúng thứ tự `metap-reconciler` từng được xây trước khi `apps/jira-server` cần tới.
+
+**Kiểm chứng sống**: `docker compose up -d seaweedfs` — chờ ~15-20s cho chuỗi khởi động nội bộ
+(master → volume → filer → S3 gateway) hoàn tất, S3 API trả `200` ở cổng 8333. Test e2e thật
+(`crates/metap-storage/tests/s3_seaweedfs.rs`, `#[ignore]`d theo đúng quy ước `*_postgres.rs` đã
+có) — vòng đời đầy đủ: `exists`/`get` trên key chưa tồn tại đúng `false`/`None` (không phải lỗi),
+`put`, `exists`/`get` đúng, ghi đè (overwrite) thay hoàn toàn nội dung cũ, `delete`, `exists`/`get`
+sau xoá đúng `false`/`None`, xoá lần 2 trên key đã xoá không lỗi (đúng ngữ nghĩa idempotent của S3
+`DELETE`) — pass thật qua SeaweedFS đang chạy, không mock. `cargo fmt --check`/`clippy --workspace
+--all-targets -D warnings`/`build --workspace` sạch. Tắt lại container sau khi verify xong (opt-in,
+không để chạy ngầm ngoài ý muốn).
+
+**Sửa security-first sau review** (chủ dự án: "thiết kế phải đảm bảo security first nữa nhé") —
+bản đầu chỉ có `put(key, ...)` trần, tin tưởng caller tự prefix key theo tenant, đúng loại lỗi
+boundary đã gặp lặp lại trong phiên này (crud_service thiếu filter tenant_id, jira-server dùng
+chung DB platform). Sửa:
+- **Tenant scoping bắt buộc ở chữ ký trait**, không phải quy ước caller: mọi method
+  (`put`/`get`/`delete`/`exists`) nhận `tenant_id: Uuid` làm tham số đầu tiên — cùng nguyên tắc
+  `Router::begin(tenant: TenantId)`/`CrudService`'s `WHERE tenant_id = $1` đã áp dụng: chặn ở
+  choke point, không dựa vào caller nhớ đúng. `S3ObjectStore` tự build key thật
+  (`{tenant_id}/{key}`) nội bộ qua `scoped_key()` — không call site nào tự nối chuỗi.
+- **`validate_key()`** chặn key dạng path-traversal (`..`/`.` segment), key rỗng, key bắt đầu
+  bằng `/`, dài quá 1024 byte (giới hạn thật của S3), chứa control character — chạy trước khi
+  request chạm backend, cùng kỷ luật `Router::validate_schema_name`/`table_name` validate đã có.
+- **`access_key`/`secret_key` đổi từ `String` sang `secrecy::SecretString`** — cùng convention
+  `metap-control::DbCreds.dsn` đã dùng, tránh lộ qua `{:?}`/log vô tình.
+- **Verify sống**: thêm 2 test e2e mới — `same_key_different_tenants_never_collide` (2 tenant ghi
+  cùng 1 key logic, đọc lại đúng nội dung riêng, xoá của tenant A không đụng tenant B) và
+  `traversal_shaped_key_is_rejected_before_it_reaches_the_backend`. Soi trực tiếp qua SeaweedFS
+  filer API (`GET /buckets/.../`) xác nhận key vật lý thật sự có prefix UUID tenant, không chỉ
+  tin vào assertion Rust. `cargo fmt`/`clippy -D warnings`/test đều sạch.
+
 ## Định hướng chưa lên phase (chưa có trigger)
 
 Tám ý nảy sinh từ thảo luận kiến trúc, hợp lý về sản phẩm nhưng chưa có trigger cụ thể nên chưa

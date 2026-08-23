@@ -4,7 +4,8 @@
 
 use anyhow::bail;
 use metap_metadata::{
-    field_kind_sql_type, resolve_field_storage_tier, EntityDefinition, FieldKind, FieldStorage, FieldStorageTier,
+    field_has_real_column, field_kind_sql_type, resolve_field_storage_tier, EntityDefinition, FieldKind,
+    FieldStorageTier,
 };
 
 use crate::schema::{ColumnOrigin, ColumnSpec, FkSpec, IndexSpec, OnDelete, PhysicalSchema, UniqueSpec};
@@ -26,12 +27,27 @@ pub const FRAMEWORK_COLUMNS: &[(&str, &str, bool)] = &[
     ("updated_by", "uuid", true),
 ];
 
+/// Every table-per-entity table lives in this schema, never `public` — `public` is where the
+/// shared `records`/`users`/`policies`/... framework tables that any tenant DB gets from
+/// `crates/migrations/*.sql` live (real feedback: mixing a tenant's own business tables into
+/// the same schema as the platform's operational tables made the boundary between "framework"
+/// and "this tenant's actual data" invisible just from `\dt`).
+pub const ENTITY_SCHEMA: &str = "entities";
+
 /// `crates/metap-metadata/src/entity.rs`'s `EntityDefinition.name` is a dotted namespace
 /// (`"hr.employees"`) — not a valid unquoted SQL identifier. One per-entity table per entity,
 /// name-mangled the same way `metap-peripherals`'s index names already do
-/// (`crates/metap-peripherals/src/index_reconciler.rs`'s `build_index_name`).
+/// (`crates/metap-peripherals/src/index_reconciler.rs`'s `build_index_name`). Bare (unqualified)
+/// — used for index/trigger/function naming, where a schema prefix would just be noise; see
+/// `qualified_table_name_for` for the actual physical table identifier.
 pub fn table_name_for(entity_name: &str) -> String {
     entity_name.replace('.', "_")
+}
+
+/// The actual physical table identifier `PhysicalSchema.table`/`EntityDefinition.table_name`
+/// use — `ENTITY_SCHEMA` + `table_name_for`'s mangled name, e.g. `"entities.jira_issues"`.
+pub fn qualified_table_name_for(entity_name: &str) -> String {
+    format!("{ENTITY_SCHEMA}.{}", table_name_for(entity_name))
 }
 
 fn index_name(entity_name: &str, field_name: &str, kind: &str) -> String {
@@ -51,7 +67,7 @@ fn index_name(entity_name: &str, field_name: &str, kind: &str) -> String {
 ///   `search_mode: fts`, trigram otherwise) regardless of `storage` — a real column doesn't
 ///   remove the need for the derived search expression.
 pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
-    let mut schema = PhysicalSchema::empty(table_name_for(&entity.name));
+    let mut schema = PhysicalSchema::empty(qualified_table_name_for(&entity.name));
 
     let framework_names: std::collections::HashSet<&str> = FRAMEWORK_COLUMNS.iter().map(|(name, ..)| *name).collect();
     for (name, sql_type, nullable) in FRAMEWORK_COLUMNS {
@@ -66,12 +82,21 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
     }
 
     for field in &entity.fields {
-        if framework_names.contains(field.name.as_str()) {
+        // `code`/`status` are the two framework columns an `EntityField` is *expected* to name-
+        // collide with — `metap-crud`'s `CrudService` already mirrors a `code`-holding or
+        // workflow-state field's value into these directly (`data.get("code")`,
+        // `get_initial_status`), the same way it does for the shared `records` table, completely
+        // independent of this compiler's per-field column-promotion/trigger machinery. Every
+        // other framework name has no such mirror and stays a hard collision.
+        if field.name != "code" && field.name != "status" && framework_names.contains(field.name.as_str()) {
             bail!(
                 "entity '{}' field '{}' collides with a framework column name",
                 entity.name,
                 field.name
             );
+        }
+        if field.name == "code" || field.name == "status" {
+            continue;
         }
 
         let sql_type = field_kind_sql_type(field.kind);
@@ -103,7 +128,10 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
         // stays index-only by default (§5.6) — this is the one exception, forced by what a FK
         // constraint physically requires, not a query-optimization choice.
         let is_fk_reference = field.kind == FieldKind::Reference && field.ref_entity.is_some();
-        let wants_real_column = is_fk_reference || field.storage == Some(FieldStorage::Column);
+        // Single source of truth shared with `metap-query` (`crates/metap-metadata/src/entity.rs`'s
+        // `field_has_real_column`) so DDL and SQL generation can never disagree about which
+        // fields have a real column.
+        let wants_real_column = field_has_real_column(field);
 
         if !wants_real_column && resolve_field_storage_tier(field) == FieldStorageTier::Jsonb {
             continue;
@@ -148,7 +176,9 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
                     format!("fk_{}_{}", table_name_for(&entity.name), field.name),
                     FkSpec {
                         column: field.name.clone(),
-                        ref_table: table_name_for(field.ref_entity.as_deref().expect("checked by is_fk_reference")),
+                        ref_table: qualified_table_name_for(
+                            field.ref_entity.as_deref().expect("checked by is_fk_reference"),
+                        ),
                         ref_column: "id".to_string(),
                         on_delete: OnDelete::Restrict,
                         validated: true,
@@ -179,7 +209,7 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
 
 #[cfg(test)]
 mod tests {
-    use metap_metadata::{EntityField, EntityListView};
+    use metap_metadata::{EntityField, EntityListView, FieldStorage};
 
     use super::*;
 
@@ -227,7 +257,7 @@ mod tests {
     #[test]
     fn framework_columns_always_present() {
         let schema = compile(&entity("hr.departments", vec![])).unwrap();
-        assert_eq!(schema.table, "hr_departments");
+        assert_eq!(schema.table, "entities.hr_departments");
         for (name, ..) in FRAMEWORK_COLUMNS {
             assert!(schema.columns.contains_key(*name), "missing framework column {name}");
         }
@@ -281,7 +311,7 @@ mod tests {
         let schema = compile(&entity("hr.employees", vec![f])).unwrap();
         assert_eq!(schema.foreign_keys.len(), 1);
         let fk = schema.foreign_keys.values().next().unwrap();
-        assert_eq!(fk.ref_table, "hr_departments");
+        assert_eq!(fk.ref_table, "entities.hr_departments");
         assert_eq!(fk.ref_column, "id");
         // Not indexed/sortable/unique/searchable, but an FK column always gets a plain btree
         // index too (best practice, avoids full-table scans on parent-side operations) — it

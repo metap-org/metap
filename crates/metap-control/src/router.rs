@@ -64,13 +64,13 @@ impl std::error::Error for RouterError {}
 /// session settings don't accept bind parameters, so this is the only thing standing between a
 /// corrupted/malicious `control.tenants` row and SQL injection into every tenant-scoped
 /// transaction. `"public"` is the legacy/unregistered-tenant fallback (see `Router::begin`);
-/// anything else must match `^tenant_[a-z0-9]+$` — matches the schema-naming convention in
-/// `docs/multi-tenant-platform-design.md` §2.2's example (`tenant_ab12`).
+/// anything else must match `^t_[a-z0-9]+$` — matches the schema-naming convention in
+/// `docs/multi-tenant-platform-design.md` §2.2's example (`t_ab12`).
 pub fn validate_schema_name(name: &str) -> Result<(), RouterError> {
     if name == "public" {
         return Ok(());
     }
-    let Some(suffix) = name.strip_prefix("tenant_") else {
+    let Some(suffix) = name.strip_prefix("t_") else {
         return Err(RouterError::InvalidSchemaName(name.to_string()));
     };
     if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()) {
@@ -121,18 +121,22 @@ impl Router {
             .map_err(|e| anyhow::anyhow!("failed to open dedicated pool for {dsn_secret_ref}: {e}"))
     }
 
-    /// Opens a transaction scoped to `tenant` — every query run against the returned
-    /// transaction sees that tenant's schema. Callers must `.commit()`/let it roll back
-    /// themselves; this never commits on their behalf.
+    /// Shared status/strategy resolution for `begin()`/`pool_for()` — same tenant lookup,
+    /// same unregistered-tenant fallback, same status checks. What differs between the two
+    /// callers is only what they do with a resolved `TenantStrategy` afterward.
     ///
     /// A tenant with no `control.tenants` row is treated as
     /// `{status: Active, strategy: Schema("public")}` — the pre-Router behavior (single shared
     /// `public` schema, isolation via the `tenant_id` column). This is a deliberate transitional
-    /// compatibility shim: nothing provisions `control.tenants` rows yet
-    /// (`docs/roadmap.md` Phase 16, tenant provisioning is a later stage), so treating an
-    /// unregistered tenant as an error would break every existing tenant/dev flow
-    /// (`pnpm mint-token` mints tokens for arbitrary tenant ids with no registration step).
-    pub async fn begin(&self, tenant: TenantId) -> anyhow::Result<Transaction<'_, Postgres>> {
+    /// compatibility shim: nothing forces every caller to provision a `control.tenants` row
+    /// first (`pnpm mint-token` mints tokens for arbitrary tenant ids with no registration
+    /// step), so treating an unregistered tenant as a hard error would break that dev flow.
+    /// `docs/multi-tenant-platform-design.md` §2.4's own implementation note calls this out as
+    /// something to tighten once every real caller provisions tenants properly, not the
+    /// intended end state — a *new* caller (e.g. a boot-time `reconcile()` call) should
+    /// provision a real tenant via `dev-tools provision-tenant` rather than leaning on this
+    /// fallback.
+    async fn resolve(&self, tenant: TenantId) -> anyhow::Result<TenantStrategy> {
         let routing = match self.registry.get(tenant).await? {
             Some(routing) => routing,
             None => {
@@ -155,7 +159,14 @@ impl Router {
             TenantStatus::Deleted => return Err(RouterError::TenantDeleted.into()),
         }
 
-        match routing.strategy {
+        Ok(routing.strategy)
+    }
+
+    /// Opens a transaction scoped to `tenant` — every query run against the returned
+    /// transaction sees that tenant's schema. Callers must `.commit()`/let it roll back
+    /// themselves; this never commits on their behalf.
+    pub async fn begin(&self, tenant: TenantId) -> anyhow::Result<Transaction<'_, Postgres>> {
+        match self.resolve(tenant).await? {
             TenantStrategy::Schema { schema_name } => {
                 validate_schema_name(&schema_name)?;
                 let mut tx = self.shared_pool.begin().await?;
@@ -174,6 +185,31 @@ impl Router {
             }
         }
     }
+
+    /// Resolves `tenant`'s actual `PgPool` — the pool-level counterpart to `begin()`, for a
+    /// caller that needs to run non-transactional statements (e.g.
+    /// `metap_reconciler::reconcile()`'s `CREATE INDEX CONCURRENTLY`/`AddSyncTrigger` DDL,
+    /// which — like all DDL in Postgres — can't run inside `begin()`'s transaction the way a
+    /// normal tenant-scoped query does) against the right tenant's data, instead of always the
+    /// platform's own shared pool. First real consumer: `apps/jira-server`'s boot sequence.
+    ///
+    /// `Schema` strategy returns the shared pool directly, no per-connection `SET` — real
+    /// per-tenant schema isolation isn't built yet (`crates/metap-control/src/provisioning.rs`'s
+    /// doc comment: `schema_name` is always `"public"` in practice), so the shared pool's
+    /// default `search_path` already resolves there the same way `begin()`'s `SET LOCAL
+    /// search_path TO public` would. `DedicatedDb` returns the same cached pool `begin()` uses.
+    pub async fn pool_for(&self, tenant: TenantId) -> anyhow::Result<PgPool> {
+        match self.resolve(tenant).await? {
+            TenantStrategy::Schema { schema_name } => {
+                validate_schema_name(&schema_name)?;
+                Ok(self.shared_pool.clone())
+            }
+            TenantStrategy::DedicatedDb { dsn_secret_ref } => {
+                let pool = self.dedicated_pool(&dsn_secret_ref).await?;
+                Ok((*pool).clone())
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -183,15 +219,15 @@ mod tests {
     #[test]
     fn validate_schema_name_accepts_whitelisted_forms() {
         assert!(validate_schema_name("public").is_ok());
-        assert!(validate_schema_name("tenant_ab12").is_ok());
+        assert!(validate_schema_name("t_ab12").is_ok());
     }
 
     #[test]
     fn validate_schema_name_rejects_everything_else() {
         assert!(validate_schema_name("Tenant_AB").is_err());
-        assert!(validate_schema_name("tenant_ab;DROP TABLE x--").is_err());
+        assert!(validate_schema_name("t_ab;DROP TABLE x--").is_err());
         assert!(validate_schema_name("").is_err());
         assert!(validate_schema_name("public'; select 1--").is_err());
-        assert!(validate_schema_name("tenant_").is_err());
+        assert!(validate_schema_name("t_").is_err());
     }
 }

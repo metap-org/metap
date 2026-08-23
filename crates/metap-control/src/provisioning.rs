@@ -60,6 +60,17 @@ pub async fn provision_dedicated_db_tenant(
         .connect(dedicated_database_url)
         .await?;
     sqlx::migrate!("../migrations").run(&dedicated_pool).await?;
+    // `control.tenants` (`0012_control_tenants.sql`) is genuinely global platform data — the
+    // one registry every tenant is looked up through — never tenant-scoped data itself
+    // (real feedback: this used to leave an empty, unused `control` schema baked into every
+    // dedicated tenant's own database, which made "which DB is the platform's registry
+    // actually in" ambiguous just from looking at one). There's no way to skip a migration
+    // file from `sqlx::migrate!`'s embedded set, so drop it right back out post-migrate — the
+    // dedicated DB's own `_sqlx_migrations` history still records 0012 as applied, which is
+    // correct (it *did* run); nothing here ever migrates that table again.
+    sqlx::query("DROP SCHEMA IF EXISTS control CASCADE")
+        .execute(&dedicated_pool)
+        .await?;
 
     registry
         .provision(tenant_id, "paid", "dedicated_db", None, Some(dsn_secret_ref), "active")

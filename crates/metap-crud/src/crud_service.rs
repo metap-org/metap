@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use metap_control::{Router, RouterError};
-use metap_metadata::{EntityDefinition, EntityField, FieldKind, MetadataRegistry};
+use metap_metadata::{field_has_real_column, EntityDefinition, EntityField, FieldKind, MetadataRegistry};
 use metap_permission::{EntityAction, PermissionDecision, PermissionService, PermissionSnapshot, RequestContext};
 use metap_query::{
     apply_params, encode_cursor, plan_list, CrossRecordConditionInListError, Cursor, InvalidCursorError, ListInput,
@@ -32,6 +32,14 @@ use crate::result::{PageInfo, ServiceResult};
 use crate::validation::validate_payload;
 
 const RECORD_COLUMNS: &str = "id, entity, code, status, data, version, created_at, updated_at";
+/// Same shape minus `entity` — a table-per-entity table (`table_name != "records"`) has no
+/// discriminator column, one table already means one entity. `row_to_dto_dedicated` fills
+/// `RecordDto.entity` in from the already-known entity name instead.
+const RECORD_COLUMNS_DEDICATED: &str = "id, code, status, data, version, created_at, updated_at";
+
+fn is_dedicated(entity: &EntityDefinition) -> bool {
+    entity.table_name != "records"
+}
 
 /// `metadata`/`permissions` are `Arc`, not owned — `crates/metap-http` (Migration Order step
 /// 8) needs to share the same registry/permission service across route handlers (direct
@@ -117,7 +125,10 @@ impl CrudService {
             else {
                 continue;
             };
-            if let Some(related_data) = fetch_related_data(&mut *tx, ref_id, tenant_id, ref_entity).await? {
+            let Some(ref_entity_def) = self.get_entity(ref_entity) else {
+                continue;
+            };
+            if let Some(related_data) = fetch_related_data(&mut *tx, ref_id, tenant_id, &ref_entity_def).await? {
                 enriched.insert(field_name, Value::Object(related_data));
             }
         }
@@ -195,8 +206,11 @@ impl CrudService {
             if ids.is_empty() {
                 continue;
             }
+            let Some(ref_entity_def) = self.get_entity(ref_entity) else {
+                continue;
+            };
 
-            let related = fetch_related_records_batch(&mut **tx, &ids, tenant_id, ref_entity).await?;
+            let related = fetch_related_records_batch(&mut **tx, &ids, tenant_id, &ref_entity_def).await?;
             if related.is_empty() {
                 continue;
             }
@@ -312,8 +326,15 @@ impl CrudService {
             }
         };
 
+        let dedicated = is_dedicated(&entity);
+        let table = &entity.table_name;
+        let columns = if dedicated {
+            RECORD_COLUMNS_DEDICATED
+        } else {
+            RECORD_COLUMNS
+        };
         let sql = format!(
-            "SELECT {RECORD_COLUMNS} FROM records WHERE {} ORDER BY {} LIMIT {}",
+            "SELECT {columns} FROM {table} WHERE {} ORDER BY {} LIMIT {}",
             planned.where_sql,
             planned.order_by_sql,
             planned.limit + 1
@@ -336,7 +357,16 @@ impl CrudService {
         } else {
             rows
         };
-        let page_dtos: Vec<RecordDto> = page_rows.into_iter().map(row_to_dto).collect::<anyhow::Result<_>>()?;
+        let page_dtos: Vec<RecordDto> = page_rows
+            .into_iter()
+            .map(|row| {
+                if dedicated {
+                    row_to_dto_dedicated(row, &entity.name)
+                } else {
+                    row_to_dto(row)
+                }
+            })
+            .collect::<anyhow::Result<_>>()?;
 
         let next_cursor = if has_more {
             page_dtos.last().map(|last| {
@@ -399,7 +429,7 @@ impl CrudService {
                 return Err(e);
             }
         };
-        let Some(existing) = fetch_existing(&mut *tx, id, tenant_id, &entity.name).await? else {
+        let Some(existing) = fetch_existing(&mut *tx, id, tenant_id, &entity).await? else {
             tracing::debug!(entity = entity.name, record_id = %id, "get rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
@@ -493,19 +523,31 @@ impl CrudService {
                 return Err(e);
             }
         };
-        let row = match sqlx::query(&format!(
-            "INSERT INTO records (tenant_id, entity, code, status, data, created_by, updated_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {RECORD_COLUMNS}"
-        ))
-        .bind(tenant_id)
-        .bind(&entity.name)
-        .bind(&code)
-        .bind(&status)
-        .bind(Value::Object(data.clone()))
-        .bind(user_id)
-        .bind(user_id)
-        .fetch_one(&mut *tx)
-        .await
+        let dedicated = is_dedicated(&entity);
+        let table = &entity.table_name;
+        let insert_sql = if dedicated {
+            format!(
+                "INSERT INTO {table} (tenant_id, code, status, data, created_by, updated_by) \
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING {RECORD_COLUMNS_DEDICATED}"
+            )
+        } else {
+            format!(
+                "INSERT INTO {table} (tenant_id, entity, code, status, data, created_by, updated_by) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {RECORD_COLUMNS}"
+            )
+        };
+        let mut query = sqlx::query(&insert_sql).bind(tenant_id);
+        if !dedicated {
+            query = query.bind(&entity.name);
+        }
+        let row = match query
+            .bind(&code)
+            .bind(&status)
+            .bind(Value::Object(data.clone()))
+            .bind(user_id)
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await
         {
             Ok(row) => row,
             Err(e) => {
@@ -517,7 +559,11 @@ impl CrudService {
                 return Err(e.into());
             }
         };
-        let record = row_to_dto(row)?;
+        let record = if dedicated {
+            row_to_dto_dedicated(row, &entity.name)?
+        } else {
+            row_to_dto(row)?
+        };
 
         emit_created(&mut *tx, &entity, record.id, &data).await?;
         tx.commit().await?;
@@ -556,7 +602,7 @@ impl CrudService {
                 return Err(e);
             }
         };
-        let Some(existing) = fetch_existing(&mut *precheck_tx, id, tenant_id, &entity.name).await? else {
+        let Some(existing) = fetch_existing(&mut *precheck_tx, id, tenant_id, &entity).await? else {
             tracing::debug!(entity = entity.name, record_id = %id, "update rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
@@ -618,21 +664,31 @@ impl CrudService {
                 return Err(e);
             }
         };
-        let row = match sqlx::query(&format!(
-            "UPDATE records SET data = $1, code = $2, version = version + 1, updated_at = now(), updated_by = $3 \
-             WHERE id = $4 AND tenant_id = $5 AND entity = $6 AND version = $7 AND deleted = false \
-             RETURNING {RECORD_COLUMNS}"
-        ))
-        .bind(Value::Object(data.clone()))
-        .bind(&code)
-        .bind(user_id)
-        .bind(id)
-        .bind(tenant_id)
-        .bind(&entity.name)
-        .bind(expected_version)
-        .fetch_optional(&mut *tx)
-        .await
-        {
+        let dedicated = is_dedicated(&entity);
+        let table = &entity.table_name;
+        let update_sql = if dedicated {
+            format!(
+                "UPDATE {table} SET data = $1, code = $2, version = version + 1, updated_at = now(), updated_by = $3 \
+                 WHERE id = $4 AND tenant_id = $5 AND version = $6 AND deleted = false \
+                 RETURNING {RECORD_COLUMNS_DEDICATED}"
+            )
+        } else {
+            format!(
+                "UPDATE {table} SET data = $1, code = $2, version = version + 1, updated_at = now(), updated_by = $3 \
+                 WHERE id = $4 AND tenant_id = $5 AND entity = $6 AND version = $7 AND deleted = false \
+                 RETURNING {RECORD_COLUMNS}"
+            )
+        };
+        let mut query = sqlx::query(&update_sql)
+            .bind(Value::Object(data.clone()))
+            .bind(&code)
+            .bind(user_id)
+            .bind(id)
+            .bind(tenant_id);
+        if !dedicated {
+            query = query.bind(&entity.name);
+        }
+        let row = match query.bind(expected_version).fetch_optional(&mut *tx).await {
             Ok(row) => row,
             Err(e) => {
                 if let Some(result) = unique_violation(&entity.name, &e) {
@@ -654,7 +710,11 @@ impl CrudService {
             );
             return Ok(ServiceResult::err(409, "version_conflict"));
         };
-        let record = row_to_dto(row)?;
+        let record = if dedicated {
+            row_to_dto_dedicated(row, &entity.name)?
+        } else {
+            row_to_dto(row)?
+        };
 
         emit_updated(&mut *tx, &entity, record.id, &data, record.version).await?;
         tx.commit().await?;
@@ -693,7 +753,7 @@ impl CrudService {
                 return Err(e);
             }
         };
-        let Some(existing) = fetch_existing(&mut *precheck_tx, id, tenant_id, &entity.name).await? else {
+        let Some(existing) = fetch_existing(&mut *precheck_tx, id, tenant_id, &entity).await? else {
             tracing::debug!(entity = entity.name, record_id = %id, "transition rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
@@ -768,20 +828,31 @@ impl CrudService {
                 return Err(e);
             }
         };
-        let row = sqlx::query(&format!(
-            "UPDATE records SET data = $1, status = $2, version = version + 1, updated_at = now(), updated_by = $3 \
-             WHERE id = $4 AND tenant_id = $5 AND entity = $6 AND version = $7 AND deleted = false \
-             RETURNING {RECORD_COLUMNS}"
-        ))
-        .bind(Value::Object(next_data))
-        .bind(&to_state)
-        .bind(user_id)
-        .bind(id)
-        .bind(tenant_id)
-        .bind(&entity.name)
-        .bind(expected_version)
-        .fetch_optional(&mut *tx)
-        .await?;
+        let dedicated = is_dedicated(&entity);
+        let table = &entity.table_name;
+        let transition_sql = if dedicated {
+            format!(
+                "UPDATE {table} SET data = $1, status = $2, version = version + 1, updated_at = now(), updated_by = $3 \
+                 WHERE id = $4 AND tenant_id = $5 AND version = $6 AND deleted = false \
+                 RETURNING {RECORD_COLUMNS_DEDICATED}"
+            )
+        } else {
+            format!(
+                "UPDATE {table} SET data = $1, status = $2, version = version + 1, updated_at = now(), updated_by = $3 \
+                 WHERE id = $4 AND tenant_id = $5 AND entity = $6 AND version = $7 AND deleted = false \
+                 RETURNING {RECORD_COLUMNS}"
+            )
+        };
+        let mut query = sqlx::query(&transition_sql)
+            .bind(Value::Object(next_data))
+            .bind(&to_state)
+            .bind(user_id)
+            .bind(id)
+            .bind(tenant_id);
+        if !dedicated {
+            query = query.bind(&entity.name);
+        }
+        let row = query.bind(expected_version).fetch_optional(&mut *tx).await?;
 
         let Some(row) = row else {
             tx.rollback().await.ok();
@@ -793,7 +864,11 @@ impl CrudService {
             );
             return Ok(ServiceResult::err(409, "version_conflict"));
         };
-        let record = row_to_dto(row)?;
+        let record = if dedicated {
+            row_to_dto_dedicated(row, &entity.name)?
+        } else {
+            row_to_dto(row)?
+        };
 
         record_event(&mut *tx, &entity, record.id, action, &from_state, &to_state, context).await?;
         emit_transitioned(
@@ -849,7 +924,7 @@ impl CrudService {
                 return Err(e);
             }
         };
-        let Some(existing) = fetch_existing(&mut *precheck_tx, id, tenant_id, &entity.name).await? else {
+        let Some(existing) = fetch_existing(&mut *precheck_tx, id, tenant_id, &entity).await? else {
             tracing::debug!(entity = entity.name, record_id = %id, "delete rejected: record not found");
             return Ok(ServiceResult::err(404, "record_not_found"));
         };
@@ -903,18 +978,26 @@ impl CrudService {
             ));
         }
 
-        let row = sqlx::query(&format!(
-            "UPDATE records SET deleted = true, version = version + 1, updated_at = now(), updated_by = $1 \
-             WHERE id = $2 AND tenant_id = $3 AND entity = $4 AND version = $5 AND deleted = false \
-             RETURNING {RECORD_COLUMNS}"
-        ))
-        .bind(user_id)
-        .bind(id)
-        .bind(tenant_id)
-        .bind(&entity.name)
-        .bind(expected_version)
-        .fetch_optional(&mut *tx)
-        .await?;
+        let dedicated = is_dedicated(&entity);
+        let table = &entity.table_name;
+        let delete_sql = if dedicated {
+            format!(
+                "UPDATE {table} SET deleted = true, version = version + 1, updated_at = now(), updated_by = $1 \
+                 WHERE id = $2 AND tenant_id = $3 AND version = $4 AND deleted = false \
+                 RETURNING {RECORD_COLUMNS_DEDICATED}"
+            )
+        } else {
+            format!(
+                "UPDATE {table} SET deleted = true, version = version + 1, updated_at = now(), updated_by = $1 \
+                 WHERE id = $2 AND tenant_id = $3 AND entity = $4 AND version = $5 AND deleted = false \
+                 RETURNING {RECORD_COLUMNS}"
+            )
+        };
+        let mut query = sqlx::query(&delete_sql).bind(user_id).bind(id).bind(tenant_id);
+        if !dedicated {
+            query = query.bind(&entity.name);
+        }
+        let row = query.bind(expected_version).fetch_optional(&mut *tx).await?;
 
         let Some(row) = row else {
             tx.rollback().await.ok();
@@ -926,7 +1009,11 @@ impl CrudService {
             );
             return Ok(ServiceResult::err(409, "version_conflict"));
         };
-        let record = row_to_dto(row)?;
+        let record = if dedicated {
+            row_to_dto_dedicated(row, &entity.name)?
+        } else {
+            row_to_dto(row)?
+        };
 
         emit_deleted(&mut *tx, &entity, record.id).await?;
         tx.commit().await?;
@@ -1008,85 +1095,162 @@ fn router_unavailable<T>(error: &anyhow::Error) -> Option<ServiceResult<T>> {
     }
 }
 
+/// One `(entity, field)` pair `delete()` needs to check for an orphan reference, plus enough to
+/// build the right query against wherever that entity's rows actually live.
+struct ReferencingField {
+    ref_entity: String,
+    ref_field: String,
+    ref_table: String,
+    has_real_column: bool,
+}
+
 /// Every `(entity, field)` pair across the whole registry where `field` is a `Reference` kind
 /// pointing at `target_entity` — the set `delete()` checks for orphan references. Includes
 /// self-references (an entity referencing itself, e.g. a manager hierarchy) — deleting a record
 /// other records of the *same* entity still point to is exactly the same orphan-reference risk.
-fn referencing_fields(metadata: &MetadataRegistry, target_entity: &str) -> Vec<(String, String)> {
+fn referencing_fields(metadata: &MetadataRegistry, target_entity: &str) -> Vec<ReferencingField> {
     let mut result = Vec::new();
     for summary in metadata.list_entities() {
         for field in &summary.fields {
             if field.kind == FieldKind::Reference && field.ref_entity.as_deref() == Some(target_entity) {
-                result.push((summary.name.clone(), field.name.clone()));
+                let ref_table = metadata
+                    .get_entity(&summary.name)
+                    .map(|e| e.table_name.clone())
+                    .unwrap_or_else(|| "records".to_string());
+                result.push(ReferencingField {
+                    ref_entity: summary.name.clone(),
+                    ref_field: field.name.clone(),
+                    ref_table,
+                    has_real_column: field_has_real_column(field),
+                });
             }
         }
     }
     result
 }
 
-/// One combined query for every `(ref_entity, ref_field)` pair `referencing_fields` returns,
-/// instead of `delete()`'s original one-query-per-pair loop (found in code review, 2026-08-22 —
-/// an entity referenced by K different fields cost K sequential round trips on every delete).
+/// One combined query per **distinct physical table** among `referencing_fields`'s results
+/// (`delete()`'s original one-query-per-pair loop, found too slow in code review 2026-08-22 —
+/// an entity referenced by K fields used to cost K sequential round trips — got fixed by
+/// combining onto one `records` query; table-per-entity now means a referencing entity might not
+/// even be on `records`, so the combining has to happen per-table instead of unconditionally).
 /// `AND id != $2` excludes the record's own row (self-references, e.g.
 /// `crm.customers.referredBy`, are deliberately included in `refs` — without this exclusion a
 /// record whose self-reference points at itself would match its own row and could never be
 /// deleted, a second bug found in the same review pass).
 ///
-/// Returns the first matching `(ref_entity, ref_field)` pair, resolved from the matched row's
-/// own `entity` column back into `refs` — if the same `ref_entity` appears more than once (two
-/// different `Reference` fields on the same entity both pointing at this target), the field
-/// reported is whichever of that entity's pairs appears first in `refs`; a rare edge case, not
-/// worth a second round trip to disambiguate exactly which field actually matched.
+/// A dedicated table holds exactly one entity's rows, so every `ReferencingField` grouped under
+/// it shares the same `ref_entity` — no `entity` column to read back, unlike the `records` group.
+/// If the same entity has two different fields both pointing at the target (rare), the field
+/// reported is whichever appears first in that table's group — same tolerance the original
+/// `records`-only version already had for the analogous case.
 async fn find_referencing_record(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     tenant_id: Uuid,
     id: Uuid,
-    refs: &[(String, String)],
+    refs: &[ReferencingField],
 ) -> anyhow::Result<Option<(String, String)>> {
     if refs.is_empty() {
         return Ok(None);
     }
 
-    let mut sql =
-        String::from("SELECT entity FROM records WHERE tenant_id = $1 AND deleted = false AND id != $2 AND (");
-    let mut clauses = Vec::with_capacity(refs.len());
-    let mut param_idx = 3;
-    for _ in refs {
-        clauses.push(format!(
-            "(entity = ${} AND data ->> ${} = ${})",
-            param_idx,
-            param_idx + 1,
-            param_idx + 2
-        ));
-        param_idx += 3;
+    let mut by_table: std::collections::BTreeMap<&str, Vec<&ReferencingField>> = std::collections::BTreeMap::new();
+    for r in refs {
+        by_table.entry(r.ref_table.as_str()).or_default().push(r);
     }
-    sql.push_str(&clauses.join(" OR "));
-    sql.push_str(") LIMIT 1");
 
-    let mut query = sqlx::query_scalar::<_, String>(&sql).bind(tenant_id).bind(id);
-    for (ref_entity, ref_field) in refs {
-        query = query.bind(ref_entity).bind(ref_field).bind(id.to_string());
+    for (table, group) in by_table {
+        if table == "records" {
+            let mut sql =
+                String::from("SELECT entity FROM records WHERE tenant_id = $1 AND deleted = false AND id != $2 AND (");
+            let mut clauses = Vec::with_capacity(group.len());
+            let mut param_idx = 3;
+            for _ in &group {
+                clauses.push(format!(
+                    "(entity = ${} AND data ->> ${} = ${})",
+                    param_idx,
+                    param_idx + 1,
+                    param_idx + 2
+                ));
+                param_idx += 3;
+            }
+            sql.push_str(&clauses.join(" OR "));
+            sql.push_str(") LIMIT 1");
+
+            let mut query = sqlx::query_scalar::<_, String>(&sql).bind(tenant_id).bind(id);
+            for r in &group {
+                query = query.bind(&r.ref_entity).bind(&r.ref_field).bind(id.to_string());
+            }
+            let matched_entity: Option<String> = query.fetch_optional(&mut **tx).await?;
+            if let Some(matched) = matched_entity {
+                if let Some(r) = group.iter().find(|r| r.ref_entity == matched) {
+                    return Ok(Some((r.ref_entity.clone(), r.ref_field.clone())));
+                }
+            }
+        } else {
+            let mut clauses = Vec::with_capacity(group.len());
+            let mut param_idx = 3;
+            for r in &group {
+                if r.has_real_column {
+                    clauses.push(format!("\"{}\" = ${}::uuid", r.ref_field, param_idx));
+                } else {
+                    clauses.push(format!("data ->> '{}' = ${}", r.ref_field, param_idx));
+                }
+                param_idx += 1;
+            }
+            let sql = format!(
+                "SELECT id FROM {table} WHERE tenant_id = $1 AND deleted = false AND id != $2 AND ({}) LIMIT 1",
+                clauses.join(" OR ")
+            );
+            let mut query = sqlx::query_scalar::<_, Uuid>(&sql).bind(tenant_id).bind(id);
+            for _ in &group {
+                query = query.bind(id.to_string());
+            }
+            let matched: Option<Uuid> = query.fetch_optional(&mut **tx).await?;
+            if matched.is_some() {
+                let r = group[0];
+                return Ok(Some((r.ref_entity.clone(), r.ref_field.clone())));
+            }
+        }
     }
-    let matched_entity: Option<String> = query.fetch_optional(&mut **tx).await?;
-    Ok(matched_entity.and_then(|matched| refs.iter().find(|(e, _)| *e == matched).cloned()))
+    Ok(None)
 }
 
 async fn fetch_existing<'e, E: PgExecutor<'e>>(
     executor: E,
     id: Uuid,
     tenant_id: Uuid,
-    entity_name: &str,
+    entity: &EntityDefinition,
 ) -> anyhow::Result<Option<RecordDto>> {
-    let row = sqlx::query(&format!(
-        "SELECT {RECORD_COLUMNS} FROM records \
-         WHERE id = $1 AND tenant_id = $2 AND entity = $3 AND deleted = false"
-    ))
-    .bind(id)
-    .bind(tenant_id)
-    .bind(entity_name)
-    .fetch_optional(executor)
-    .await?;
-    row.map(row_to_dto).transpose()
+    let dedicated = is_dedicated(entity);
+    let table = &entity.table_name;
+    let row = if dedicated {
+        sqlx::query(&format!(
+            "SELECT {RECORD_COLUMNS_DEDICATED} FROM {table} WHERE id = $1 AND tenant_id = $2 AND deleted = false"
+        ))
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(executor)
+        .await?
+    } else {
+        sqlx::query(&format!(
+            "SELECT {RECORD_COLUMNS} FROM {table} \
+             WHERE id = $1 AND tenant_id = $2 AND entity = $3 AND deleted = false"
+        ))
+        .bind(id)
+        .bind(tenant_id)
+        .bind(&entity.name)
+        .fetch_optional(executor)
+        .await?
+    };
+    row.map(|r| {
+        if dedicated {
+            row_to_dto_dedicated(r, &entity.name)
+        } else {
+            row_to_dto(r)
+        }
+    })
+    .transpose()
 }
 
 /// Raw `data` fetch for one hop of cross-record permission enrichment (see
@@ -1098,15 +1262,27 @@ async fn fetch_related_data<'e, E: PgExecutor<'e>>(
     executor: E,
     id: Uuid,
     tenant_id: Uuid,
-    entity_name: &str,
+    ref_entity: &EntityDefinition,
 ) -> anyhow::Result<Option<JsonObject>> {
-    let row =
-        sqlx::query("SELECT data FROM records WHERE id = $1 AND tenant_id = $2 AND entity = $3 AND deleted = false")
-            .bind(id)
-            .bind(tenant_id)
-            .bind(entity_name)
-            .fetch_optional(executor)
-            .await?;
+    let table = &ref_entity.table_name;
+    let row = if is_dedicated(ref_entity) {
+        sqlx::query(&format!(
+            "SELECT data FROM {table} WHERE id = $1 AND tenant_id = $2 AND deleted = false"
+        ))
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(executor)
+        .await?
+    } else {
+        sqlx::query(&format!(
+            "SELECT data FROM {table} WHERE id = $1 AND tenant_id = $2 AND entity = $3 AND deleted = false"
+        ))
+        .bind(id)
+        .bind(tenant_id)
+        .bind(&ref_entity.name)
+        .fetch_optional(executor)
+        .await?
+    };
     let Some(row) = row else {
         return Ok(None);
     };
@@ -1125,16 +1301,27 @@ async fn fetch_related_records_batch<'e, E: PgExecutor<'e>>(
     executor: E,
     ids: &[Uuid],
     tenant_id: Uuid,
-    entity_name: &str,
+    ref_entity: &EntityDefinition,
 ) -> anyhow::Result<HashMap<Uuid, JsonObject>> {
-    let rows = sqlx::query(
-        "SELECT id, data FROM records WHERE id = ANY($1) AND tenant_id = $2 AND entity = $3 AND deleted = false",
-    )
-    .bind(ids)
-    .bind(tenant_id)
-    .bind(entity_name)
-    .fetch_all(executor)
-    .await?;
+    let table = &ref_entity.table_name;
+    let rows = if is_dedicated(ref_entity) {
+        sqlx::query(&format!(
+            "SELECT id, data FROM {table} WHERE id = ANY($1) AND tenant_id = $2 AND deleted = false"
+        ))
+        .bind(ids)
+        .bind(tenant_id)
+        .fetch_all(executor)
+        .await?
+    } else {
+        sqlx::query(&format!(
+            "SELECT id, data FROM {table} WHERE id = ANY($1) AND tenant_id = $2 AND entity = $3 AND deleted = false"
+        ))
+        .bind(ids)
+        .bind(tenant_id)
+        .bind(&ref_entity.name)
+        .fetch_all(executor)
+        .await?
+    };
     let mut result = HashMap::new();
     for row in rows {
         let id: Uuid = row.try_get("id")?;
@@ -1155,6 +1342,28 @@ fn row_to_dto(row: sqlx::postgres::PgRow) -> anyhow::Result<RecordDto> {
     Ok(RecordDto {
         id: row.try_get("id")?,
         entity: row.try_get("entity")?,
+        code: row.try_get("code")?,
+        status: row.try_get("status")?,
+        data,
+        version: row.try_get("version")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+        related_display: None,
+    })
+}
+
+/// `row_to_dto`'s counterpart for a table-per-entity table (`RECORD_COLUMNS_DEDICATED` — no
+/// `entity` column to read back), `entity_name` supplied by the caller instead (always already
+/// known — every call site already resolved the `EntityDefinition` being queried).
+fn row_to_dto_dedicated(row: sqlx::postgres::PgRow, entity_name: &str) -> anyhow::Result<RecordDto> {
+    let data_value: Value = row.try_get("data")?;
+    let data = data_value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("dedicated table's data was not a JSON object"))?;
+    Ok(RecordDto {
+        id: row.try_get("id")?,
+        entity: entity_name.to_string(),
         code: row.try_get("code")?,
         status: row.try_get("status")?,
         data,

@@ -154,6 +154,28 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
         }
     }
 
+    // `table_name` is interpolated directly into SQL (`crates/metap-crud`, `crates/metap-query`)
+    // since Postgres can't parameterize an identifier — validate it here, at the trust boundary
+    // where entities are registered, rather than trusting it blindly at query time. A dedicated
+    // table-per-entity table is schema-qualified (`metap_reconciler::qualified_table_name_for`,
+    // e.g. `"entities.jira_issues"` — never `public`, see that function's doc comment for why),
+    // so each `.`-separated segment is checked against the same identifier charset separately.
+    fn is_safe_ident_segment(segment: &str) -> bool {
+        !segment.is_empty()
+            && segment.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+            && segment
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    }
+    let table_name_ok = entity.table_name == "records"
+        || entity.table_name.split('.').all(is_safe_ident_segment) && entity.table_name.contains('.');
+    if !table_name_ok {
+        issues.push(format!(
+            "tableName \"{}\" must be \"records\" or a schema-qualified ^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$ name",
+            entity.table_name
+        ));
+    }
+
     if issues.is_empty() {
         Ok(())
     } else {

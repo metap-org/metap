@@ -15,7 +15,12 @@ pub async fn introspect(
     entity_name: &str,
     table: &str,
 ) -> anyhow::Result<Option<PhysicalSchema>> {
-    let exists: bool = sqlx::query_scalar("SELECT to_regclass('public.' || $1) IS NOT NULL")
+    // `table` is schema-qualified (`crate::compile::qualified_table_name_for`, e.g.
+    // `"entities.jira_issues"`) — split once for the `pg_catalog`/`information_schema` queries
+    // below, which key on bare table name + schema name separately, never a dotted string.
+    let (schema, bare_table) = table.split_once('.').unwrap_or(("public", table));
+
+    let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
         .bind(table)
         .fetch_one(pool)
         .await?;
@@ -27,9 +32,10 @@ pub async fn introspect(
     let mut columns = BTreeMap::new();
     let column_rows = sqlx::query(
         "SELECT column_name, data_type, is_nullable, character_maximum_length, numeric_precision, numeric_scale
-         FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1",
+         FROM information_schema.columns WHERE table_schema = $2 AND table_name = $1",
     )
-    .bind(table)
+    .bind(bare_table)
+    .bind(schema)
     .fetch_all(pool)
     .await?;
     for row in column_rows {
@@ -67,9 +73,10 @@ pub async fn introspect(
          JOIN pg_class tbl ON tbl.oid = i.indrelid
          JOIN pg_am am ON am.oid = ix.relam
          JOIN pg_namespace ns ON ns.oid = tbl.relnamespace
-         WHERE tbl.relname = $1 AND ns.nspname = 'public' AND NOT i.indisprimary",
+         WHERE tbl.relname = $1 AND ns.nspname = $2 AND NOT i.indisprimary",
     )
-    .bind(table)
+    .bind(bare_table)
+    .bind(schema)
     .fetch_all(pool)
     .await?;
     for row in index_rows {
@@ -93,18 +100,21 @@ pub async fn introspect(
     let mut foreign_keys = BTreeMap::new();
     let mut uniques = BTreeMap::new();
     let constraint_rows = sqlx::query(
-        "SELECT c.conname, c.contype, c.convalidated,
+        "SELECT c.conname, c.contype::text AS contype, c.convalidated,
                 array(SELECT attname FROM pg_attribute WHERE attrelid = c.conrelid AND attnum = ANY(c.conkey)) AS cols,
                 ref.relname AS ref_table,
+                refns.nspname AS ref_schema,
                 array(SELECT attname FROM pg_attribute WHERE attrelid = c.confrelid AND attnum = ANY(c.confkey)) AS ref_cols,
-                c.confdeltype
+                c.confdeltype::text AS confdeltype
          FROM pg_constraint c
          JOIN pg_class tbl ON tbl.oid = c.conrelid
          JOIN pg_namespace ns ON ns.oid = tbl.relnamespace
          LEFT JOIN pg_class ref ON ref.oid = c.confrelid
-         WHERE tbl.relname = $1 AND ns.nspname = 'public' AND c.contype IN ('f', 'u')",
+         LEFT JOIN pg_namespace refns ON refns.oid = ref.relnamespace
+         WHERE tbl.relname = $1 AND ns.nspname = $2 AND c.contype IN ('f', 'u')",
     )
-    .bind(table)
+    .bind(bare_table)
+    .bind(schema)
     .fetch_all(pool)
     .await?;
     for row in constraint_rows {
@@ -114,14 +124,22 @@ pub async fn introspect(
             "f" => {
                 let cols: Vec<String> = row.try_get("cols")?;
                 let ref_table: String = row.try_get("ref_table")?;
+                let ref_schema: Option<String> = row.try_get("ref_schema")?;
                 let ref_cols: Vec<String> = row.try_get("ref_cols")?;
                 let convalidated: bool = row.try_get("convalidated")?;
                 let confdeltype: String = row.try_get("confdeltype")?;
+                // `compile()`'s desired `FkSpec.ref_table` is always schema-qualified
+                // (`qualified_table_name_for`) — introspected the same way, or `diff()` would
+                // see every FK's `ref_table` as "changed" on every pass and never converge.
+                let qualified_ref_table = match ref_schema {
+                    Some(s) => format!("{s}.{ref_table}"),
+                    None => ref_table,
+                };
                 foreign_keys.insert(
                     conname,
                     FkSpec {
                         column: cols.into_iter().next().unwrap_or_default(),
-                        ref_table,
+                        ref_table: qualified_ref_table,
                         ref_column: ref_cols.into_iter().next().unwrap_or_default(),
                         on_delete: on_delete_from_char(&confdeltype),
                         validated: convalidated,

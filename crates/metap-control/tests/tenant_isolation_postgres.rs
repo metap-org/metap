@@ -74,8 +74,8 @@ async fn single_connection_pool_never_leaks_search_path_between_two_registered_t
     let pool = connect_single_connection().await;
     let tenant_a = Uuid::new_v4();
     let tenant_b = Uuid::new_v4();
-    let schema_a = format!("tenant_isotesta{}", tenant_a.simple());
-    let schema_b = format!("tenant_isotestb{}", tenant_b.simple());
+    let schema_a = format!("t_isotesta{}", tenant_a.simple());
+    let schema_b = format!("t_isotestb{}", tenant_b.simple());
     insert_schema_tenant(&pool, tenant_a, &schema_a).await;
     insert_schema_tenant(&pool, tenant_b, &schema_b).await;
 
