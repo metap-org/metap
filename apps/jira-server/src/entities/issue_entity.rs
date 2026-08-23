@@ -72,6 +72,23 @@ pub fn issue_entity() -> EntityDefinition {
                 sortable: None,
                 storage: None,
             },
+            EntityField {
+                name: "sprint".to_string(),
+                label: "Sprint".to_string(),
+                kind: FieldKind::Reference,
+                // Optional — an issue with no sprint sits in the backlog, same convention a
+                // real Jira board uses for its "Backlog" column/swimlane.
+                required: None,
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: Some("jira.sprints".to_string()),
+                ref_display_field: Some("name".to_string()),
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+            },
             field(
                 "assigneeEmail",
                 "Assignee Email",
@@ -81,6 +98,7 @@ pub fn issue_entity() -> EntityDefinition {
                 false,
             ),
             field("reporterEmail", "Reporter Email", FieldKind::String, true, false, false),
+            field("dueDate", "Due Date", FieldKind::Date, false, true, false),
             EntityField {
                 name: "status".to_string(),
                 label: "Status".to_string(),
@@ -88,7 +106,12 @@ pub fn issue_entity() -> EntityDefinition {
                 required: None,
                 indexed: Some(true),
                 unique: None,
-                enum_values: Some(vec!["todo".to_string(), "in_progress".to_string(), "done".to_string()]),
+                enum_values: Some(vec![
+                    "todo".to_string(),
+                    "in_progress".to_string(),
+                    "in_review".to_string(),
+                    "done".to_string(),
+                ]),
                 ref_entity: None,
                 ref_display_field: None,
                 searchable: None,
@@ -104,18 +127,26 @@ pub fn issue_entity() -> EntityDefinition {
                 "title".to_string(),
                 "priority".to_string(),
                 "project".to_string(),
+                "sprint".to_string(),
                 "status".to_string(),
                 "assigneeEmail".to_string(),
+                "dueDate".to_string(),
             ],
             filters: vec![
                 "title".to_string(),
                 "priority".to_string(),
                 "project".to_string(),
+                "sprint".to_string(),
                 "status".to_string(),
             ],
             default_sort: Some("-createdAt".to_string()),
             max_limit: 100,
         }],
+        // 4 states so the kanban board (`apps/jira-fe`) has a genuine review column, not just
+        // "doing"/"done" — `start`/`submit_for_review`/`request_changes`/`approve`/`reopen`
+        // together form a diamond (`in_review` can go either back to `in_progress` or forward to
+        // `done`), which is exactly the shape a board's drag-and-drop needs to call the right
+        // transition action per source/target column pair.
         workflow: Some(EntityWorkflow {
             state_field: "status".to_string(),
             initial_state: "todo".to_string(),
@@ -129,10 +160,24 @@ pub fn issue_entity() -> EntityDefinition {
                     guard: None,
                 },
                 WorkflowTransition {
-                    action: "complete".to_string(),
+                    action: "submit_for_review".to_string(),
                     from: "in_progress".to_string(),
+                    to: "in_review".to_string(),
+                    label: "Submit for review".to_string(),
+                    guard: None,
+                },
+                WorkflowTransition {
+                    action: "request_changes".to_string(),
+                    from: "in_review".to_string(),
+                    to: "in_progress".to_string(),
+                    label: "Request changes".to_string(),
+                    guard: None,
+                },
+                WorkflowTransition {
+                    action: "approve".to_string(),
+                    from: "in_review".to_string(),
                     to: "done".to_string(),
-                    label: "Mark done".to_string(),
+                    label: "Approve".to_string(),
                     guard: Some(metap::permission::PolicyCondition::Attribute {
                         attribute: "reporterEmail".to_string(),
                         op: ConditionOp::Neq,

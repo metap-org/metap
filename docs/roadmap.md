@@ -1954,6 +1954,62 @@ invalidate đúng, không trả dữ liệu cũ). `cargo fmt --check`/`clippy --
 warnings`/`build --workspace` sạch toàn bộ; unit test toàn workspace (`cargo test --workspace
 --lib --bins`) 0 failed.
 
+## Phase 24: xây đầy `apps/jira-server` cho demo — bước 1/nhiều: sprint, comment, kanban workflow (2026-08-23, đang tiếp tục)
+
+Chủ dự án: "làm đầy jira-server lên để t xem, dashboard, isue, comment, sử cứm workflow chuyển
+trạng thái, build sprint, date, kanban,... rất nhiều luôn, phải bắt đầu build thì mới biết metap
+cần thêm gì" — chủ động build tăng dần thay vì lên kế hoạch đầy đủ trước, đúng tinh thần "bắt đầu
+build để lộ ra chỗ metap còn thiếu". Batch này là phần backend nền cho kanban/sprint/comment;
+frontend (`apps/jira-fe`, kanban board, dashboard) là bước tiếp theo.
+
+**Entity mới**: `jira.sprints` (`project` Reference bắt buộc, `name`/`goal`, `startDate`/
+`endDate` dùng `FieldKind::Date`, `status` workflow `planned → active → completed`) và
+`jira.comments` (`issue` Reference bắt buộc, `authorEmail`, `body`, không workflow). `jira.issues`
+thêm `sprint` (Reference tới `jira.sprints`, optional — không set nghĩa là nằm ở backlog) và
+`dueDate` (`FieldKind::Date`, indexed). Thứ tự reconcile trong `main.rs`'s boot loop đổi thành
+`project → sprint → issue → comment` — bắt buộc, không tuỳ ý: FK của field tham chiếu build thẳng
+vào bảng vật lý của entity đích ngay lúc DDL chạy (`compile()`), nên bảng đích phải đã tồn tại
+trước.
+
+**Workflow `jira.issues` mở rộng từ 3 sang 4 trạng thái** để có đủ cột cho kanban board thật:
+`todo → in_progress → in_review → done`, transition `start`/`submit_for_review`/
+`request_changes`/`approve`/`reopen` tạo thành hình thoi (`in_review` có thể quay lại
+`in_progress` hoặc tiến tới `done`) — đúng hình dạng 1 board kéo-thả cần để chọn đúng transition
+action theo cặp cột nguồn/đích.
+
+**Bug thật tìm được lúc verify sống — lần đầu có field `Date` được đánh `indexed`/`sortable`
+trong toàn bộ codebase**: `metap-reconciler::compile()`'s nhánh expression-index (cho field
+không có cột vật lý thật) tạo index dạng `((data ->> 'field')::date)` cho mọi field — nhưng cast
+`text → date`/`text → timestamptz` của Postgres là `STABLE` (phụ thuộc `DateStyle`/`TimeZone`
+GUC), không phải `IMMUTABLE`, mà `CREATE INDEX` trên expression bắt buộc mọi hàm/cast trong đó
+phải `IMMUTABLE` — reconcile `jira.issues` (field `dueDate`) lỗi thẳng
+`functions in index expression must be marked IMMUTABLE`, chặn đứng boot. Sửa: `Date`/`Datetime`
+dùng expression **không cast** (`(data ->> 'field')`) thay vì cast kiểu — không mất gì về đúng
+đắn: `metap-query`'s `condition_to_sql`/`sort_field_expression` chưa từng emit so sánh có kiểu
+cho field không phải cột thật (luôn `jsonb_extract_path_text`, so sánh text thuần), nên index
+không cast còn **khớp đúng hơn** với SQL query thật phát sinh so với bản có cast trước đây —
+chuỗi ngày ISO-8601 (định dạng wire chuẩn của platform) vốn đã sort đúng thứ tự khi so sánh dạng
+text. Thêm unit test
+`indexed_date_field_gets_an_uncast_text_expression_index_not_a_stable_cast`
+(`crates/metap-reconciler/src/compile.rs`).
+
+**Kiểm chứng sống đầy đủ vòng đời**: boot lại `jira-server` sau khi sửa — cả 4 entity reconcile
+thành công (`ops_applied` 4/18 lần đầu, 0/0/0/0 lần chạy lại kế tiếp — idempotent thật, không
+drop/tạo lại index vô hạn). `\d entities.jira_issues` qua psql xác nhận `project`/`sprint` là FK
+thật, index `dueDate` đúng dạng không cast. Tạo dữ liệu thật qua HTTP (không mock): project →
+sprint → issue (tham chiếu cả hai) → comment (tham chiếu issue) → transition issue qua đủ 4 trạng
+thái (`start`/`submit_for_review`/`approve`, guard trên `approve` pass đúng) → list filter theo
+`sprint` (FK hydration trả đúng `relatedDisplay: {project, sprint}`) → list sort theo `dueDate`
+không lỗi. `cargo fmt --check`/`clippy --workspace --all-targets -D warnings`/
+`test --workspace --lib --bins` sạch toàn bộ.
+
+**Còn lại (chưa làm trong batch này)**: `apps/jira-fe` (frontend harness mới, mirror `apps/
+crm-fe`, hiện jira-server hoàn toàn chưa có UI), kanban board component (kéo-thả issue giữa cột
+theo `status`, gọi đúng transition action theo cặp nguồn/đích), dashboard (đếm theo status/
+priority/sprint), UI thread comment trên issue detail (generic list/form của `packages/
+platform-react` đã đủ dùng ngay cho `jira.sprints`/`jira.comments` không cần code UI mới — chỉ
+kanban/dashboard là component thật sự mới).
+
 ## Định hướng chưa lên phase (chưa có trigger)
 
 Tám ý nảy sinh từ thảo luận kiến trúc, hợp lý về sản phẩm nhưng chưa có trigger cụ thể nên chưa

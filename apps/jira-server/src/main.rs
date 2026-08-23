@@ -37,7 +37,10 @@
 
 mod entities;
 
-use entities::{issue_entity::issue_entity, project_entity::project_entity};
+use entities::{
+    comment_entity::comment_entity, issue_entity::issue_entity, project_entity::project_entity,
+    sprint_entity::sprint_entity,
+};
 
 use std::sync::Arc;
 
@@ -56,7 +59,9 @@ async fn main() -> anyhow::Result<()> {
 
     let mut registry = MetadataRegistry::new();
     registry.register(project_entity())?;
+    registry.register(sprint_entity())?;
     registry.register(issue_entity())?;
+    registry.register(comment_entity())?;
     registry.validate_references()?;
     let metadata_base = Arc::new(registry);
     let metadata = Arc::new(ArcSwap::new(Arc::new((*metadata_base).clone())));
@@ -83,7 +88,12 @@ async fn main() -> anyhow::Result<()> {
              (dev-tools provision-tenant) and is its dsn_secret_ref env var set? {e}"
         )
     })?;
-    for entity in [project_entity(), issue_entity()] {
+    // Order is load-bearing: each entity's Reference fields build a real FK straight into its
+    // target's table at DDL time (`compile()`, see `sprint_entity.rs`'s doc comment), so a
+    // referenced entity must be reconciled — its table must physically exist — before the
+    // entity that references it. project -> sprint (references project) -> issue (references
+    // project + sprint) -> comment (references issue).
+    for entity in [project_entity(), sprint_entity(), issue_entity(), comment_entity()] {
         let outcome = metap_reconciler::reconcile(&tenant_pool, jira_tenant_id, &entity, &[]).await?;
         tracing::info!(
             entity = entity.name,

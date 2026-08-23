@@ -186,16 +186,34 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
                 );
             }
         } else {
+            // `Date`/`Datetime` deliberately stay an uncast text expression here, not
+            // `((data ->> 'field')::date)` like every other kind gets — found live
+            // (`apps/jira-server`'s `dueDate` field, first `indexed`/`sortable` Date-kind field
+            // anywhere in this codebase): Postgres's implicit `text -> date`/`text ->
+            // timestamptz` cast (`date_in`/`timestamptz_in`) is `STABLE`, not `IMMUTABLE` — it
+            // depends on the session's `DateStyle`/`TimeZone` GUCs — and `CREATE INDEX` on an
+            // expression requires every function/cast in it to be `IMMUTABLE`, so the cast form
+            // fails outright with "functions in index expression must be marked IMMUTABLE".
+            // Dropping the cast isn't a functionality loss: `metap-query`'s
+            // `condition_to_sql`/`sort_field_expression` never emit a typed date comparison for
+            // a non-promoted field either (`jsonb_extract_path_text(data, ...)`, always
+            // text-compared) — an uncast index actually matches what queries emit, unlike the
+            // cast form ever would have, and ISO-8601 date/timestamp strings (what this
+            // metadata-driven wire format always stores) sort correctly as plain text anyway.
+            let expr = match field.kind {
+                FieldKind::Date | FieldKind::Datetime => format!("(data ->> '{}')", field.name),
+                // The extra outer paren is required, not cosmetic — probed live: Postgres's
+                // `CREATE INDEX ... (expr)` grammar rejects a bare `(a ->> 'b')::type` as an
+                // index key ("syntax error at or near ::"), but accepts
+                // `((a ->> 'b')::type)`. A plain (uncast) expression or one that already has
+                // its own enclosing structure (the trigram/tsvector cases below) doesn't hit
+                // this — only a cast sitting directly at the top level does.
+                _ => format!("((data ->> '{}')::{})", field.name, sql_type),
+            };
             schema.indexes.insert(
                 index_name(&entity.name, &field.name, if unique { "uniq" } else { "idx" }),
                 IndexSpec {
-                    // The extra outer paren is required, not cosmetic — probed live: Postgres's
-                    // `CREATE INDEX ... (expr)` grammar rejects a bare `(a ->> 'b')::type` as an
-                    // index key ("syntax error at or near ::"), but accepts
-                    // `((a ->> 'b')::type)`. A plain (uncast) expression or one that already has
-                    // its own enclosing structure (the trigram/tsvector cases below) doesn't hit
-                    // this — only a cast sitting directly at the top level does.
-                    expression: format!("((data ->> '{}')::{})", field.name, sql_type),
+                    expression: expr,
                     unique,
                     using: None,
                     valid: true,
@@ -280,6 +298,20 @@ mod tests {
         let idx = schema.indexes.values().next().unwrap();
         assert_eq!(idx.expression, "((data ->> 'departmentId')::text)");
         assert!(!idx.unique);
+    }
+
+    /// A cast `text -> date`/`text -> timestamptz` is `STABLE` in Postgres (depends on
+    /// `DateStyle`/`TimeZone`), not `IMMUTABLE` — `CREATE INDEX` on an expression requires
+    /// `IMMUTABLE`, so the generic cast-expression form every other kind gets would fail at
+    /// reconcile time for `Date`/`Datetime`. Found live via `apps/jira-server`'s `dueDate` field.
+    #[test]
+    fn indexed_date_field_gets_an_uncast_text_expression_index_not_a_stable_cast() {
+        let mut f = plain_field("dueDate", FieldKind::Date);
+        f.indexed = Some(true);
+        let schema = compile(&entity("t.e", vec![f])).unwrap();
+        assert_eq!(schema.indexes.len(), 1);
+        let idx = schema.indexes.values().next().unwrap();
+        assert_eq!(idx.expression, "(data ->> 'dueDate')");
     }
 
     #[test]
