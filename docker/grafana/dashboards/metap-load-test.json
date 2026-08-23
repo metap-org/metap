@@ -1,0 +1,73 @@
+{
+  "title": "Metap — Load Test Generator (k6)",
+  "uid": "metap-load-test",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Requests/sec by scenario + status",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (scenario, status) (rate(k6_http_reqs_total[15s]))",
+          "legendFormat": "{{scenario}} ({{status}})"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Failed request rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [
+        {
+          "expr": "k6_http_req_failed_rate",
+          "legendFormat": "{{scenario}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Client-observed latency p50 / p95 / p99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        {
+          "expr": "k6_http_req_duration_p50",
+          "legendFormat": "{{scenario}} p50"
+        },
+        {
+          "expr": "k6_http_req_duration_p95",
+          "legendFormat": "{{scenario}} p95"
+        },
+        {
+          "expr": "k6_http_req_duration_p99",
+          "legendFormat": "{{scenario}} p99"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Total requests this run",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "expr": "sum(k6_http_reqs_total)"
+        }
+      ]
+    }
+  ]
+}

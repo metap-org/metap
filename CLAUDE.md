@@ -46,6 +46,8 @@ Frontend library (pnpm workspace):
 
 `apps/crm-server` keeps its **own** `.env`/`.env.example`/`keys/` (dotenv and the JWT key paths resolve relative to whichever directory a binary actually runs from — `pnpm dev:rs`/`mint-token`/etc. all `cd apps/crm-server` first). This mirrors the old TS-era per-package `.env` convention, now collapsed to one location since there's only one backend binary.
 
+`testing/` (repo root) — the backend test-kit control tower (regression/performance/security): docs, a living security checklist, performance baselines, orchestration scripts. No Rust code lives here — actual tests/benchmarks stay in each crate's own `tests/`/`benches/` per normal Cargo convention; `testing/README.md` is the index.
+
 ## Commands
 
 ```bash
@@ -67,6 +69,7 @@ pnpm worker:outbox:rs                     # watch + rebuild + run the outbox-pub
 pnpm worker:notification:rs               # watch + rebuild + run the notification-worker consumer loop (cargo-watch, debug build)
 pnpm worker:cron:rs                       # watch + rebuild + run the cron-scheduler ticker+executor (cargo-watch, debug build)
 pnpm dev:web                              # run the frontend dev harness (apps/crm-fe), port 5173
+pnpm loadtest:customers                   # reusable HTTP load test via k6 in Docker (testing/performance/k6/), crm.customers scenario set — needs crm-server + `docker compose --profile observability up -d`
 
 pnpm typecheck                            # tsc --noEmit, frontend packages only
 pnpm test                                 # vitest run, frontend packages only (no backend TS tests anymore)

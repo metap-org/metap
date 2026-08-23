@@ -69,10 +69,13 @@ docker compose --profile observability up -d
 ```
 
 Lên 3 service mới: `postgres-exporter` (expose `/metrics` cho Postgres, cổng 9187),
-`prometheus` (scrape Postgres mỗi 5s + `crm-server` trên host qua `host.docker.internal:3000`,
-cổng 9090), `grafana` (cổng **3001** — không phải 3000, để không đụng `crm-server`). 2 dashboard
-tự động provision sẵn, không cần setup tay — mở `http://localhost:3001`, không cần đăng nhập
-(anonymous admin — chỉ an toàn vì đây là stack local-only, không bao giờ expose ra ngoài):
+`prometheus` (scrape Postgres mỗi 5s + `crm-server` trên host qua `host.docker.internal:3000`;
+cổng 9090; cũng bật `--web.enable-remote-write-receiver` để nhận metric k6 push tới — xem dashboard
+thứ 3 bên dưới), `grafana` (cổng **3001** — không phải 3000, để không đụng `crm-server`). Cũng có
+service `k6` (image `grafana/k6`, không phải long-running — chỉ chạy qua `docker compose run`,
+xem `testing/performance/k6/`). 3 dashboard tự động provision sẵn, không cần setup tay — mở
+`http://localhost:3001`, không cần đăng nhập (anonymous admin — chỉ an toàn vì đây là stack
+local-only, không bao giờ expose ra ngoài):
 
 - **"Metap — Postgres Resource Metrics"** — 8 panel: uptime, active connections/max connections,
   cache hit ratio, transactions/sec, row throughput/sec, kích thước DB, deadlock (đếm dồn — xem
@@ -81,6 +84,13 @@ tự động provision sẵn, không cần setup tay — mở `http://localhost:
   đủ cho một query cụ thể).
 - **"Metap — crm-server Resource Metrics"** — 7 panel: request rate theo endpoint, in-flight
   requests, p50/p95/p99 latency, CPU/RAM/fd/thread của process (xem mục riêng bên dưới).
+- **"Metap — Load Test Generator (k6)"** (`testing/README.md`'s Performance section,
+  `testing/performance/k6/`) — 4 panel: requests/sec theo scenario+status, failed request rate,
+  p50/p95/p99 latency phía client (k6 tự đo), tổng request trong lần chạy. k6 push metric qua
+  Prometheus remote-write (`k6 run -o experimental-prometheus-rw`), không phải scrape — chỉ có
+  dữ liệu trong lúc `pnpm loadtest:customers`/`testing/performance/k6/run.sh` đang chạy — xem
+  cạnh 2 dashboard trên để theo dõi cả tải sinh ra lẫn tài nguyên `crm-server`/Postgres cùng lúc
+  trong một bài stress test.
 
 Tắt lại khi xong (dừng cả 3 service observability, giữ nguyên postgres/rabbitmq):
 

@@ -66,6 +66,16 @@ services:
     profiles: ["observability"]
     volumes:
       - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    # Default command args (config/storage/console paths) plus
+    # `--web.enable-remote-write-receiver` — k6's Prometheus output
+    # (`testing/performance/k6/`, `k6 run -o experimental-prometheus-rw`) pushes here instead of
+    # being scraped (it's a short-lived one-off run, not a stable long-running `/metrics` target).
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --web.enable-remote-write-receiver
     ports:
       - "9090:9090"
     # crm-server runs on the host (`pnpm dev:rs`), not in this compose file — needs
@@ -75,6 +85,23 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - postgres-exporter
+
+  # The actual HTTP load-test engine (`testing/README.md`'s Performance section,
+  # `testing/performance/k6/`) — Grafana's own k6, not a hand-rolled stress-test client. Not a
+  # long-running service: no `ports`, never started by a plain `up`, invoked per-run via
+  # `docker compose run --rm k6 run /scripts/<script>.js` (see `testing/performance/k6/run.sh`).
+  # Reaches `crm-server` (runs on the host) via `host.docker.internal:3000`, same pattern as
+  # `prometheus` above, and pushes its own metrics to `prometheus:9090` over this compose
+  # network's remote-write receiver.
+  k6:
+    image: grafana/k6:latest
+    profiles: ["observability"]
+    volumes:
+      - ./testing/performance/k6:/scripts:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - prometheus
 
   grafana:
     image: grafana/grafana-oss:11.3.1

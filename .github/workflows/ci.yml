@@ -36,6 +36,22 @@ jobs:
       # merge gate now, not just informational.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  security:
+    name: Rust — dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Plain `cargo audit` (not the `rustsec/audit-check` action) — that action files a GitHub
+      # issue per advisory by default, a side effect nobody asked for here. This just fails the
+      # job; the log is the report. `.cargo/audit.toml` ignore-lists one known, unfixable,
+      # not-actually-compiled advisory (see that file's comment) so this stays a real gate for
+      # new/fixable issues instead of permanently red. `testing/security/checklist.md` tracks
+      # what this does and doesn't cover.
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
   rust-e2e:
     name: Rust — e2e (real Postgres/RabbitMQ)
     runs-on: ubuntu-latest

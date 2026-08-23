@@ -1,0 +1,16 @@
+# Local/CI logic-vuln scanning (`testing/security/checklist.md`) — the complement to
+# `cargo audit` (dependency CVEs only) and CodeQL (`.github/workflows/codeql.yml`, GitHub-native,
+# no local CLI story). Semgrep is the one of the three a developer can run on their own machine
+# for fast feedback before pushing.
+#
+# This file holds only repo-local custom rules (none yet — `rules: []`). A `.semgrep.yml`
+# `rules:` list cannot reference registry packs by itself (verified live 2026-08-23, not
+# assumed) — `p/rust` (generic Rust footguns) and `p/secrets` (hardcoded-secret detection) must
+# be passed explicitly on the command line and merge with whatever is in this file:
+#
+#   semgrep scan --config p/rust --config p/secrets --config .semgrep.yml
+#
+# Not `p/owasp-top-ten`: that pack is web-framework-pattern-heavy (SQLi/XSS in Java/PHP/JS
+# idioms) and mostly doesn't apply to this codebase's actual attack surface or Rust's type
+# system already closing off a lot of it — `p/rust` covers what's actually relevant here.
+rules: []

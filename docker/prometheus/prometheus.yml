@@ -12,3 +12,9 @@ scrape_configs:
   - job_name: crm-server
     static_configs:
       - targets: ["host.docker.internal:3000"]
+
+# k6 (testing/README.md's Performance section, testing/performance/k6/) pushes its own metrics
+# here via Prometheus remote-write (`k6 run -o experimental-prometheus-rw`) rather than being
+# scraped — it's a short-lived one-off run, not a long-running process with a stable `/metrics`
+# port. `--web.enable-remote-write-receiver` on the `prometheus` service (`docker-compose.yml`)
+# is what accepts this.

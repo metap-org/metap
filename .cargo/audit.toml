@@ -1,0 +1,17 @@
+# cargo-audit config (`.github/workflows/ci.yml`'s `security` job, `testing/security/checklist.md`).
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 — "Marvin Attack" timing side-channel in `rsa` 0.9.10. No fixed upstream
+    # version exists (checked 2026-08-23). `rsa` is pulled in transitively because `sqlx`/
+    # `sqlx-macros-core` declare `sqlx-mysql` as an optional dependency — it shows up in
+    # Cargo.lock (cargo-audit scans the full lockfile, not the feature-activated build graph,
+    # a documented characteristic of the tool) but is never actually compiled: no crate in this
+    # workspace enables sqlx's `mysql` feature (every `sqlx = {...}` declaration sets
+    # `default-features = false` with an explicit feature list — grep confirms this, and
+    # `cargo tree -p sqlx-mysql` / `cargo tree -i rsa` both resolve to nothing after a full
+    # `cargo generate-lockfile` from scratch). This project only ever uses Postgres
+    # (`docs/architectures/09-adr.md`). Re-check this ignore whenever `sqlx` is upgraded, in case
+    # a fix lands or the mysql-optional-dep shape changes.
+    "RUSTSEC-2023-0071",
+]

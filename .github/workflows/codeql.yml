@@ -1,0 +1,35 @@
+name: CodeQL
+
+# testing/security/checklist.md — logic-code SAST, distinct from `cargo audit` (which only
+# scans dependency CVEs, never code this repo actually wrote). Native GitHub Actions, no
+# third-party service — results land in the repo's Security tab as code-scanning alerts, not as
+# a build-failing gate (CodeQL's own convention: alerts are triaged, not auto-blocking, since a
+# fresh ruleset on an existing codebase commonly needs a first pass of review before anything is
+# strict enough to fail CI on). Backend (Rust) only, matching this initiative's stated scope.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    # Weekly, not just on push/PR — CodeQL's ruleset itself updates over time, so a scan can
+    # find something new even with no code changes.
+    - cron: "23 3 * * 1"
+
+jobs:
+  analyze:
+    name: CodeQL analysis (Rust)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: rust
+      # CodeQL's Rust support builds the code to extract its database — same command CI's
+      # `rust` job already uses, so this sees exactly what actually compiles.
+      - run: cargo build --workspace --all-targets --locked
+      - uses: github/codeql-action/analyze@v3

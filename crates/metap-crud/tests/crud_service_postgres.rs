@@ -5,6 +5,8 @@
 //! Migration Order steps 3–6 — the most important place for real, not just unit-tested,
 //! confidence.
 
+mod support;
+
 use metap_control::PostgresPolicyStore;
 use metap_crud::{CrudService, JsonObject, ServiceResult};
 use metap_metadata::{EntityDefinition, EntityField, EntityWorkflow, FieldKind, MetadataRegistry, WorkflowTransition};
@@ -975,9 +977,10 @@ async fn delete_is_rejected_when_referenced_by_any_of_multiple_referencing_entit
 #[tokio::test]
 #[ignore = "manual benchmark: requires the out-of-band hr/helpdesk seed, not part of a normal e2e run"]
 async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+
+    use support::{run_sustained_load, LoadTestConfig};
 
     const DURATION_SECS: u64 = 600;
     const CONCURRENCY: usize = 20;
@@ -1123,29 +1126,21 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
         permissions,
     ));
 
-    let total_ok = Arc::new(AtomicU64::new(0));
-    let total_err = Arc::new(AtomicU64::new(0));
-    let total_latency_us = Arc::new(AtomicU64::new(0));
-    let mut latencies_ms: Vec<Vec<u64>> = (0..CONCURRENCY).map(|_| Vec::new()).collect();
-
     eprintln!(
         "sustained_concurrent_list: {CONCURRENCY} concurrent workers, {DURATION_SECS}s, against \
          500K helpdesk.tickets / 200 hr.employees / 20 hr.departments (real, related data)"
     );
-    let start = Instant::now();
-    let deadline = start + Duration::from_secs(DURATION_SECS);
 
-    let mut handles = Vec::with_capacity(CONCURRENCY);
-    for worker in 0..CONCURRENCY {
-        let crud = crud.clone();
-        let dept_ids = dept_ids.clone();
-        let total_ok = total_ok.clone();
-        let total_err = total_err.clone();
-        let total_latency_us = total_latency_us.clone();
-        handles.push(tokio::spawn(async move {
-            let mut my_latencies = Vec::new();
-            let mut i: usize = 0;
-            while Instant::now() < deadline {
+    let report = run_sustained_load(
+        "sustained_concurrent_list",
+        LoadTestConfig {
+            duration: Duration::from_secs(DURATION_SECS),
+            concurrency: CONCURRENCY,
+        },
+        move |worker, i| {
+            let crud = crud.clone();
+            let dept_ids = dept_ids.clone();
+            async move {
                 let dept = dept_ids[(worker + i) % dept_ids.len()];
                 let mut ctx_attrs = serde_json::Map::new();
                 ctx_attrs.insert("departmentId".to_string(), json!(dept));
@@ -1160,56 +1155,17 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
                     limit: 50,
                     ..Default::default()
                 };
-                let call_start = Instant::now();
-                let result = crud.list("helpdesk.tickets", &input, &ctx).await;
-                let elapsed = call_start.elapsed();
-                match result {
-                    Ok(ServiceResult::Ok { .. }) => {
-                        total_ok.fetch_add(1, Ordering::Relaxed);
-                        total_latency_us.fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
-                        my_latencies.push(elapsed.as_millis() as u64);
-                    }
-                    other => {
-                        total_err.fetch_add(1, Ordering::Relaxed);
-                        eprintln!("worker {worker} iteration {i} unexpected result: {other:?}");
-                    }
+                match crud.list("helpdesk.tickets", &input, &ctx).await {
+                    Ok(ServiceResult::Ok { .. }) => Ok(()),
+                    other => Err(anyhow::anyhow!("unexpected result: {other:?}")),
                 }
-                i += 1;
             }
-            my_latencies
-        }));
-    }
+        },
+    )
+    .await;
 
-    for (worker, handle) in handles.into_iter().enumerate() {
-        latencies_ms[worker] = handle.await.unwrap();
-    }
-
-    let elapsed = start.elapsed();
-    let ok = total_ok.load(Ordering::Relaxed);
-    let err = total_err.load(Ordering::Relaxed);
-    let mut all_latencies: Vec<u64> = latencies_ms.into_iter().flatten().collect();
-    all_latencies.sort_unstable();
-    let pct = |p: f64| -> u64 {
-        if all_latencies.is_empty() {
-            return 0;
-        }
-        let idx = ((all_latencies.len() as f64 - 1.0) * p) as usize;
-        all_latencies[idx]
-    };
-
-    eprintln!("=== sustained_concurrent_list results ===");
-    eprintln!("duration: {:.1}s", elapsed.as_secs_f64());
-    eprintln!("total calls: {ok} ok, {err} err");
-    eprintln!("throughput: {:.2} list()/s", ok as f64 / elapsed.as_secs_f64());
-    eprintln!(
-        "latency ms: avg={:.1} p50={} p95={} p99={} max={}",
-        total_latency_us.load(Ordering::Relaxed) as f64 / ok.max(1) as f64 / 1000.0,
-        pct(0.50),
-        pct(0.95),
-        pct(0.99),
-        all_latencies.last().copied().unwrap_or(0)
-    );
-    assert_eq!(err, 0, "no list() call should have failed");
+    report.print_summary();
+    report.assert_no_errors();
 }
 
 /// Wider/bigger sibling of the test above — found missing scope in code review, 2026-08-23:
@@ -1231,9 +1187,10 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
 #[tokio::test]
 #[ignore = "manual benchmark: requires the out-of-band 10-tenant/10M-row seed, not part of a normal e2e run"]
 async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+
+    use support::{run_sustained_load, LoadTestConfig};
 
     const DURATION_SECS: u64 = 600;
     const CONCURRENCY: usize = 20;
@@ -1384,29 +1341,21 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
         permissions,
     ));
 
-    let total_ok = Arc::new(AtomicU64::new(0));
-    let total_err = Arc::new(AtomicU64::new(0));
-    let total_latency_us = Arc::new(AtomicU64::new(0));
-    let mut latencies_ms: Vec<Vec<u64>> = (0..CONCURRENCY).map(|_| Vec::new()).collect();
-
     eprintln!(
         "sustained_concurrent_list (multi-tenant): {CONCURRENCY} concurrent workers, {DURATION_SECS}s, \
          against 10M helpdesk.tickets / 2000 hr.employees / 200 hr.departments across 10 tenants"
     );
-    let start = Instant::now();
-    let deadline = start + Duration::from_secs(DURATION_SECS);
 
-    let mut handles = Vec::with_capacity(CONCURRENCY);
-    for worker in 0..CONCURRENCY {
-        let crud = crud.clone();
-        let pairs = tenant_dept_pairs.clone();
-        let total_ok = total_ok.clone();
-        let total_err = total_err.clone();
-        let total_latency_us = total_latency_us.clone();
-        handles.push(tokio::spawn(async move {
-            let mut my_latencies = Vec::new();
-            let mut i: usize = 0;
-            while Instant::now() < deadline {
+    let report = run_sustained_load(
+        "sustained_concurrent_list (multi-tenant, 10M)",
+        LoadTestConfig {
+            duration: Duration::from_secs(DURATION_SECS),
+            concurrency: CONCURRENCY,
+        },
+        move |worker, i| {
+            let crud = crud.clone();
+            let pairs = tenant_dept_pairs.clone();
+            async move {
                 let (tenant_id, dept) = pairs[(worker * 7 + i) % pairs.len()];
                 let mut ctx_attrs = serde_json::Map::new();
                 ctx_attrs.insert("departmentId".to_string(), json!(dept));
@@ -1421,54 +1370,200 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
                     limit: 50,
                     ..Default::default()
                 };
-                let call_start = Instant::now();
-                let result = crud.list("helpdesk.tickets", &input, &ctx).await;
-                let elapsed = call_start.elapsed();
-                match result {
-                    Ok(ServiceResult::Ok { .. }) => {
-                        total_ok.fetch_add(1, Ordering::Relaxed);
-                        total_latency_us.fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
-                        my_latencies.push(elapsed.as_millis() as u64);
-                    }
-                    other => {
-                        total_err.fetch_add(1, Ordering::Relaxed);
-                        eprintln!("worker {worker} iteration {i} unexpected result: {other:?}");
-                    }
+                match crud.list("helpdesk.tickets", &input, &ctx).await {
+                    Ok(ServiceResult::Ok { .. }) => Ok(()),
+                    other => Err(anyhow::anyhow!("unexpected result: {other:?}")),
                 }
-                i += 1;
             }
-            my_latencies
+        },
+    )
+    .await;
+
+    report.print_summary();
+    report.assert_no_errors();
+}
+
+/// Security regression suite (`testing/security/checklist.md`) — the application-level
+/// counterpart to `metap-control/tests/tenant_isolation_postgres.rs`'s connection-level check.
+/// `crates/metap-control` proves `Router::begin` never leaks a *schema* between tenants sharing
+/// one physical connection; this proves `CrudService::list` never leaks *rows* between tenants
+/// sharing one *pool connection*, forced via a deliberately small pool (`max_connections(2)`)
+/// under real concurrency — the actual shape of the past "cross-tenant leak" this repo already
+/// fixed once (commit `cc5f1ea`), where the bug was a missing `tenant_id` filter in application
+/// SQL, not a schema-routing gap. Every single response, across many interleaved concurrent
+/// calls for two different tenants, must contain *only* that call's own tenant's records.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn concurrent_cross_tenant_list_calls_never_return_another_tenants_records() {
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test"))
+        .await
+        .unwrap();
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(test_entity()).unwrap();
+    let permissions = std::sync::Arc::new(PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(
+        pool.clone(),
+    )))));
+    let crud = std::sync::Arc::new(CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        permissions,
+    ));
+
+    for (tenant_id, prefix) in [(tenant_a, "secret-a"), (tenant_b, "secret-b")] {
+        let ctx = admin_context(tenant_id);
+        for i in 0..5 {
+            let mut payload = JsonObject::new();
+            payload.insert("name".to_string(), json!(format!("{prefix}-{i}")));
+            crud.create("test.orders", &payload, &ctx).await.unwrap();
+        }
+    }
+
+    let mut handles = Vec::new();
+    for i in 0..30 {
+        let crud = crud.clone();
+        // Alternate which tenant each concurrent call belongs to — the interleaving itself is
+        // what stresses connection reuse across tenants, not just running many calls for one.
+        let (tenant_id, expected_prefix, forbidden_prefix) = if i % 2 == 0 {
+            (tenant_a, "secret-a", "secret-b")
+        } else {
+            (tenant_b, "secret-b", "secret-a")
+        };
+        handles.push(tokio::spawn(async move {
+            let ctx = admin_context(tenant_id);
+            let input = ListInput {
+                limit: 50,
+                ..Default::default()
+            };
+            let result = crud.list("test.orders", &input, &ctx).await.unwrap();
+            let ServiceResult::Ok { data, .. } = result else {
+                panic!("expected list to succeed");
+            };
+            for record in &data {
+                let name = record.data.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+                assert!(
+                    name.starts_with(expected_prefix),
+                    "tenant {tenant_id} saw a record it doesn't own: {name:?}"
+                );
+                assert!(
+                    !name.starts_with(forbidden_prefix),
+                    "tenant {tenant_id} leaked another tenant's record: {name:?}"
+                );
+            }
+            assert_eq!(
+                data.len(),
+                5,
+                "tenant {tenant_id} must see exactly its own 5 records, no more, no less"
+            );
         }));
     }
-
-    for (worker, handle) in handles.into_iter().enumerate() {
-        latencies_ms[worker] = handle.await.unwrap();
+    for h in handles {
+        h.await.unwrap();
     }
 
-    let elapsed = start.elapsed();
-    let ok = total_ok.load(Ordering::Relaxed);
-    let err = total_err.load(Ordering::Relaxed);
-    let mut all_latencies: Vec<u64> = latencies_ms.into_iter().flatten().collect();
-    all_latencies.sort_unstable();
-    let pct = |p: f64| -> u64 {
-        if all_latencies.is_empty() {
-            return 0;
-        }
-        let idx = ((all_latencies.len() as f64 - 1.0) * p) as usize;
-        all_latencies[idx]
-    };
+    cleanup(&pool, tenant_a).await;
+    cleanup(&pool, tenant_b).await;
+}
 
-    eprintln!("=== sustained_concurrent_list (multi-tenant, 10M) results ===");
-    eprintln!("duration: {:.1}s", elapsed.as_secs_f64());
-    eprintln!("total calls: {ok} ok, {err} err");
-    eprintln!("throughput: {:.2} list()/s", ok as f64 / elapsed.as_secs_f64());
+/// Performance pillar (`testing/README.md`) — the write-path counterpart to the two
+/// `list()`-only sustained tests above. Each iteration runs the full
+/// create → update → transition → delete cycle `full_lifecycle_create_get_update_transition_delete`
+/// exercises for correctness, but as a sustained concurrent load rather than a single sequential
+/// run — `test_entity()` (`test.orders`) is the only fixture in this file with a real workflow,
+/// so it's the only one that can drive a `transition()` call under load too. Shorter default
+/// duration than the two `list()` benchmarks (60s, not 600s) — four round trips per iteration
+/// is inherently heavier than one `list()` call, and this exists to prove out the write path's
+/// shape/harness reuse, not to be a from-scratch capacity benchmark; bump `DURATION_SECS` for a
+/// deeper run.
+#[tokio::test]
+#[ignore = "manual benchmark: writes real records, not part of a normal e2e run"]
+async fn sustained_concurrent_create_update_transition_delete_cycle() {
+    use std::time::Duration;
+
+    use support::{run_sustained_load, LoadTestConfig};
+
+    const DURATION_SECS: u64 = 60;
+    const CONCURRENCY: usize = 10;
+
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    let pool = PgPoolOptions::new()
+        .max_connections(CONCURRENCY as u32 + 5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+    let tenant_id = Uuid::new_v4();
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(test_entity()).unwrap();
+    let permissions = std::sync::Arc::new(PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(
+        pool.clone(),
+    )))));
+    let crud = std::sync::Arc::new(CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        permissions,
+    ));
+
     eprintln!(
-        "latency ms: avg={:.1} p50={} p95={} p99={} max={}",
-        total_latency_us.load(Ordering::Relaxed) as f64 / ok.max(1) as f64 / 1000.0,
-        pct(0.50),
-        pct(0.95),
-        pct(0.99),
-        all_latencies.last().copied().unwrap_or(0)
+        "sustained_concurrent_create_update_transition_delete_cycle: {CONCURRENCY} concurrent \
+         workers, {DURATION_SECS}s, one full create+update+transition+delete cycle per iteration"
     );
-    assert_eq!(err, 0, "no list() call should have failed");
+
+    let report = run_sustained_load(
+        "sustained_concurrent_create_update_transition_delete_cycle",
+        LoadTestConfig {
+            duration: Duration::from_secs(DURATION_SECS),
+            concurrency: CONCURRENCY,
+        },
+        move |worker, i| {
+            let crud = crud.clone();
+            let ctx = admin_context(tenant_id);
+            async move {
+                let mut payload = JsonObject::new();
+                payload.insert("name".to_string(), json!(format!("load-{worker}-{i}")));
+                // amount == 100 so the "approve" transition's guard passes on the first try.
+                payload.insert("amount".to_string(), json!(100));
+                let created = match crud.create("test.orders", &payload, &ctx).await? {
+                    ServiceResult::Ok { data, .. } => data,
+                    other => anyhow::bail!("create failed: {other:?}"),
+                };
+
+                let mut update_payload = JsonObject::new();
+                update_payload.insert("name".to_string(), json!(format!("load-{worker}-{i}-updated")));
+                let updated = match crud
+                    .update("test.orders", created.id, created.version, &update_payload, &ctx)
+                    .await?
+                {
+                    ServiceResult::Ok { data, .. } => data,
+                    other => anyhow::bail!("update failed: {other:?}"),
+                };
+
+                let transitioned = match crud
+                    .transition("test.orders", created.id, "approve", updated.version, &ctx)
+                    .await?
+                {
+                    ServiceResult::Ok { data, .. } => data,
+                    other => anyhow::bail!("transition failed: {other:?}"),
+                };
+
+                match crud
+                    .delete("test.orders", created.id, transitioned.version, &ctx)
+                    .await?
+                {
+                    ServiceResult::Ok { .. } => Ok(()),
+                    other => anyhow::bail!("delete failed: {other:?}"),
+                }
+            }
+        },
+    )
+    .await;
+
+    report.print_summary();
+    report.assert_no_errors();
+
+    cleanup(&pool, tenant_id).await;
 }
