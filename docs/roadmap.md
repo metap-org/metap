@@ -2036,10 +2036,20 @@ trước) — không phải build thêm form/table nào cho sprint hay comment.
 Playwright-verify thay đổi FE — code xong, typecheck/lint/build sạch, bàn giao người dùng tự kiểm
 tra trên trình duyệt"), nên **chưa** tự kiểm tra tương tác kéo-thả/click thật trên trình duyệt.
 
+**Gap thật tìm được lúc thử đăng nhập demo (2026-08-24)**: `LoginForm`'s `POST /auth/login` query
+`AppState.pool` (DB platform), không phải DB dedicated của tenant — gap đã ghi trong
+`apps/jira-server/src/main.rs`'s doc comment từ trước nhưng chưa từng thực sự chặn ai, tới lúc thử
+đăng nhập thật qua trình duyệt mới lộ ra: **không đăng nhập được vào app demo bằng form thật**.
+Sửa tạm bằng 1 fallback dev-only ngay trong `apps/jira-fe/src/demo/LoginPage.tsx`
+(`PasteTokenFallback`) — dán token mint bằng `pnpm mint:jira-token` vào, gọi `setToken` thẳng, có
+ghi chú rõ đây không phải luồng auth thật, chỉ tồn tại tới khi gap `/auth/login` được sửa triệt để
+(cần `AppState.pool`-based routes route theo tenant thật, chưa làm — xem `main.rs`'s doc comment).
+
 **Còn lại (chưa làm)**: UI thread comment lồng trực tiếp trên trang chi tiết issue (hiện phải xem
 qua `/records/jira.comments` lọc theo `issue` — dùng được nhưng chưa "tự nhiên" như 1 thread thật);
 dashboard chưa scope theo project (đang gộp toàn bộ tenant); chưa có UI tạo/sửa comment ngay trong
-board card.
+board card; `/auth/login` vẫn chưa route theo tenant thật cho `DedicatedDb` (gap kế thừa từ
+`crm-server`, không mới) — `PasteTokenFallback` chỉ là lối tắt demo, không phải bản sửa thật.
 
 ### Bước 3/nhiều: `outbox-publisher` không hề chạy cho tenant của jira-server — sự cố tìm được khi thử demo trực tiếp (2026-08-24)
 
