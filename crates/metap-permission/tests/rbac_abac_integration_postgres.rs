@@ -16,7 +16,12 @@
 //! tenants only ever run in `public` schema today, see `CLAUDE.md`'s `metap-control` bullet),
 //! which is enough to exercise `PermissionService`/`PermissionSnapshot` for real.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
 use async_trait::async_trait;
+use metap_cache::{Cache, RedisCache};
 use metap_permission::{
     row_from_sql, EntityAction, ExplainOptions, JsonObject, PermissionService, PolicyCondition, PolicyEffect,
     PolicyRow, PolicyStore, PolicySubject, RequestContext,
@@ -119,6 +124,80 @@ impl PolicyStore for TestPolicyStore {
             .await?;
         Ok(())
     }
+}
+
+/// Wraps `TestPolicyStore`, counting `load_all_policies` calls — the only way to prove
+/// `PermissionService`'s policy cache (`crates/metap-cache`) is actually being consulted rather
+/// than merely "not obviously wrong": a cached `load_snapshot` must not increment this at all.
+struct CountingPolicyStore {
+    inner: TestPolicyStore,
+    load_all_calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl PolicyStore for CountingPolicyStore {
+    async fn find_context_policies(
+        &self,
+        tenant_id: Uuid,
+        entity: &str,
+        action: &str,
+    ) -> anyhow::Result<Vec<PolicyRow>> {
+        self.inner.find_context_policies(tenant_id, entity, action).await
+    }
+
+    async fn load_all_policies(&self, tenant_id: Uuid, entity: &str) -> anyhow::Result<Vec<PolicyRow>> {
+        self.load_all_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.load_all_policies(tenant_id, entity).await
+    }
+
+    async fn find_explain_policies(
+        &self,
+        tenant_id: Uuid,
+        entity: &str,
+        action: &str,
+        options: &ExplainOptions,
+    ) -> anyhow::Result<Vec<PolicyRow>> {
+        self.inner
+            .find_explain_policies(tenant_id, entity, action, options)
+            .await
+    }
+
+    async fn list_policies(&self, tenant_id: Uuid, entity: Option<&str>) -> anyhow::Result<Vec<PolicyRow>> {
+        self.inner.list_policies(tenant_id, entity).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn create_policy(
+        &self,
+        tenant_id: Uuid,
+        entity: &str,
+        action: &str,
+        roles: Option<Vec<String>>,
+        condition: Option<PolicyCondition>,
+        created_by: Option<Uuid>,
+        field: Option<&str>,
+        subject: Option<PolicySubject>,
+        effect: PolicyEffect,
+    ) -> anyhow::Result<PolicyRow> {
+        self.inner
+            .create_policy(
+                tenant_id, entity, action, roles, condition, created_by, field, subject, effect,
+            )
+            .await
+    }
+
+    async fn delete_policy(&self, tenant_id: Uuid, id: Uuid) -> anyhow::Result<()> {
+        self.inner.delete_policy(tenant_id, id).await
+    }
+}
+
+async fn redis_cache() -> Arc<dyn Cache> {
+    let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    Arc::new(
+        RedisCache::connect(&url, Duration::from_secs(30))
+            .await
+            .expect("connect to Redis/DragonflyDB for this e2e test"),
+    )
 }
 
 async fn connect() -> PgPool {
@@ -318,6 +397,84 @@ async fn explicit_deny_policy_overrides_a_matching_allow_policy() {
     assert!(
         !decision.allowed,
         "an explicit deny must win even though an allow policy also matches"
+    );
+
+    cleanup(&pool, tenant_id).await;
+}
+
+/// The `metap-cache` integration itself: a second `load_snapshot` for the same tenant/entity
+/// must be served from cache (zero extra `PolicyStore` queries), and a `create_policy` write
+/// must invalidate that entry so the very next `load_snapshot` sees the new policy instead of a
+/// stale cached one — the same "no permanently-stale permission data" bar `metap-cache`'s own
+/// doc comment sets.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres, and REDIS_URL / a running dev DragonflyDB"]
+async fn load_snapshot_is_cached_and_invalidated_on_policy_write() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let entity = "test.cache_docs";
+
+    let load_calls = Arc::new(AtomicUsize::new(0));
+    let store = CountingPolicyStore {
+        inner: TestPolicyStore(pool.clone()),
+        load_all_calls: load_calls.clone(),
+    };
+    let permissions = PermissionService::with_cache(Box::new(store), redis_cache().await);
+
+    permissions
+        .create_policy(
+            tenant_id,
+            entity,
+            "read",
+            Some(vec!["editor".to_string()]),
+            None,
+            None,
+            None,
+            Some(PolicySubject::Context),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        load_calls.load(Ordering::SeqCst),
+        0,
+        "create_policy must not itself trigger a load_all_policies call"
+    );
+
+    permissions.load_snapshot(tenant_id, entity).await.unwrap();
+    assert_eq!(
+        load_calls.load(Ordering::SeqCst),
+        1,
+        "first load_snapshot must hit the store"
+    );
+
+    permissions.load_snapshot(tenant_id, entity).await.unwrap();
+    assert_eq!(
+        load_calls.load(Ordering::SeqCst),
+        1,
+        "second load_snapshot must be served from cache, not query the store again"
+    );
+
+    permissions
+        .create_policy(
+            tenant_id,
+            entity,
+            "read",
+            Some(vec!["viewer".to_string()]),
+            None,
+            None,
+            None,
+            Some(PolicySubject::Context),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+
+    permissions.load_snapshot(tenant_id, entity).await.unwrap();
+    assert_eq!(
+        load_calls.load(Ordering::SeqCst),
+        2,
+        "load_snapshot after a policy write must hit the store again — the write must invalidate the cache entry, not leave it stale for the TTL"
     );
 
     cleanup(&pool, tenant_id).await;

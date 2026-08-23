@@ -1,5 +1,9 @@
 //! Mirrors `packages/core/src/core/permission/permission-service.ts`.
 
+use std::sync::Arc;
+
+use bytes::Bytes;
+use metap_cache::Cache;
 use uuid::Uuid;
 
 use crate::context::{EntityAction, PermissionDecision, RequestContext};
@@ -10,11 +14,25 @@ use crate::policy_store::{ExplainOptions, PolicyEffect, PolicyRow, PolicyStore, 
 
 pub struct PermissionService {
     store: Box<dyn PolicyStore>,
+    /// `None` by default (`new`) — every existing call site keeps querying `PolicyStore` fresh
+    /// on every `load_snapshot`, exactly as before this cache existed. Opt in via `with_cache`.
+    cache: Option<Arc<dyn Cache>>,
 }
 
 impl PermissionService {
     pub fn new(store: Box<dyn PolicyStore>) -> Self {
-        Self { store }
+        Self { store, cache: None }
+    }
+
+    pub fn with_cache(store: Box<dyn PolicyStore>, cache: Arc<dyn Cache>) -> Self {
+        Self {
+            store,
+            cache: Some(cache),
+        }
+    }
+
+    fn policies_cache_key(entity: &str) -> String {
+        format!("policies:{entity}")
     }
 
     /// `RequestContext.tenantId` is required and always derived from a verified JWT by the
@@ -123,7 +141,29 @@ impl PermissionService {
     }
 
     pub async fn load_snapshot(&self, tenant_id: Uuid, entity: &str) -> anyhow::Result<PermissionSnapshot> {
-        PermissionSnapshot::load(self.store.as_ref(), tenant_id, entity).await
+        let Some(cache) = &self.cache else {
+            return PermissionSnapshot::load(self.store.as_ref(), tenant_id, entity).await;
+        };
+
+        let key = Self::policies_cache_key(entity);
+        match cache.get(tenant_id, &key).await {
+            Ok(Some(bytes)) => match serde_json::from_slice::<Vec<PolicyRow>>(&bytes) {
+                Ok(rows) => return Ok(PermissionSnapshot::from_rows(rows)),
+                Err(e) => {
+                    tracing::warn!(%tenant_id, entity, "policy cache entry failed to deserialize, falling back to store: {e}")
+                }
+            },
+            Ok(None) => {}
+            Err(e) => tracing::warn!(%tenant_id, entity, "policy cache read failed, falling back to store: {e}"),
+        }
+
+        let rows = self.store.load_all_policies(tenant_id, entity).await?;
+        if let Ok(bytes) = serde_json::to_vec(&rows) {
+            if let Err(e) = cache.set(tenant_id, &key, Bytes::from(bytes)).await {
+                tracing::warn!(%tenant_id, entity, "policy cache write failed (non-fatal): {e}");
+            }
+        }
+        Ok(PermissionSnapshot::from_rows(rows))
     }
 
     pub async fn list_policies(&self, tenant_id: Uuid, entity: Option<&str>) -> anyhow::Result<Vec<PolicyRow>> {
@@ -143,15 +183,37 @@ impl PermissionService {
         subject: Option<PolicySubject>,
         effect: PolicyEffect,
     ) -> anyhow::Result<PolicyRow> {
-        self.store
+        let row = self
+            .store
             .create_policy(
                 tenant_id, entity, action, roles, condition, created_by, field, subject, effect,
             )
-            .await
+            .await?;
+        self.invalidate_policies_cache(tenant_id, entity).await;
+        Ok(row)
     }
 
+    /// Looks the policy up first (to learn which entity's cache entry to drop) only when a
+    /// cache is actually configured — the extra `list_policies` round-trip is a no-op cost for
+    /// the common uncached deployment, and a rare-admin-action cost otherwise (never on any
+    /// request-serving hot path).
     pub async fn delete_policy(&self, tenant_id: Uuid, id: Uuid) -> anyhow::Result<()> {
+        if self.cache.is_some() {
+            if let Ok(rows) = self.store.list_policies(tenant_id, None).await {
+                if let Some(row) = rows.iter().find(|r| r.id == id) {
+                    self.invalidate_policies_cache(tenant_id, &row.entity).await;
+                }
+            }
+        }
         self.store.delete_policy(tenant_id, id).await
+    }
+
+    async fn invalidate_policies_cache(&self, tenant_id: Uuid, entity: &str) {
+        let Some(cache) = &self.cache else { return };
+        let key = Self::policies_cache_key(entity);
+        if let Err(e) = cache.invalidate(tenant_id, &key).await {
+            tracing::warn!(%tenant_id, entity, "policy cache invalidate failed (non-fatal, entry will expire via TTL): {e}");
+        }
     }
 
     pub async fn explain(

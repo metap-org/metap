@@ -3,6 +3,7 @@
 //! `PermissionSnapshot`/`PermissionService`.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::Row;
 use uuid::Uuid;
@@ -16,7 +17,7 @@ use crate::policy_condition::PolicyCondition;
 /// independently-authored policy would otherwise allow it. Defaults to `Allow` everywhere (DB
 /// column default, `parse`'s fallback) so every policy written before this existed keeps
 /// meaning exactly what it always meant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PolicyEffect {
     Allow,
     Deny,
@@ -41,7 +42,7 @@ impl PolicyEffect {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyRow {
     pub id: Uuid,
     pub tenant_id: Uuid,

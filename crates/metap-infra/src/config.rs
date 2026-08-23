@@ -66,6 +66,17 @@ pub struct AppConfig {
     /// `POST /admin/users/{userId}/context/invalidate` clears an entry immediately instead of
     /// waiting out this window. Defaults to 30s, matching `metap-control::RegistryCache`.
     pub auth_context_cache_ttl_seconds: u64,
+    /// Opt-in — when set, `PermissionService` (`crates/metap-permission`) caches policy-row
+    /// lookups in `metap-cache::RedisCache` (Redis/DragonflyDB/Valkey, whatever's at this URL)
+    /// instead of holding no cache at all. Unset (default) means no policy caching — every
+    /// `load_snapshot` call queries `PolicyStore` fresh, exactly as before this cache existed.
+    /// Distributed rather than `MokaCache` by default because policy data must stay consistent
+    /// across every server instance behind a load balancer, not just the instance that happened
+    /// to serve the write (`docs/architectures/07-deployment.md`'s multi-instance gap).
+    pub policy_cache_redis_url: Option<String>,
+    /// See `policy_cache_redis_url`. Defaults to 30s, matching `auth_context_cache_ttl_seconds`'s
+    /// convention — policy rows are admin-edited config, not per-request state.
+    pub policy_cache_ttl_seconds: u64,
 }
 
 impl AppConfig {
@@ -148,6 +159,12 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(30);
 
+    let policy_cache_redis_url = env::var("POLICY_CACHE_REDIS_URL").ok().filter(|s| !s.is_empty());
+    let policy_cache_ttl_seconds: u64 = env::var("POLICY_CACHE_TTL_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
+
     Ok(AppConfig {
         node_env,
         host,
@@ -166,5 +183,7 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         vault_approle_mount,
         auth_context_entity,
         auth_context_cache_ttl_seconds,
+        policy_cache_redis_url,
+        policy_cache_ttl_seconds,
     })
 }

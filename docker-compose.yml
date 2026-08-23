@@ -50,6 +50,29 @@ services:
       - "9333:9333" # master UI/API
       - "8888:8888" # filer UI/API
 
+  # Opt-in (docs/roadmap.md's caching-layer phase) — dev DragonflyDB for
+  # `metap-cache::RedisCache`. NOT part of the default `docker compose up -d postgres rabbitmq`
+  # dev stack; `MokaCache` stays the default for a single-instance boot. Speaks the same RESP
+  # protocol real Redis/Valkey do — `RedisCache` connects with a plain `redis://` URL and doesn't
+  # know or care it's talking to DragonflyDB specifically (see `crates/metap-cache/src/
+  # redis_cache.rs`'s doc comment for the license/perf rationale). No auth (no `--requirepass`) —
+  # fine only because this never leaves localhost, same posture as `seaweedfs`/`vault` above.
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.40.1
+    # `--proactor_threads`/`--maxmemory` pinned, not left to Dragonfly's own
+    # detect-the-host-and-decide defaults: unpinned, it sizes memory as ~256MB per IO thread (16
+    # threads on this dev host = ~4GiB required) against *currently available* RAM, not total —
+    # found live when this container refused to start (`E ... There are 16 threads, so 4.00GiB
+    # are required. Exiting...`) after a `cargo build` had already claimed most of the box's
+    # free memory. A fixed small footprint is the right shape for a dev-only cache anyway (same
+    # "sized for this dev host, not a production box" reasoning as postgres's shared_buffers
+    # comment above).
+    command: dragonfly --logtostderr --proactor_threads=2 --maxmemory=512mb
+    ulimits:
+      memlock: -1
+    ports:
+      - "6379:6379"
+
   # Opt-in (docs/roadmap.md Phase 16 Giai đoạn 4) — dev-mode Vault for metap-control::VaultStore.
   # NOT part of the default `docker compose up -d postgres rabbitmq` dev stack; EnvStore stays
   # the default SecretStore. Dev mode = in-memory, unsealed, fixed root token, never for

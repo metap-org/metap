@@ -1,6 +1,12 @@
 //! Mirrors `packages/core/src/core/permission/permission-snapshot.ts`: a per-call batch of
-//! a tenant/entity's policies, loaded once and reused across a single `CrudService` call —
-//! deliberately not a cross-request/TTL cache (see that file's original design notes).
+//! a tenant/entity's policies, loaded once and reused across a single `CrudService` call. The
+//! *snapshot* itself is still built fresh per call (never held across calls) — but the *rows* it
+//! is built from can now come from a TTL cache instead of a fresh `PolicyStore` query every
+//! time, see `PermissionService::load_snapshot`/`crates/metap-cache`. This does not weaken the
+//! "no stale permission data" property much: unlike role assignment (`user_roles`, never cached,
+//! `crates/metap-http/src/auth.rs`), policy rows are the *rules*, changed rarely by an admin, not
+//! per-request state — the same "ordinary config data, short TTL + explicit invalidation on
+//! write" reasoning `metap-http::ContextAttributesCache` already applies to caller attributes.
 
 use std::collections::HashMap;
 
@@ -20,7 +26,14 @@ pub struct PermissionSnapshot {
 impl PermissionSnapshot {
     pub async fn load(store: &dyn PolicyStore, tenant_id: Uuid, entity: &str) -> anyhow::Result<Self> {
         let rows = store.load_all_policies(tenant_id, entity).await?;
+        Ok(Self::from_rows(rows))
+    }
 
+    /// Builds a snapshot from already-fetched rows, whether they came straight from
+    /// `PolicyStore` (`load`, above) or from `PermissionService`'s cache
+    /// (`load_snapshot`/`crates/metap-cache`) — kept separate from `load` so the caching
+    /// decision lives entirely in `PermissionService`, not duplicated here.
+    pub fn from_rows(rows: Vec<PolicyRow>) -> Self {
         let field_policies: Vec<PolicyRow> = rows.iter().filter(|r| r.field.is_some()).cloned().collect();
 
         let mut record_policies_by_action: HashMap<String, Vec<PolicyRow>> = HashMap::new();
@@ -33,10 +46,10 @@ impl PermissionSnapshot {
             }
         }
 
-        Ok(Self {
+        Self {
             field_policies,
             record_policies_by_action,
-        })
+        }
     }
 
     pub fn get_record_policies(&self, action: EntityAction) -> &[PolicyRow] {

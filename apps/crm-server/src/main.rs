@@ -101,7 +101,21 @@ async fn main() -> anyhow::Result<()> {
         secret_store,
     );
 
-    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(router.clone())));
+    // Opt-in distributed policy cache (`POLICY_CACHE_REDIS_URL`) — unset stays fully uncached,
+    // exactly as before this existed (see `metap::cache`'s doc comment for why Redis/DragonflyDB
+    // rather than the in-process `MokaCache`: policy writes must be visible to every server
+    // instance behind a load balancer, not just the one that served the write).
+    let permissions = match &config.policy_cache_redis_url {
+        Some(url) => {
+            let ttl = std::time::Duration::from_secs(config.policy_cache_ttl_seconds);
+            let cache = metap::cache::RedisCache::connect(url, ttl).await?;
+            PermissionService::with_cache(
+                Box::new(PostgresPolicyStore::new(router.clone())),
+                Arc::new(cache) as Arc<dyn metap::cache::Cache>,
+            )
+        }
+        None => PermissionService::new(Box::new(PostgresPolicyStore::new(router.clone()))),
+    };
 
     let public_key_pem = std::fs::read(&config.auth_jwt_public_key_path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_public_key_path))?;

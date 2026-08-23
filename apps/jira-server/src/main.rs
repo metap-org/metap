@@ -93,7 +93,18 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(router.clone())));
+    // See `apps/crm-server/src/main.rs`'s identical block for why this is opt-in/Redis-backed.
+    let permissions = match &config.policy_cache_redis_url {
+        Some(url) => {
+            let ttl = std::time::Duration::from_secs(config.policy_cache_ttl_seconds);
+            let cache = metap::cache::RedisCache::connect(url, ttl).await?;
+            PermissionService::with_cache(
+                Box::new(PostgresPolicyStore::new(router.clone())),
+                Arc::new(cache) as Arc<dyn metap::cache::Cache>,
+            )
+        }
+        None => PermissionService::new(Box::new(PostgresPolicyStore::new(router.clone()))),
+    };
 
     let public_key_pem = std::fs::read(&config.auth_jwt_public_key_path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_public_key_path))?;
