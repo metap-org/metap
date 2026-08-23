@@ -2432,6 +2432,7 @@ dependencies = [
  "axum",
  "jsonwebtoken",
  "metap",
+ "metap-outbox-publisher",
  "metap-reconciler",
  "serde_json",
  "tokio",

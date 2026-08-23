@@ -2039,7 +2039,53 @@ tra trên trình duyệt"), nên **chưa** tự kiểm tra tương tác kéo-th�
 **Còn lại (chưa làm)**: UI thread comment lồng trực tiếp trên trang chi tiết issue (hiện phải xem
 qua `/records/jira.comments` lọc theo `issue` — dùng được nhưng chưa "tự nhiên" như 1 thread thật);
 dashboard chưa scope theo project (đang gộp toàn bộ tenant); chưa có UI tạo/sửa comment ngay trong
-board card. Đây là hạng mục tiếp theo nếu tiếp tục "làm đầy" theo đúng thứ tự người dùng liệt kê.
+board card.
+
+### Bước 3/nhiều: `outbox-publisher` không hề chạy cho tenant của jira-server — sự cố tìm được khi thử demo trực tiếp (2026-08-24)
+
+Lúc bật server thật lên cho chủ dự án xem demo, chủ dự án hỏi thẳng: "phần jira server có run
+reconcile, outbox + scheduler chung binary với main k?" — câu hỏi lộ ra 1 gap thật đang tồn tại,
+không phải giả định: kiểm tra trực tiếp `outbox_events` trong `metap_myjira` (DB dedicated của
+tenant jira) thấy **9 event `published_at IS NULL`** — mọi lần tạo/transition `jira.issues` từ lúc
+demo tới giờ **chưa từng được publish lên RabbitMQ**, vì:
+- `metap-crud::CrudService` ghi outbox event vào đúng transaction với business write, luôn qua
+  `Router::begin(tenant_id)` — với tenant `DedicatedDb` (như jira-server's tenant) nghĩa là ghi
+  thẳng vào DB riêng của tenant đó (`metap_myjira`), không phải DB nào khác.
+- `outbox-publisher` (worker chuẩn để drain bảng này) chỉ tồn tại dưới dạng process riêng
+  (`pnpm worker:outbox:rs`), và script đó **hardcode `cd apps/crm-server`** — trỏ vào
+  `DATABASE_URL` của `crm-server` (platform DB), không bao giờ chạm tới `metap_myjira`.
+- Kết quả: **không có bất kỳ worker nào từng drain outbox của tenant jira-server cả** — im lặng,
+  không lỗi, không log cảnh báo, chỉ đơn giản là event nằm mãi ở `published_at = NULL`.
+
+**Sửa theo đúng pattern đã có sẵn trong repo** (`notification-worker`'s binary+lib +
+`NOTIFICATION_WORKER_INLINE`, không phát minh pattern mới):
+- `crates/outbox-publisher` tách thành `[lib] outbox_publisher` (giữ nguyên toàn bộ logic
+  `run`/`publish_pending`/`mark_published`/`mark_failed`) + `[[bin]] outbox-publisher` (giờ chỉ
+  còn load config, connect DB/RabbitMQ, gọi `outbox_publisher::run(...)`) — binary độc lập
+  (`pnpm worker:outbox:rs`) vẫn chạy y hệt trước, không đổi hành vi cho `crm-server`.
+- `apps/jira-server`: thêm cờ `OUTBOX_WORKER_INLINE=true` — khi bật, spawn 1 task chạy
+  `outbox_publisher::run(&tenant_pool, ...)` **ngay trong process jira-server**, dùng đúng
+  `tenant_pool` (đã resolve qua `Router::pool_for` từ bước reconcile) chứ không phải `pool`
+  (platform DB) — đây chính là điểm khác biệt bắt buộc so với `crm-server`: tenant dedicated-db
+  cần 1 thứ gì đó drain đúng DB của riêng nó, không thể dùng chung 1 worker trỏ platform DB như
+  các tenant `Schema`-strategy vẫn làm được.
+- Không bắt buộc phải inline — chạy `outbox-publisher` như 1 process riêng với `.env` riêng trỏ
+  DSN của tenant cũng đúng (giống hệt cách `crm-server` làm), inline chỉ đơn giản là lựa chọn gọn
+  hơn cho 1 app demo single-tenant đã sẵn `tenant_pool` trong tay. Đúng như chủ dự án chốt: "single
+  binary hoặc chia process ra sao thì tùy, nhưng phải biết chắc chắn phải có" — bản chất là phải
+  tồn tại 1 worker drain đúng DB, hình dạng deployment (inline hay tách process) là lựa chọn.
+
+**Kiểm chứng sống**: trước khi sửa — `SELECT count(*) FILTER (WHERE published_at IS NULL)` = 9/9.
+Bật `OUTBOX_WORKER_INLINE=true` chạy jira-server thật → cả 9 event cũ được publish hết trong vòng
+poll đầu tiên (0/9 unpublished). Tạo thêm 1 record mới qua HTTP thật → event mới cũng được drain
+đúng trong vòng poll kế tiếp (~500ms), xác nhận không phải chỉ dọn 1 lần lúc boot mà đúng là vòng
+lặp poll liên tục. `cargo build --workspace`/`fmt --check`/`clippy --workspace --all-targets -D
+warnings` sạch — cả `outbox-publisher`'s standalone binary lẫn `notification-worker` (crate khác
+dùng chung pattern binary+lib) không bị ảnh hưởng bởi refactor.
+
+**Còn lại**: `cron-scheduler` vẫn chưa wire cho jira-server — nhưng chưa có cron job nào định
+nghĩa cho tenant này nên chưa có gì cụ thể để verify; sẽ làm theo đúng pattern trên (binary+lib đã
+có sẵn) khi có nhu cầu thật, không build trước khi có use case.
 
 ## Định hướng chưa lên phase (chưa có trigger)
 

@@ -3,6 +3,10 @@ name = "metap-outbox-publisher"
 version = "0.1.0"
 edition.workspace = true
 
+[lib]
+name = "outbox_publisher"
+path = "src/lib.rs"
+
 [[bin]]
 name = "outbox-publisher"
 path = "src/main.rs"

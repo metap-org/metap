@@ -4,7 +4,20 @@
 //! dedicated table (`table_name != "records"`, see `entities/`), reconciled here before the
 //! server starts serving. Everything else mirrors `apps/crm-server/src/main.rs`'s boot sequence
 //! as closely as possible, minus what this PoC doesn't need: no DB-authored (low-code) entity
-//! merge, no `lowcode_http`/`control_http` router, no static frontend, no inline worker.
+//! merge, no `lowcode_http`/`control_http` router, no static frontend.
+//!
+//! **`OUTBOX_WORKER_INLINE=true` runs `outbox-publisher`'s drain loop in this same process,
+//! against `tenant_pool` (below), not `pool`.** Found live (2026-08-24): this tenant's
+//! `outbox_events` rows — every `jira.issues` create/transition — sat unpublished forever with
+//! nothing draining them, because they live in the tenant's own dedicated database
+//! (`Router::begin`/`pool_for`), and the standalone `outbox-publisher` binary's normal
+//! deployment shape (`pnpm worker:outbox:rs`) points at `apps/crm-server`'s own `.env` /
+//! `DATABASE_URL` — the platform's database, never this tenant's. A `DedicatedDb` tenant's
+//! outbox needs *something* draining its own database specifically; a separate `outbox-publisher`
+//! process with its own `.env` pointed at the tenant's DSN would also work (same shape as
+//! `crm-server`'s), but the inline flag is simpler for a single-tenant demo app that already
+//! resolves `tenant_pool` at boot anyway — same "two deployment shapes, one shared `run()`,
+//! can't drift apart" reasoning `crm-server`'s `NOTIFICATION_WORKER_INLINE` already established.
 //!
 //! **`JIRA_TENANT_ID` must be a properly provisioned `DedicatedDb` tenant, not the platform's
 //! own dev/admin tenant.** An earlier version of this file reconciled straight against
@@ -46,6 +59,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
+use metap::infra::{EventBus, RabbitEventBus};
 use metap::prelude::*;
 use uuid::Uuid;
 
@@ -136,6 +150,36 @@ async fn main() -> anyhow::Result<()> {
     // platform-tenant provisioning surface.
     let router = build_router(state, &config.cors_origins, axum::Router::new());
 
+    // Off by default — see this file's top doc comment for why this tenant's outbox needs
+    // *something* draining it, and why inline (against `tenant_pool`, not `pool`) is the
+    // simplest option for this single-tenant demo app. `OUTBOX_POLL_MS`/`OUTBOX_BATCH_SIZE`
+    // read the same env vars the standalone `outbox-publisher` binary does, for the same reason
+    // (no shared config struct field — each caller reads its own knobs at its own composition
+    // root).
+    let outbox_worker_handle = if env_flag_enabled("OUTBOX_WORKER_INLINE") {
+        tracing::info!("connecting outbox worker to rabbitmq (inline mode)...");
+        let outbox_bus = RabbitEventBus::connect(&config.rabbitmq_url).await?;
+        let outbox_pool = tenant_pool.clone();
+        let poll_ms: u64 = std::env::var("OUTBOX_POLL_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1000);
+        let batch_size: i64 = std::env::var("OUTBOX_BATCH_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(100);
+        Some(tokio::spawn(async move {
+            if let Err(err) =
+                outbox_publisher::run(&outbox_pool, &outbox_bus, poll_ms, batch_size, shutdown_signal()).await
+            {
+                tracing::error!(error = %err, "outbox worker exited with error");
+            }
+            outbox_bus.close().await.ok();
+        }))
+    } else {
+        None
+    };
+
     let addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "listening");
@@ -147,10 +191,22 @@ async fn main() -> anyhow::Result<()> {
     .with_graceful_shutdown(shutdown_signal())
     .await?;
 
+    // Block on the inline outbox worker's own shutdown branch (and its `bus.close()`) instead
+    // of letting the process exit as soon as the HTTP server drains — otherwise the spawned
+    // task above can be cut off mid-publish, same reasoning `crm-server`'s inline notification
+    // worker already applies.
+    if let Some(handle) = outbox_worker_handle {
+        handle.await.ok();
+    }
+
     Ok(())
 }
 
 async fn shutdown_signal() {
     tokio::signal::ctrl_c().await.ok();
     tracing::info!("shutdown signal received, exiting");
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|v| v == "true" || v == "1")
 }
