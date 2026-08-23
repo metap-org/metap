@@ -2003,12 +2003,43 @@ thái (`start`/`submit_for_review`/`approve`, guard trên `approve` pass đúng)
 không lỗi. `cargo fmt --check`/`clippy --workspace --all-targets -D warnings`/
 `test --workspace --lib --bins` sạch toàn bộ.
 
-**Còn lại (chưa làm trong batch này)**: `apps/jira-fe` (frontend harness mới, mirror `apps/
-crm-fe`, hiện jira-server hoàn toàn chưa có UI), kanban board component (kéo-thả issue giữa cột
-theo `status`, gọi đúng transition action theo cặp nguồn/đích), dashboard (đếm theo status/
-priority/sprint), UI thread comment trên issue detail (generic list/form của `packages/
-platform-react` đã đủ dùng ngay cho `jira.sprints`/`jira.comments` không cần code UI mới — chỉ
-kanban/dashboard là component thật sự mới).
+### Bước 2/nhiều: `apps/jira-fe` — dashboard + kanban board (2026-08-23, cùng ngày)
+
+`apps/jira-fe` mới (`@metap/jira-fe`), mirror y hệt khung `apps/crm-fe` (Vite + React +
+TypeScript + `packages/platform-react` qua `workspace:*`, cổng dev riêng 5174 để chạy song song
+với `crm-fe`'s 5173, proxy sang jira-server's cổng 3100). `pnpm-workspace.yaml` glob sẵn `apps/*`
+nên không cần sửa gì để `pnpm install` nhận app mới.
+
+**Phần lớn UI không cần code mới** — đúng giá trị cốt lõi "metadata-driven UI" của
+`packages/platform-react`: `jira.projects`/`jira.sprints`/`jira.comments` và cả `jira.issues` ở
+dạng bảng/form đã chạy ngay qua `GeneratedList`/`GeneratedForm`/`RecordDetail` sẵn có, kể cả field
+`Date` (`DateInput`/`DateTimePicker` của Mantine đã map sẵn cho `FieldKind::Date`/`Datetime` từ
+trước) — không phải build thêm form/table nào cho sprint hay comment.
+
+**2 component thật sự mới**:
+- `DashboardPage` — đếm issue theo `status`/`priority`, bảng issue tạo gần đây nhất. Dùng thẳng
+  `useApiQuery` sẵn có của `platform-react`, không thêm hook mới.
+- `BoardPage` — kanban board thật: chọn project (dropdown từ `jira.projects`), cột lấy từ
+  `enumValues` của field `status` qua `GET /metadata/entities/jira.issues` (không hardcode 4
+  trạng thái tay — đổi workflow ở entity definition thì board tự đổi cột theo, không cần sửa FE).
+  Kéo-thả dùng **HTML5 drag-and-drop gốc của trình duyệt** (`draggable`/`onDragStart`/
+  `onDragOver`/`onDrop`), không thêm dependency DnD mới — đúng tinh thần tối thiểu, board này
+  không cần animation/reorder phức tạp. Thả issue sang cột khác tra đúng
+  `WorkflowTransition` theo cặp `(from, to)` trong `entity.workflow.transitions` rồi gọi thẳng
+  `POST /api/jira.issues/{id}/transitions/{action}` — **y hệt lời gọi** `WorkflowActionBar` của
+  `platform-react` đã dùng (cùng 1 code path, không phải luồng song song mới) — nếu không có
+  transition trực tiếp giữa 2 cột thì từ chối thả + báo lỗi rõ ràng (Mantine notification), không
+  âm thầm không làm gì.
+
+**Kiểm chứng**: `tsc -b` (typecheck), `oxlint` (9 file, 0 warning/error), `prettier --check`,
+`vite build` production đều sạch — theo đúng chính sách FE đã chốt trong dự án ("không tự
+Playwright-verify thay đổi FE — code xong, typecheck/lint/build sạch, bàn giao người dùng tự kiểm
+tra trên trình duyệt"), nên **chưa** tự kiểm tra tương tác kéo-thả/click thật trên trình duyệt.
+
+**Còn lại (chưa làm)**: UI thread comment lồng trực tiếp trên trang chi tiết issue (hiện phải xem
+qua `/records/jira.comments` lọc theo `issue` — dùng được nhưng chưa "tự nhiên" như 1 thread thật);
+dashboard chưa scope theo project (đang gộp toàn bộ tenant); chưa có UI tạo/sửa comment ngay trong
+board card. Đây là hạng mục tiếp theo nếu tiếp tục "làm đầy" theo đúng thứ tự người dùng liệt kê.
 
 ## Định hướng chưa lên phase (chưa có trigger)
 

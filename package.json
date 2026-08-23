@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev:web": "pnpm --filter @metap/crm-fe dev",
+    "dev:jira:web": "pnpm --filter @metap/jira-fe dev",
     "build": "pnpm -r build",
     "build:web": "pnpm --filter @metap/crm-fe build",
     "dev:rs": "cd apps/crm-server && cargo watch -w src -w ../../crates -w Cargo.toml -x 'run -p crm-server'",
