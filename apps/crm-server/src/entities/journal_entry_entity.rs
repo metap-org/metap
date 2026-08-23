@@ -38,6 +38,7 @@ fn field(
         searchable: searchable.then_some(true),
         search_mode: None,
         sortable: sortable.then_some(true),
+        storage: None,
     }
 }
 
@@ -82,6 +83,7 @@ pub fn journal_entry_entity() -> EntityDefinition {
                 searchable: None,
                 search_mode: None,
                 sortable: None,
+                storage: None,
             },
             EntityField {
                 name: "status".to_string(),
@@ -96,6 +98,7 @@ pub fn journal_entry_entity() -> EntityDefinition {
                 searchable: None,
                 search_mode: None,
                 sortable: Some(true),
+                storage: None,
             },
         ],
         list_views: vec![

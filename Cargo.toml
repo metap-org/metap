@@ -18,6 +18,7 @@ members = [
   "crates/metap-peripherals",
   "crates/metap-permission",
   "crates/metap-query",
+  "crates/metap-reconciler",
   "crates/metap-workflow",
   "crates/notification-worker",
   "crates/outbox-publisher",

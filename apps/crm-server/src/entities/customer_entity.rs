@@ -36,6 +36,7 @@ fn field(
         searchable: searchable.then_some(true),
         search_mode: None,
         sortable: sortable.then_some(true),
+        storage: None,
     }
 }
 
@@ -62,6 +63,7 @@ pub fn customer_entity() -> EntityDefinition {
                 searchable: None,
                 search_mode: None,
                 sortable: Some(true),
+                storage: None,
             },
             EntityField {
                 name: "referredBy".to_string(),
@@ -76,6 +78,7 @@ pub fn customer_entity() -> EntityDefinition {
                 searchable: None,
                 search_mode: None,
                 sortable: None,
+                storage: None,
             },
         ],
         list_views: vec![EntityListView {

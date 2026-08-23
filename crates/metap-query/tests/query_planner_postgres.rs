@@ -72,6 +72,7 @@ fn field(name: &str, kind: FieldKind, sortable: bool, searchable: bool) -> Entit
         searchable: searchable.then_some(true),
         search_mode: searchable.then(|| "substring".to_string()),
         sortable: sortable.then_some(true),
+        storage: None,
     }
 }
 

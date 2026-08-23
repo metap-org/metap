@@ -35,6 +35,7 @@ fn field(
         searchable: searchable.then_some(true),
         search_mode: None,
         sortable: sortable.then_some(true),
+        storage: None,
     }
 }
 
@@ -58,6 +59,7 @@ pub fn sales_order_entity() -> EntityDefinition {
                 searchable: None,
                 search_mode: None,
                 sortable: None,
+                storage: None,
             },
             field("orderDate", "Order Date", FieldKind::Date, true, false, false, true),
             field(
@@ -87,6 +89,7 @@ pub fn sales_order_entity() -> EntityDefinition {
                 searchable: None,
                 search_mode: None,
                 sortable: Some(true),
+                storage: None,
             },
             field("notes", "Notes", FieldKind::String, false, false, true, false),
         ],

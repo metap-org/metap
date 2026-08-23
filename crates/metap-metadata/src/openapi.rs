@@ -75,6 +75,7 @@ fn entity_field_json_schema() -> Value {
             "searchable": { "type": "boolean" },
             "searchMode": { "type": "string", "enum": ["substring", "fts"] },
             "sortable": { "type": "boolean" },
+            "storage": { "type": "string", "enum": ["native", "column"] },
         },
         "required": ["name", "label", "kind"],
     })
@@ -295,6 +296,7 @@ mod tests {
                 searchable: None,
                 search_mode: None,
                 sortable: None,
+                storage: None,
             }],
             list_views: vec![],
             workflow: None,

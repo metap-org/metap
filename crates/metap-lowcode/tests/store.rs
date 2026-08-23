@@ -33,6 +33,7 @@ fn field(name: &str, kind: FieldKind) -> EntityField {
         searchable: None,
         search_mode: None,
         sortable: None,
+        storage: None,
     }
 }
 

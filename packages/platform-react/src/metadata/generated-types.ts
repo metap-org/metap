@@ -750,6 +750,8 @@ export interface components {
         searchMode?: "substring" | "fts";
         searchable?: boolean;
         sortable?: boolean;
+        /** @enum {string} */
+        storage?: "native" | "column";
         unique?: boolean;
       }[];
       label: string;
@@ -770,6 +772,7 @@ export interface components {
         transitions: {
           action: string;
           from: string;
+          guard?: unknown;
           label: string;
           to: string;
         }[];

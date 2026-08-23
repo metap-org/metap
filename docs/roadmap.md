@@ -1219,6 +1219,151 @@ có HTTP server để gắn `/metrics` vào — chưa có trigger cho việc ri�
 
 Chi tiết đầy đủ ở `docs/local-benchmarking.md`.
 
+**Benchmark nghiệp vụ phức tạp thật, 10 phút, đồng thời (2026-08-23) — chủ dự án chỉ ra đúng:
+benchmark `pgbench` ở trên vẫn chỉ là MỘT bảng, filter đơn giản, không phản ánh nghiệp vụ thật
+(multi-entity, hydration, ABAC).** Dựng schema quan hệ thật qua chính low-code builder:
+`hr.departments` (20 row) → `hr.employees` (200 row, `departmentId` Reference) →
+`helpdesk.tickets` (500K row, `assigneeId`+`departmentId` Reference, có `refDisplayField` cho cả
+hai, có workflow 3 transition), cộng policy ABAC record-level theo phòng ban
+(`fromContext.departmentId`) — đúng pattern Organization & Identity (Phase 18). Chạy
+`CrudService::list()` **trực tiếp** (không qua HTTP — bỏ qua rate limiter theo IP, thứ không
+phản ánh năng lực xử lý nghiệp vụ, chỉ là giới hạn tầng HTTP riêng), 20 worker đồng thời, 600
+giây liên tục. Mỗi lần gọi `list()` ở đây trả giá đúng: context permission check + load record
+policy snapshot + base query có điều kiện ABAC + `hydrate_related_display` cho **cả hai** field
+Reference (mỗi field lại có permission check + batch fetch + record-condition check riêng) —
+không phải một xấp xỉ, đúng cost shape thật của một list view org-scoped.
+
+**Kết quả**: 448,399 lệnh gọi `list()` thành công / 600s, **747.3 list()/s trung bình, 0% lỗi**,
+latency ổn định suốt 10 phút (không suy giảm theo thời gian) — p50=26ms, p95=31ms, p99=34ms,
+max=120ms. Cache hit ratio **100%** trong suốt cửa sổ đo (B-tree index nhỏ cho
+`assigneeId`/`departmentId`, khác hẳn 2 GIN index 47-48MB của benchmark đơn bảng trước — vừa đủ
+trong `shared_buffers` mặc định 128MB, không cần tune). 0 deadlock mới, 0 temp file spill.
+
+**Kết luận**: nghiệp vụ multi-entity thật (2 Reference field hydrate + ABAC record-level + workflow)
+**không phải điểm nghẽn** ở quy mô 500K ticket/200 employee/20 department — nhanh hơn nhiều so
+với lo ngại ban đầu, kể cả với ~5-9 query/lệnh `list()` (permission + snapshot + base + 2×
+hydration). Test tool: `crates/metap-crud/tests/crud_service_postgres.rs`'s
+`sustained_concurrent_list_against_a_real_multi_entity_abac_workflow` (`#[ignore]`d, cần seed
+out-of-band trước — không chạy trong e2e suite thường).
+
+**Mở rộng 10M row / 10 tenant / 3 Reference field, 10 phút, đồng thời (2026-08-23) — chủ dự án hỏi
+tiếp: "seed 10tr bản ghi xem còn k, entity khác nhau tenant khác nhau lookup dữ liệu join bảng
+nhiều thì sao".** Seed 10 tenant độc lập, mỗi tenant 20 `hr.departments` → 200 `hr.employees` →
+1,000,000 `helpdesk.tickets` (10,000,000 ticket tổng — đúng vào ngưỡng `@10M/entity` đã ghim ở
+Data Model Strategy/ADR cho table-per-entity), cùng chia sẻ **một** bảng `records` vật lý —
+đúng kịch bản ngưỡng đó nói tới. `helpdesk.tickets` thêm field Reference thứ 3 (`reporterId` →
+`hr.employees`, cạnh `assigneeId`/`departmentId` đã có) để `hydrate_related_display` chạy 3 lượt
+permission-check + batch-fetch + record-condition thay vì 2 — gần hơn với "join nhiều bảng" thật.
+Policy ABAC theo phòng ban được tạo lại cho **cả 10 tenant** (context-role grant + record
+condition `fromContext.departmentId`, insert thẳng vào `policies` cho nhanh thay vì lặp HTTP). 20
+worker đồng thời, mỗi lần lặp chọn ngẫu nhiên một cặp `(tenant_id, departmentId)` trong số 200 cặp
+trải trên 10 tenant — traffic thật sự trộn tenant, không phải một tenant lặp lại.
+
+**Kết quả**: 65,756 lệnh gọi `list()` thành công / 600s, **109.5 list()/s trung bình, 0% lỗi**,
+nhưng latency suy giảm rõ — p50=57ms, **p95=1306ms, p99=1479ms, max=2140ms** (so với p95=31ms/
+p99=34ms ở benchmark 500K/1 tenant). Throughput giảm ~6.8 lần. Cache hit ratio Postgres tụt còn
+92.4-94.75% (so với 100% ở benchmark 500K) với ~149,000 block read/s — **root cause giống hệt
+benchmark `pgbench` đơn bảng trước đó: `shared_buffers` mặc định 128MB quá nhỏ**, lần này còn rõ
+hơn vì working set đã lớn hẳn (`pg_total_relation_size('records')` = 6.5GB, so với ~600MB ở
+benchmark trước) — index/dữ liệu bị đẩy ra khỏi buffer cache liên tục dưới tải đồng thời 10
+tenant. Đã loại trừ nguyên nhân khác: `ANALYZE` đã chạy tự động sau seed (`last_autoanalyze` mới
+hơn thời điểm seed xong, `n_live_tup` khớp số dòng thật — planner không dùng statistics cũ), 0
+deadlock mới, không có `crm-server` nào chạy song song gây nhiễu (test gọi thẳng `CrudService`,
+xác nhận qua Prometheus target `crm-server` ở trạng thái down trong lúc benchmark). `EXPLAIN
+ANALYZE` một truy vấn mẫu cho thấy planner ưu tiên index theo `(tenant_id, entity, created_at)`
+để tránh sort thay vì index riêng trên `departmentId` (chọn lọc thấp — mỗi phòng ban chỉ ~0.6%
+dòng của tenant) — một composite index `(tenant_id, entity, departmentId, created_at)` sẽ tốt
+hơn cho pattern filter+sort này, chưa làm, ghi lại làm việc tiếp theo nếu quy mô 10M/tenant trở
+thành thật thay vì benchmark.
+
+**Kết luận (bản đầu, trước verify)**: ngưỡng `@10M/entity` **có ý nghĩa thật, không phải con số
+suy diễn** — cùng cấu hình Postgres mặc định (`shared_buffers=128MB`) từng đủ dùng ở 500K giờ đã
+là điểm nghẽn rõ rệt. Multi-tenant tự nó (10 tenant chia sẻ 1 bảng) **không** làm chậm thêm — mỗi
+tenant vẫn lọc đúng bằng `tenant_id`. 3 Reference field hydrate (thay vì 2) cũng không phải
+nguyên nhân chính. Test tool: `crates/metap-crud/tests/crud_service_postgres.rs`'s
+`sustained_concurrent_list_across_many_tenants_at_ten_million_rows` (`#[ignore]`d, cần seed
+out-of-band 10 tenant/10M row — không chạy trong e2e suite thường, dữ liệu test đã được dọn sau
+khi đo).
+
+**Verify fix thật, không dừng ở suy luận (2026-08-23, trigger: chủ dự án phản bác đúng — "hiệu
+năng k tốt r, bài test db quá ít logic, chỉ mới datastore mà đã mất hơn 1s", tức là kết luận "chỉ
+cần tune, chưa cần table-per-entity" phải được **verify bằng đo lại**, không phải để nguyên như
+một giả thuyết chưa kiểm chứng).** Áp 2 fix đã nêu: `shared_buffers` 128MB → **2GB** +
+`effective_cache_size` → 4GB (`docker-compose.yml`, không còn revert như benchmark `pgbench`
+trước — bake thẳng vào compose vì lần này có dự định giữ lại), và composite index
+`(tenant_id, departmentId, created_at DESC)` `WHERE entity='helpdesk.tickets' AND deleted=false`
+(`idx_records_helpdesk_tickets_dept_created`, `CREATE INDEX CONCURRENTLY`). Seed lại đúng bộ 10
+tenant/10M ticket, chạy lại đúng bài test 10 phút/20 worker.
+
+**Kết quả sau fix**: 179,549 lệnh gọi `list()` / 600s, **299.2 list()/s** (109.5 → 299.2, ~2.7
+lần), **p50=66ms, p95=78ms, p99=91ms, max=190ms** (so với p95=1306ms/p99=1479ms/max=2140ms trước
+fix — **giảm ~17 lần** ở p95/p99), 0 lỗi. Cache hit ratio Postgres trong suốt cửa sổ đo:
+**99.35%** (so với 92.4-94.75% trước fix). `EXPLAIN (ANALYZE, BUFFERS)` trên đúng truy vấn mẫu
+(department-scoped, sort theo `created_at`) xác nhận planner giờ dùng
+`idx_records_helpdesk_tickets_dept_created` thay vì né sort qua `records_tenant_entity_created_idx`
+như trước — 0.448ms execution, 55 buffer hit, toàn bộ từ cache, 0 đọc đĩa.
+
+Một điểm cần nói thẳng: `pg_total_relation_size('records')` ở lần đo này là **13GB** (bảng + toàn
+bộ index, kể cả GIN trigram/description áp cho `helpdesk.tickets` — lớn hơn ước tính 6.5GB ban
+đầu vì tính thiếu các GIN index đó), trong khi host dev chỉ có **~9.7GB RAM tổng**. `shared_buffers
+2GB` vẫn nhỏ hơn nhiều so với working set thật 13GB — kết quả tốt hơn hẳn không phải vì đã cache
+toàn bộ working set, mà vì phần **thực sự được truy cập** (composite index cho truy vấn department
++ B-tree cho Reference field) đủ nhỏ để nằm gọn trong 2GB, còn phần ít dùng (GIN trigram cho search
+tự do) không cần nằm trong cache cho pattern truy cập của bài test này.
+
+**Kết luận đã verify**: fix ở tầng Postgres (shared_buffers + composite index) **thật sự giải
+quyết được vấn đề đo được** ở quy mô 10M/10-tenant hiện tại — không còn là suy luận từ Prometheus,
+mà là số đo trước/sau cụ thể. Nhưng điều đó **không có nghĩa table-per-entity không cần làm** —
+nó có nghĩa: ở quy mô 10M **hiện tại**, chưa cần, và khi cần thì đã biết chính xác 2 đòn bẩy nào
+tác động lớn nhất. Bản thân việc `pg_total_relation_size` đã lên 13GB chỉ với 1 entity 10M-row —
+trên một host dev 9.7GB RAM — là tín hiệu thật của đúng vấn đề mà `docs/multi-tenant-platform-
+design.md` §3.1 mô tả: "N entity × 10M trong một bảng chung = 100M+ → index phình, autovacuum ác
+mộng, một entity nặng làm chậm cả hệ" — tune RAM/index cho **một** entity 10M là khả thi, nhưng
+không scale tuyến tính khi có **nhiều** entity cùng ở quy mô đó cùng lúc (mỗi entity nặng lại đòi
+thêm working set riêng, cộng dồn trên cùng một bảng vật lý). table-per-entity được nâng độ ưu
+tiên: xem `docs/features/04-table-per-entity.md` (trạng thái cập nhật — trigger đã có bằng chứng
+thực nghiệm, không còn thuần lý thuyết). Test tool:
+`crates/metap-crud/tests/crud_service_postgres.rs`'s
+`sustained_concurrent_list_across_many_tenants_at_ten_million_rows`, dữ liệu test đã được dọn sau
+khi đo (10,002,200 record + 40 policy xoá đúng phạm vi 10 tenant test, tenant dev cố định
+`00000000-0000-0000-0000-000000000001` không bị đụng — verify 2203 record/2 policy còn nguyên).
+
+**Sustained load test thật, 10 phút, đồng thời (2026-08-23, trigger: benchmark trước đó chỉ đơn
+luồng, vài request — chủ dự án yêu cầu test nhiều hơn, tối thiểu 10 phút).** `pgbench` (có sẵn
+trong image `postgres:16-alpine`) chạy 5 kịch bản trộn theo trọng số (filter chính xác 30%,
+substring 20%, FTS 20%, filter theo assignee 20%, ghi 10%) — **20 client đồng thời, 4 thread,
+600 giây liên tục**, trên 1 triệu record `bench.issues` (build `--release`, không phải debug
+như benchmark trước). Kết quả:
+
+- **106,562 transaction / 600s, 177.6 TPS trung bình, 0% lỗi.**
+- Filter chính xác (indexed): 8.9ms; filter assignee (indexed): 6.8ms; ghi: 7.0ms — không đổi
+  nhiều so với benchmark đơn luồng trước.
+- **Substring/FTS chậm hẳn dưới tải đồng thời: 270ms/269ms** (so với 30-35ms đơn luồng trước đó
+  ở 500K row) — phát hiện thật mà benchmark đơn luồng trước **hoàn toàn bỏ sót**.
+
+**Truy nguyên nguyên nhân bằng Prometheus** (không suy đoán): cache hit ratio trong lúc chạy chỉ
+**95.68%**, ~69K block đọc/giây từ ngoài `shared_buffers`. `shared_buffers` mặc định của image
+Postgres chỉ **128MB**, trong khi working set (bảng `records` 329MB + 2 GIN index 47-48MB mỗi
+cái) đã ~600MB — không đủ chứa trong cache của Postgres dưới tải đồng thời. **Verify bằng thực
+nghiệm**: tăng `shared_buffers` lên 1GB (`ALTER SYSTEM` + restart, không đụng
+`docker-compose.yml`), chạy lại 90 giây cùng kịch bản — cache hit ratio lên **99.98%**, TPS
+tổng gần **gấp đôi** (177.6 → 345.3), **FTS giảm 70%** (268ms → 81.5ms), substring giảm 36%
+(270ms → 173.7ms). Đã revert `shared_buffers` về mặc định sau khi verify xong (không thay đổi
+`docker-compose.yml` — đây là runtime tuning, để lại quyết định "có bake vào compose file
+không" cho lúc thật sự cần).
+
+Kiểm tra phụ trong lúc chạy: `pg_stat_database_deadlocks` tăng thêm **0** trong suốt 11 phút
+(dùng `increase()`, không phải giá trị cộng dồn — giá trị cộng dồn là 10, dư âm từ lúc tái hiện
+deadlock `CREATE INDEX CONCURRENTLY` thủ công trước đó trong phiên, không phải phát sinh mới);
+`pg_stat_database_temp_bytes` tăng 0 (không có sort/hash tràn ra đĩa, loại trừ nguyên nhân
+`work_mem`). 1,013,833 row đã dọn sau test.
+
+**Kết luận cập nhật**: 500K-1M row/entity vẫn không cần table-per-entity — nhưng khác kết luận
+benchmark đơn luồng trước, **`shared_buffers` mặc định của Postgres dev container là điểm nghẽn
+thật dưới tải đồng thời thực tế**, không phải kiến trúc bảng chung/JSONB. Đáng làm trước khi
+cân nhắc table-per-entity: tune `shared_buffers` (và các tham số bộ nhớ liên quan) cho target
+production thật — rẻ hơn nhiều so với tách bảng, và benchmark này cho thấy tác động lớn hơn.
+
 **Fix + capability mới (2026-08-22, trigger: benchmark ở trên chỉ chứng minh nhanh trong MỘT
 entity — chủ dự án chỉ ra đúng: nghiệp vụ thật trải dài nhiều entity, list Issue kiểu Jira cần
 hiển thị tên Project/Assignee, không chỉ ID thô).** Xác nhận bằng code: `QueryPlanner` không có
@@ -1270,6 +1415,122 @@ chỉ chạy cho single-record, chỉ phục vụ permission condition, không l
 
 P1 (`hr.positions`/`hr.locations`, `managerId` self-reference + policy "chỉ manager trực tiếp"),
 P2 (Legal Entity/Business Unit/Approval Authority...) vẫn `proposed`, chưa có trigger để code.
+
+## Phase 19: Table-per-entity — Bước 1/5 (2026-08-23)
+
+Trigger: benchmark 10M row/10 tenant (xem phần "Verify fix thật" ở trên) đo được
+`pg_total_relation_size('records')` = 13GB chỉ với **một** entity 10M-row trên host 9.7GB RAM —
+đúng cơ chế `docs/multi-tenant-platform-design.md` §3.1 cảnh báo ("N entity × 10M trong một bảng
+chung = 100M+ → index phình"), dù tune Postgres giải quyết được cho quy mô một-entity hiện tại.
+Chủ dự án chốt: bắt đầu implement thật thay vì tiếp tục chỉ giữ ở readiness brief
+(`docs/features/04-table-per-entity.md`) — bước 1 trong 5 bước đã sequencing ở đó.
+
+**Bước 1 — `FieldStorage`/tier suy từ cờ metadata (§3.2), done:**
+
+- `crates/metap-metadata/src/entity.rs`: `FieldStorage` enum (`Native`/`Column`, override tường
+  minh), `FieldStorageTier` enum (`Jsonb`/`GeneratedColumn`), `resolve_field_storage_tier` (suy
+  tier từ `indexed`/`sortable`/`unique`/`searchable`, override thắng khi có), `field_kind_sql_type`
+  (map `FieldKind` → SQL type đúng bảng §3.2: `Money`→`numeric(18,4)`, `Reference`/`Id`→`uuid`,
+  ...). `EntityField` thêm field `storage: Option<FieldStorage>`, optional + `#[serde(default)]`
+  — entity cũ (kể cả low-code đã lưu trong `low_code_entity_versions`) deserialize bình thường,
+  không cần backfill.
+- Metadata-only, đúng scope bước 1: chưa có reconciler nào tiêu thụ `FieldStorageTier`, bảng
+  `records` dùng chung vẫn lưu mọi field trong `data jsonb` bất kể tier — bước này chỉ chuẩn bị
+  input cho bước 2 (reconciler diff).
+- Đồng bộ chỗ cần: `crates/metap-metadata/src/openapi.rs`'s hand-written `EntitySummary` schema
+  (thêm property `storage`), `crates/metap-metadata/src/lib.rs`'s re-export. `metap::metadata::*`
+  (facade) đã tự động thấy qua module re-export sẵn có, không cần sửa `metap::prelude` (tier
+  resolution không phải thứ một boot sequence cần).
+- 56 chỗ dựng `EntityField { .. }` bằng struct-literal trên toàn repo (entity demo, test) đều
+  cần thêm `storage: None,` — sửa bằng script tự động rồi build lặp lại tới khi sạch lỗi biên
+  dịch, xác nhận không có literal nào bị bỏ sót.
+- Kiểm chứng: 11 unit test mới (`entity.rs`'s `storage_tier_tests` — derive từ từng cờ, override
+  cả hai chiều, mapping SQL type, round-trip JSON camelCase, entity cũ thiếu key `storage`
+  deserialize ra `None`). `cargo build/clippy --all-targets -D warnings/fmt --check` sạch,
+  `cargo test --workspace` (unit, không cần DB) sạch, không regression.
+
+**Dọn DB dev + regenerate FE types (2026-08-23, sau khi chủ dự án xác nhận)**: quy trình chuẩn
+"sau khi đổi meta-model, chạy `pnpm dev:rs` + `pnpm --filter @metap/platform-react generate:types`"
+(CLAUDE.md) từng bị chặn vì DB dev tồn đọng **608 entity rác** (540 draft + 608 version, khớp
+đúng pattern `test.<kịch bản e2e>_<hex>` của 21 kịch bản trong `crates/metap-lowcode`'s test
+suite + `teste`) trong `low_code_entity_versions`/`low_code_entity_drafts`. Đã xoá đúng phạm vi
+đó, giữ nguyên 8 entity thật (`hr.departments`/`hr.employees` — Phase 18 P0,
+`helpdesk.tickets`/`bench.issues`/`demo.projects`/`demo.tickets`/`ops.demo_a_fcbfb890`/
+`ops.demo_b_3ad50e6c`). Regenerate lại sạch: `generated-types.ts` giờ chỉ +3 dòng (property
+`storage`, xem trên).
+
+**Bước 2/5 — Reconciler cho một entity, đầy đủ §5.1-§5.8 (2026-08-23), done.** Crate mới
+`crates/metap-reconciler`: `reconcile(desired) = introspect(actual) → diff → plan → execute`.
+`compile()` field không cờ → giữ JSONB; `indexed`/`sortable`/`unique` → expression index thẳng
+trên `data` (không tạo cột, đúng §5.6); `searchable` → GIN (tsvector/trigram); `storage: column`
+→ cột thật + trigger đồng bộ + backfill; **`Reference` field luôn cần cột thật khi có
+`ref_entity`** bất kể cờ khác — phát hiện qua e2e, không có trong pseudocode gốc (FK không thể
+trỏ vào JSONB path). `diff()` đúng 5 bước §5.4 + `topo_sort`; `normalize_expr` (§5.3) dò thực
+nghiệm qua Postgres thật trước khi viết (không đoán) — Postgres tự thêm `::text` vào literal và
+đổi số lớp ngoặc khi lưu index definition, đoán sai sẽ khiến reconcile lặp vô hạn không hội tụ.
+`executor::execute` dùng advisory lock **ghim trên một connection riêng** — phát hiện bug thật
+lúc code: `pg_try_advisory_lock` gắn theo connection/session, gọi qua `&PgPool` trần sẽ đổi
+connection mỗi lần, lock không bảo vệ được gì. `backfill` (§5.7) checkpoint cùng transaction với
+update, cờ `completed` để `diff()` phân biệt "đang backfill dở" (resume) với "đã xong" (không
+làm lại) — chi tiết phải tự thiết kế thêm để `diff()` vẫn là hàm thuần so hai `PhysicalSchema`.
+`watchdog` (§5.8) lease+heartbeat, requeue hoặc `error` sau 5 lần retry. Migration mới:
+`crates/migrations/0017_reconciler_tables.sql`.
+
+**Kiểm chứng bằng e2e thật trên Postgres dev**, không chỉ unit test:
+`crates/metap-reconciler/tests/reconcile_postgres.rs`, quan trọng nhất
+`reconcile_converges_to_zero_ops_on_a_second_pass` — thuộc tính đúng đắn cốt lõi của reconciler
+level-triggered (reconcile lần 2 với desired không đổi phải ra 0 op). E2e bắt được và sửa 3 bug
+thật trước khi merge: (1) thiếu một lớp ngoặc bọc ngoài cho biểu thức có cast trong
+`CREATE INDEX` (`"syntax error near ::"`), (2) FK field chưa được promote thành cột thật trước
+khi gắn constraint, (3) advisory lock không ghim connection. 29 unit test + 3 e2e test,
+`cargo build/clippy --all-targets -D warnings/fmt --check` sạch toàn workspace, `cargo test
+--workspace` không regression. **Chưa wire vào binary nào** — không boot sequence nào gọi
+`reconcile()`, bảng `records` chung vẫn là nơi `CrudService` đọc/ghi thật; vẫn là bước 2/5, chưa
+phải "table-per-entity chạy thật". Chi tiết đầy đủ:
+`docs/features/04-table-per-entity.md`.
+
+**Bước 3/5 — Migration declarative-only + preflight/quarantine (2026-08-23), done.**
+`crates/metap-reconciler/src/migration.rs`: `MigrationOp` (`RenameField`/`AddField`/
+`WidenType`/`DropField`/`RemoveEnum`, đúng tập op §4.2, mỗi op sinh một SQL cố định, không code
+hook). Chỉ `WidenType` cần preflight thật (chỉ nó có thể fail trên data bẩn) — dùng
+`pg_input_is_valid` (hàm built-in Postgres 16, kiểm tra cast an toàn không cần try/catch), xác
+nhận qua Postgres thật trước khi dùng chứ không đoán. `QuarantinePolicy` (`Block` mặc định |
+`Coerce{fallback}` | `Quarantine`, đúng §4.4). `quarantine.rs`: bảng `{table}_quarantine` đúng
+schema §4.5; `quarantine_bad_rows` di chuyển **từng dòng một** để bắt riêng lỗi
+`foreign_key_violation` và bỏ qua đúng dòng đang bị tham chiếu — nhờ vậy không cần tự dò đồ thị
+FK liên-entity, để Postgres (`ON DELETE RESTRICT` từ bước 2) tự chặn. Bug thật bắt được qua e2e:
+CTE `batch` trong `backfill.rs` thiếu alias `t` trong khi `where_extra` của migration lại dùng
+`t.data` → lỗi "missing FROM-clause entry" — chỉ lộ ra khi test transform thật có điều kiện WHERE
+bổ sung. 5 e2e test (`tests/migration_postgres.rs`).
+
+**Bước 4/5 — Orchestrator fan-out multi-tenant (2026-08-23), done.**
+`crates/metap-reconciler/src/orchestrator.rs` + `crates/migrations/
+0018_reconciler_orchestrator.sql` (`reconciler_entity_deployments`). `claim_due` đúng SQL
+`FOR UPDATE SKIP LOCKED` §6.2; thêm `entity_name_filter` **so với thiết kế gốc** (hợp lý cho
+production — sharding worker theo entity — và phát hiện cần thiết qua e2e: nhiều test chạy song
+song trong cùng process tranh nhau một hàng đợi toàn cục, không phải lỗi SKIP LOCKED mà là thiếu
+scope). `classify_error` (§6.4) đọc SQLSTATE thật từ error chain (không chỉ lớp lỗi ngoài cùng,
+vì `executor`/`backfill` bọc lỗi qua nhiều tầng) → Transient (tự retry) / DataError / Fatal
+(chuyển `blocked`, cần người). `run_claimed_batch` bound concurrency qua
+`futures::stream::buffer_unordered`, cô lập lỗi từng entity đúng §6.4. `wave_size`/
+`advance_wave` (canary 1-2 → 5% → 25% → 100%, halt nếu wave trước vượt ngưỡng error rate). Kiểm
+chứng quan trọng nhất: 8 worker gọi `claim_due` đồng thời **thật** trên 40 dòng — không dòng nào
+bị claim 2 lần, không dòng nào bị bỏ sót. 6 e2e test (`tests/orchestrator_postgres.rs`). Không
+phải service chạy nền — giống `metap-cron` (thư viện) so với `cron-scheduler` (binary), một
+binary orchestrator thật là việc riêng, ngoài phạm vi crate này.
+
+**Bước 5/5 — Relations + FK thật (§3.3): thực chất đã done từ bước 2.** FK cấp DB cần một cột
+vật lý thật để gắn vào — phát hiện lúc code bước 2 (không nằm trong kế hoạch ban đầu), nên
+`compile()` đã phải tự suy ra field `Reference` có `ref_entity` luôn cần cột thật, độc lập với
+`indexed`/`storage`. Phần còn lại (tắt fallback check ở `CrudService` cho entity đã tách bảng)
+chưa làm — cần khái niệm "vị trí lưu trữ entity" chưa tồn tại, và vô nghĩa trước khi có entity
+đầu tiên chạy thật qua table-per-entity.
+
+**Trạng thái tổng**: cả 5/5 bước đã code + kiểm chứng bằng e2e trên Postgres dev thật (không
+mock) — 31 unit test + 14 e2e test, `cargo build/clippy --all-targets -D warnings/fmt --check`
+sạch toàn workspace, `cargo test --workspace` không regression. **Chưa wire vào bất kỳ binary
+nào** — không entity sản phẩm nào thật sự chuyển sang table-per-entity, chưa có service
+orchestrator chạy nền thật. Chi tiết đầy đủ: `docs/features/04-table-per-entity.md`.
 
 ## Định hướng chưa lên phase (chưa có trigger)
 

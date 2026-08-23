@@ -17,7 +17,12 @@ services:
     # kind (a fixed-size shared-memory ring buffer, not per-query tracing). Changing this on an
     # *existing* local container needs `docker compose down` then `up` again (recreate, not just
     # restart) for the new command to take effect.
-    command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all
+    #
+    # shared_buffers/effective_cache_size (2026-08-23, docs/roadmap.md's 10M-row/10-tenant
+    # benchmark) — bumped from the image's 128MB default, found to be the root cause of a ~6.8x
+    # throughput drop / p95 1.3s once the working set reached ~6.5GB. 2GB is sized for this dev
+    # host's ~9.7GB total RAM (roughly the usual 20-25% guidance), not tuned for a production box.
+    command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c shared_buffers=2GB -c effective_cache_size=4GB
 
   rabbitmq:
     image: rabbitmq:3.13-management-alpine

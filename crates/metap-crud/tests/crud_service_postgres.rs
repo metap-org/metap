@@ -37,6 +37,7 @@ fn test_entity() -> EntityDefinition {
                 searchable: None,
                 search_mode: None,
                 sortable: Some(true),
+                storage: None,
             },
             EntityField {
                 name: "amount".to_string(),
@@ -51,6 +52,7 @@ fn test_entity() -> EntityDefinition {
                 searchable: None,
                 search_mode: None,
                 sortable: None,
+                storage: None,
             },
             EntityField {
                 name: "status".to_string(),
@@ -65,6 +67,7 @@ fn test_entity() -> EntityDefinition {
                 searchable: None,
                 search_mode: None,
                 sortable: None,
+                storage: None,
             },
         ],
         list_views: vec![metap_metadata::EntityListView {
@@ -117,6 +120,7 @@ fn unique_field_entity() -> EntityDefinition {
             searchable: None,
             search_mode: None,
             sortable: None,
+            storage: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -144,6 +148,7 @@ fn parent_entity() -> EntityDefinition {
             searchable: None,
             search_mode: None,
             sortable: None,
+            storage: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -170,6 +175,7 @@ fn child_entity() -> EntityDefinition {
             searchable: None,
             search_mode: None,
             sortable: None,
+            storage: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -198,6 +204,7 @@ fn grandchild_entity() -> EntityDefinition {
             searchable: None,
             search_mode: None,
             sortable: None,
+            storage: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -225,6 +232,7 @@ fn self_ref_entity() -> EntityDefinition {
             searchable: None,
             search_mode: None,
             sortable: None,
+            storage: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -945,4 +953,522 @@ async fn delete_is_rejected_when_referenced_by_any_of_multiple_referencing_entit
     }
 
     cleanup(&pool, tenant_id).await;
+}
+
+/// Sustained, concurrent load test of the *real* complex-workflow path — not a single flat
+/// table with simple filters (that benchmark, `docs/roadmap.md` 2026-08-22/23, was correctly
+/// called out as unrepresentative). Runs `CrudService::list()` directly (no HTTP layer, no
+/// per-IP rate limiter — this measures business-logic capacity, not an unrelated HTTP-layer
+/// throttle) against `hr.departments` -> `hr.employees` -> `helpdesk.tickets` (2 `Reference`
+/// fields, a workflow, department-scoped record-level ABAC via `fromContext`), seeded with
+/// 500K real, related tickets across 200 real employees in 20 real departments (seeded
+/// separately, out-of-band, before this runs — see the benchmarking session). Every `list()`
+/// call here pays: a context-level permission check, a record-policy snapshot load, the base
+/// filtered `SELECT`, and `hydrate_related_display` for *both* `Reference` fields (each with
+/// its own permission check + batch fetch + per-row record-condition check) — the actual cost
+/// shape a real org-scoped list view has, not an approximation.
+///
+/// `#[ignore]`d like every other e2e test, but not meant to run in a normal `--ignored` pass —
+/// it needs the specific out-of-band seed above and runs for `DURATION_SECS`. Prints results to
+/// stderr (`--nocapture`) rather than asserting thresholds, same "read the numbers yourself"
+/// spirit as `apps/crm-server/scripts/bench-queries.sh`.
+#[tokio::test]
+#[ignore = "manual benchmark: requires the out-of-band hr/helpdesk seed, not part of a normal e2e run"]
+async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    const DURATION_SECS: u64 = 600;
+    const CONCURRENCY: usize = 20;
+    // Fixed dev tenant (`pnpm seed:admin`'s default) — where the out-of-band seed script put
+    // 500K helpdesk.tickets across 200 hr.employees in 20 hr.departments.
+    let tenant_id: Uuid = "00000000-0000-0000-0000-000000000001".parse().unwrap();
+
+    // Not `connect()` — its pool is intentionally small (5) for the rest of this file's
+    // lightweight, mostly-sequential tests. `list()` itself needs one connection per
+    // in-flight call (permission checks + base query + hydration all share one transaction),
+    // so `CONCURRENCY` concurrent workers need at least that many connections available or
+    // most of them just time out waiting for the pool, not for anything CrudService did.
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    let pool = PgPoolOptions::new()
+        .max_connections(CONCURRENCY as u32 + 5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+    let dept_ids: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM records WHERE entity = 'hr.departments' AND tenant_id = $1 ORDER BY id")
+            .bind(tenant_id)
+            .fetch_all(&pool)
+            .await
+            .expect("hr.departments must already be seeded (out-of-band) before this test runs");
+    assert!(
+        !dept_ids.is_empty(),
+        "no hr.departments found for the fixed dev tenant — seed first"
+    );
+
+    fn ref_field(name: &str, ref_entity: &str, ref_display_field: &str, indexed: bool) -> EntityField {
+        EntityField {
+            name: name.to_string(),
+            label: name.to_string(),
+            kind: FieldKind::Reference,
+            required: None,
+            indexed: indexed.then_some(true),
+            unique: None,
+            enum_values: None,
+            ref_entity: Some(ref_entity.to_string()),
+            ref_display_field: Some(ref_display_field.to_string()),
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+            storage: None,
+        }
+    }
+    fn plain_field(name: &str, kind: FieldKind) -> EntityField {
+        EntityField {
+            name: name.to_string(),
+            label: name.to_string(),
+            kind,
+            required: None,
+            indexed: None,
+            unique: None,
+            enum_values: None,
+            ref_entity: None,
+            ref_display_field: None,
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+            storage: None,
+        }
+    }
+
+    let mut registry = MetadataRegistry::new();
+    registry
+        .register(EntityDefinition {
+            name: "hr.departments".to_string(),
+            label: "Department".to_string(),
+            table_name: "records".to_string(),
+            fields: vec![plain_field("name", FieldKind::String)],
+            list_views: vec![],
+            workflow: None,
+        })
+        .unwrap();
+    registry
+        .register(EntityDefinition {
+            name: "hr.employees".to_string(),
+            label: "Employee".to_string(),
+            table_name: "records".to_string(),
+            fields: vec![
+                plain_field("userId", FieldKind::String),
+                plain_field("name", FieldKind::String),
+                ref_field("departmentId", "hr.departments", "name", true),
+            ],
+            list_views: vec![],
+            workflow: None,
+        })
+        .unwrap();
+    registry
+        .register(EntityDefinition {
+            name: "helpdesk.tickets".to_string(),
+            label: "Ticket".to_string(),
+            table_name: "records".to_string(),
+            fields: vec![
+                plain_field("title", FieldKind::String),
+                plain_field("description", FieldKind::String),
+                {
+                    let mut f = plain_field("status", FieldKind::Enum);
+                    f.enum_values = Some(vec![
+                        "open".to_string(),
+                        "in_progress".to_string(),
+                        "resolved".to_string(),
+                        "closed".to_string(),
+                    ]);
+                    f
+                },
+                {
+                    let mut f = plain_field("priority", FieldKind::Enum);
+                    f.enum_values = Some(vec![
+                        "low".to_string(),
+                        "medium".to_string(),
+                        "high".to_string(),
+                        "urgent".to_string(),
+                    ]);
+                    f
+                },
+                ref_field("assigneeId", "hr.employees", "name", true),
+                ref_field("departmentId", "hr.departments", "name", true),
+            ],
+            list_views: vec![metap_metadata::EntityListView {
+                name: "default".to_string(),
+                label: "Default".to_string(),
+                fields: vec!["title".to_string(), "status".to_string()],
+                filters: vec![
+                    "status".to_string(),
+                    "assigneeId".to_string(),
+                    "departmentId".to_string(),
+                ],
+                default_sort: Some("-createdAt".to_string()),
+                max_limit: 100,
+            }],
+            workflow: None,
+        })
+        .unwrap();
+
+    let permissions = Arc::new(PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(
+        pool.clone(),
+    )))));
+    let crud = Arc::new(CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        permissions,
+    ));
+
+    let total_ok = Arc::new(AtomicU64::new(0));
+    let total_err = Arc::new(AtomicU64::new(0));
+    let total_latency_us = Arc::new(AtomicU64::new(0));
+    let mut latencies_ms: Vec<Vec<u64>> = (0..CONCURRENCY).map(|_| Vec::new()).collect();
+
+    eprintln!(
+        "sustained_concurrent_list: {CONCURRENCY} concurrent workers, {DURATION_SECS}s, against \
+         500K helpdesk.tickets / 200 hr.employees / 20 hr.departments (real, related data)"
+    );
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(DURATION_SECS);
+
+    let mut handles = Vec::with_capacity(CONCURRENCY);
+    for worker in 0..CONCURRENCY {
+        let crud = crud.clone();
+        let dept_ids = dept_ids.clone();
+        let total_ok = total_ok.clone();
+        let total_err = total_err.clone();
+        let total_latency_us = total_latency_us.clone();
+        handles.push(tokio::spawn(async move {
+            let mut my_latencies = Vec::new();
+            let mut i: usize = 0;
+            while Instant::now() < deadline {
+                let dept = dept_ids[(worker + i) % dept_ids.len()];
+                let mut ctx_attrs = serde_json::Map::new();
+                ctx_attrs.insert("departmentId".to_string(), json!(dept));
+                let ctx = RequestContext {
+                    tenant_id: tenant_id.to_string(),
+                    user_id: Some(Uuid::new_v4().to_string()),
+                    roles: Some(vec!["employee".to_string()]),
+                    function_id: None,
+                    context_attributes: Some(ctx_attrs),
+                };
+                let input = ListInput {
+                    limit: 50,
+                    ..Default::default()
+                };
+                let call_start = Instant::now();
+                let result = crud.list("helpdesk.tickets", &input, &ctx).await;
+                let elapsed = call_start.elapsed();
+                match result {
+                    Ok(ServiceResult::Ok { .. }) => {
+                        total_ok.fetch_add(1, Ordering::Relaxed);
+                        total_latency_us.fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
+                        my_latencies.push(elapsed.as_millis() as u64);
+                    }
+                    other => {
+                        total_err.fetch_add(1, Ordering::Relaxed);
+                        eprintln!("worker {worker} iteration {i} unexpected result: {other:?}");
+                    }
+                }
+                i += 1;
+            }
+            my_latencies
+        }));
+    }
+
+    for (worker, handle) in handles.into_iter().enumerate() {
+        latencies_ms[worker] = handle.await.unwrap();
+    }
+
+    let elapsed = start.elapsed();
+    let ok = total_ok.load(Ordering::Relaxed);
+    let err = total_err.load(Ordering::Relaxed);
+    let mut all_latencies: Vec<u64> = latencies_ms.into_iter().flatten().collect();
+    all_latencies.sort_unstable();
+    let pct = |p: f64| -> u64 {
+        if all_latencies.is_empty() {
+            return 0;
+        }
+        let idx = ((all_latencies.len() as f64 - 1.0) * p) as usize;
+        all_latencies[idx]
+    };
+
+    eprintln!("=== sustained_concurrent_list results ===");
+    eprintln!("duration: {:.1}s", elapsed.as_secs_f64());
+    eprintln!("total calls: {ok} ok, {err} err");
+    eprintln!("throughput: {:.2} list()/s", ok as f64 / elapsed.as_secs_f64());
+    eprintln!(
+        "latency ms: avg={:.1} p50={} p95={} p99={} max={}",
+        total_latency_us.load(Ordering::Relaxed) as f64 / ok.max(1) as f64 / 1000.0,
+        pct(0.50),
+        pct(0.95),
+        pct(0.99),
+        all_latencies.last().copied().unwrap_or(0)
+    );
+    assert_eq!(err, 0, "no list() call should have failed");
+}
+
+/// Wider/bigger sibling of the test above — found missing scope in code review, 2026-08-23:
+/// "different entities, different tenants, lookups joining many tables" (the earlier test used
+/// one tenant, two `Reference` fields). This one: **10 different tenants**, each with its own
+/// 20 departments / 200 employees / 1,000,000 tickets (**10M tickets total**, at/past the
+/// documented `@10M/entity` table-per-entity trigger, `docs/architectures/09-adr.md`) — sharing
+/// one physical `records` table, exactly the shared-table scenario that trigger is about.
+/// `helpdesk.tickets` here has **three** `Reference` fields (`assigneeId`, `reporterId`, both
+/// -> `hr.employees`, plus `departmentId`), so `hydrate_related_display` runs 3 separate
+/// permission-check + batch-fetch + record-condition passes per `list()` call, not 2 — closer
+/// to what a real multi-way "join" of business data looks like within this platform's
+/// no-SQL-JOIN constraint (`docs/features/05-cross-entity-relations.md`'s Mode 3 gap). Each
+/// worker picks a random *(tenant, department)* pair per iteration, so the concurrent traffic
+/// is genuinely mixed across tenants, not all hammering one tenant_id value.
+///
+/// Needs the out-of-band 10-tenant seed (10x the single-tenant seed this file's other
+/// sustained test uses) — see the benchmarking session, not part of a normal e2e run.
+#[tokio::test]
+#[ignore = "manual benchmark: requires the out-of-band 10-tenant/10M-row seed, not part of a normal e2e run"]
+async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    const DURATION_SECS: u64 = 600;
+    const CONCURRENCY: usize = 20;
+
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    let pool = PgPoolOptions::new()
+        .max_connections(CONCURRENCY as u32 + 5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+
+    // (tenant_id, department_id) pairs across all 10 seeded tenants — a worker picks one at
+    // random each iteration, so traffic is genuinely mixed across tenants, not one tenant_id
+    // repeated with different departments.
+    let tenant_dept_pairs: Vec<(Uuid, Uuid)> =
+        sqlx::query_as("SELECT tenant_id, id FROM records WHERE entity = 'hr.departments' ORDER BY tenant_id, id")
+            .fetch_all(&pool)
+            .await
+            .expect("hr.departments must already be seeded (out-of-band, 10 tenants) before this test runs");
+    let distinct_tenants: std::collections::HashSet<Uuid> = tenant_dept_pairs.iter().map(|(t, _)| *t).collect();
+    assert!(
+        distinct_tenants.len() >= 2,
+        "expected multiple tenants seeded (got {}) — this test is specifically about cross-tenant \
+         concurrent traffic, not a single tenant",
+        distinct_tenants.len()
+    );
+    eprintln!(
+        "sustained_concurrent_list (multi-tenant): {} tenants, {} department pairs",
+        distinct_tenants.len(),
+        tenant_dept_pairs.len()
+    );
+
+    fn ref_field(name: &str, ref_entity: &str, ref_display_field: &str, indexed: bool) -> EntityField {
+        EntityField {
+            name: name.to_string(),
+            label: name.to_string(),
+            kind: FieldKind::Reference,
+            required: None,
+            indexed: indexed.then_some(true),
+            unique: None,
+            enum_values: None,
+            ref_entity: Some(ref_entity.to_string()),
+            ref_display_field: Some(ref_display_field.to_string()),
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+            storage: None,
+        }
+    }
+    fn plain_field(name: &str, kind: FieldKind) -> EntityField {
+        EntityField {
+            name: name.to_string(),
+            label: name.to_string(),
+            kind,
+            required: None,
+            indexed: None,
+            unique: None,
+            enum_values: None,
+            ref_entity: None,
+            ref_display_field: None,
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+            storage: None,
+        }
+    }
+
+    let mut registry = MetadataRegistry::new();
+    registry
+        .register(EntityDefinition {
+            name: "hr.departments".to_string(),
+            label: "Department".to_string(),
+            table_name: "records".to_string(),
+            fields: vec![plain_field("name", FieldKind::String)],
+            list_views: vec![],
+            workflow: None,
+        })
+        .unwrap();
+    registry
+        .register(EntityDefinition {
+            name: "hr.employees".to_string(),
+            label: "Employee".to_string(),
+            table_name: "records".to_string(),
+            fields: vec![
+                plain_field("userId", FieldKind::String),
+                plain_field("name", FieldKind::String),
+                ref_field("departmentId", "hr.departments", "name", true),
+            ],
+            list_views: vec![],
+            workflow: None,
+        })
+        .unwrap();
+    registry
+        .register(EntityDefinition {
+            name: "helpdesk.tickets".to_string(),
+            label: "Ticket".to_string(),
+            table_name: "records".to_string(),
+            fields: vec![
+                plain_field("title", FieldKind::String),
+                plain_field("description", FieldKind::String),
+                {
+                    let mut f = plain_field("status", FieldKind::Enum);
+                    f.enum_values = Some(vec![
+                        "open".to_string(),
+                        "in_progress".to_string(),
+                        "resolved".to_string(),
+                        "closed".to_string(),
+                    ]);
+                    f
+                },
+                {
+                    let mut f = plain_field("priority", FieldKind::Enum);
+                    f.enum_values = Some(vec![
+                        "low".to_string(),
+                        "medium".to_string(),
+                        "high".to_string(),
+                        "urgent".to_string(),
+                    ]);
+                    f
+                },
+                ref_field("assigneeId", "hr.employees", "name", true),
+                ref_field("reporterId", "hr.employees", "name", true),
+                ref_field("departmentId", "hr.departments", "name", true),
+            ],
+            list_views: vec![metap_metadata::EntityListView {
+                name: "default".to_string(),
+                label: "Default".to_string(),
+                fields: vec!["title".to_string(), "status".to_string()],
+                filters: vec![
+                    "status".to_string(),
+                    "assigneeId".to_string(),
+                    "reporterId".to_string(),
+                    "departmentId".to_string(),
+                ],
+                default_sort: Some("-createdAt".to_string()),
+                max_limit: 100,
+            }],
+            workflow: None,
+        })
+        .unwrap();
+
+    let permissions = Arc::new(PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(
+        pool.clone(),
+    )))));
+    let crud = Arc::new(CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        permissions,
+    ));
+
+    let total_ok = Arc::new(AtomicU64::new(0));
+    let total_err = Arc::new(AtomicU64::new(0));
+    let total_latency_us = Arc::new(AtomicU64::new(0));
+    let mut latencies_ms: Vec<Vec<u64>> = (0..CONCURRENCY).map(|_| Vec::new()).collect();
+
+    eprintln!(
+        "sustained_concurrent_list (multi-tenant): {CONCURRENCY} concurrent workers, {DURATION_SECS}s, \
+         against 10M helpdesk.tickets / 2000 hr.employees / 200 hr.departments across 10 tenants"
+    );
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(DURATION_SECS);
+
+    let mut handles = Vec::with_capacity(CONCURRENCY);
+    for worker in 0..CONCURRENCY {
+        let crud = crud.clone();
+        let pairs = tenant_dept_pairs.clone();
+        let total_ok = total_ok.clone();
+        let total_err = total_err.clone();
+        let total_latency_us = total_latency_us.clone();
+        handles.push(tokio::spawn(async move {
+            let mut my_latencies = Vec::new();
+            let mut i: usize = 0;
+            while Instant::now() < deadline {
+                let (tenant_id, dept) = pairs[(worker * 7 + i) % pairs.len()];
+                let mut ctx_attrs = serde_json::Map::new();
+                ctx_attrs.insert("departmentId".to_string(), json!(dept));
+                let ctx = RequestContext {
+                    tenant_id: tenant_id.to_string(),
+                    user_id: Some(Uuid::new_v4().to_string()),
+                    roles: Some(vec!["employee".to_string()]),
+                    function_id: None,
+                    context_attributes: Some(ctx_attrs),
+                };
+                let input = ListInput {
+                    limit: 50,
+                    ..Default::default()
+                };
+                let call_start = Instant::now();
+                let result = crud.list("helpdesk.tickets", &input, &ctx).await;
+                let elapsed = call_start.elapsed();
+                match result {
+                    Ok(ServiceResult::Ok { .. }) => {
+                        total_ok.fetch_add(1, Ordering::Relaxed);
+                        total_latency_us.fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
+                        my_latencies.push(elapsed.as_millis() as u64);
+                    }
+                    other => {
+                        total_err.fetch_add(1, Ordering::Relaxed);
+                        eprintln!("worker {worker} iteration {i} unexpected result: {other:?}");
+                    }
+                }
+                i += 1;
+            }
+            my_latencies
+        }));
+    }
+
+    for (worker, handle) in handles.into_iter().enumerate() {
+        latencies_ms[worker] = handle.await.unwrap();
+    }
+
+    let elapsed = start.elapsed();
+    let ok = total_ok.load(Ordering::Relaxed);
+    let err = total_err.load(Ordering::Relaxed);
+    let mut all_latencies: Vec<u64> = latencies_ms.into_iter().flatten().collect();
+    all_latencies.sort_unstable();
+    let pct = |p: f64| -> u64 {
+        if all_latencies.is_empty() {
+            return 0;
+        }
+        let idx = ((all_latencies.len() as f64 - 1.0) * p) as usize;
+        all_latencies[idx]
+    };
+
+    eprintln!("=== sustained_concurrent_list (multi-tenant, 10M) results ===");
+    eprintln!("duration: {:.1}s", elapsed.as_secs_f64());
+    eprintln!("total calls: {ok} ok, {err} err");
+    eprintln!("throughput: {:.2} list()/s", ok as f64 / elapsed.as_secs_f64());
+    eprintln!(
+        "latency ms: avg={:.1} p50={} p95={} p99={} max={}",
+        total_latency_us.load(Ordering::Relaxed) as f64 / ok.max(1) as f64 / 1000.0,
+        pct(0.50),
+        pct(0.95),
+        pct(0.99),
+        all_latencies.last().copied().unwrap_or(0)
+    );
+    assert_eq!(err, 0, "no list() call should have failed");
 }
