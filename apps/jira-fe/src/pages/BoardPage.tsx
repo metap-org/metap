@@ -46,7 +46,7 @@ function IssueCard({
 }) {
   return (
     <Card withBorder padding="sm" draggable onDragStart={onDragStart} style={{ cursor: "grab" }}>
-      <Text size="sm" fw={600} component={Link} to={`/records/jira.issues/${issue.id}`}>
+      <Text size="sm" fw={600} component={Link} to={`/issues/${issue.id}`}>
         {issue.data.title}
       </Text>
       <Group gap="xs" mt="xs">

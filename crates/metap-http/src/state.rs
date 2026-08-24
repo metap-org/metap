@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,6 +44,19 @@ pub struct AppState {
     /// rarely enough that re-parsing per request is not worth holding a second key type in
     /// state for. See `metap_peripherals::mint_jwt`, the only thing that reads this.
     pub jwt_encoding_key_pem: Arc<str>,
+    /// `None` unless the host binary opts in (e.g. `apps/jira-server`, `.env`'s `S3_BUCKET`) —
+    /// backs `crate::routes::attachments`' generic `/api/{entity}/{id}/attachments*` routes,
+    /// always registered in `build_router` regardless of whether a given host actually
+    /// configures storage (a request against an app that never set this just gets a 503, the
+    /// same shape any other unconfigured optional feature degrades to here).
+    pub object_store: Option<Arc<dyn metap_storage::ObjectStore>>,
+    /// Entity name -> dedicated attachments table name, empty by default (every entity uses the
+    /// shared `attachments` table, `crates/migrations/0021_attachments.sql`). An entity expecting
+    /// heavy attachment volume can get its own table instead
+    /// (`metap_attachments::ensure_dedicated_table`, called once at boot by the host binary,
+    /// same pattern `reconcile()` already follows per entity) — this map is just how
+    /// `routes::attachments` learns which table name to use for a given `:entity` path segment.
+    pub attachment_tables: Arc<HashMap<String, String>>,
     /// Opt-in caller-attributes entity name (`AUTH_CONTEXT_ENTITY`,
     /// `docs/features/03-organization-identity.md`) — `None` by default (set by `new`), the
     /// composition root (`apps/crm-server/src/main.rs`) assigns this directly after
@@ -103,6 +117,8 @@ impl AppState {
             crud,
             jwt_decoding_key: Arc::new(jwt_decoding_key),
             jwt_encoding_key_pem: Arc::from(jwt_encoding_key_pem),
+            object_store: None,
+            attachment_tables: Arc::new(HashMap::new()),
             auth_context_entity: None,
             context_attributes_cache: ContextAttributesCache::new(Duration::from_secs(30)),
             tenant_auth_cache: TenantAuthCache::new(Duration::from_secs(30)),

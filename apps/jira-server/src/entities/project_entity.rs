@@ -33,7 +33,27 @@ pub fn project_entity() -> EntityDefinition {
         table_name: metap_reconciler::qualified_table_name_for("jira.projects"),
         fields: vec![
             field("key", "Key", FieldKind::String, true, true, true),
-            field("name", "Name", FieldKind::String, true, false, false),
+            EntityField {
+                // `searchable: true` (substring, `search_mode: None` defaults to ILIKE — same
+                // convention `issue_entity.rs`'s `title` uses) — found live missing while
+                // building the sprint-creation form's `project` `Reference` picker
+                // (`ReferenceFieldInput`): it queries `?name=<partial input>` as the caller
+                // types, which needs substring matching to ever return a hit for anything but
+                // an exact full name.
+                name: "name".to_string(),
+                label: "Name".to_string(),
+                kind: FieldKind::String,
+                required: Some(true),
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: Some(true),
+                search_mode: None,
+                sortable: None,
+                storage: None,
+            },
             field("description", "Description", FieldKind::String, false, false, false),
         ],
         list_views: vec![EntityListView {

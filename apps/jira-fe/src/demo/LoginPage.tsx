@@ -1,60 +1,14 @@
-import { useState } from "react";
-import { Alert, Button, Container, Stack, Textarea, Title } from "@mantine/core";
-import { LoginForm, useAuth } from "@metap/platform-react";
-import { useNavigate } from "react-router-dom";
+import { LoginForm } from "@metap/platform-react";
 
 /**
- * `LoginForm`'s `POST /auth/login` queries `AppState.pool` (the platform's own database), not
- * this tenant's dedicated one — a pre-existing, documented gap (`apps/jira-server/src/main.rs`'s
- * top doc comment): a `DedicatedDb` tenant's `users` row is unreachable through that route today.
- * Real login stays here for when that gap closes; this fallback lets a token minted out-of-band
- * (`pnpm mint:jira-token`) unblock using the app in the meantime — dev-only, not a real auth path.
+ * `LoginForm`'s `tenantId` prop (added when `metap-auth`'s tenant-auth phase shipped) routes
+ * `POST /auth/login` through `Router::begin(tenantId)` instead of the global-by-email fallback —
+ * required for this app's `DedicatedDb`-strategy tenant, whose `users` table lives only in its
+ * own database (`apps/jira-server/.env`'s `JIRA_TENANT_ID`/`MY_JIRA_DSN`). Real login now reaches
+ * it directly; the `PasteTokenFallback` this page used to also render (paste a
+ * `pnpm mint:jira-token`-minted token by hand) is retired now that the actual gap it worked
+ * around is closed.
  */
-function PasteTokenFallback() {
-  const { setToken } = useAuth();
-  const navigate = useNavigate();
-  const [value, setValue] = useState("");
-
-  return (
-    <Container size="xs" pb="xl">
-      <Alert color="yellow" title="Dev-only: real login can't reach this tenant yet">
-        This tenant runs on its own dedicated database, and `/auth/login` isn&apos;t tenant-routed
-        yet — see <code>apps/jira-server/src/main.rs</code>. Mint a token with{" "}
-        <code>pnpm mint:jira-token &lt;tenantId&gt; &lt;userId&gt;</code> and paste it below
-        instead.
-      </Alert>
-      <Stack mt="md">
-        <Textarea
-          label="JWT"
-          autosize
-          minRows={2}
-          value={value}
-          onChange={(event) => setValue(event.currentTarget.value)}
-        />
-        <Button
-          onClick={() => {
-            setToken(value.trim());
-            navigate("/");
-          }}
-          disabled={value.trim().length === 0}
-        >
-          Use token
-        </Button>
-      </Stack>
-    </Container>
-  );
-}
-
 export function LoginPage() {
-  return (
-    <>
-      <LoginForm />
-      <Container size="xs" pb="md">
-        <Title order={4} mb="sm">
-          — or —
-        </Title>
-      </Container>
-      <PasteTokenFallback />
-    </>
-  );
+  return <LoginForm tenantId={import.meta.env.VITE_JIRA_TENANT_ID} />;
 }

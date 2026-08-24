@@ -259,6 +259,44 @@ async fn exact_filter_on_non_searchable_field() {
     h.cleanup(&[active, draft]).await;
 }
 
+/// Found live (2026-08-24, `apps/jira-server`'s backlog view — filtering `sprint` for "not yet
+/// assigned"): an empty filter value used to bind straight into the equality branch, which is
+/// harmless for a plain text field but a real 500 for a `uuid`-cast one
+/// (`invalid input syntax for type uuid: ""`, `sort_field_expression`'s `cast_suffix()`). Fixed
+/// by treating an empty value as `IS NULL` for every field, not just uuid-typed ones — this test
+/// covers the generic-table JSONB path (`data->>'field'`, no cast involved), the uuid-cast path
+/// is exercised live against `apps/jira-server`'s real `Reference` column.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn empty_filter_value_matches_unset_field() {
+    let h = setup().await;
+
+    let with_status = insert_fixture(&h.pool, h.tenant_id, "one", "active", 1, false).await;
+    let without_status = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO records (id, tenant_id, entity, data, deleted) VALUES ($1, $2, 'test.widgets', $3, false)",
+    )
+    .bind(without_status)
+    .bind(h.tenant_id)
+    .bind(serde_json::json!({ "name": "two", "score": 2 }))
+    .execute(&h.pool)
+    .await
+    .expect("insert fixture row with no status key");
+
+    let input = ListInput {
+        limit: 50,
+        filters: vec![("status".to_string(), String::new())],
+        ..Default::default()
+    };
+    let planned = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]).unwrap();
+    let ids = run_plan(&h.pool, &planned).await;
+
+    assert!(ids.contains(&without_status));
+    assert!(!ids.contains(&with_status));
+
+    h.cleanup(&[with_status, without_status]).await;
+}
+
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn default_sort_is_used_when_no_sort_given_and_limit_is_clamped() {

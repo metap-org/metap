@@ -45,11 +45,20 @@ export function ReferenceFieldInput({
     Boolean(refEntity && currentValue),
   );
 
+  // No search text yet -> just the first page, unfiltered, so a small reference set (a handful
+  // of projects, say) shows options immediately on open instead of looking empty/broken until
+  // the caller types something (found live: the combobox for `jira.sprints.project` looked like
+  // it wasn't loading anything at all). `?field=` (empty) would now mean "IS NULL" since
+  // `metap-query`'s empty-filter-value fix, so this branch omits the param entirely rather than
+  // sending it empty.
+  const searchPath = debouncedSearch.length > 0
+    ? `/api/${refEntity}?${field.refDisplayField}=${encodeURIComponent(debouncedSearch)}&limit=10`
+    : `/api/${refEntity}?limit=10`;
   const { data: searchResults } = useApiQuery<{ data: RecordDto[] }, RecordDto[]>(
     ["reference-search", refEntity, field.refDisplayField, debouncedSearch],
-    `/api/${refEntity}?${field.refDisplayField}=${encodeURIComponent(debouncedSearch)}&limit=10`,
+    searchPath,
     (response) => response.data,
-    Boolean(refEntity && field.refDisplayField && debouncedSearch.length > 0),
+    Boolean(refEntity && field.refDisplayField),
   );
 
   const options = new Map<string, string>();

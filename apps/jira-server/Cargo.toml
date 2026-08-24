@@ -11,9 +11,11 @@ path = "src/main.rs"
 metap = { path = "../../crates/metap" }
 metap-outbox-publisher = { path = "../../crates/outbox-publisher" }
 metap-reconciler = { path = "../../crates/metap-reconciler" }
+metap-storage = { path = "../../crates/metap-storage" }
 anyhow = "1"
 arc-swap = "1"
 axum = "0.8"
+secrecy = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 jsonwebtoken = "9"
 serde_json = "1"

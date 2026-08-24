@@ -42,3 +42,45 @@ export type ProjectRecord = {
   id: string;
   data: ProjectData;
 };
+
+export type SprintStatus = "planned" | "active" | "completed";
+
+export type SprintData = {
+  project: string;
+  name: string;
+  goal?: string;
+  startDate?: string;
+  endDate?: string;
+};
+
+export type SprintRecord = {
+  id: string;
+  status: SprintStatus;
+  data: SprintData;
+};
+
+// `metap-http`'s generic `/api/{entity}/{id}/attachments*` routes — not a metadata-driven
+// `RecordDto` (see `crates/metap-attachments`'s doc comment for why), so this is a flat shape,
+// not `{ id, version, data: {...} }` like every other entity record here.
+export type AttachmentRecord = {
+  id: string;
+  entityName: string;
+  recordId: string;
+  filename: string;
+  key: string;
+  size: number;
+  contentType?: string;
+  createdAt: string;
+};
+
+export type CommentData = {
+  issue: string;
+  authorEmail: string;
+  body: string;
+};
+
+export type CommentRecord = {
+  id: string;
+  createdAt: string;
+  data: CommentData;
+};

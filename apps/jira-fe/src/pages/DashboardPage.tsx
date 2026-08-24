@@ -114,7 +114,7 @@ export function DashboardPage() {
           {recent.map((issue) => (
             <Table.Tr key={issue.id}>
               <Table.Td>
-                <Link to={`/records/jira.issues/${issue.id}`}>{issue.data.title}</Link>
+                <Link to={`/issues/${issue.id}`}>{issue.data.title}</Link>
               </Table.Td>
               <Table.Td>
                 <Badge color={PRIORITY_COLOR[issue.data.priority]} variant="light">

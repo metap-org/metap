@@ -247,6 +247,15 @@ pub fn plan_list(
                 .collect();
             let ph = params.push(BindValue::Text(format!("%{escaped}%")));
             conditions.push(format!("{field_expr} ILIKE {ph}"));
+        } else if value.is_empty() {
+            // `?field=` (empty value) means "field is unset" — the common REST convention, and
+            // the only sane reading here: binding `""` as `$n::uuid` (or any other typed cast)
+            // fails outright at the DB with "invalid input syntax", a real 500 found live while
+            // filtering an optional `Reference` field (`sprint`) for "no sprint assigned yet".
+            // `field_expr IS NULL` is correct for both storage shapes — a real nullable column,
+            // or `data->>'field'` on the generic table, which already yields SQL NULL for either
+            // a missing JSON key or an explicit JSON null.
+            conditions.push(format!("{field_expr} IS NULL"));
         } else {
             let ph = params.push(BindValue::Text(value.clone()));
             conditions.push(format!("{field_expr} = {ph}{}", field_col_type.cast_suffix()));

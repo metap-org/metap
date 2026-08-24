@@ -61,6 +61,7 @@ use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
 use metap::infra::{EventBus, RabbitEventBus};
 use metap::prelude::*;
+use secrecy::SecretString;
 use uuid::Uuid;
 
 #[tokio::main]
@@ -136,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
     let private_key_pem = std::fs::read_to_string(&config.auth_jwt_private_key_path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_private_key_path))?;
 
-    let state = AppState::new(
+    let mut state = AppState::new(
         pool,
         metadata_base,
         metadata,
@@ -146,8 +147,33 @@ async fn main() -> anyhow::Result<()> {
         router,
     );
 
+    // Off by default — only set if `S3_BUCKET` is configured (same "presence of the one
+    // required knob opts a feature in" convention `POLICY_CACHE_REDIS_URL`/
+    // `OUTBOX_WORKER_INLINE` already use). Backs `metap-http`'s generic
+    // `/api/{entity}/{id}/attachments*` routes (`metap-storage::ObjectStore`'s first real
+    // consumer anywhere in this repo, added ahead of a consumer in Phase 22 — this is that
+    // consumer landing) — every entity in this app (`jira.issues`, etc) gets file attachments
+    // for free, nothing jira-specific to wire beyond this.
+    if let Ok(bucket) = std::env::var("S3_BUCKET") {
+        let store = metap_storage::S3ObjectStore::new(metap_storage::S3ObjectStoreConfig {
+            endpoint_url: std::env::var("S3_ENDPOINT_URL").ok(),
+            region: std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
+            access_key: SecretString::from(std::env::var("S3_ACCESS_KEY").unwrap_or_default()),
+            secret_key: SecretString::from(std::env::var("S3_SECRET_KEY").unwrap_or_default()),
+            bucket,
+            // SeaweedFS (this project's dev S3 backend, `docker-compose.yml`'s `seaweedfs`
+            // service) needs path-style addressing, not virtual-hosted-style — see
+            // `metap-storage::S3ObjectStoreConfig`'s doc comment.
+            force_path_style: true,
+        });
+        state.object_store = Some(Arc::new(store));
+        tracing::info!("object storage configured");
+    }
+
     // No lowcode/control_http extra routes — this PoC doesn't need the low-code admin API or
-    // platform-tenant provisioning surface.
+    // platform-tenant provisioning surface. Attachment routes are generic now
+    // (`metap-http::routes::attachments`, always registered in `build_router` itself) — no
+    // jira-specific route module needed here anymore.
     let router = build_router(state, &config.cors_origins, axum::Router::new());
 
     // Off by default — see this file's top doc comment for why this tenant's outbox needs

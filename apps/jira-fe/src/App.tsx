@@ -18,6 +18,8 @@ import type { ShellNavItem } from "@metap/platform-react";
 import { LoginPage } from "./demo/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { BoardPage } from "./pages/BoardPage";
+import { BacklogPage } from "./pages/BacklogPage";
+import { IssueDetailPage } from "./pages/IssueDetailPage";
 
 // No `LowCodeEntitiesAdminPage`/nav item here, unlike crm-fe — jira-server's `main.rs`
 // deliberately doesn't merge `metap_lowcode_http`'s router (this PoC doesn't need the low-code
@@ -32,6 +34,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
   const navItems: ShellNavItem[] = [
     { to: "/", label: "Dashboard" },
     { to: "/board", label: "Board" },
+    { to: "/backlog", label: "Backlog" },
     { to: "/records/jira.projects", label: "Projects" },
     { to: "/records/jira.sprints", label: "Sprints" },
     { to: "/records/jira.issues", label: "Issues" },
@@ -109,6 +112,22 @@ export default function App() {
             element={
               <RequireAuth>
                 <BoardPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/backlog"
+            element={
+              <RequireAuth>
+                <BacklogPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/issues/:id"
+            element={
+              <RequireAuth>
+                <IssueDetailPage />
               </RequireAuth>
             }
           />

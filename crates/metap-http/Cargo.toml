@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+metap-attachments = { path = "../metap-attachments" }
 metap-auth = { path = "../metap-auth" }
 metap-control = { path = "../metap-control" }
 metap-cron = { path = "../metap-cron" }
@@ -13,9 +14,10 @@ metap-peripherals = { path = "../metap-peripherals" }
 metap-metadata = { path = "../metap-metadata" }
 metap-permission = { path = "../metap-permission" }
 metap-query = { path = "../metap-query" }
+metap-storage = { path = "../metap-storage" }
 anyhow = "1"
 arc-swap = "1"
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
