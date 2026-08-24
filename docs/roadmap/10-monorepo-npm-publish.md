@@ -1,0 +1,10 @@
+## Phase 10: Monorepo, npm publish
+
+**Trạng thái: Làm một phần.** Split repo thành một pnpm workspace và publish `packages/core` (tương ứng `src/core` + `src/infra` dùng chung hiện tại) như một npm package cài được, để một downstream project có thể depend vào core của Metap thay vì fork nó. Overlap với trigger repo/package-split của Phase 9, nhưng được scope riêng ở đây vì "publish một npm package cho người khác cài" là một cam kết riêng, bổ sung (semver, changelog, public API surface) ngoài việc chỉ split repo cho mục đích multi-service nội bộ.
+
+Mục tiêu:
+
+- ~~Split thành một pnpm workspace (`packages/core`, `apps/*`)~~ — **Đã xong** 2026-08-02 (`packages/core`, `packages/platform-react`, `apps/crm`, `apps/crm-fe`). Được kéo lên sớm trước cả trigger của Phase 9, bằng một lựa chọn tường minh — xem Phase 9 ở trên. Đã bị Rust migration (Phase 12) thay thế — `packages/core` không còn tồn tại, phần tương đương bên Rust là `crates/metap-*`.
+- Định nghĩa và ổn định public API surface của `packages/core`. — Chưa bắt đầu cho việc publish thật lên crates.io/npm (cả `packages/platform-react` lẫn mọi crate `metap-*` đều vẫn chưa được publish, chưa có consumer ngoài workspace nào tồn tại). Có tiến triển một phần trên *downstream-consumption ergonomics* mà mục tiêu này thực sự nhắm tới, hoàn thành 2026-08-09 trước cả việc publish thật: `crates/metap` (một facade crate re-export các sub-crate `metap-*` — một dependency, một `use metap::prelude::*` thay vì phải nhớ item nào nằm ở sub-crate nào) và `templates/metap-app` (một template `cargo generate` được wire để depend vào `metap` qua git, vì việc publish lên crates.io chưa xảy ra) — cả hai đều được dogfood bằng cách migrate chính `apps/crm-server` sang dùng facade và bằng cách thực sự generate + compile + chạy một project từ template đó với một Postgres thật. Bản thân việc publish (một git dependency vẫn có nghĩa là "clone và compile từ source" cho mỗi consumer) chưa bắt đầu.
+- Thiết lập versioning/changelog và một pipeline publish npm (và, giờ đây, một pipeline crates.io cho `metap`/`metap-*`).
+

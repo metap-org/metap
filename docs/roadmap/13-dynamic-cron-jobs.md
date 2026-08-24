@@ -1,0 +1,22 @@
+## Phase 13: Dynamic Cron Jobs
+
+**Trạng thái: Đã xong (2026-08-10) — backend và admin UI đều đã live.** Scheduled job metadata-driven — một operator định nghĩa một job định kỳ (schedule + target action) qua admin API, theo đúng cách policy/role được định nghĩa hiện nay, thay vì một developer tự hand-wire một cron entry mới trong code. "Dynamic" là từ khóa chính: tập hợp job là dữ liệu mà platform đọc lúc runtime, không phải một danh sách cố định bake vào binary lúc compile time.
+
+Đã implement:
+
+- **Storage** (`crates/metap-cron`): bảng `cron_jobs`/`cron_job_runs` (`crates/migrations/0006_cron_jobs.sql`) — platform/ops config, không phải một `EntityDefinition`/row trong `records` generic, cùng loại với `policies`/`user_roles`. Một job có `cronExpr` (cú pháp 6-field chuẩn của crate `cron`, ví dụ `0 */5 * * * *`), một `timezone` IANA tường minh (occurrence được tính trong timezone đó, không phải giờ server-local — `schedule::next_run_at`), và một `targetType` (`workflow_transition` | `bulk_query_action` | `webhook`) + một blob JSON `targetConfig`.
+- **Dispatch, reliable-vs-fire-and-forget theo từng job** (`crates/cron-scheduler`, chạy bằng `pnpm worker:cron:rs`): một ticker poll `cron_jobs` tìm entry đến hạn (`SELECT ... FOR UPDATE SKIP LOCKED`, cùng cách claim an toàn về concurrency mà `outbox-publisher::publish_pending` dùng, để nhiều replica scheduler không bao giờ fire trùng một job), advance `next_run_at`, và insert một row `cron_job_runs` — rồi rẽ nhánh theo `dispatchMode` của job (2026-08-09, thêm vào sau review: không phải job nào cũng cần độ bền cấp outbox). `dispatchMode: "outbox"` (mặc định) ghi một outbox event `cron.job.due` trong cùng transaction, tái sử dụng `outbox-publisher` hiện có để thực sự đưa nó lên RabbitMQ (không bao giờ publish trực tiếp); một executor trong cùng process `cron-scheduler` subscribe routing key đó và chạy job — at-least-once, sống sót qua một lần `cron-scheduler` crash giữa lúc claim và lúc thực thi. `dispatchMode: "direct"` bỏ qua hoàn toàn hop outbox/RabbitMQ: ticker gọi thẳng đúng hàm thực thi đó in-process, trong cùng tick đã claim job — latency thấp hơn (đã xác nhận live: claim-đến-webhook-call ~16ms so với latency ~1s poll-interval của đường outbox), nhưng đúng nghĩa fire-and-forget — một crash giữa chừng thực thi sẽ mất lần fire đó, không có redelivery. Doc comment của `metap_cron::DispatchMode` có đầy đủ tradeoff.
+- **Việc thực thi vẫn entity-agnostic**: các target `workflow_transition`/`bulk_query_action` gọi ngược lại vào chính bề mặt `/api/:entity/...` HTTP của `crm-server` sở hữu chúng, với một JWT dịch vụ đã mint sẵn (`CRON_SERVICE_JWT`), thay vì để `cron-scheduler` link trực tiếp `metap-crud`/`metap-metadata` — tái sử dụng permission check, field validation, optimistic-locking, và workflow audit trail miễn phí, đồng thời giữ đúng boundary mà rule của CLAUDE.md yêu cầu (không `metap-*`/ops-binary nào được biết business-entity). Target `webhook` thì gọi một URL bên ngoài tùy ý. Ràng buộc đã biết: claim `tenantId` của service JWT cố định tenant nào mà một executor thực sự chạy job được — một job có `tenant_id` không khớp sẽ fail lúc thực thi (không tìm thấy record/entity), không phải lỗ hổng bảo mật, nhưng deployment multi-tenant hiện cần một `CRON_SERVICE_JWT`/executor cho mỗi tenant.
+- **Admin API** (`crates/metap-http/src/routes/cron.rs`): `GET/POST /admin/cron-jobs`, `GET/PATCH/DELETE /admin/cron-jobs/{id}`, `GET /admin/cron-jobs/{id}/runs` — được gate bởi `AdminContext` giống `routes/admin.rs`, validate `cronExpr`/`timezone`/`targetType` lúc ghi (`metap_cron::validate_schedule`) thay vì fail âm thầm lần đầu tiên ticker thử schedule một job hỏng.
+- **Admin UI của `packages/platform-react`** (`CronJobsAdminPage`, Phase 15, 2026-08-10): create/list/delete job, enable toggle, lịch sử run theo từng job — xem Phase 15 để biết phần còn lại của admin kit được ship kèm.
+
+Chưa làm:
+
+- **Alert khi fail lặp lại** — retry-with-backoff đã xong (Phase 17 Increment 1, 2026-08-21):
+  `cron_jobs.maxAttempts`/`retryBackoffSeconds` áp dụng cho mọi job (cả `schedule` lẫn
+  `on_transition`), `finish_run_with_retry` tự lên lịch lần thử tiếp theo khi còn attempt, ticker
+  claim qua `claim_due_retries`. Phần còn thiếu chỉ còn *alert* khi một run fail hết attempt —
+  chưa có gì báo cho ai, phụ thuộc vào việc kênh notification thật cuối cùng sẽ là gì
+  (`crates/notification-worker` hiện chỉ stdout).
+- **Multi-tenant executor routing** — xem ràng buộc `CRON_SERVICE_JWT` ở trên.
+
