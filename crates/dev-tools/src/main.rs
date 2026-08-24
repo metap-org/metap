@@ -2,9 +2,30 @@
 //! — three tiny dev scripts consolidated into one binary with subcommands, since none of
 //! them is more than a few lines and no separate `packages/core` remains to host them.
 
+use std::sync::Arc;
+
 use metap_peripherals::assign_role;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
+
+/// `seed_admin`/`create_user` write into `users`/`user_roles` — for a `DedicatedDb`-strategy
+/// tenant those tables live only in that tenant's own database, never in `DATABASE_URL`'s shared
+/// platform pool. Found live (2026-08-24): running either command from a directory whose `.env`
+/// happens to point at the platform DB silently wrote the row into the *wrong* database for a
+/// dedicated tenant — no error, just a row nothing ever queries, because neither command
+/// resolved the tenant through `Router` the way every other write path in this repo does. This
+/// builds the same kind of `Router` `apps/*-server/src/main.rs` does, so these two CLI paths
+/// can't diverge from what a real request would resolve to. `EnvStore` only (not the AppRole/
+/// Vault branching `apps/crm-server/src/main.rs` has) — a `Vault`-backed dedicated tenant's DSN
+/// can still be seeded by hand via `vault-put-dsn` first, same as it always could.
+async fn router_for(shared_pool: sqlx::PgPool) -> metap_control::Router {
+    let tenant_registry = Arc::new(metap_control::PostgresTenantRegistry::new(shared_pool.clone()));
+    metap_control::Router::new(
+        shared_pool,
+        metap_control::RegistryCache::new(tenant_registry),
+        Arc::new(metap_control::EnvStore),
+    )
+}
 
 fn usage() -> ! {
     eprintln!("Usage:");
@@ -65,12 +86,27 @@ fn gen_keys(dir: String) -> anyhow::Result<()> {
 /// Delegates the actual encoding to `metap_peripherals::mint_jwt` — the same function
 /// `POST /auth/login` calls — so this CLI and a real login can't mint differently-shaped
 /// tokens.
+///
+/// The default tenant/user ids are **not** a registered `control.tenants` row — found live
+/// (2026-08-24): calling this with no args against an app whose only real tenant is a
+/// `dedicated_db` one (e.g. `apps/jira-server`) mints a token for a tenant `Router` has never
+/// heard of, which falls back to the shared platform schema — every request then 500s with a
+/// confusing "relation does not exist" instead of an auth error, since the token itself decodes
+/// fine. No file I/O here to check registration against (this only touches the JWT keypair,
+/// never the DB), so the fix is a loud warning on the default path rather than a silent trap.
 fn mint_token(args: &[String]) -> anyhow::Result<()> {
-    let tenant_id: Uuid = args
-        .get(2)
-        .map(String::as_str)
-        .unwrap_or("00000000-0000-0000-0000-000000000001")
-        .parse()?;
+    let tenant_id: Uuid = match args.get(2).map(String::as_str) {
+        Some(id) => id.parse()?,
+        None => {
+            eprintln!(
+                "Warning: no tenantId given, defaulting to 00000000-0000-0000-0000-000000000001 \
+                 — this is NOT a provisioned tenant for most apps (check the app's .env for its \
+                 real tenant id, e.g. JIRA_TENANT_ID). Pass it explicitly: \
+                 dev-tools mint-token <tenantId> [userId]"
+            );
+            "00000000-0000-0000-0000-000000000001".parse()?
+        }
+    };
     let user_id: Uuid = args
         .get(3)
         .map(String::as_str)
@@ -99,7 +135,14 @@ async fn seed_admin(args: &[String]) -> anyhow::Result<()> {
 
     let tenant_id: Uuid = tenant_id.parse()?;
     let user_id: Uuid = user_id.parse()?;
-    assign_role(&pool, tenant_id, user_id, "admin", None).await?;
+
+    let router = router_for(pool).await;
+    let mut tx = router
+        .begin(tenant_id.into())
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to resolve tenant {tenant_id}'s database: {e}"))?;
+    assign_role(&mut *tx, tenant_id, user_id, "admin", None).await?;
+    tx.commit().await?;
 
     println!("Granted 'admin' role to user {user_id} in tenant {tenant_id}.");
     Ok(())
@@ -118,7 +161,14 @@ async fn create_user(args: &[String]) -> anyhow::Result<()> {
     let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
 
     let tenant_id: Uuid = tenant_id.parse()?;
-    let user = metap_peripherals::create_user(&pool, tenant_id, email, password).await?;
+
+    let router = router_for(pool).await;
+    let mut tx = router
+        .begin(tenant_id.into())
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to resolve tenant {tenant_id}'s database: {e}"))?;
+    let user = metap_peripherals::create_user(&mut *tx, tenant_id, email, password).await?;
+    tx.commit().await?;
 
     println!("Created user {} ({email}) in tenant {tenant_id}.", user.id);
     Ok(())
