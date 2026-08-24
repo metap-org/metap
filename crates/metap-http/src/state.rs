@@ -9,7 +9,7 @@ use metap_metadata::MetadataRegistry;
 use metap_permission::PermissionService;
 use sqlx::PgPool;
 
-use crate::cache::ContextAttributesCache;
+use crate::cache::{ContextAttributesCache, OidcFlowCache, TenantAuthCache};
 use crate::metrics::{process_collector, prometheus_handle};
 
 #[derive(Clone)]
@@ -55,6 +55,14 @@ pub struct AppState {
     /// matching `metap-control::RegistryCache`); the composition root rebuilds it with a
     /// configured TTL if `AUTH_CONTEXT_CACHE_TTL_SECONDS` overrides the default.
     pub context_attributes_cache: ContextAttributesCache,
+    /// Backs the `Authorization: Basic` branch of `AuthContext` (`crate::auth`) — see
+    /// `TenantAuthCache`'s doc comment for why this one is cached more aggressively than a
+    /// one-off login check would need.
+    pub tenant_auth_cache: TenantAuthCache,
+    /// Backs the OIDC redirect/callback pair (`crate::routes::auth`) — 10 minutes is generous
+    /// enough for a real login (IdP page load + credential entry) while bounding how long an
+    /// abandoned flow's PKCE verifier sits in memory.
+    pub oidc_flow_cache: OidcFlowCache,
     /// `GET /metrics` (`crate::routes::metrics`, `docs/local-benchmarking.md`) — HTTP
     /// request-level metrics (count/duration/in-flight, per route) via `axum-prometheus`.
     /// `prometheus_handle()` installs the global `metrics` recorder exactly once per process
@@ -97,6 +105,8 @@ impl AppState {
             jwt_encoding_key_pem: Arc::from(jwt_encoding_key_pem),
             auth_context_entity: None,
             context_attributes_cache: ContextAttributesCache::new(Duration::from_secs(30)),
+            tenant_auth_cache: TenantAuthCache::new(Duration::from_secs(30)),
+            oidc_flow_cache: OidcFlowCache::new(Duration::from_secs(600)),
             metrics_handle: prometheus_handle(),
             process_collector: process_collector(),
         }

@@ -5,7 +5,7 @@ Tài liệu này chỉ theo dõi trạng thái ở cấp độ phase. Với mộ
 và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, xem
 `docs/frontend-checklist.md`.
 
-## Trạng thái hiện tại (cập nhật 2026-08-22)
+## Trạng thái hiện tại (cập nhật 2026-08-24)
 
 | Phase | Status |
 |---|---|
@@ -28,6 +28,13 @@ và `docs/agile-process.md`; checklist chi tiết ở mức UI/UX cho frontend, 
 | 16. Multi-tenant SaaS Control Plane & Data Plane | Hướng B đã chốt. Giai đoạn 1-3 xong (Router, `provision-tenant`+`DedicatedDb`, HTTP tenant provisioning + platform-superadmin — 2026-08-16 → 2026-08-17); Giai đoạn 4: `VaultStore` (token) xong 2026-08-17, AppRole auth + auto-renewal + role lookup/RBAC qua Router (đóng bug login vỡ cho `dedicated_db`) + delete/deprovision tenant xong 2026-08-20 → 2026-08-21; `schema`/trial vẫn chưa có isolation thật; dynamic Vault creds/data-plane/capabilities/FE onboarding/deployment còn lại |
 | 17. Metadata-driven Workflow Engine | Increment 1 (on-transition trigger cho `metap-cron`) xong 2026-08-21; Increment 2 (chuỗi activity, `workflow_runs`) và Increment 3 (`wait_event` durable pause) vẫn approved, chưa code — chờ Increment 1 chạy thật lộ ra nhu cầu cụ thể |
 | 18. Organization & Identity — P0 | Done 2026-08-22 — `RequestContext.context_attributes` (opt-in `AUTH_CONTEXT_ENTITY`, cache + invalidate endpoint), entity mẫu `hr.departments`/`hr.employees` qua low-code, org-scoped policy verify sống qua HTTP thật. P1 (`hr.positions`/`hr.locations`, `managerId` self-reference)/P2 (Legal Entity, Approval Authority...) vẫn proposed, chưa có trigger |
+| 19. Table-per-entity | 5/5 bước code-complete + e2e (2026-08-23) — **chưa wire vào bất kỳ binary nào**, `records` chung vẫn là nơi `CrudService` đọc/ghi thật cho mọi entity `crm-server`. `apps/jira-server` (Phase 21) là nơi duy nhất thật sự dùng bảng riêng, chỉ 4 entity của app demo đó |
+| 20. Backend test kit (regression/performance/security) | Done phần lớn — security (`cargo audit`+CI, tenant-isolation/JWT/RBAC-ABAC test, CodeQL+Semgrep) và performance (k6 qua Docker + Grafana) xong; **2026-08-24 thêm OWASP ZAP (DAST)**, `testing/security/zap/run.sh`, chạy tay không CI. Còn thiếu: regression baseline/nightly tự động, Semgrep chưa wire CI |
+| 21. `apps/jira-server` — table-per-entity thật | Done 2026-08-23 — 2 entity ban đầu (`jira.projects`/`jira.issues`), lần đầu `reconcile()` chạy trong boot sequence thật, không phải orchestrator đa-tenant |
+| 22. `metap-storage` (object storage) | Done 2026-08-23 — `ObjectStore`/`S3ObjectStore` (SeaweedFS backend), chưa wire vào route/feature nào |
+| 23. `metap-cache` (caching layer) | Done 2026-08-23 — `Cache`/`MokaCache`/`RedisCache` (DragonflyDB), consumer đầu tiên: `PermissionService::with_cache` (policy-row cache) |
+| 24. Xây đầy `apps/jira-server` cho demo | Đang tiếp tục (2026-08-23 → 08-24) — backend: sprint/comment/4-state kanban workflow xong; frontend `apps/jira-fe`: dashboard+kanban board xong; outbox-publisher gap cho tenant dedicated-db tìm được lúc demo + đã fix (`OUTBOX_WORKER_INLINE`). Còn 2 gap đã ghi nhận, chưa quyết định fix: `POST /auth/login` không tới được DB riêng của tenant dedicated-db (workaround tạm: `PasteTokenFallback` dev-only trong `jira-fe`), và `dev-tools mint-token` không truyền tham số sẽ âm thầm default về tenant chưa provision (gây lỗi `relation does not exist` khó hiểu — phát hiện lúc demo 2026-08-24) |
+| 25. Tenant auth pluggable (Bearer + Basic + OIDC) | Done 2026-08-24 — cả 3/3 bước (crate `metap-auth`, bảng `tenant_auth_configs`, refactor local login; HTTP Basic per-request; OIDC redirect/callback + JIT provisioning + FE `OidcCallbackPage`/SSO button), verify sống đầy đủ kể cả full HTTP round-trip qua fake IdP |
 
 ## Phase 0: Skeleton
 
@@ -1662,6 +1669,30 @@ baseline/nightly tự động của Trụ Performance** (criterion micro-benchma
 benchmark direct-mode đã đo, chưa có seed/nightly workflow tự động so lệch. Semgrep cũng chưa wire
 vào CI (đang chỉ dừng ở local theo đúng yêu cầu ban đầu).
 
+**Trụ Security — tiếp tục, DAST bằng OWASP ZAP (2026-08-24, chủ dự án hỏi riêng "OWASP + open
+source thì có nhanh không"):** 4 công cụ security đã có (cargo audit, CodeQL, Semgrep,
+tenant/JWT/RBAC-ABAC test) đều là test nhắm đúng bug/invariant đã biết trước, không cover rộng
+kiểu OWASP Top 10 (injection payload theo field, header thiếu...). `metap`'s router hoàn toàn
+metadata-driven (`/api/:entity*`) nên không có danh sách route cố định để liệt kê tay cho một
+scanner — giải pháp: trỏ OWASP ZAP (open-source) thẳng vào `GET /metadata/openapi.json` (route đã
+public sẵn, không auth — phục vụ codegen frontend), để ZAP tự đọc ra toàn bộ entity/route rồi tự
+sinh request tấn công.
+
+`testing/security/zap/run.sh` (mới) — script orchestration mỏng, chạy tay qua `docker run
+zaproxy/zap-stable`, **không CI theo đúng yêu cầu** ("chỉ cần có script... k cần tích hợp cicd").
+Tự mint token (`pnpm mint-token`/`mint:jira-token`), tự inject `Authorization: Bearer` vào mọi
+request ZAP bắn ra qua ZAP replacer rule (không có flag `--auth-header` sẵn). 2 chế độ: `MODE=api`
+(mặc định, active scan đầy đủ qua OpenAPI import) / `MODE=baseline` (chỉ passive spider, nhanh
+hơn); `APP=crm` (mặc định, port 3000) hoặc `APP=jira` (port 3100, cần `TENANT_ID`/`USER_ID` vì
+tenant của jira-server không có default an toàn). Report HTML ra `testing/security/zap/reports/`
+(gitignored).
+
+**Verify sống**: chạy `MODE=api` thật nhắm `crm-server` — import 22 URL từ OpenAPI (80 URL sau khi
+ZAP tự dò biến thể), active scan 119 rule (SQLi, XSS reflected/persistent/DOM, path traversal,
+RCE/SSTI/XXE, CRLF, header leak...) → **0 FAIL, 0 WARN, 119 PASS**. Không thay thế 4 công cụ trên —
+ZAP không hiểu multi-tenant ABAC/workflow guard của app này, chỉ là lớp phủ rộng bổ sung cho lỗ
+hổng web chung chung. Ghi vào `testing/security/checklist.md`'s mục "Công cụ bổ sung".
+
 ## Phase 21: `apps/jira-server` — table-per-entity thật, lần đầu `reconcile()` chạy trong boot sequence (2026-08-23)
 
 Quay lại việc bị pause trước Phase 20 (test kit): "bước 6" đã chốt — không chỉ dựng app jira mẫu,
@@ -2096,6 +2127,105 @@ dùng chung pattern binary+lib) không bị ảnh hưởng bởi refactor.
 **Còn lại**: `cron-scheduler` vẫn chưa wire cho jira-server — nhưng chưa có cron job nào định
 nghĩa cho tenant này nên chưa có gì cụ thể để verify; sẽ làm theo đúng pattern trên (binary+lib đã
 có sẵn) khi có nhu cầu thật, không build trước khi có use case.
+
+### Bước 4/nhiều: siết JWT leeway 60s → 20s (2026-08-24)
+
+Lúc review roadmap tổng thể, chủ dự án hỏi kỹ hơn về mục "JWT leeway 60s" đã ghi nhận ở
+`testing/security/checklist.md`'s "Chưa cover" (không phải bug, mặc định của crate
+`jsonwebtoken`'s `Validation::new()` — token vẫn được chấp nhận tới 60s sau `exp`, để chống lệch
+đồng hồ giữa server ký/verify) — sau khi giải thích rủi ro thật (hệ thống không có cơ chế revoke
+token riêng, exp+leeway là biên duy nhất chặn 1 token bị lộ còn dùng được bao lâu) và 3 lựa chọn
+(giữ 60s / siết 5-10s / leeway=0), chủ dự án chốt **20s**.
+
+`crates/metap-http/src/auth.rs`: thêm `validation.leeway = 20;` tường minh (trước đó dùng default
+ẩn của crate). `crates/metap-http/tests/jwt_security_postgres.rs`'s `expired_token_is_rejected`
+cập nhật theo: sleep 65s → 25s (vẫn đủ qua leeway mới, chạy nhanh hơn), doc comment + assert
+message sửa từ "60s" sang "20s". `testing/security/checklist.md` cập nhật: xoá khỏi mục "chưa
+cover", ghi nhận giá trị mới vào hàng "JWT hết hạn" ở mục "Đã cover".
+
+## Phase 25: Tenant auth pluggable — Bearer + Basic + OIDC (2026-08-24, đang làm)
+
+Auth trước đây chỉ có 1 đường cứng: local email+password → mint JWT. Chủ dự án chốt: đây là auth
+của **tenant** (khách hàng dùng platform), không phải auth low-code admin — tenant phải tự chọn
+được cơ chế auth cho user của mình, **cho phép nhiều kiểu cùng lúc**. Scope chốt: Bearer (JWT, giữ
+nguyên), Basic (HTTP Basic, per-request), OIDC (redirect IdP ngoài, JIT provisioning khi user OIDC
+login lần đầu) — extensible thêm sau. Plan đầy đủ: xem plan file phiên làm việc lúc chốt
+(`/home/minhtuan/.claude/plans/snazzy-squishing-phoenix.md` tại thời điểm viết).
+
+**Bước 1/3 — Foundation, done (2026-08-24):**
+- `crates/migrations/0019_tenant_auth_configs.sql` — bảng `tenant_auth_configs` (1 row/tenant/
+  provider_kind, **N provider enabled cùng lúc**, không phải 1 strategy loại trừ nhau — đúng
+  "tenant có thể chọn nhiều kiểu auth"), backfill `local` cho mọi tenant đã có trong
+  `control.tenants` trước migration này.
+- Crate mới `crates/metap-auth` (plain library, cùng hình dạng `metap-cache`/`metap-storage`):
+  `AuthProviderKind` enum (`Local`/`Basic`/`Oidc`), `LocalPasswordProvider` (bọc
+  `metap_peripherals::verify_credentials`, generic `PgExecutor` — không phải `dyn AuthProvider`
+  boxed, vì Local/Basic/OIDC nhận input khác hẳn nhau, ép chung 1 trait signature chỉ là
+  indirection không cần thiết — chi tiết ghi trong doc comment của crate).
+  `crates/metap-control::provisioning`'s `provision_schema_tenant`/`provision_dedicated_db_tenant`
+  thêm bước `seed_local_auth_config` — tenant mới luôn có `local` enabled mặc định.
+- `crates/metap-http/src/routes/auth.rs`'s `login()` refactor gọi qua
+  `metap_auth::LocalPasswordProvider` thay vì gọi thẳng `metap_peripherals::verify_credentials` —
+  thuần refactor, hành vi giữ nguyên 100%.
+- **Kiểm chứng sống**: apply migration thật, xác nhận 2 tenant đã provision đều backfill đúng
+  `local` row. Chạy `crm-server` thật, tạo user thật qua `pnpm create:user`, login qua HTTP với cả
+  2 nhánh (`tenantId` có/không) đều trả JWT đúng, sai password → 401 — không regression.
+  `cargo build/fmt --check/clippy --workspace --all-targets -D warnings` sạch toàn workspace.
+
+**Bước 2/3 — HTTP Basic auth, done (2026-08-24):**
+- `crates/metap-http/src/auth.rs`'s `AuthContext` extractor thêm nhánh `Authorization: Basic
+  <base64>` (thử trước Bearer, cheap prefix check) — bắt buộc header `X-Tenant-Id` (Basic không
+  có claim nào mang tenant_id như JWT), decode base64 `email:password`, check tenant có bật
+  `basic` trong `tenant_auth_configs` không (mặc định **tắt** cho mọi tenant), verify qua
+  `LocalPasswordProvider`, build `RequestContext` thẳng — **không mint JWT**, stateless đúng bản
+  chất HTTP Basic.
+- `TenantAuthCache` mới (`crates/metap-http/src/cache.rs`, cùng hình dạng
+  `ContextAttributesCache` đã có) — cache "tenant này bật provider nào" 30s TTL, vì check này
+  chạy trên **mọi request** Basic-authed (không có session/JWT để amortize như Bearer).
+- `metap-auth::enabled_providers` mới — query `tenant_auth_configs`.
+- **Kiểm chứng sống** (crm-server thật, tenant `33333333-...`): (1) Basic chưa bật → 401 đúng
+  message; (2) thiếu `X-Tenant-Id` → 401; (3) bật `basic` qua SQL, đợi qua cache TTL (30s) → 200
+  đúng identity; (4) sai password → 401 "Invalid email or password."; (5) path Bearer cũ không bị
+  ảnh hưởng — `/auth/login` + `/auth/me` qua JWT vẫn 200 y hệt trước. `cargo build/fmt --check/
+  clippy --workspace --all-targets -D warnings` sạch toàn workspace.
+
+**Bước 3/3 — OIDC, done (2026-08-24):**
+- `crates/migrations/0020_users_oidc_columns.sql` — `password_hash` chuyển nullable, thêm
+  `auth_provider`/`external_subject` (+ CHECK constraint, + unique index tra theo
+  `(tenant_id, auth_provider, external_subject)`). **Chú ý thao tác**: `sqlx::migrate!` không tự
+  phát hiện file migration mới thêm vào nếu binary `db-migrate` đã build trước đó — cần `touch`
+  lại `src/main.rs` (hoặc `cargo clean`) để ép rebuild, nếu không sẽ âm thầm bỏ qua migration mới.
+- `crates/metap-auth/src/oidc.rs` (mới) — `OidcConfig` (issuer/client_id/client_secret_ref trỏ
+  env var, không lưu secret thật/redirect_uri/scopes/post_login_redirect), `oidc_authorize_url`/
+  `oidc_verify_callback` dùng crate `openidconnect` v4 (dựng trên `oauth2` + `reqwest` rustls,
+  xác nhận qua `cargo tree` không kéo openssl). PKCE + nonce đầy đủ theo chuẩn, không tự làm crypto
+  tay. `jit_provision_oidc_user`/`find_oidc_user` — JIT provisioning tra theo `external_subject`
+  (ổn định hơn email), không gán role nào (deny-by-default, admin gán sau).
+- Routes mới (`crates/metap-http/src/routes/auth.rs`): `GET /auth/oidc/{tenant_id}/login`
+  (redirect IdP), `GET /auth/oidc/{tenant_id}/callback` (exchange code → JIT/link user → mint JWT
+  y hệt local login → redirect FE kèm `#token=`), `GET /auth/providers?tenantId=` (public, liệt kê
+  provider đã bật). `OidcFlowCache` mới (`crates/metap-http/src/cache.rs`) — bookkeeping CSRF/
+  nonce/PKCE verifier giữa 2 request redirect+callback, one-time-use (chống replay).
+- FE (`packages/platform-react`): `OidcCallbackPage` mới (đọc `#token=` từ URL, gọi `setToken`).
+  `LoginForm` thêm prop `tenantId` tuỳ chọn (không đổi hành vi cho mọi caller hiện có không truyền
+  prop này) — khi có, gọi `/auth/providers` để hiện nút "Sign in with SSO" nếu tenant bật oidc, và
+  truyền `tenantId` vào body `/auth/login` (đóng luôn gap FE chưa từng gửi field này dù backend đã
+  hỗ trợ từ Phase 16). Route `/auth/oidc/callback` thêm vào cả `apps/crm-fe`/`apps/jira-fe`.
+- **Kiểm chứng sống — nhiều lớp**: (1) unit e2e `crates/metap-auth/tests/oidc_e2e.rs` — mock IdP
+  thật qua `wiremock` (discovery/JWKS/token), id_token tự ký RS256 bằng `jsonwebtoken`+keypair
+  `rsa` tự sinh (không phải mock đoán mò) — xác nhận round-trip đúng identity + nonce sai bị
+  reject; JIT provisioning + link-lần-2-không-trùng verify qua Postgres thật (`--ignored`). (2)
+  **Full HTTP round-trip qua `crm-server` thật** với 1 fake IdP Python độc lập (không phải test
+  trong repo, verify tay 1 lần): `GET /auth/oidc/{tenant}/login` → parse `nonce`/`state` thật từ
+  header `Location` → `GET /auth/oidc/{tenant}/callback` → 303 kèm `#token=` đúng JWT hợp lệ, dùng
+  được trên `/auth/me` y hệt token local login. Xác nhận thêm: `users` row JIT-provisioned đúng
+  (`auth_provider='oidc'`), replay `state` đã dùng → 401 đúng, tenant chưa cấu hình oidc → 404
+  đúng. `cargo build/fmt --check/clippy --workspace --all-targets -D warnings` + `cargo test
+  --workspace` sạch toàn bộ. `pnpm typecheck`/`lint` sạch cả 3 package frontend; `pnpm --filter
+  @metap/crm-fe build` + `@metap/jira-fe build` (tsc -b + vite build) sạch — theo đúng chính sách
+  không tự Playwright-verify FE, hand off cho chủ dự án bấm thử thật trên trình duyệt.
+
+**Tổng Phase 25**: cả 3/3 bước done, verify sống đầy đủ. Diff chưa commit.
 
 ## Định hướng chưa lên phase (chưa có trigger)
 

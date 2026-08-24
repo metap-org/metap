@@ -16,6 +16,22 @@ pub struct ProvisionedTenant {
     pub admin_user_id: Uuid,
 }
 
+/// Every newly provisioned tenant gets `local` (password) auth enabled by default — the only
+/// provider that has ever existed (`crates/migrations/0019_tenant_auth_configs.sql` backfills the
+/// same row for tenants provisioned before this table existed). `metap-auth`'s doc comment: a
+/// tenant can have more than one provider enabled, this is just what every tenant starts with.
+async fn seed_local_auth_config(pool: &PgPool, tenant_id: Uuid) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO tenant_auth_configs (tenant_id, provider_kind, enabled, config) \
+         VALUES ($1, 'local', true, '{}'::jsonb) \
+         ON CONFLICT (tenant_id, provider_kind) DO NOTHING",
+    )
+    .bind(tenant_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Trial tier — `schema_name` is always pinned to `"public"` (see `Router::begin`'s doc
 /// comment and `docs/roadmap.md` Phase 16: real per-tenant schema isolation needs
 /// table-per-entity, not built yet). `shared_pool` is the main database's pool — the admin
@@ -30,6 +46,7 @@ pub async fn provision_schema_tenant(
     registry
         .provision(tenant_id, "trial", "schema", Some("public"), None, "active")
         .await?;
+    seed_local_auth_config(shared_pool, tenant_id).await?;
     let user = metap_peripherals::create_user(shared_pool, tenant_id, admin_email, admin_password).await?;
     metap_peripherals::assign_role(shared_pool, tenant_id, user.id, "admin", None).await?;
 
@@ -75,6 +92,7 @@ pub async fn provision_dedicated_db_tenant(
     registry
         .provision(tenant_id, "paid", "dedicated_db", None, Some(dsn_secret_ref), "active")
         .await?;
+    seed_local_auth_config(&dedicated_pool, tenant_id).await?;
     let user = metap_peripherals::create_user(&dedicated_pool, tenant_id, admin_email, admin_password).await?;
     metap_peripherals::assign_role(&dedicated_pool, tenant_id, user.id, "admin", None).await?;
 

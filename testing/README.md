@@ -92,3 +92,27 @@ công cụ, mỗi cái một vai trò:
   qua tab Security của repo, không chặn build.
 - **Semgrep** (`.semgrep.yml`) — chạy tay trên máy dev, phản hồi nhanh trước khi push, chưa wire
   vào CI.
+
+### DAST — OWASP ZAP (chạy tay, không CI)
+
+Cả 3 bộ trên đều là test nhắm đúng bug/invariant đã biết trước — không cover rộng kiểu OWASP Top
+10 (injection payload theo từng field, header thiếu, v.v). `metap`'s router hoàn toàn
+metadata-driven (`/api/:entity*`) nên không có danh sách route cố định để liệt kê tay cho một
+scanner — thay vào đó trỏ [OWASP ZAP](https://www.zaproxy.org/) (open-source) thẳng vào
+`GET /metadata/openapi.json` (route này vốn public, không auth — sinh cho bước codegen frontend,
+xem CLAUDE.md's "Metadata types stay generated"), để ZAP tự đọc ra toàn bộ entity/route rồi tự
+sinh request tấn công theo từng field.
+
+```bash
+./testing/security/zap/run.sh                                        # crm-server, api mode (đầy đủ)
+MODE=baseline ./testing/security/zap/run.sh                          # crm-server, chỉ passive scan (nhanh)
+APP=jira TENANT_ID=<uuid> USER_ID=<uuid> ./testing/security/zap/run.sh   # jira-server
+```
+
+Script chỉ orchestration mỏng (mint token qua `pnpm mint-token`/`mint:jira-token` có sẵn, tự inject
+`Authorization: Bearer` vào mọi request ZAP bắn qua ZAP replacer rule, `docker run
+zaproxy/zap-stable`) — không có logic scan nào tự viết. Report HTML ra
+`testing/security/zap/reports/` (gitignored). Công cụ tay, **không** wire CI — chạy trước khi push
+thay đổi lớn liên quan tới route/auth, không phải gate tự động. Không thay thế 4 bộ test tenant-
+isolation/JWT/RBAC-ABAC ở trên — ZAP không hiểu multi-tenant ABAC/workflow guard của app này,
+đây chỉ là lớp phủ rộng bổ sung cho các lỗ hổng web chung chung.

@@ -14,7 +14,10 @@ use axum::http::request::Parts;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use jsonwebtoken::{decode, Algorithm, Validation};
+use metap_auth::{AuthProviderKind, LocalPasswordProvider};
 use metap_peripherals::{fetch_context_attributes, get_roles_for_user, JWT_AUDIENCE, JWT_ISSUER};
 use metap_permission::RequestContext;
 use serde::{Deserialize, Serialize};
@@ -94,6 +97,13 @@ where
             .and_then(|v| v.to_str().ok())
             .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
 
+        // Stateless per-request path — no JWT involved at all, tried first since it's a cheap
+        // prefix check. See `basic_auth`'s doc comment for why it needs `X-Tenant-Id` and why
+        // it's off by default for every tenant.
+        if let Some(credentials_b64) = header.strip_prefix("Basic ") {
+            return basic_auth(&app_state, parts, credentials_b64).await;
+        }
+
         let token = header
             .strip_prefix("Bearer ")
             .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
@@ -101,6 +111,11 @@ where
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_audience(&[JWT_AUDIENCE]);
         validation.set_issuer(&[JWT_ISSUER]);
+        // Default is 60s (`docs/roadmap.md`'s Phase 20 security checklist flagged this as wider
+        // than needed — no revocation list exists, so exp+leeway is the only bound on how long a
+        // leaked token stays usable past its stated expiry). Tightened to 20s per project owner
+        // decision 2026-08-24 — still enough to forgive minor clock drift between processes.
+        validation.leeway = 20;
         let token_data = decode::<Claims>(token, &app_state.jwt_decoding_key, &validation)
             .map_err(|_| AuthError::unauthorized("Invalid or expired token."))?;
         let claims = token_data.claims;
@@ -162,6 +177,76 @@ where
             context_attributes,
         }))
     }
+}
+
+/// `Authorization: Basic base64(email:password)` — stateless per request, no JWT minted or
+/// checked, no `context_attributes`/`function_id` (neither has an equivalent in this scheme).
+/// Unlike Bearer (whose JWT claims embed `tenantId`), Basic carries no tenant information at
+/// all, so the caller must supply `X-Tenant-Id` explicitly — same reasoning `POST /auth/login`'s
+/// optional `tenantId` body field already documents for a `DedicatedDb` tenant whose `users`
+/// table isn't reachable by email alone. Off by default for every tenant
+/// (`tenant_auth_configs` has no `basic` row until an operator explicitly enables one) — enabling
+/// this does not change the security surface of any tenant that hasn't opted in.
+async fn basic_auth(app_state: &AppState, parts: &Parts, credentials_b64: &str) -> Result<AuthContext, AuthError> {
+    let tenant_id = parts
+        .headers
+        .get("x-tenant-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| Uuid::parse_str(v).ok())
+        .ok_or(AuthError::unauthorized(
+            "Basic auth requires a valid X-Tenant-Id header.",
+        ))?;
+
+    let decoded = BASE64
+        .decode(credentials_b64)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
+    let (email, password) = decoded
+        .split_once(':')
+        .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
+
+    // Cached (`TenantAuthCache`) since this runs on every Basic-authed request, unlike Bearer's
+    // one-off login check — see that cache's doc comment.
+    let router = app_state.router.clone();
+    let enabled = app_state
+        .tenant_auth_cache
+        .get_with(tenant_id, move || async move {
+            let mut tx = router.begin(tenant_id.into()).await?;
+            let kinds = metap_auth::enabled_providers(&mut *tx, tenant_id).await?;
+            tx.commit().await?;
+            Ok(kinds)
+        })
+        .await
+        .map_err(|_| AuthError::unauthorized("Failed to resolve tenant auth configuration."))?;
+    if !enabled.contains(&AuthProviderKind::Basic) {
+        return Err(AuthError::unauthorized("Basic auth is not enabled for this tenant."));
+    }
+
+    let mut tx = app_state
+        .router
+        .begin(tenant_id.into())
+        .await
+        .map_err(|_| AuthError::unauthorized("Invalid email or password."))?;
+    let user = LocalPasswordProvider
+        .verify(&mut *tx, email, password)
+        .await
+        .map_err(|_| AuthError::unauthorized("Invalid email or password."))?
+        .ok_or(AuthError::unauthorized("Invalid email or password."))?;
+    let roles = get_roles_for_user(&mut *tx, tenant_id, user.id)
+        .await
+        .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
+    tx.commit()
+        .await
+        .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
+
+    Ok(AuthContext(RequestContext {
+        tenant_id: tenant_id.to_string(),
+        user_id: Some(user.id.to_string()),
+        roles: Some(roles),
+        function_id: None,
+        context_attributes: None,
+    }))
 }
 
 /// Same identity/tenant resolution as `AuthContext`, plus an `admin` role check — the

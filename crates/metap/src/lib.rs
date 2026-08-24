@@ -8,6 +8,7 @@
 //! modules below (`metap::query::plan_list`, `metap::workflow::run_guard`, etc.) without
 //! adding that sub-crate as its own direct dependency.
 
+pub use metap_auth as tenant_auth;
 pub use metap_cache as cache;
 pub use metap_control as control;
 pub use metap_control_http as control_http;

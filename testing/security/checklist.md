@@ -11,7 +11,7 @@ diễn giải lại logic (đọc code là nguồn thật).
 | `SET LOCAL search_path` không rò giữa 2 tenant dùng chung 1 connection | `crates/metap-control/tests/tenant_isolation_postgres.rs`'s `single_connection_pool_never_leaks_search_path_between_two_registered_tenants` | `max_connections(1)`, đúng invariant §7 #4 thiết kế |
 | `CrudService::list()` không rò dòng dữ liệu giữa 2 tenant dùng chung pool nhỏ | `crates/metap-crud/tests/crud_service_postgres.rs`'s `concurrent_cross_tenant_list_calls_never_return_another_tenants_records` | Đúng hình dạng bug thật đã fix ở commit `cc5f1ea` (thiếu filter `tenant_id`) |
 | JWT thiếu token | `crates/metap-http/tests/jwt_security_postgres.rs`'s `missing_token_is_rejected` | |
-| JWT hết hạn | `..jwt_security_postgres.rs`'s `expired_token_is_rejected` | **Phát hiện**: `jsonwebtoken::Validation::new()` mặc định `leeway=60s` — token vẫn được chấp nhận tới 60s sau `exp`. Không phải bug (chuẩn thực hành, chống lệch giờ), nhưng khá rộng rãi — xem mục "Chưa cover / cân nhắc thêm" |
+| JWT hết hạn | `..jwt_security_postgres.rs`'s `expired_token_is_rejected` | `crates/metap-http/src/auth.rs`'s `validation.leeway = 20` (siết từ mặc định 60s của crate `jsonwebtoken`, quyết định chủ dự án 2026-08-24 — xem `docs/roadmap.md`) |
 | JWT chữ ký bị sửa | `..jwt_security_postgres.rs`'s `tampered_signature_is_rejected` | |
 | JWT ký bằng key khác (không phải key server tin) | `..jwt_security_postgres.rs`'s `token_signed_by_a_different_key_is_rejected` | |
 | JWT hợp lệ nhưng tenant khác không đọc được dữ liệu | `..jwt_security_postgres.rs`'s `a_valid_token_for_one_tenant_cannot_read_another_tenants_record` | |
@@ -30,9 +30,6 @@ diễn giải lại logic (đọc code là nguồn thật).
 
 ## Chưa cover / cân nhắc thêm (ghi nhận, chưa phải việc cần làm ngay)
 
-- **JWT leeway 60s** — mặc định `jsonwebtoken` crate, khá rộng rãi cho một token đã hết hạn vẫn
-  còn hiệu lực thêm 1 phút. Cân nhắc siết xuống (5-10s) — đây là thay đổi hành vi auth thật, ảnh
-  hưởng mọi request, cần quyết định riêng, không tự ý đổi khi chỉ đang viết test.
 - **Fuzz testing** — không nằm trong phạm vi bộ test này.
 - **Injection qua tên entity low-code** — đã có `MetadataCompiler` validate theo
   `docs/architectures/09-adr.md`, không phải gap cần lấp thêm.
@@ -43,6 +40,13 @@ diễn giải lại logic (đọc code là nguồn thật).
 - **Semgrep chưa chạy trong CI** — hiện chỉ là công cụ local (đúng yêu cầu ban đầu: "semgrep quét
   local"). Cân nhắc thêm sau như một bước report-only (không chặn build, giống CodeQL) nếu muốn
   bắt buộc mọi PR đều được quét, không phụ thuộc kỷ luật chạy tay của từng dev.
+
+## Công cụ bổ sung (không phải regression test, không CI)
+
+- **OWASP ZAP (DAST)** — `testing/security/zap/run.sh`, xem `testing/README.md`'s mục "DAST —
+  OWASP ZAP". Cover rộng kiểu OWASP Top 10 (injection/header/v.v) bằng cách import
+  `/metadata/openapi.json` — không hiểu multi-tenant ABAC/workflow của app này, không thay thế
+  các hàng ở trên.
 
 ## Không thay thế review thủ công
 

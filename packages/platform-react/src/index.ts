@@ -11,6 +11,7 @@ export * from "./api/useApiQuery";
 export * from "./auth/AuthContext";
 export * from "./auth/Can";
 export * from "./auth/LoginForm";
+export * from "./auth/OidcCallbackPage";
 export * from "./auth/useCurrentUser";
 export * from "./detail/recordCapabilities";
 export * from "./detail/RecordDetail";

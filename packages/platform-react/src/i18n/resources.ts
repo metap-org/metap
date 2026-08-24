@@ -53,6 +53,8 @@ const en = {
     password: "Password",
     submit: "Log In",
     invalidCredentials: "Invalid email or password.",
+    orDivider: "or",
+    ssoButton: "Sign in with SSO",
   },
   entities: {
     title: "Entities",
@@ -244,6 +246,8 @@ const vi = {
     password: "Mật khẩu",
     submit: "Đăng nhập",
     invalidCredentials: "Email hoặc mật khẩu không đúng.",
+    orDivider: "hoặc",
+    ssoButton: "Đăng nhập bằng SSO",
   },
   entities: {
     title: "Entities",

@@ -1,13 +1,25 @@
-import { useState } from "react";
-import { Alert, Button, Container, PasswordInput, Stack, TextInput, Title } from "@mantine/core";
+import { useEffect, useState } from "react";
+import { Alert, Button, Container, Divider, PasswordInput, Stack, TextInput, Title } from "@mantine/core";
 import { useTranslation } from "react-i18next";
 import { apiFetch, ApiError } from "../api/client";
 import { useNavigationAdapter } from "../navigation/NavigationContext";
 import { useAuth } from "./AuthContext";
 
 type LoginResponse = { data: { token: string } };
+type ProvidersResponse = { data: { providers: string[] } };
 
-export function LoginForm() {
+type LoginFormProps = {
+  /**
+   * Optional — most callers (`apps/crm-fe`, `apps/jira-fe` today) omit it and rely on
+   * `POST /auth/login`'s global-by-email fallback, unchanged. Pass it once a caller actually
+   * has a tenant to log into (e.g. after a tenant-picker step) to also enable the SSO button
+   * below, which needs a `tenantId` to know which IdP to redirect to
+   * (`GET /auth/oidc/{tenantId}/login`) — there is no tenant-picker UI in this package itself.
+   */
+  tenantId?: string;
+};
+
+export function LoginForm({ tenantId }: LoginFormProps = {}) {
   const { t } = useTranslation();
   const { setToken } = useAuth();
   const navAdapter = useNavigationAdapter();
@@ -15,6 +27,14 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [oidcEnabled, setOidcEnabled] = useState(false);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    apiFetch<ProvidersResponse>(`/auth/providers?tenantId=${encodeURIComponent(tenantId)}`, null)
+      .then((response) => setOidcEnabled(response.data.providers.includes("oidc")))
+      .catch(() => setOidcEnabled(false));
+  }, [tenantId]);
 
   async function handleSubmit() {
     setError(null);
@@ -22,7 +42,7 @@ export function LoginForm() {
     try {
       const response = await apiFetch<LoginResponse>("/auth/login", null, {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, ...(tenantId ? { tenantId } : {}) }),
       });
       setToken(response.data.token);
       navAdapter.navigate(navAdapter.toHome());
@@ -68,6 +88,14 @@ export function LoginForm() {
         >
           {t("login.submit")}
         </Button>
+        {oidcEnabled && tenantId ? (
+          <>
+            <Divider label={t("login.orDivider")} labelPosition="center" />
+            <Button component="a" href={`/auth/oidc/${encodeURIComponent(tenantId)}/login`} variant="outline">
+              {t("login.ssoButton")}
+            </Button>
+          </>
+        ) : null}
       </Stack>
     </Container>
   );

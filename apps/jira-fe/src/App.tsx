@@ -12,6 +12,7 @@ import {
   UsersAdminPage,
   PoliciesAdminPage,
   CronJobsAdminPage,
+  OidcCallbackPage,
 } from "@metap/platform-react";
 import type { ShellNavItem } from "@metap/platform-react";
 import { LoginPage } from "./demo/LoginPage";
@@ -94,6 +95,7 @@ export default function App() {
       <LocaleProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/auth/oidc/callback" element={<OidcCallbackPage />} />
           <Route
             path="/"
             element={

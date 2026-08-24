@@ -199,13 +199,11 @@ async fn missing_token_is_rejected() {
     cleanup(&server.pool, tenant_id).await;
 }
 
-/// `auth.rs` uses `jsonwebtoken::Validation::new(Algorithm::RS256)`, whose default `leeway` is
-/// 60s (clock-skew tolerance, not a bug — found the hard way here: an earlier version of this
-/// test slept only 2s past `exp` and got a `200`, not a `401`, because 2s is well inside that
-/// window). Sleeping past the leeway, not just past `exp`, is what actually exercises rejection
-/// for *this* server's real configured behavior — `testing/security/checklist.md` notes the
-/// 60s leeway itself as a known, deliberate-but-worth-revisiting default, not something this
-/// test changes.
+/// `auth.rs` sets `Validation::leeway = 20` explicitly (tightened 2026-08-24 from the
+/// `jsonwebtoken` crate's 60s default — clock-skew tolerance, not a bug: an earlier version of
+/// this test slept only 2s past `exp` and got a `200`, not a `401`, because 2s was well inside
+/// the (then 60s) window). Sleeping past the leeway, not just past `exp`, is what actually
+/// exercises rejection for *this* server's real configured behavior.
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn expired_token_is_rejected() {
@@ -214,7 +212,7 @@ async fn expired_token_is_rejected() {
     let server = boot_server(tenant_id, user_id).await;
 
     let token = mint_token_ttl(&server.private_pem, tenant_id, user_id, 1);
-    tokio::time::sleep(std::time::Duration::from_secs(65)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(25)).await;
 
     let res = reqwest::Client::new()
         .get(format!("{}/api/test.jwt_orders", server.base))
@@ -222,7 +220,7 @@ async fn expired_token_is_rejected() {
         .send()
         .await
         .unwrap();
-    assert_eq!(res.status(), 401, "a token past exp + the 60s leeway must be rejected");
+    assert_eq!(res.status(), 401, "a token past exp + the 20s leeway must be rejected");
 
     cleanup(&server.pool, tenant_id).await;
 }
