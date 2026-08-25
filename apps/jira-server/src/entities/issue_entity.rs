@@ -6,6 +6,22 @@
 //! `assigneeEmail`/`reporterEmail` are plain text, not `Reference` fields — `users` is a
 //! platform/auth table, not a registered `EntityDefinition`, so there's nothing for a
 //! `Reference`'s `refEntity` to point at. Kept deliberately simple for this PoC's scope.
+//!
+//! `parentIssue` is a **self-referencing** `Reference` (`ref_entity == "jira.issues"`, this
+//! entity's own name) — sub-tasks. Worth calling out because it's a genuinely different case
+//! from every other `Reference` field in this app: `metap-reconciler::compile()`'s FK-target-
+//! must-already-exist ordering constraint (see `sprint_entity.rs`'s doc comment) is trivially
+//! satisfied here since the table is reconciled before its own FK constraint is ever attempted
+//! within the same `CREATE TABLE`, but it's still the first self-reference this whole codebase
+//! has ever declared — verified live it reconciles and round-trips correctly, not assumed.
+//!
+//! `labels` uses `FieldKind::Json` (a bare string array, e.g. `["bug","urgent"]`) — metap has no
+//! dedicated multi-select/tag `FieldKind` yet, and `Json` is the closest existing fit. Known
+//! rough edge, not silently smoothed over: `packages/platform-react`'s generic `FieldInput`
+//! renders any `Json` field as a raw-text `Textarea` (`case "json"` in that file), so editing
+//! labels through the generic form means typing `["bug","urgent"]` by hand — a real gap a
+//! first-class tag/multi-select `FieldKind` would close, not built here since one entity's ad
+//! hoc need isn't a strong enough trigger for a new platform-wide field kind on its own.
 
 use metap::permission::{ConditionOp, PolicyValue};
 use metap::prelude::{EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, WorkflowTransition};
@@ -89,6 +105,63 @@ pub fn issue_entity() -> EntityDefinition {
                 sortable: None,
                 storage: None,
             },
+            EntityField {
+                name: "epic".to_string(),
+                label: "Epic".to_string(),
+                kind: FieldKind::Reference,
+                // Optional — not every issue belongs to an epic.
+                required: None,
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: Some("jira.epics".to_string()),
+                ref_display_field: Some("name".to_string()),
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+            },
+            EntityField {
+                name: "issueType".to_string(),
+                label: "Issue Type".to_string(),
+                kind: FieldKind::Enum,
+                required: Some(true),
+                indexed: Some(true),
+                unique: None,
+                enum_values: Some(vec!["bug".to_string(), "task".to_string(), "story".to_string()]),
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: None,
+                search_mode: None,
+                sortable: Some(true),
+                storage: None,
+            },
+            EntityField {
+                name: "parentIssue".to_string(),
+                label: "Parent Issue".to_string(),
+                kind: FieldKind::Reference,
+                // Optional — an issue with no parent is a top-level issue, not a sub-task.
+                required: None,
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: Some("jira.issues".to_string()),
+                ref_display_field: Some("title".to_string()),
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+            },
+            field("storyPoints", "Story Points", FieldKind::Number, false, false, false),
+            field(
+                "originalEstimateMinutes",
+                "Original Estimate (minutes)",
+                FieldKind::Number,
+                false,
+                false,
+                false,
+            ),
+            field("labels", "Labels", FieldKind::Json, false, false, false),
             field(
                 "assigneeEmail",
                 "Assignee Email",
@@ -125,19 +198,28 @@ pub fn issue_entity() -> EntityDefinition {
             label: "Default".to_string(),
             fields: vec![
                 "title".to_string(),
+                "issueType".to_string(),
                 "priority".to_string(),
                 "project".to_string(),
                 "sprint".to_string(),
+                "epic".to_string(),
                 "status".to_string(),
                 "assigneeEmail".to_string(),
                 "dueDate".to_string(),
+                "storyPoints".to_string(),
             ],
             filters: vec![
                 "title".to_string(),
+                "issueType".to_string(),
                 "priority".to_string(),
                 "project".to_string(),
                 "sprint".to_string(),
+                "epic".to_string(),
                 "status".to_string(),
+                // Lets a sub-task panel filter "?parentIssue={id}" the same way
+                // `jira.comments`'s `filters: ["issue"]` already does for its parent — same
+                // pattern, not a new capability.
+                "parentIssue".to_string(),
             ],
             default_sort: Some("-createdAt".to_string()),
             max_limit: 100,

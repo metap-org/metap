@@ -139,6 +139,8 @@ pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Rout
         .merge(routes::metadata::protected_router())
         .merge(routes::records::router())
         .merge(routes::attachments::router())
+        .merge(routes::users::router())
+        .merge(routes::workflow_events::router())
         .merge(routes::admin::router())
         .merge(routes::auth::router())
         .merge(routes::cron::router())

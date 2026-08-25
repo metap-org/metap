@@ -7,3 +7,5 @@ pub mod metadata;
 pub mod metrics;
 pub mod preferences;
 pub mod records;
+pub mod users;
+pub mod workflow_events;

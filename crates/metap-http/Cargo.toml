@@ -15,6 +15,7 @@ metap-metadata = { path = "../metap-metadata" }
 metap-permission = { path = "../metap-permission" }
 metap-query = { path = "../metap-query" }
 metap-storage = { path = "../metap-storage" }
+metap-workflow = { path = "../metap-workflow" }
 anyhow = "1"
 arc-swap = "1"
 axum = { version = "0.8", features = ["multipart"] }

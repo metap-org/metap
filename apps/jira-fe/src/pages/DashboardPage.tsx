@@ -1,8 +1,63 @@
-import { useMemo } from "react";
-import { Badge, Card, Container, Group, SimpleGrid, Table, Text, Title } from "@mantine/core";
+import { useMemo, useState } from "react";
+import { Badge, Card, Container, Group, SimpleGrid, Table, Text, TextInput, Title } from "@mantine/core";
+import { useDebouncedValue } from "@mantine/hooks";
 import { Link } from "react-router-dom";
 import { ApiErrorMessage, useApiQuery } from "@metap/platform-react";
 import type { IssueRecord, ListResponse } from "../api/types";
+
+/**
+ * `title` is `searchable` on `jira.issues` (`issue_entity.rs`) — substring/ILIKE match, so
+ * `?title=<term>` already works through the generic `QueryPlanner`. No dedicated search page:
+ * this box lives on the page everyone already lands on first.
+ */
+function SearchBox() {
+  const [term, setTerm] = useState("");
+  const [debounced] = useDebouncedValue(term, 300);
+
+  const { data: results } = useApiQuery<ListResponse<IssueRecord>, IssueRecord[]>(
+    ["search-issues", debounced],
+    `/api/jira.issues?title=${encodeURIComponent(debounced)}&limit=10`,
+    (response) => response.data,
+    debounced.trim().length > 0,
+  );
+
+  return (
+    <Card withBorder mb="xl" padding="md">
+      <TextInput
+        placeholder="Search issues by title…"
+        value={term}
+        onChange={(event) => setTerm(event.currentTarget.value)}
+      />
+      {debounced.trim().length > 0 ? (
+        <Table mt="sm">
+          <Table.Tbody>
+            {(results ?? []).map((issue) => (
+              <Table.Tr key={issue.id}>
+                <Table.Td>
+                  <Link to={`/issues/${issue.id}`}>{issue.data.title}</Link>
+                </Table.Td>
+                <Table.Td>
+                  <Badge size="sm" variant="light">
+                    {issue.status}
+                  </Badge>
+                </Table.Td>
+              </Table.Tr>
+            ))}
+            {results?.length === 0 ? (
+              <Table.Tr>
+                <Table.Td>
+                  <Text size="sm" c="dimmed">
+                    No matching issues.
+                  </Text>
+                </Table.Td>
+              </Table.Tr>
+            ) : null}
+          </Table.Tbody>
+        </Table>
+      ) : null}
+    </Card>
+  );
+}
 
 const STATUS_LABEL: Record<string, string> = {
   todo: "To do",
@@ -62,6 +117,8 @@ export function DashboardPage() {
       <Title order={2} mb="md">
         Dashboard
       </Title>
+
+      <SearchBox />
 
       <Text fw={600} mb="xs">
         By status

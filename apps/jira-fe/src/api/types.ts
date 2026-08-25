@@ -18,6 +18,12 @@ export type IssueData = {
   priority: IssuePriority;
   project: string;
   sprint?: string;
+  parentIssue?: string;
+  epic?: string;
+  issueType?: "bug" | "task" | "story";
+  storyPoints?: number;
+  originalEstimateMinutes?: number;
+  labels?: string[];
   assigneeEmail?: string;
   reporterEmail: string;
   dueDate?: string;
@@ -81,6 +87,16 @@ export type CommentData = {
 
 export type CommentRecord = {
   id: string;
+  version: number;
   createdAt: string;
   data: CommentData;
+};
+
+export type IssueLinkType = "relates_to" | "blocks" | "duplicates";
+
+export type IssueLinkRecord = {
+  id: string;
+  version: number;
+  data: { fromIssue: string; toIssue: string; linkType: IssueLinkType };
+  relatedDisplay?: Record<string, string>;
 };

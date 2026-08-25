@@ -51,8 +51,9 @@
 mod entities;
 
 use entities::{
-    comment_entity::comment_entity, issue_entity::issue_entity, project_entity::project_entity,
-    sprint_entity::sprint_entity,
+    comment_entity::comment_entity, epic_entity::epic_entity, issue_entity::issue_entity,
+    issue_link_entity::issue_link_entity, project_entity::project_entity, sprint_entity::sprint_entity,
+    watcher_entity::watcher_entity, worklog_entity::worklog_entity,
 };
 
 use std::sync::Arc;
@@ -75,8 +76,12 @@ async fn main() -> anyhow::Result<()> {
     let mut registry = MetadataRegistry::new();
     registry.register(project_entity())?;
     registry.register(sprint_entity())?;
+    registry.register(epic_entity())?;
     registry.register(issue_entity())?;
     registry.register(comment_entity())?;
+    registry.register(issue_link_entity())?;
+    registry.register(worklog_entity())?;
+    registry.register(watcher_entity())?;
     registry.validate_references()?;
     let metadata_base = Arc::new(registry);
     let metadata = Arc::new(ArcSwap::new(Arc::new((*metadata_base).clone())));
@@ -106,9 +111,19 @@ async fn main() -> anyhow::Result<()> {
     // Order is load-bearing: each entity's Reference fields build a real FK straight into its
     // target's table at DDL time (`compile()`, see `sprint_entity.rs`'s doc comment), so a
     // referenced entity must be reconciled — its table must physically exist — before the
-    // entity that references it. project -> sprint (references project) -> issue (references
-    // project + sprint) -> comment (references issue).
-    for entity in [project_entity(), sprint_entity(), issue_entity(), comment_entity()] {
+    // entity that references it. project -> sprint (references project) -> epic (references
+    // project) -> issue (references project + sprint + epic + itself via parentIssue) ->
+    // comment (references issue) -> issue_links (references issue twice).
+    for entity in [
+        project_entity(),
+        sprint_entity(),
+        epic_entity(),
+        issue_entity(),
+        comment_entity(),
+        issue_link_entity(),
+        worklog_entity(),
+        watcher_entity(),
+    ] {
         let outcome = metap_reconciler::reconcile(&tenant_pool, jira_tenant_id, &entity, &[]).await?;
         tracing::info!(
             entity = entity.name,

@@ -4,11 +4,12 @@
 //! only uses the `executor` parameter — see `metap-infra`'s `outbox.rs` doc comment). A
 //! plain function module is the faithful equivalent, not a stateful wrapper around nothing.
 
+use chrono::{DateTime, Utc};
 use metap_infra::{enqueue_outbox_event, OutboxEvent};
 use metap_metadata::{EntityDefinition, WorkflowTransition};
 use metap_permission::{evaluate_condition, RequestContext};
 use serde_json::{json, Value};
-use sqlx::PgExecutor;
+use sqlx::{FromRow, PgExecutor};
 use uuid::Uuid;
 
 pub type JsonObject = serde_json::Map<String, Value>;
@@ -84,6 +85,44 @@ pub async fn record_event<'c, E: PgExecutor<'c>>(
     .execute(executor)
     .await?;
     Ok(())
+}
+
+/// One row of `workflow_events` — the read side of `record_event`'s append-only audit log.
+/// Generic across every entity/app (a plain data row, no business meaning attached), same shape
+/// as `metap_attachments::AttachmentRecord`.
+#[derive(Debug, Clone, FromRow, serde::Serialize)]
+pub struct WorkflowEvent {
+    pub id: Uuid,
+    pub entity: String,
+    pub record_id: Uuid,
+    pub action: String,
+    pub from_state: String,
+    pub to_state: String,
+    pub actor: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Chronological transition history for one record — the primitive a burndown/report feature
+/// needs to reconstruct "when did this record reach state X" without a bespoke time-series table.
+/// Tenant-scoped like every other read here; `entity`/`record_id` narrow it to one record's
+/// history, same granularity `metap_attachments::list_attachments` uses for one record's files.
+pub async fn list_events<'c, E: PgExecutor<'c>>(
+    executor: E,
+    tenant_id: Uuid,
+    entity: &str,
+    record_id: Uuid,
+) -> anyhow::Result<Vec<WorkflowEvent>> {
+    let events = sqlx::query_as::<_, WorkflowEvent>(
+        "SELECT id, entity, record_id, action, from_state, to_state, actor, created_at \
+         FROM workflow_events WHERE tenant_id = $1 AND entity = $2 AND record_id = $3 \
+         ORDER BY created_at ASC",
+    )
+    .bind(tenant_id)
+    .bind(entity)
+    .bind(record_id)
+    .fetch_all(executor)
+    .await?;
+    Ok(events)
 }
 
 #[allow(clippy::too_many_arguments)]

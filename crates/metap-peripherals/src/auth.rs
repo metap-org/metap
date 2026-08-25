@@ -78,6 +78,27 @@ pub async fn create_user<'e>(
     })
 }
 
+/// Every user in the tenant, id+email only — the "pick a user" primitive an app-level assignee/
+/// reporter picker needs (`GET /users`, `crates/metap-http/src/routes/users.rs`), distinct from
+/// `role_assignment::list_users` (which returns role assignments for `/admin/users`, an admin-
+/// only concern). Any authenticated user can call the route this backs — picking who to assign
+/// an issue to isn't an admin action, unlike granting a role.
+pub async fn list_tenant_users<'e>(executor: impl PgExecutor<'e>, tenant_id: Uuid) -> anyhow::Result<Vec<AuthUser>> {
+    let rows = sqlx::query("SELECT id, tenant_id, email FROM users WHERE tenant_id = $1 ORDER BY email")
+        .bind(tenant_id)
+        .fetch_all(executor)
+        .await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(AuthUser {
+                id: row.try_get("id")?,
+                tenant_id: row.try_get("tenant_id")?,
+                email: row.try_get("email")?,
+            })
+        })
+        .collect()
+}
+
 /// `Ok(None)` for either "no user with this email" or "wrong password" — deliberately not
 /// distinguished, so a caller can't use this to enumerate registered emails.
 ///

@@ -3123,6 +3123,7 @@ dependencies = [
  "metap-permission",
  "metap-query",
  "metap-storage",
+ "metap-workflow",
  "metrics-process",
  "moka",
  "reqwest",
@@ -3305,9 +3306,11 @@ name = "metap-workflow"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "metap-infra",
  "metap-metadata",
  "metap-permission",
+ "serde",
  "serde_json",
  "sqlx",
  "tokio",

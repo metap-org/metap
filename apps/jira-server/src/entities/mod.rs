@@ -2,6 +2,10 @@
 //! exists (table-per-entity, wired into a real boot sequence for the first time).
 
 pub mod comment_entity;
+pub mod epic_entity;
 pub mod issue_entity;
+pub mod issue_link_entity;
 pub mod project_entity;
 pub mod sprint_entity;
+pub mod watcher_entity;
+pub mod worklog_entity;
