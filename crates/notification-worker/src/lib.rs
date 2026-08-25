@@ -34,6 +34,7 @@ where
     run_resilient_consumer(
         QUEUE,
         ROUTING_KEY,
+        None, // no retry policy needed — notify() can't fail, always acks
         connect,
         |event| async move {
             notify(&event);

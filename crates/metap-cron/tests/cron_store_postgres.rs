@@ -94,7 +94,7 @@ async fn on_transition_job_fires_when_entity_and_action_match_outbox_mode() {
     let tenant_id = Uuid::new_v4();
     let job_id = create_on_transition_job(&pool, tenant_id, DispatchMode::Outbox).await;
 
-    let result = dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate")
+    let result = dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate", Uuid::new_v4())
         .await
         .expect("dispatch_on_transition_matches");
     assert_eq!(result.claimed, 1);
@@ -127,7 +127,7 @@ async fn on_transition_job_does_not_fire_for_a_non_matching_action() {
     let tenant_id = Uuid::new_v4();
     create_on_transition_job(&pool, tenant_id, DispatchMode::Outbox).await;
 
-    let result = dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "block")
+    let result = dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "block", Uuid::new_v4())
         .await
         .expect("dispatch_on_transition_matches");
     assert_eq!(
@@ -146,7 +146,7 @@ async fn on_transition_job_does_not_fire_for_another_tenant() {
     let other_tenant_id = Uuid::new_v4();
     create_on_transition_job(&pool, tenant_id, DispatchMode::Outbox).await;
 
-    let result = dispatch_on_transition_matches(&pool, other_tenant_id, "crm.customers", "activate")
+    let result = dispatch_on_transition_matches(&pool, other_tenant_id, "crm.customers", "activate", Uuid::new_v4())
         .await
         .expect("dispatch_on_transition_matches");
     assert_eq!(
@@ -168,7 +168,7 @@ async fn on_record_event_job_fires_when_entity_and_event_match_outbox_mode() {
     let tenant_id = Uuid::new_v4();
     let job_id = create_on_record_event_job(&pool, tenant_id, DispatchMode::Outbox).await;
 
-    let result = dispatch_on_record_event_matches(&pool, tenant_id, "crm.customers", "created")
+    let result = dispatch_on_record_event_matches(&pool, tenant_id, "crm.customers", "created", Uuid::new_v4())
         .await
         .expect("dispatch_on_record_event_matches");
     assert_eq!(result.claimed, 1);
@@ -200,10 +200,13 @@ async fn on_record_event_job_does_not_fire_for_a_non_matching_event() {
     let tenant_id = Uuid::new_v4();
     create_on_record_event_job(&pool, tenant_id, DispatchMode::Outbox).await;
 
-    let result = dispatch_on_record_event_matches(&pool, tenant_id, "crm.customers", "deleted")
+    let result = dispatch_on_record_event_matches(&pool, tenant_id, "crm.customers", "deleted", Uuid::new_v4())
         .await
         .expect("dispatch_on_record_event_matches");
-    assert_eq!(result.claimed, 0, "job registered for \"created\" must not fire on \"deleted\"");
+    assert_eq!(
+        result.claimed, 0,
+        "job registered for \"created\" must not fire on \"deleted\""
+    );
 
     cleanup(&pool, tenant_id).await;
 }
@@ -216,7 +219,7 @@ async fn on_record_event_job_does_not_fire_for_another_tenant() {
     let other_tenant_id = Uuid::new_v4();
     create_on_record_event_job(&pool, tenant_id, DispatchMode::Outbox).await;
 
-    let result = dispatch_on_record_event_matches(&pool, other_tenant_id, "crm.customers", "created")
+    let result = dispatch_on_record_event_matches(&pool, other_tenant_id, "crm.customers", "created", Uuid::new_v4())
         .await
         .expect("dispatch_on_record_event_matches");
     assert_eq!(
@@ -237,14 +240,19 @@ async fn on_transition_and_on_record_event_jobs_do_not_cross_fire() {
     create_on_transition_job(&pool, tenant_id, DispatchMode::Outbox).await;
     create_on_record_event_job(&pool, tenant_id, DispatchMode::Outbox).await;
 
-    let record_event_result = dispatch_on_record_event_matches(&pool, tenant_id, "crm.customers", "created")
-        .await
-        .expect("dispatch_on_record_event_matches");
-    assert_eq!(record_event_result.claimed, 1, "only the on_record_event job should fire");
+    let record_event_result =
+        dispatch_on_record_event_matches(&pool, tenant_id, "crm.customers", "created", Uuid::new_v4())
+            .await
+            .expect("dispatch_on_record_event_matches");
+    assert_eq!(
+        record_event_result.claimed, 1,
+        "only the on_record_event job should fire"
+    );
 
-    let transition_result = dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate")
-        .await
-        .expect("dispatch_on_transition_matches");
+    let transition_result =
+        dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate", Uuid::new_v4())
+            .await
+            .expect("dispatch_on_transition_matches");
     assert_eq!(transition_result.claimed, 1, "only the on_transition job should fire");
 
     cleanup(&pool, tenant_id).await;
@@ -257,7 +265,7 @@ async fn on_transition_direct_mode_job_is_returned_for_immediate_execution() {
     let tenant_id = Uuid::new_v4();
     create_on_transition_job(&pool, tenant_id, DispatchMode::Direct).await;
 
-    let result = dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate")
+    let result = dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate", Uuid::new_v4())
         .await
         .expect("dispatch_on_transition_matches");
     assert_eq!(result.claimed, 1);
@@ -279,7 +287,7 @@ async fn failed_run_with_attempts_remaining_schedules_a_retry_that_claim_due_ret
     let tenant_id = Uuid::new_v4();
     let job_id = create_on_transition_job(&pool, tenant_id, DispatchMode::Outbox).await;
 
-    let result = dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate")
+    let result = dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate", Uuid::new_v4())
         .await
         .expect("dispatch_on_transition_matches");
     let run_id = sqlx::query("SELECT id FROM cron_job_runs WHERE job_id = $1")
@@ -300,6 +308,8 @@ async fn failed_run_with_attempts_remaining_schedules_a_retry_that_claim_due_ret
         max_attempts: 3,
         retry_backoff_seconds: 1,
         dispatch_mode: DispatchMode::Outbox.as_str().to_string(),
+        trigger_record_id: None,
+        trigger_entity: None,
     };
     finish_run_with_retry(&pool, &payload, RunStatus::Failed, Some("connection refused"), None)
         .await
@@ -339,7 +349,7 @@ async fn failed_run_with_no_attempts_remaining_does_not_schedule_a_retry() {
     let tenant_id = Uuid::new_v4();
     let job_id = create_on_transition_job(&pool, tenant_id, DispatchMode::Outbox).await;
 
-    dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate")
+    dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate", Uuid::new_v4())
         .await
         .expect("dispatch_on_transition_matches");
     let run_id = sqlx::query("SELECT id FROM cron_job_runs WHERE job_id = $1")
@@ -359,6 +369,8 @@ async fn failed_run_with_no_attempts_remaining_does_not_schedule_a_retry() {
         max_attempts: 3,
         retry_backoff_seconds: 1,
         dispatch_mode: DispatchMode::Outbox.as_str().to_string(),
+        trigger_record_id: None,
+        trigger_entity: None,
     };
     finish_run_with_retry(&pool, &payload, RunStatus::Failed, Some("still failing"), None)
         .await

@@ -151,7 +151,9 @@ async fn create_cron_job(
         Err(e) => return internal_error_response(e),
     };
     if TargetType::parse(&body.target_type).is_none() {
-        return validation_error("`targetType` must be one of: workflow_transition, bulk_query_action, webhook.");
+        return validation_error(
+            "`targetType` must be one of: workflow_transition, bulk_query_action, webhook, email.",
+        );
     }
     if DispatchMode::parse(&body.dispatch_mode).is_none() {
         return validation_error("`dispatchMode` must be one of: outbox, direct.");
@@ -253,7 +255,9 @@ async fn update_cron_job(
     };
     if let Some(target_type) = &body.target_type {
         if TargetType::parse(target_type).is_none() {
-            return validation_error("`targetType` must be one of: workflow_transition, bulk_query_action, webhook.");
+            return validation_error(
+                "`targetType` must be one of: workflow_transition, bulk_query_action, webhook, email.",
+            );
         }
     }
     if let Some(dispatch_mode) = &body.dispatch_mode {

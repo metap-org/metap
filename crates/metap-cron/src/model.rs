@@ -23,6 +23,12 @@ pub enum TargetType {
     BulkQueryAction,
     /// `target_config`: `{ url, method, headers?, bodyTemplate? }`.
     Webhook,
+    /// `target_config`: `{ to: string | string[], subject: string, body: string }` — sent via
+    /// SMTP (`cron-scheduler`'s `run_email`), configured entity-agnostically by an admin rather
+    /// than hardcoded per business case (`notification-worker` stays a fixed, unconfigurable
+    /// stdout log of every transition — this is the "admin picks which entity/event mails whom"
+    /// path Phase 39 adds instead).
+    Email,
 }
 
 impl TargetType {
@@ -31,6 +37,7 @@ impl TargetType {
             TargetType::WorkflowTransition => "workflow_transition",
             TargetType::BulkQueryAction => "bulk_query_action",
             TargetType::Webhook => "webhook",
+            TargetType::Email => "email",
         }
     }
 
@@ -39,6 +46,7 @@ impl TargetType {
             "workflow_transition" => Some(TargetType::WorkflowTransition),
             "bulk_query_action" => Some(TargetType::BulkQueryAction),
             "webhook" => Some(TargetType::Webhook),
+            "email" => Some(TargetType::Email),
             _ => None,
         }
     }
@@ -243,6 +251,15 @@ pub struct CronJobDuePayload {
     pub retry_backoff_seconds: i32,
     #[serde(rename = "dispatchMode")]
     pub dispatch_mode: String,
+    /// Which record's event caused this firing, when the job's `trigger_type` is
+    /// `on_transition`/`on_record_event` — `None` for a plain `schedule` job, which has no
+    /// single triggering record. Lets `run_email`/`run_webhook` reference the actual record
+    /// (`recordId`/`entity`) rather than only the static `target_config`, e.g. an email body
+    /// that says which order/issue/customer just changed.
+    #[serde(rename = "triggerRecordId", skip_serializing_if = "Option::is_none")]
+    pub trigger_record_id: Option<Uuid>,
+    #[serde(rename = "triggerEntity", skip_serializing_if = "Option::is_none")]
+    pub trigger_entity: Option<String>,
 }
 
 pub const ROUTING_KEY: &str = "cron.job.due";
@@ -263,4 +280,6 @@ pub struct ClaimedDirectJob {
     pub max_attempts: i32,
     pub retry_backoff_seconds: i32,
     pub dispatch_mode: String,
+    pub trigger_record_id: Option<Uuid>,
+    pub trigger_entity: Option<String>,
 }

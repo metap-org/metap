@@ -15,6 +15,6 @@ pub mod executor;
 pub mod ticker;
 pub mod trigger;
 
-pub use executor::{execute, run_executor, ExecutorConfig};
+pub use executor::{execute, run_executor, ExecutorConfig, SmtpConfig};
 pub use ticker::{run_ticker, TickerConfig};
 pub use trigger::run_trigger_listener;

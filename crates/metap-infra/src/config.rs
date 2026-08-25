@@ -77,6 +77,19 @@ pub struct AppConfig {
     /// See `policy_cache_redis_url`. Defaults to 30s, matching `auth_context_cache_ttl_seconds`'s
     /// convention — policy rows are admin-edited config, not per-request state.
     pub policy_cache_ttl_seconds: u64,
+    /// SMTP config for `metap-cron`'s `TargetType::Email` target (`cron-scheduler`'s `run_email`,
+    /// Phase 39) — all optional, since only `cron-scheduler` needs them and only once an admin
+    /// actually creates an `email` job; unset means that job fails clearly at execution time
+    /// (`run_email` errors with a message naming the missing config) rather than at boot.
+    /// Local dev points these at Mailhog (`docker-compose.yml`'s opt-in `mailhog` service,
+    /// `localhost:1025`, no auth) rather than a real provider account.
+    pub smtp_host: Option<String>,
+    pub smtp_port: u16,
+    pub smtp_user: Option<String>,
+    pub smtp_password: Option<String>,
+    /// The `From:` address `run_email` sends as — required alongside `smtp_host` for a job to
+    /// actually run (a `From:` address isn't optional in SMTP the way auth can be, e.g. Mailhog).
+    pub smtp_from: Option<String>,
 }
 
 impl AppConfig {
@@ -165,6 +178,12 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(30);
 
+    let smtp_host = env::var("SMTP_HOST").ok().filter(|s| !s.is_empty());
+    let smtp_port: u16 = env::var("SMTP_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(1025); // Mailhog's default SMTP port
+    let smtp_user = env::var("SMTP_USER").ok().filter(|s| !s.is_empty());
+    let smtp_password = env::var("SMTP_PASSWORD").ok().filter(|s| !s.is_empty());
+    let smtp_from = env::var("SMTP_FROM").ok().filter(|s| !s.is_empty());
+
     Ok(AppConfig {
         node_env,
         host,
@@ -185,5 +204,10 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         auth_context_cache_ttl_seconds,
         policy_cache_redis_url,
         policy_cache_ttl_seconds,
+        smtp_host,
+        smtp_port,
+        smtp_user,
+        smtp_password,
+        smtp_from,
     })
 }

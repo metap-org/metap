@@ -322,7 +322,7 @@ pub async fn claim_due_jobs(pool: &PgPool, now: DateTime<Utc>, batch_size: i64) 
         .execute(&mut *tx)
         .await?;
 
-        dispatch_claimed(&mut tx, &job, run_id, 1, &mut result).await?;
+        dispatch_claimed(&mut tx, &job, run_id, 1, None, None, &mut result).await?;
 
         tracing::info!(
             job_id = %job.id,
@@ -347,6 +347,7 @@ pub async fn dispatch_on_transition_matches(
     tenant_id: Uuid,
     entity: &str,
     action: &str,
+    record_id: Uuid,
 ) -> anyhow::Result<ClaimResult> {
     let mut tx = pool.begin().await?;
     let rows = sqlx::query(
@@ -359,7 +360,7 @@ pub async fn dispatch_on_transition_matches(
     .bind(action)
     .fetch_all(&mut *tx)
     .await?;
-    let result = fire_matched_jobs(&mut tx, rows, "on_transition", entity, action).await?;
+    let result = fire_matched_jobs(&mut tx, rows, "on_transition", entity, action, Some(record_id)).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -374,6 +375,7 @@ pub async fn dispatch_on_record_event_matches(
     tenant_id: Uuid,
     entity: &str,
     event: &str,
+    record_id: Uuid,
 ) -> anyhow::Result<ClaimResult> {
     let mut tx = pool.begin().await?;
     let rows = sqlx::query(
@@ -386,7 +388,7 @@ pub async fn dispatch_on_record_event_matches(
     .bind(event)
     .fetch_all(&mut *tx)
     .await?;
-    let result = fire_matched_jobs(&mut tx, rows, "on_record_event", entity, event).await?;
+    let result = fire_matched_jobs(&mut tx, rows, "on_record_event", entity, event, Some(record_id)).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -404,6 +406,7 @@ async fn fire_matched_jobs(
     trigger_kind: &'static str,
     entity: &str,
     detail: &str,
+    record_id: Option<Uuid>,
 ) -> anyhow::Result<ClaimResult> {
     let mut result = ClaimResult {
         claimed: rows.len(),
@@ -432,7 +435,7 @@ async fn fire_matched_jobs(
             .execute(&mut **tx)
             .await?;
 
-        dispatch_claimed(tx, &job, run_id, 1, &mut result).await?;
+        dispatch_claimed(tx, &job, run_id, 1, Some(entity), record_id, &mut result).await?;
 
         tracing::info!(
             job_id = %job.id, run_id = %run_id, name = job.name, entity, trigger_kind, detail,
@@ -478,7 +481,7 @@ pub async fn claim_due_retries(pool: &PgPool, now: DateTime<Utc>, batch_size: i6
         let job = job_from_row(row)?;
         let run_id: Uuid = row.try_get("run_id")?;
         let attempt: i32 = row.try_get("attempt")?;
-        dispatch_claimed(&mut tx, &job, run_id, attempt, &mut result).await?;
+        dispatch_claimed(&mut tx, &job, run_id, attempt, None, None, &mut result).await?;
         sqlx::query("UPDATE cron_job_runs SET started_at = now() WHERE id = $1")
             .bind(run_id)
             .execute(&mut *tx)
@@ -495,11 +498,19 @@ pub async fn claim_due_retries(pool: &PgPool, now: DateTime<Utc>, batch_size: i6
 /// an entry in `ClaimResult::direct_jobs` for the caller to run immediately
 /// (`DispatchMode::Direct`), so the three claim paths can never dispatch differently for the
 /// same `dispatch_mode`.
+/// `trigger_entity`/`trigger_record_id` are `None` for a `schedule` firing (`claim_due_jobs`) and
+/// for a retry (`claim_due_retries` — the original firing's trigger context isn't persisted
+/// anywhere `cron_job_runs` can rejoin later, so a retried email/webhook loses the "which record"
+/// reference its first attempt had; not fixed here, same scope the plan called for), and `Some`
+/// only for `fire_matched_jobs`'s `on_transition`/`on_record_event` callers, which have the
+/// triggering event's entity/`recordId` on hand.
 async fn dispatch_claimed(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     job: &CronJob,
     run_id: Uuid,
     attempt: i32,
+    trigger_entity: Option<&str>,
+    trigger_record_id: Option<Uuid>,
     result: &mut ClaimResult,
 ) -> anyhow::Result<()> {
     match DispatchMode::parse(&job.dispatch_mode) {
@@ -514,6 +525,8 @@ async fn dispatch_claimed(
                 max_attempts: job.max_attempts,
                 retry_backoff_seconds: job.retry_backoff_seconds,
                 dispatch_mode: job.dispatch_mode.clone(),
+                trigger_record_id,
+                trigger_entity: trigger_entity.map(str::to_string),
             });
         }
         // Unknown dispatch_mode (shouldn't happen — validated at write time) falls back to the
@@ -529,6 +542,8 @@ async fn dispatch_claimed(
                 max_attempts: job.max_attempts,
                 retry_backoff_seconds: job.retry_backoff_seconds,
                 dispatch_mode: job.dispatch_mode.clone(),
+                trigger_record_id,
+                trigger_entity: trigger_entity.map(str::to_string),
             };
             enqueue_outbox_event(
                 &mut **tx,

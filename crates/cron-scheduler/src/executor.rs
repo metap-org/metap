@@ -30,6 +30,19 @@ pub struct ExecutorConfig {
     /// fails at execution time (record/entity not found) rather than silently crossing
     /// tenants — see `docs/roadmap.md` Phase 13 for this constraint.
     pub service_jwt: String,
+    /// SMTP settings for `TargetType::Email` jobs (`run_email`) — `metap_infra::AppConfig`'s
+    /// `smtp_*` fields, carried in `ExecutorConfig` rather than read from env again here so
+    /// this stays testable/constructible without touching the environment.
+    pub smtp: SmtpConfig,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SmtpConfig {
+    pub host: Option<String>,
+    pub port: u16,
+    pub user: Option<String>,
+    pub password: Option<String>,
+    pub from: Option<String>,
 }
 
 /// Runs the consume-execute loop until `shutdown` resolves — a thin wrapper around
@@ -52,6 +65,11 @@ where
     run_resilient_consumer(
         QUEUE,
         ROUTING_KEY,
+        // No retry policy here — a failed job execution already has its own DB-scheduled
+        // backoff (`ExecutorConfig`'s `max_attempts`/`retry_backoff_seconds`,
+        // `metap_cron::finish_run_with_retry`/`claim_due_retries`), so a *second*,
+        // message-level retry on top of it isn't needed for this consumer.
+        None,
         connect,
         |event| async move {
             match serde_json::from_value::<CronJobDuePayload>(event.payload.clone()) {
@@ -106,6 +124,7 @@ async fn dispatch(
         TargetType::WorkflowTransition => run_workflow_transition(http, config, &payload.target_config).await,
         TargetType::BulkQueryAction => run_bulk_query_action(http, config, &payload.target_config).await,
         TargetType::Webhook => run_webhook(http, payload).await,
+        TargetType::Email => run_email(&config.smtp, payload).await,
     }
 }
 
@@ -249,6 +268,87 @@ async fn run_webhook(http: &reqwest::Client, payload: &CronJobDuePayload) -> any
         anyhow::bail!("webhook returned {status}: {}", truncate(&text, 500));
     }
     Ok(json!({ "status": status.as_u16(), "body": truncate(&text, 2000) }))
+}
+
+#[derive(Deserialize)]
+struct EmailConfig {
+    to: EmailRecipients,
+    subject: String,
+    body: String,
+}
+
+/// `target_config.to` accepts either a single address or a list — same "string or array of
+/// strings" convenience `WebhookConfig.headers`-adjacent shapes elsewhere in this codebase
+/// don't need, but a mailing recipient list benefits from.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum EmailRecipients {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl EmailRecipients {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            EmailRecipients::One(addr) => vec![addr],
+            EmailRecipients::Many(addrs) => addrs,
+        }
+    }
+}
+
+async fn run_email(smtp: &SmtpConfig, payload: &CronJobDuePayload) -> anyhow::Result<Value> {
+    let cfg: EmailConfig = serde_json::from_value(payload.target_config.clone())?;
+    let host = smtp
+        .host
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("email target requires SMTP_HOST to be configured"))?;
+    let from = smtp
+        .from
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("email target requires SMTP_FROM to be configured"))?;
+
+    let recipients = cfg.to.into_vec();
+    if recipients.is_empty() {
+        anyhow::bail!("email target_config.to must not be empty");
+    }
+
+    // Auto-append which record actually caused this firing, same intent as `run_webhook`
+    // injecting `jobId`/`runId` into its body — `trigger_record_id`/`trigger_entity` are only
+    // `Some` for an `on_transition`/`on_record_event`-triggered job (see `CronJobDuePayload`'s
+    // doc comment), so a plain `schedule` job's email is left as the admin wrote it.
+    let mut body = cfg.body;
+    if let Some(entity) = &payload.trigger_entity {
+        body.push_str(&format!("\n\n---\nTriggered by: {entity}"));
+        if let Some(record_id) = payload.trigger_record_id {
+            body.push_str(&format!(" (record {record_id})"));
+        }
+    }
+
+    let mut message_builder = lettre::Message::builder().from(from.parse()?).subject(&cfg.subject);
+    for addr in &recipients {
+        message_builder = message_builder.to(addr.parse()?);
+    }
+    let message = message_builder.body(body)?;
+
+    let transport = match (&smtp.user, &smtp.password) {
+        (Some(user), Some(password)) => lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::relay(host)?
+            .port(smtp.port)
+            .credentials(lettre::transport::smtp::authentication::Credentials::new(
+                user.clone(),
+                password.clone(),
+            ))
+            .build(),
+        // No credentials — local dev against Mailhog (`docker-compose.yml`'s opt-in `mailhog`
+        // service), which speaks plain SMTP with no STARTTLS/auth. `relay()` always requires
+        // TLS, so a no-auth target uses the plaintext builder instead.
+        _ => lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::builder_dangerous(host)
+            .port(smtp.port)
+            .build(),
+    };
+
+    lettre::AsyncTransport::send(&transport, message).await?;
+
+    Ok(json!({ "to": recipients, "subject": cfg.subject }))
 }
 
 fn truncate(s: &str, max: usize) -> String {

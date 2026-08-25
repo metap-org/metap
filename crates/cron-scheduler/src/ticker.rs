@@ -102,6 +102,8 @@ async fn run_direct_jobs(
             max_attempts: direct_job.max_attempts,
             retry_backoff_seconds: direct_job.retry_backoff_seconds,
             dispatch_mode: direct_job.dispatch_mode,
+            trigger_record_id: direct_job.trigger_record_id,
+            trigger_entity: direct_job.trigger_entity,
         };
         execute(pool, http, executor_config, &payload).await;
     }

@@ -11,8 +11,9 @@
 //! loop shape.
 
 use std::future::Future;
+use std::time::Duration;
 
-use metap_infra::{run_resilient_consumer, ConsumedEvent, EventBus};
+use metap_infra::{run_resilient_consumer, ConsumedEvent, EventBus, RetryPolicy};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -20,6 +21,21 @@ use crate::executor::{execute, ExecutorConfig};
 
 pub const QUEUE: &str = "cron.workflow-trigger";
 pub const ROUTING_KEY: &str = "#";
+
+/// A trigger-match attempt failing is (almost always) a transient DB error, not a permanent
+/// one — worth a few backed-off retries before giving up, unlike a malformed payload (never
+/// worth retrying, see `reject_malformed`). 5s/30s/2m: enough spacing that a brief DB hiccup
+/// clears well within the first tier, capped low enough that a genuinely broken DB doesn't sit
+/// retrying for hours before landing in the dead-letter queue.
+fn retry_policy() -> RetryPolicy {
+    RetryPolicy {
+        delays: vec![
+            Duration::from_secs(5),
+            Duration::from_secs(30),
+            Duration::from_secs(120),
+        ],
+    }
+}
 
 /// What kind of trigger-worthy event a routing key names — `None` for anything else (not an
 /// error, just not this listener's concern).
@@ -62,42 +78,68 @@ where
     F: Fn() -> Fut,
     Fut: Future<Output = anyhow::Result<B>>,
 {
+    let policy = retry_policy();
     run_resilient_consumer(
         QUEUE,
         ROUTING_KEY,
+        Some(&policy),
         connect,
-        |event| async move {
-            match classify_topic(&event.routing_key) {
-                Some(Topic::Transitioned { entity }) => {
-                    let entity = entity.to_string();
-                    match parse_tenant_id(&event) {
-                        Some(tenant_id) => {
-                            let action = event.payload.get("action").and_then(|v| v.as_str());
-                            match action {
-                                Some(action) => {
-                                    dispatch_transition(pool, http, executor_config, &event, tenant_id, &entity, action)
+        |event| {
+            let policy = policy.clone();
+            async move {
+                match classify_topic(&event.routing_key) {
+                    Some(Topic::Transitioned { entity }) => {
+                        let entity = entity.to_string();
+                        match (parse_tenant_id(&event), parse_record_id(&event)) {
+                            (Some(tenant_id), Some(record_id)) => {
+                                let action = event.payload.get("action").and_then(|v| v.as_str());
+                                match action {
+                                    Some(action) => {
+                                        dispatch_transition(
+                                            pool,
+                                            http,
+                                            executor_config,
+                                            &policy,
+                                            &event,
+                                            tenant_id,
+                                            &entity,
+                                            action,
+                                            record_id,
+                                        )
                                         .await
+                                    }
+                                    None => reject_malformed(&event, "missing/invalid `action`").await,
                                 }
-                                None => reject_malformed(&event, "missing/invalid `action`").await,
                             }
+                            _ => reject_malformed(&event, "missing/invalid `tenantId`/`recordId`").await,
                         }
-                        None => reject_malformed(&event, "missing/invalid `tenantId`").await,
                     }
-                }
-                Some(Topic::RecordEvent { entity, event: kind }) => {
-                    let entity = entity.to_string();
-                    match parse_tenant_id(&event) {
-                        Some(tenant_id) => {
-                            dispatch_record_event(pool, http, executor_config, &event, tenant_id, &entity, kind).await
+                    Some(Topic::RecordEvent { entity, event: kind }) => {
+                        let entity = entity.to_string();
+                        match (parse_tenant_id(&event), parse_record_id(&event)) {
+                            (Some(tenant_id), Some(record_id)) => {
+                                dispatch_record_event(
+                                    pool,
+                                    http,
+                                    executor_config,
+                                    &policy,
+                                    &event,
+                                    tenant_id,
+                                    &entity,
+                                    kind,
+                                    record_id,
+                                )
+                                .await
+                            }
+                            _ => reject_malformed(&event, "missing/invalid `tenantId`/`recordId`").await,
                         }
-                        None => reject_malformed(&event, "missing/invalid `tenantId`").await,
                     }
-                }
-                // Not a topic this listener cares about (e.g. `cron.job.due`, meant for the
-                // executor's own queue) — acking is correct here, not a fallback: under a
-                // catch-all subscription, receiving other topics is the expected case.
-                None => {
-                    event.ack().await.ok();
+                    // Not a topic this listener cares about (e.g. `cron.job.due`, meant for the
+                    // executor's own queue) — acking is correct here, not a fallback: under a
+                    // catch-all subscription, receiving other topics is the expected case.
+                    None => {
+                        event.ack().await.ok();
+                    }
                 }
             }
         },
@@ -123,20 +165,33 @@ fn parse_tenant_id(event: &ConsumedEvent) -> Option<Uuid> {
     Uuid::parse_str(tenant_id).ok()
 }
 
+/// `recordId` is likewise present on every trigger-worthy payload
+/// (`metap_workflow::emit_transitioned`/`emit_created`/`emit_updated`/`emit_deleted` all include
+/// it) — threaded through to `CronJobDuePayload::trigger_record_id` so a target (`run_email`/
+/// `run_webhook`) can reference which record actually caused the firing.
+fn parse_record_id(event: &ConsumedEvent) -> Option<Uuid> {
+    let record_id = event.payload.get("recordId")?.as_str()?;
+    Uuid::parse_str(record_id).ok()
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_transition(
     pool: &PgPool,
     http: &reqwest::Client,
     executor_config: &ExecutorConfig,
+    policy: &RetryPolicy,
     event: &ConsumedEvent,
     tenant_id: Uuid,
     entity: &str,
     action: &str,
+    record_id: Uuid,
 ) {
-    let result = metap_cron::dispatch_on_transition_matches(pool, tenant_id, entity, action).await;
+    let result = metap_cron::dispatch_on_transition_matches(pool, tenant_id, entity, action, record_id).await;
     finish_dispatch(
         pool,
         http,
         executor_config,
+        policy,
         event,
         result,
         "on_transition",
@@ -147,20 +202,24 @@ async fn dispatch_transition(
     .await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_record_event(
     pool: &PgPool,
     http: &reqwest::Client,
     executor_config: &ExecutorConfig,
+    policy: &RetryPolicy,
     event: &ConsumedEvent,
     tenant_id: Uuid,
     entity: &str,
     record_event: &str,
+    record_id: Uuid,
 ) {
-    let result = metap_cron::dispatch_on_record_event_matches(pool, tenant_id, entity, record_event).await;
+    let result = metap_cron::dispatch_on_record_event_matches(pool, tenant_id, entity, record_event, record_id).await;
     finish_dispatch(
         pool,
         http,
         executor_config,
+        policy,
         event,
         result,
         "on_record_event",
@@ -179,6 +238,7 @@ async fn finish_dispatch(
     pool: &PgPool,
     http: &reqwest::Client,
     executor_config: &ExecutorConfig,
+    policy: &RetryPolicy,
     event: &ConsumedEvent,
     result: anyhow::Result<metap_cron::ClaimResult>,
     trigger_kind: &str,
@@ -199,6 +259,8 @@ async fn finish_dispatch(
                     max_attempts: direct_job.max_attempts,
                     retry_backoff_seconds: direct_job.retry_backoff_seconds,
                     dispatch_mode: direct_job.dispatch_mode,
+                    trigger_record_id: direct_job.trigger_record_id,
+                    trigger_entity: direct_job.trigger_entity,
                 };
                 execute(pool, http, executor_config, &payload).await;
             }
@@ -206,15 +268,16 @@ async fn finish_dispatch(
         }
         Err(err) => {
             // Failed before any cron_job_runs row could be written for this firing (e.g. a
-            // transient DB error) — nothing tracks a retry for it the way
-            // `finish_run_with_retry` tracks an execution failure, so dead-letter it instead of
-            // silently dropping the trigger evaluation (ack) or hot-looping redelivery against a
-            // possibly still-struggling DB (nack requeue:true).
-            tracing::error!(
+            // transient DB error) — retry with backoff (`retry_policy`) instead of the old
+            // behavior of dead-lettering on the very first failure: a brief DB hiccup used to
+            // permanently lose that trigger evaluation, now it gets a few backed-off chances to
+            // clear before giving up.
+            tracing::warn!(
                 tenant_id = %tenant_id, entity, trigger_kind, detail, error = %err,
-                "failed to dispatch trigger matches, routed to dead-letter queue"
+                retry_count = event.retry_count(),
+                "failed to dispatch trigger matches, retrying with backoff"
             );
-            event.nack(false).await.ok();
+            event.retry_or_give_up(policy).await.ok();
         }
     }
 }

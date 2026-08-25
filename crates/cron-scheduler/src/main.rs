@@ -1,7 +1,7 @@
 use std::env;
 use std::time::Duration;
 
-use cron_scheduler::{run_executor, run_ticker, run_trigger_listener, ExecutorConfig, TickerConfig};
+use cron_scheduler::{run_executor, run_ticker, run_trigger_listener, ExecutorConfig, SmtpConfig, TickerConfig};
 use metap_infra::{connect_db, load_config, RabbitEventBus};
 
 #[tokio::main]
@@ -38,6 +38,13 @@ async fn main() -> anyhow::Result<()> {
     let executor_config = ExecutorConfig {
         target_base_url,
         service_jwt,
+        smtp: SmtpConfig {
+            host: config.smtp_host.clone(),
+            port: config.smtp_port,
+            user: config.smtp_user.clone(),
+            password: config.smtp_password.clone(),
+            from: config.smtp_from.clone(),
+        },
     };
     let ticker_config = TickerConfig {
         interval: Duration::from_millis(tick_ms),

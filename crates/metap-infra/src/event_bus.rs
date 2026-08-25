@@ -10,6 +10,8 @@
 //! `lapin`-specific delivery/ack machinery behind the same backend-agnostic shape `publish`
 //! already uses, so a future non-Rabbit `EventBus` impl doesn't leak here either.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use futures_util::stream::BoxStream;
 use futures_util::StreamExt;
@@ -23,6 +25,16 @@ use lapin::{BasicProperties, Connection, ConnectionProperties, ExchangeKind};
 
 const EXCHANGE: &str = "metap.events";
 
+/// A per-message retry-with-backoff schedule for `ConsumedEvent::retry_or_give_up` — distinct
+/// from `run_resilient_consumer`'s `backoff_delay` (that one backs off *reconnecting the whole
+/// consumer* after a connection loss; this one backs off *redelivering one specific message*
+/// after its handler failed transiently). `delays[i]` is how long the message waits before its
+/// `i+1`-th redelivery; once every delay is exhausted the message is given up on (final DLQ).
+#[derive(Debug, Clone)]
+pub struct RetryPolicy {
+    pub delays: Vec<Duration>,
+}
+
 /// A message received from `EventBus::subscribe`, already parsed as JSON. Must be acked (or
 /// nacked) exactly once — the underlying queue is durable, so an unacked delivery is
 /// redelivered on reconnect rather than lost.
@@ -30,6 +42,13 @@ pub struct ConsumedEvent {
     pub routing_key: String,
     pub payload: serde_json::Value,
     delivery: Delivery,
+    /// Only populated (and only needed) when the caller wants `retry_or_give_up` — a clone of
+    /// the subscribing channel (cheap: `lapin::Channel` is an `Arc`-backed handle) and the
+    /// origin queue's name, so a retry can be published directly to `<queue>.retry.<n>` without
+    /// the caller needing to hold onto the `EventBus`/bus instance itself (`run_resilient_consumer`'s
+    /// handler closures only ever see the `ConsumedEvent`, never the bus).
+    retry_channel: lapin::Channel,
+    queue: String,
 }
 
 impl ConsumedEvent {
@@ -49,6 +68,57 @@ impl ConsumedEvent {
             .await?;
         Ok(())
     }
+
+    /// How many times this exact message has already gone through a retry tier — read straight
+    /// from the AMQP `x-death` header RabbitMQ itself maintains (one entry per distinct queue a
+    /// message has been dead-lettered from; each retry tier is a distinct queue name, so the
+    /// array's length is exactly the retry count) rather than a custom header, so this stays
+    /// correct even across a process restart mid-retry.
+    pub fn retry_count(&self) -> u32 {
+        let Some(headers) = self.delivery.properties.headers() else {
+            return 0;
+        };
+        let Some(AMQPValue::FieldArray(deaths)) = headers.inner().get("x-death") else {
+            return 0;
+        };
+        deaths.as_slice().len() as u32
+    }
+
+    /// Retries this message with backoff per `policy`, or gives up (final DLQ) once every delay
+    /// in it is exhausted — the bounded, backed-off alternative to calling `nack(requeue: true)`
+    /// (immediate, unbounded redelivery) or `nack(requeue: false)` (give up on the first
+    /// failure) directly. Always resolves the original delivery one way or the other (ack after
+    /// re-publishing to a retry tier, or `nack(false)` once exhausted) — never leaves it
+    /// unacked. Requires `subscribe`'s `retry_policy` to have declared the same tiers `policy`
+    /// describes (`RabbitEventBus::subscribe` does this when given `Some(policy)`); retrying
+    /// against undeclared tiers would fail the publish.
+    pub async fn retry_or_give_up(&self, policy: &RetryPolicy) -> anyhow::Result<()> {
+        let attempt = self.retry_count() as usize;
+        if attempt >= policy.delays.len() {
+            tracing::warn!(
+                queue = self.queue,
+                attempt,
+                "retry attempts exhausted, routed to dead-letter queue"
+            );
+            return self.nack(false).await;
+        }
+
+        let retry_queue = format!("{}.retry.{}", self.queue, attempt + 1);
+        let payload_bytes = serde_json::to_vec(&self.payload)?;
+        // Forward whatever headers this delivery already carries (including any `x-death`
+        // entries from earlier retry hops) — RabbitMQ's own TTL-triggered dead-letter on the
+        // tier queue appends the *next* `x-death` entry on top of these when it routes the
+        // message back to the main queue, which is what keeps `retry_count()` accurate across
+        // more than one hop.
+        let mut props = BasicProperties::default().with_delivery_mode(2);
+        if let Some(headers) = self.delivery.properties.headers() {
+            props = props.with_headers(headers.clone());
+        }
+        self.retry_channel
+            .basic_publish("", &retry_queue, BasicPublishOptions::default(), &payload_bytes, props)
+            .await?;
+        self.ack().await
+    }
 }
 
 #[async_trait]
@@ -66,10 +136,18 @@ pub trait EventBus: Send + Sync {
     /// a message nacked with `requeue: false` — including one this method drops itself because
     /// it isn't valid JSON — lands there instead of vanishing. `nack(requeue: true)` redelivers
     /// immediately with no backoff and no retry cap; it's meant for a transient failure a
-    /// caller expects to clear quickly, not as a general retry mechanism — a caller that needs
-    /// bounded retries-with-backoff should track its own attempt count (e.g. in the DLQ message
-    /// itself, or a side table) rather than relying on this call alone.
-    async fn subscribe(&self, queue: &str, routing_key: &str) -> anyhow::Result<BoxStream<'static, ConsumedEvent>>;
+    /// caller expects to clear quickly, not as a general retry mechanism.
+    ///
+    /// `retry_policy`, when `Some`, additionally declares one queue per `RetryPolicy::delays`
+    /// entry (`<queue>.retry.1`, `<queue>.retry.2`, ...) so `ConsumedEvent::retry_or_give_up`
+    /// has somewhere to publish a backed-off redelivery — `None` (every caller before this
+    /// parameter existed) skips that, unchanged behavior.
+    async fn subscribe(
+        &self,
+        queue: &str,
+        routing_key: &str,
+        retry_policy: Option<&RetryPolicy>,
+    ) -> anyhow::Result<BoxStream<'static, ConsumedEvent>>;
 
     async fn close(&self) -> anyhow::Result<()>;
 }
@@ -111,6 +189,7 @@ async fn sleep_or_shutdown(
 pub async fn run_resilient_consumer<B, F, Fut, H, HFut>(
     queue: &str,
     routing_key: &str,
+    retry_policy: Option<&RetryPolicy>,
     connect: F,
     mut handle: H,
     shutdown: impl std::future::Future<Output = ()>,
@@ -138,7 +217,7 @@ where
             }
         };
 
-        let mut events = match bus.subscribe(queue, routing_key).await {
+        let mut events = match bus.subscribe(queue, routing_key, retry_policy).await {
             Ok(events) => events,
             Err(err) => {
                 tracing::warn!(error = %err, attempt, queue, "failed to subscribe, reconnecting");
@@ -224,7 +303,12 @@ impl EventBus for RabbitEventBus {
         Ok(())
     }
 
-    async fn subscribe(&self, queue: &str, routing_key: &str) -> anyhow::Result<BoxStream<'static, ConsumedEvent>> {
+    async fn subscribe(
+        &self,
+        queue: &str,
+        routing_key: &str,
+        retry_policy: Option<&RetryPolicy>,
+    ) -> anyhow::Result<BoxStream<'static, ConsumedEvent>> {
         // A dedicated channel per subscription — consuming holds a channel open for the
         // stream's whole lifetime, and sharing `self.channel` with `publish` would mean a
         // slow/blocked consumer could stall publishes on the same connection.
@@ -272,6 +356,36 @@ impl EventBus for RabbitEventBus {
             )
             .await?;
 
+        // Retry tiers (`<queue>.retry.1`, `<queue>.retry.2`, ...) — one per `RetryPolicy::delays`
+        // entry, only declared when the caller actually wants retry-with-backoff.  No consumer
+        // ever attaches to these: a message published here (`ConsumedEvent::retry_or_give_up`)
+        // just sits until its `x-message-ttl` expires, at which point RabbitMQ itself
+        // dead-letters it back onto `queue` — the classic TTL+DLX "delay queue" pattern, no
+        // delayed-message-exchange plugin required (this project's `rabbitmq:3.13-management-alpine`
+        // image doesn't ship one).
+        if let Some(policy) = retry_policy {
+            for (i, delay) in policy.delays.iter().enumerate() {
+                let tier_queue = format!("{queue}.retry.{}", i + 1);
+                let mut tier_args = FieldTable::default();
+                tier_args.insert(
+                    "x-message-ttl".into(),
+                    AMQPValue::LongInt(delay.as_millis().min(i32::MAX as u128) as i32),
+                );
+                tier_args.insert("x-dead-letter-exchange".into(), AMQPValue::LongString("".into()));
+                tier_args.insert("x-dead-letter-routing-key".into(), AMQPValue::LongString(queue.into()));
+                channel
+                    .queue_declare(
+                        &tier_queue,
+                        QueueDeclareOptions {
+                            durable: true,
+                            ..Default::default()
+                        },
+                        tier_args,
+                    )
+                    .await?;
+            }
+        }
+
         // Bounds how many unacked deliveries the broker will push ahead of the consumer —
         // without this the broker has no backpressure signal and will flood an unbounded
         // number of in-flight (unacked) messages to the client.
@@ -289,10 +403,13 @@ impl EventBus for RabbitEventBus {
         tracing::info!(%queue, %routing_key, "subscribed");
 
         // Owned + `Arc`'d so the filter_map closure below can be `'static` without borrowing
-        // from this function's stack frame.
+        // from this function's stack frame. `channel.clone()` is cheap (an `Arc`-backed handle,
+        // same channel `retry_or_give_up` publishes retries on).
         let queue_name: std::sync::Arc<str> = std::sync::Arc::from(queue);
+        let retry_channel = channel.clone();
         let events = consumer.filter_map(move |delivery| {
             let queue_name = queue_name.clone();
+            let retry_channel = retry_channel.clone();
             async move {
                 match delivery {
                     Ok(delivery) => match serde_json::from_slice(&delivery.data) {
@@ -300,6 +417,8 @@ impl EventBus for RabbitEventBus {
                             routing_key: delivery.routing_key.to_string(),
                             payload,
                             delivery,
+                            retry_channel,
+                            queue: queue_name.to_string(),
                         }),
                         Err(err) => {
                             tracing::warn!(

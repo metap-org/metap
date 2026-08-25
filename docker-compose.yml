@@ -87,6 +87,17 @@ services:
     ports:
       - "8200:8200"
 
+  # Opt-in (docs/roadmap.md Phase 39) — dev SMTP server for `metap-cron`'s `TargetType::Email`
+  # target (`cron-scheduler`'s `run_email`). NOT part of the default `docker compose up -d
+  # postgres rabbitmq` dev stack. Catches every email sent to it — no real provider account, no
+  # real delivery — viewable at its web UI (`http://localhost:8025`) or `GET :8025/api/v2/messages`,
+  # same "test locally, swap credentials for real later" posture as `dragonfly`/`vault` above.
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # web UI / HTTP API
+
   # Opt-in, `observability` profile only (`docs/local-benchmarking.md`) — resource metrics for
   # a benchmarking session, never part of the default `docker compose up -d postgres rabbitmq`
   # dev stack. `docker compose --profile observability up -d`. Never for anything but local
