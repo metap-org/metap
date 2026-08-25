@@ -568,7 +568,7 @@ impl CrudService {
             row_to_dto(row)?
         };
 
-        emit_created(&mut *tx, &entity, record.id, &data).await?;
+        emit_created(&mut *tx, &entity, tenant_id, record.id, &data).await?;
         tx.commit().await?;
         tracing::info!(entity = entity.name, record_id = %record.id, "record created");
 
@@ -719,7 +719,7 @@ impl CrudService {
             row_to_dto(row)?
         };
 
-        emit_updated(&mut *tx, &entity, record.id, &data, record.version).await?;
+        emit_updated(&mut *tx, &entity, tenant_id, record.id, &data, record.version).await?;
         tx.commit().await?;
         tracing::info!(entity = entity.name, record_id = %record.id, version = record.version, "record updated");
 
@@ -1018,7 +1018,7 @@ impl CrudService {
             row_to_dto(row)?
         };
 
-        emit_deleted(&mut *tx, &entity, record.id).await?;
+        emit_deleted(&mut *tx, &entity, tenant_id, record.id).await?;
         tx.commit().await?;
         tracing::info!(entity = entity.name, record_id = %record.id, "record deleted");
 

@@ -7,10 +7,10 @@
 //! external URL instead.
 
 use std::collections::HashMap;
+use std::future::Future;
 
-use futures_util::StreamExt;
 use metap_cron::{CronJobDuePayload, RunStatus, TargetType, ROUTING_KEY};
-use metap_infra::EventBus;
+use metap_infra::{run_resilient_consumer, EventBus};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -32,43 +32,42 @@ pub struct ExecutorConfig {
     pub service_jwt: String,
 }
 
-/// Runs the consume-execute loop until `shutdown` resolves. Mirrors
-/// `notification_worker::run`'s shape (subscribe, `tokio::select!` with a biased shutdown
-/// branch, propagate an error on unexpected stream close so a process manager can restart).
-pub async fn run_executor(
-    bus: &impl EventBus,
+/// Runs the consume-execute loop until `shutdown` resolves — a thin wrapper around
+/// `metap_infra::run_resilient_consumer` (reconnects with backoff on any connection loss,
+/// instead of requiring a full process restart the way this function used to) supplying the
+/// executor-specific handler (parse `cron.job.due`, run it, ack — or nack a malformed payload
+/// to the dead-letter queue).
+pub async fn run_executor<B, F, Fut>(
+    connect: F,
     pool: &PgPool,
     http: &reqwest::Client,
     config: &ExecutorConfig,
-    shutdown: impl std::future::Future<Output = ()>,
-) -> anyhow::Result<()> {
-    let mut events = bus.subscribe(QUEUE, ROUTING_KEY).await?;
-    let mut shutdown = std::pin::pin!(shutdown);
-
-    loop {
-        tokio::select! {
-            biased;
-            _ = &mut shutdown => {
-                tracing::info!("shutdown signal received, exiting executor");
-                return Ok(());
-            }
-            event = events.next() => {
-                let Some(event) = event else {
-                    anyhow::bail!("event stream closed unexpectedly (bus disconnected?)");
-                };
-                match serde_json::from_value::<CronJobDuePayload>(event.payload.clone()) {
-                    Ok(payload) => {
-                        execute(pool, http, config, &payload).await;
-                        event.ack().await.ok();
-                    }
-                    Err(err) => {
-                        tracing::warn!(error = %err, "malformed cron.job.due payload, routed to dead-letter queue");
-                        event.nack(false).await.ok();
-                    }
+    shutdown: impl Future<Output = ()>,
+) -> anyhow::Result<()>
+where
+    B: EventBus,
+    F: Fn() -> Fut,
+    Fut: Future<Output = anyhow::Result<B>>,
+{
+    run_resilient_consumer(
+        QUEUE,
+        ROUTING_KEY,
+        connect,
+        |event| async move {
+            match serde_json::from_value::<CronJobDuePayload>(event.payload.clone()) {
+                Ok(payload) => {
+                    execute(pool, http, config, &payload).await;
+                    event.ack().await.ok();
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "malformed cron.job.due payload, routed to dead-letter queue");
+                    event.nack(false).await.ok();
                 }
             }
-        }
-    }
+        },
+        shutdown,
+    )
+    .await
 }
 
 /// Runs one job to completion and records its result — shared by the outbox-consuming loop

@@ -85,7 +85,7 @@ async fn emit_transitioned_and_emit_created_enqueue_outbox_rows_with_correct_top
 
     let mut data = JsonObject::new();
     data.insert("name".to_string(), json!("Acme"));
-    emit_created(&pool, &entity, record_id, &data)
+    emit_created(&pool, &entity, tenant_id, record_id, &data)
         .await
         .expect("emit_created");
 
@@ -104,6 +104,7 @@ async fn emit_transitioned_and_emit_created_enqueue_outbox_rows_with_correct_top
     assert_eq!(transitioned_payload["tenantId"], tenant_id.to_string());
     let created_payload: serde_json::Value = rows[1].get("payload");
     assert_eq!(created_payload["data"]["name"], "Acme");
+    assert_eq!(created_payload["tenantId"], tenant_id.to_string());
 
     sqlx::query("DELETE FROM outbox_events WHERE aggregate_id = $1")
         .bind(record_id)

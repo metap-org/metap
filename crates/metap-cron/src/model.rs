@@ -94,6 +94,12 @@ pub enum TriggerType {
     #[default]
     Schedule,
     OnTransition,
+    /// `docs/roadmap/38-generic-record-event-triggers.md` — fires on a plain
+    /// `<entity>.record.{created,updated,deleted}` event instead of a workflow transition. Kept
+    /// as its own trigger type rather than folding into `OnTransition` — `<entity>.record.*`
+    /// events carry no `action`, so `OnTransitionTriggerConfig`'s shape doesn't fit, and
+    /// existing `on_transition` rows must keep matching exactly as before.
+    OnRecordEvent,
 }
 
 impl TriggerType {
@@ -101,6 +107,7 @@ impl TriggerType {
         match self {
             TriggerType::Schedule => "schedule",
             TriggerType::OnTransition => "on_transition",
+            TriggerType::OnRecordEvent => "on_record_event",
         }
     }
 
@@ -108,6 +115,7 @@ impl TriggerType {
         match s {
             "schedule" => Some(TriggerType::Schedule),
             "on_transition" => Some(TriggerType::OnTransition),
+            "on_record_event" => Some(TriggerType::OnRecordEvent),
             _ => None,
         }
     }
@@ -121,6 +129,19 @@ impl TriggerType {
 pub struct OnTransitionTriggerConfig {
     pub entity: String,
     pub action: String,
+}
+
+/// `trigger_config` shape when `trigger_type = on_record_event` — matched against the entity
+/// name and event kind (`"created"`/`"updated"`/`"deleted"`) derived from a
+/// `<entity>.record.{created,updated,deleted}` routing key. Exact match only, same posture as
+/// `OnTransitionTriggerConfig`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnRecordEventTriggerConfig {
+    pub entity: String,
+    /// `"created"` | `"updated"` | `"deleted"` — not its own enum here since the only place
+    /// that needs to interpret it is the routing-key classifier in `cron-scheduler::trigger`,
+    /// which already works in plain `&str`s (matching a routing key suffix).
+    pub event: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

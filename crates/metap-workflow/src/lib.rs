@@ -152,9 +152,15 @@ pub async fn emit_transitioned<'c, E: PgExecutor<'c>>(
     enqueue_outbox_event(executor, &event).await
 }
 
+/// `tenant_id` in the payload (added alongside `emit_transitioned`'s existing `tenantId` field,
+/// 2026-08-25) — needed for `metap-cron`'s `on_record_event` trigger
+/// (`docs/roadmap/38-generic-record-event-triggers.md`) to scope its `cron_jobs` lookup by
+/// tenant; without it a record-event consumer would have no tenant-safe way to know which
+/// tenant's jobs to match.
 pub async fn emit_created<'c, E: PgExecutor<'c>>(
     executor: E,
     entity: &EntityDefinition,
+    tenant_id: Uuid,
     record_id: Uuid,
     data: &JsonObject,
 ) -> anyhow::Result<()> {
@@ -162,7 +168,7 @@ pub async fn emit_created<'c, E: PgExecutor<'c>>(
         topic: format!("{}.record.created", entity.name),
         aggregate_type: entity.name.clone(),
         aggregate_id: record_id,
-        payload: json!({ "recordId": record_id, "data": data }),
+        payload: json!({ "tenantId": tenant_id, "recordId": record_id, "data": data }),
     };
     enqueue_outbox_event(executor, &event).await
 }
@@ -170,13 +176,14 @@ pub async fn emit_created<'c, E: PgExecutor<'c>>(
 pub async fn emit_deleted<'c, E: PgExecutor<'c>>(
     executor: E,
     entity: &EntityDefinition,
+    tenant_id: Uuid,
     record_id: Uuid,
 ) -> anyhow::Result<()> {
     let event = OutboxEvent {
         topic: format!("{}.record.deleted", entity.name),
         aggregate_type: entity.name.clone(),
         aggregate_id: record_id,
-        payload: json!({ "recordId": record_id }),
+        payload: json!({ "tenantId": tenant_id, "recordId": record_id }),
     };
     enqueue_outbox_event(executor, &event).await
 }
@@ -184,6 +191,7 @@ pub async fn emit_deleted<'c, E: PgExecutor<'c>>(
 pub async fn emit_updated<'c, E: PgExecutor<'c>>(
     executor: E,
     entity: &EntityDefinition,
+    tenant_id: Uuid,
     record_id: Uuid,
     data: &JsonObject,
     version: i32,
@@ -192,7 +200,7 @@ pub async fn emit_updated<'c, E: PgExecutor<'c>>(
         topic: format!("{}.record.updated", entity.name),
         aggregate_type: entity.name.clone(),
         aggregate_id: record_id,
-        payload: json!({ "recordId": record_id, "data": data, "version": version }),
+        payload: json!({ "tenantId": tenant_id, "recordId": record_id, "data": data, "version": version }),
     };
     enqueue_outbox_event(executor, &event).await
 }

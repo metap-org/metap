@@ -2,7 +2,7 @@ use std::env;
 use std::time::Duration;
 
 use cron_scheduler::{run_executor, run_ticker, run_trigger_listener, ExecutorConfig, TickerConfig};
-use metap_infra::{connect_db, load_config, EventBus, RabbitEventBus};
+use metap_infra::{connect_db, load_config, RabbitEventBus};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -33,9 +33,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("connecting to postgres...");
     let pool = connect_db(config.outbox_database_url()).await?;
 
-    tracing::info!("connecting to rabbitmq...");
-    let bus = RabbitEventBus::connect(&config.rabbitmq_url).await?;
-
+    let rabbitmq_url = config.rabbitmq_url.clone();
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
     let executor_config = ExecutorConfig {
         target_base_url,
@@ -53,12 +51,26 @@ async fn main() -> anyhow::Result<()> {
         "ready, ticking and listening"
     );
 
+    let executor_connect = {
+        let url = rabbitmq_url.clone();
+        move || {
+            let url = url.clone();
+            async move { RabbitEventBus::connect(&url).await }
+        }
+    };
+    let trigger_connect = {
+        let url = rabbitmq_url.clone();
+        move || {
+            let url = url.clone();
+            async move { RabbitEventBus::connect(&url).await }
+        }
+    };
+
     let ticker = run_ticker(&pool, &http, &executor_config, ticker_config, shutdown_signal());
-    let executor = run_executor(&bus, &pool, &http, &executor_config, shutdown_signal());
-    let trigger = run_trigger_listener(&bus, &pool, &http, &executor_config, shutdown_signal());
+    let executor = run_executor(executor_connect, &pool, &http, &executor_config, shutdown_signal());
+    let trigger = run_trigger_listener(trigger_connect, &pool, &http, &executor_config, shutdown_signal());
     let result = tokio::try_join!(ticker, executor, trigger);
 
-    bus.close().await.ok();
     pool.close().await;
 
     result?;

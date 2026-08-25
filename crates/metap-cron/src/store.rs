@@ -339,9 +339,9 @@ pub async fn claim_due_jobs(pool: &PgPool, now: DateTime<Utc>, batch_size: i64) 
 
 /// Fires every enabled `trigger_type = "on_transition"` job whose `trigger_config` matches
 /// `(tenant_id, entity, action)` — the `on_transition` counterpart to `claim_due_jobs`'s
-/// schedule-based firing, called by `cron-scheduler`'s `#.workflow.transitioned` consumer
-/// instead of the ticker. Same per-firing shape (a `cron_job_runs` row + outbox event or
-/// direct-dispatch entry) so both trigger kinds share one execution/retry path downstream.
+/// schedule-based firing, called by `cron-scheduler`'s trigger-listener consumer instead of the
+/// ticker. Same per-firing shape (a `cron_job_runs` row + outbox event or direct-dispatch entry)
+/// so both trigger kinds share one execution/retry path downstream.
 pub async fn dispatch_on_transition_matches(
     pool: &PgPool,
     tenant_id: Uuid,
@@ -349,7 +349,6 @@ pub async fn dispatch_on_transition_matches(
     action: &str,
 ) -> anyhow::Result<ClaimResult> {
     let mut tx = pool.begin().await?;
-
     let rows = sqlx::query(
         "SELECT * FROM cron_jobs \
          WHERE tenant_id = $1 AND enabled AND trigger_type = 'on_transition' \
@@ -360,7 +359,52 @@ pub async fn dispatch_on_transition_matches(
     .bind(action)
     .fetch_all(&mut *tx)
     .await?;
+    let result = fire_matched_jobs(&mut tx, rows, "on_transition", entity, action).await?;
+    tx.commit().await?;
+    Ok(result)
+}
 
+/// Fires every enabled `trigger_type = "on_record_event"` job whose `trigger_config` matches
+/// `(tenant_id, entity, event)` (`event` is `"created"`/`"updated"`/`"deleted"`) —
+/// `docs/roadmap/38-generic-record-event-triggers.md`, the `on_record_event` counterpart to
+/// `dispatch_on_transition_matches` above, called by the same trigger-listener consumer for
+/// `<entity>.record.{created,updated,deleted}` topics instead of `.workflow.transitioned`.
+pub async fn dispatch_on_record_event_matches(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    entity: &str,
+    event: &str,
+) -> anyhow::Result<ClaimResult> {
+    let mut tx = pool.begin().await?;
+    let rows = sqlx::query(
+        "SELECT * FROM cron_jobs \
+         WHERE tenant_id = $1 AND enabled AND trigger_type = 'on_record_event' \
+         AND trigger_config ->> 'entity' = $2 AND trigger_config ->> 'event' = $3",
+    )
+    .bind(tenant_id)
+    .bind(entity)
+    .bind(event)
+    .fetch_all(&mut *tx)
+    .await?;
+    let result = fire_matched_jobs(&mut tx, rows, "on_record_event", entity, event).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+/// Shared by `dispatch_on_transition_matches`/`dispatch_on_record_event_matches` — turns a
+/// batch of already-matched `cron_jobs` rows into `cron_job_runs` + dispatch entries, the one
+/// place that per-firing bookkeeping (run row, `last_run_at`, `dispatch_claimed`, log line)
+/// lives so the two trigger kinds can't drift on how a match actually gets fired. `trigger_kind`
+/// is `"on_transition"`/`"on_record_event"` and `detail` is that trigger's matched
+/// action/event — both just go into the log line, `tracing::info!`'s message has to be a
+/// literal so they can't be interpolated into it directly.
+async fn fire_matched_jobs(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    rows: Vec<sqlx::postgres::PgRow>,
+    trigger_kind: &'static str,
+    entity: &str,
+    detail: &str,
+) -> anyhow::Result<ClaimResult> {
     let mut result = ClaimResult {
         claimed: rows.len(),
         direct_jobs: Vec::new(),
@@ -379,28 +423,23 @@ pub async fn dispatch_on_transition_matches(
         .bind(job.id)
         .bind(RunStatus::Enqueued.as_str())
         .bind(now)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
         sqlx::query("UPDATE cron_jobs SET last_run_at = $1, updated_at = now() WHERE id = $2")
             .bind(now)
             .bind(job.id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
 
-        dispatch_claimed(&mut tx, &job, run_id, 1, &mut result).await?;
+        dispatch_claimed(tx, &job, run_id, 1, &mut result).await?;
 
         tracing::info!(
-            job_id = %job.id,
-            run_id = %run_id,
-            name = job.name,
-            entity,
-            action,
-            "cron job triggered on transition"
+            job_id = %job.id, run_id = %run_id, name = job.name, entity, trigger_kind, detail,
+            "cron job triggered"
         );
     }
 
-    tx.commit().await?;
     Ok(result)
 }
 

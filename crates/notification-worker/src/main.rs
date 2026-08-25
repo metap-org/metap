@@ -1,12 +1,9 @@
-use metap_infra::{load_config, EventBus, RabbitEventBus};
+use metap_infra::{load_config, RabbitEventBus};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     metap_infra::init_tracing();
     let config = load_config()?;
-
-    tracing::info!("connecting to rabbitmq...");
-    let bus = RabbitEventBus::connect(&config.rabbitmq_url).await?;
 
     tracing::info!(
         queue = notification_worker::QUEUE,
@@ -14,9 +11,16 @@ async fn main() -> anyhow::Result<()> {
         "ready, listening"
     );
 
-    notification_worker::run(&bus, shutdown_signal()).await?;
+    let url = config.rabbitmq_url.clone();
+    notification_worker::run(
+        move || {
+            let url = url.clone();
+            async move { RabbitEventBus::connect(&url).await }
+        },
+        shutdown_signal(),
+    )
+    .await?;
 
-    bus.close().await.ok();
     Ok(())
 }
 

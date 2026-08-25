@@ -5,8 +5,8 @@
 //! trigger matching and retry-with-backoff.
 
 use metap_cron::{
-    claim_due_retries, dispatch_on_transition_matches, finish_run_with_retry, list_job_runs, DispatchMode, NewCronJob,
-    RunStatus, TargetType, TriggerType,
+    claim_due_retries, dispatch_on_record_event_matches, dispatch_on_transition_matches, finish_run_with_retry,
+    list_job_runs, DispatchMode, NewCronJob, RunStatus, TargetType, TriggerType,
 };
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
@@ -58,6 +58,32 @@ async fn create_on_transition_job(pool: &PgPool, tenant_id: Uuid, dispatch_mode:
     .expect("create_job");
     assert_eq!(job.trigger_type, "on_transition");
     assert!(job.next_run_at.is_none(), "on_transition job must have no schedule");
+    job.id
+}
+
+async fn create_on_record_event_job(pool: &PgPool, tenant_id: Uuid, dispatch_mode: DispatchMode) -> Uuid {
+    let job = metap_cron::create_job(
+        pool,
+        tenant_id,
+        NewCronJob {
+            name: "on-customer-created".to_string(),
+            trigger_type: TriggerType::OnRecordEvent.as_str().to_string(),
+            trigger_config: Some(json!({ "entity": "crm.customers", "event": "created" })),
+            cron_expr: None,
+            timezone: "UTC".to_string(),
+            target_type: TargetType::Webhook.as_str().to_string(),
+            target_config: json!({ "url": "https://example.invalid/hook" }),
+            dispatch_mode: dispatch_mode.as_str().to_string(),
+            max_attempts: 3,
+            retry_backoff_seconds: 30,
+            enabled: true,
+        },
+        None,
+    )
+    .await
+    .expect("create_job");
+    assert_eq!(job.trigger_type, "on_record_event");
+    assert!(job.next_run_at.is_none(), "on_record_event job must have no schedule");
     job.id
 }
 
@@ -127,6 +153,99 @@ async fn on_transition_job_does_not_fire_for_another_tenant() {
         result.claimed, 0,
         "a job registered for one tenant must never fire for another"
     );
+
+    cleanup(&pool, tenant_id).await;
+}
+
+/// `docs/roadmap/38-generic-record-event-triggers.md` — the `on_record_event` counterpart to
+/// `on_transition_job_fires_when_entity_and_action_match_outbox_mode` above, covering the new
+/// trigger type end to end: create job, dispatch a matching event, confirm the outbox row +
+/// `cron_job_runs` row both land correctly.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn on_record_event_job_fires_when_entity_and_event_match_outbox_mode() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let job_id = create_on_record_event_job(&pool, tenant_id, DispatchMode::Outbox).await;
+
+    let result = dispatch_on_record_event_matches(&pool, tenant_id, "crm.customers", "created")
+        .await
+        .expect("dispatch_on_record_event_matches");
+    assert_eq!(result.claimed, 1);
+    assert!(
+        result.direct_jobs.is_empty(),
+        "outbox-mode job must not be a direct job"
+    );
+
+    let outbox_row = sqlx::query("SELECT topic, aggregate_id FROM outbox_events WHERE aggregate_id = $1")
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .expect("outbox event must exist");
+    assert_eq!(outbox_row.get::<String, _>("topic"), "cron.job.due");
+
+    let runs = list_job_runs(&pool, tenant_id, job_id, 10)
+        .await
+        .expect("list_job_runs");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, "enqueued");
+
+    cleanup(&pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn on_record_event_job_does_not_fire_for_a_non_matching_event() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    create_on_record_event_job(&pool, tenant_id, DispatchMode::Outbox).await;
+
+    let result = dispatch_on_record_event_matches(&pool, tenant_id, "crm.customers", "deleted")
+        .await
+        .expect("dispatch_on_record_event_matches");
+    assert_eq!(result.claimed, 0, "job registered for \"created\" must not fire on \"deleted\"");
+
+    cleanup(&pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn on_record_event_job_does_not_fire_for_another_tenant() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let other_tenant_id = Uuid::new_v4();
+    create_on_record_event_job(&pool, tenant_id, DispatchMode::Outbox).await;
+
+    let result = dispatch_on_record_event_matches(&pool, other_tenant_id, "crm.customers", "created")
+        .await
+        .expect("dispatch_on_record_event_matches");
+    assert_eq!(
+        result.claimed, 0,
+        "a job registered for one tenant must never fire for another"
+    );
+
+    cleanup(&pool, tenant_id).await;
+}
+
+/// `on_transition`-vs-`on_record_event` trigger types must never cross-fire — a job registered
+/// for one must not match a dispatch call for the other, even against the exact same entity.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn on_transition_and_on_record_event_jobs_do_not_cross_fire() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    create_on_transition_job(&pool, tenant_id, DispatchMode::Outbox).await;
+    create_on_record_event_job(&pool, tenant_id, DispatchMode::Outbox).await;
+
+    let record_event_result = dispatch_on_record_event_matches(&pool, tenant_id, "crm.customers", "created")
+        .await
+        .expect("dispatch_on_record_event_matches");
+    assert_eq!(record_event_result.claimed, 1, "only the on_record_event job should fire");
+
+    let transition_result = dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate")
+        .await
+        .expect("dispatch_on_transition_matches");
+    assert_eq!(transition_result.claimed, 1, "only the on_transition job should fire");
 
     cleanup(&pool, tenant_id).await;
 }

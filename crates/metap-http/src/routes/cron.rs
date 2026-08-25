@@ -7,7 +7,9 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use metap_cron::{DispatchMode, JobUpdate, NewCronJob, OnTransitionTriggerConfig, TargetType, TriggerType};
+use metap_cron::{
+    DispatchMode, JobUpdate, NewCronJob, OnRecordEventTriggerConfig, OnTransitionTriggerConfig, TargetType, TriggerType,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -75,8 +77,10 @@ fn default_true() -> bool {
 
 /// Shared by create/update: `triggerType: "schedule"` needs a valid `cronExpr`/`timezone` (the
 /// existing behavior, unchanged); `triggerType: "on_transition"` instead needs `triggerConfig`
-/// to parse as `{entity, action}` with both non-empty — `cronExpr` is meaningless for it and
-/// isn't validated. Returns `Err` with the response to send on the first validation failure.
+/// to parse as `{entity, action}` with both non-empty; `triggerType: "on_record_event"` needs
+/// `triggerConfig` as `{entity, event}` with `event` one of created/updated/deleted — `cronExpr`
+/// is meaningless for either and isn't validated. Returns `Err` with the response to send on the
+/// first validation failure.
 fn validate_trigger(
     trigger_type: &str,
     trigger_config: Option<&Value>,
@@ -110,8 +114,29 @@ fn validate_trigger(
             }
             Ok(())
         }
+        Some(TriggerType::OnRecordEvent) => {
+            let Some(trigger_config) = trigger_config else {
+                return Err(Box::new(validation_error(
+                    "`triggerConfig` ({entity, event}) is required when `triggerType` is \"on_record_event\".",
+                )));
+            };
+            let cfg: OnRecordEventTriggerConfig = serde_json::from_value(trigger_config.clone()).map_err(|_| {
+                Box::new(validation_error(
+                    "`triggerConfig` must be `{ entity: string, event: string }`.",
+                ))
+            })?;
+            if cfg.entity.trim().is_empty() {
+                return Err(Box::new(validation_error("`triggerConfig.entity` must not be empty.")));
+            }
+            if !matches!(cfg.event.as_str(), "created" | "updated" | "deleted") {
+                return Err(Box::new(validation_error(
+                    "`triggerConfig.event` must be one of: created, updated, deleted.",
+                )));
+            }
+            Ok(())
+        }
         None => Err(Box::new(validation_error(
-            "`triggerType` must be one of: schedule, on_transition.",
+            "`triggerType` must be one of: schedule, on_transition, on_record_event.",
         ))),
     }
 }

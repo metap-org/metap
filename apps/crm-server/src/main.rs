@@ -20,7 +20,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
 use metap::http::cache::ContextAttributesCache;
-use metap::infra::{EventBus, RabbitEventBus};
+use metap::infra::RabbitEventBus;
 use metap::prelude::*;
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -197,13 +197,16 @@ async fn main() -> anyhow::Result<()> {
     // `pnpm start`'s STATIC_DIR merging crm-fe into this binary) — both modes call the exact
     // same `notification_worker::run`, so they can't drift apart.
     let notification_worker_handle = if env_flag_enabled("NOTIFICATION_WORKER_INLINE") {
-        tracing::info!("connecting notification worker to rabbitmq (inline mode)...");
-        let notification_bus = RabbitEventBus::connect(&config.rabbitmq_url).await?;
+        tracing::info!("starting notification worker (inline mode)...");
+        let url = config.rabbitmq_url.clone();
         Some(tokio::spawn(async move {
-            if let Err(err) = notification_worker::run(&notification_bus, shutdown_signal()).await {
+            let connect = move || {
+                let url = url.clone();
+                async move { RabbitEventBus::connect(&url).await }
+            };
+            if let Err(err) = notification_worker::run(connect, shutdown_signal()).await {
                 tracing::error!(error = %err, "notification worker exited with error");
             }
-            notification_bus.close().await.ok();
         }))
     } else {
         None
