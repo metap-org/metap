@@ -8,6 +8,7 @@ export * from "./api/ApiErrorMessage";
 export * from "./api/useApiInfiniteQuery";
 export * from "./api/useApiMutation";
 export * from "./api/useApiQuery";
+export * from "./charts/BarChart";
 export * from "./auth/AuthContext";
 export * from "./auth/Can";
 export * from "./auth/LoginForm";

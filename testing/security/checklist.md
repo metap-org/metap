@@ -20,13 +20,13 @@ diễn giải lại logic (đọc code là nguồn thật).
 | ABAC record-condition (`fromContext`) cấp/từ chối đúng theo attribute | `..rbac_abac_integration_postgres.rs`'s `record_condition_allows_matching_department_and_denies_mismatched` | Non-admin role — `is_admin()` mới bypass, test này không dùng admin |
 | Deny ghi đè Allow qua round-trip Postgres thật | `..rbac_abac_integration_postgres.rs`'s `explicit_deny_policy_overrides_a_matching_allow_policy` | Logic thuần đã unit-test ở `policy_condition.rs`; đây là bản round-trip DB thật |
 | SAST cho logic code tự viết (không phải CVE dependency) | `.github/workflows/codeql.yml` (`analyze` job) | GitHub-native, chạy trên push/PR/cron hằng tuần. Report-only qua tab Security, không phải gate chặn CI — quy ước CodeQL: ruleset mới trên codebase cũ cần một vòng triage trước khi đủ tin để chặn build |
-| SAST local trước khi push | `.semgrep.yml` + `semgrep scan --config p/rust --config p/secrets --config .semgrep.yml` | Chạy tay trên máy dev, không phải CI (yêu cầu người dùng: "semgrep quét local"). Verify thật 2026-08-23: 0 finding trên `crates/metap-reconciler/`, 1 finding (false positive) khi quét toàn `crates/`+`apps/` — xem hàng dưới |
+| SAST local + CI (blocking) | `.semgrep.yml` + `semgrep scan --config p/rust --config p/secrets --config .semgrep.yml`, wired vào CI 2026-08-25 (`.github/workflows/ci.yml`'s `semgrep` job, `--error`) | Ban đầu chỉ local (yêu cầu người dùng: "semgrep quét local"); wired vào CI sau khi false positive duy nhất được nosemgrep inline (xem hàng dưới) — gate thật ở 0 finding, không phải report-only |
 
 ### Semgrep false positive đã xác nhận (không cần sửa code)
 
 | File | Rule | Vì sao là false positive |
 |---|---|---|
-| `crates/dev-tools/src/main.rs:26` | `rust.lang.security.args.args` | Rule cảnh báo dùng `std::env::args()[0]` (đường dẫn executable) cho mục đích bảo mật — file này chỉ dùng `args.get(1)` để chọn subcommand CLI (`gen-keys`/`mint-token`/...), không đọc `args[0]`, không có logic bảo mật nào phụ thuộc executable path |
+| `crates/dev-tools/src/main.rs` (dòng `std::env::args().collect()`) | `rust.lang.security.args.args` | Rule cảnh báo dùng `std::env::args()[0]` (đường dẫn executable) cho mục đích bảo mật — file này chỉ dùng `args.get(1)` để chọn subcommand CLI (`gen-keys`/`mint-token`/...), không đọc `args[0]`, không có logic bảo mật nào phụ thuộc executable path. Suppress bằng `# nosemgrep: rust.lang.security.args.args` inline (2026-08-25) để CI job gate được ở 0 finding thật, không phải bị "biết trước 1 finding luôn đỏ" |
 
 ## Chưa cover / cân nhắc thêm (ghi nhận, chưa phải việc cần làm ngay)
 
@@ -37,9 +37,6 @@ diễn giải lại logic (đọc code là nguồn thật).
   có test riêng khai thác bypass (vd multiple IP giả mạo header).
 - **Resolve-đúng-transform-chain khi quarantine** (`crates/metap-reconciler/src/quarantine.rs`) —
   đã ghi nhận là giới hạn có chủ đích trong chính doc comment của `resolve()`, không phải gap ẩn.
-- **Semgrep chưa chạy trong CI** — hiện chỉ là công cụ local (đúng yêu cầu ban đầu: "semgrep quét
-  local"). Cân nhắc thêm sau như một bước report-only (không chặn build, giống CodeQL) nếu muốn
-  bắt buộc mọi PR đều được quét, không phụ thuộc kỷ luật chạy tay của từng dev.
 
 ## Công cụ bổ sung (không phải regression test, không CI)
 

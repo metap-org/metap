@@ -44,7 +44,9 @@ fn usage() -> ! {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().collect();
+    // CLI subcommand dispatch (gen-keys/mint-token/seed-admin/...), not a security-sensitive use
+    // of raw args (verified false positive, testing/security/checklist.md).
+    let args: Vec<String> = std::env::args().collect(); // nosemgrep: rust.lang.security.args.args
     match args.get(1).map(String::as_str) {
         Some("gen-keys") => gen_keys(args.get(2).cloned().unwrap_or_else(|| "keys".to_string())),
         Some("mint-token") => mint_token(&args),

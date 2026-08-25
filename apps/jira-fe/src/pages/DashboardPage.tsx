@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { Badge, Card, Container, Group, SimpleGrid, Table, Text, TextInput, Title } from "@mantine/core";
+import { Badge, Card, Container, SimpleGrid, Table, Text, TextInput, Title } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { Link } from "react-router-dom";
-import { ApiErrorMessage, useApiQuery } from "@metap/platform-react";
+import { ApiErrorMessage, BarChart, useApiQuery } from "@metap/platform-react";
+import type { BarChartDatum } from "@metap/platform-react";
 import type { IssueRecord, ListResponse } from "../api/types";
 
 /**
@@ -109,6 +110,16 @@ export function DashboardPage() {
   );
   const recent = useMemo(() => (data ?? []).slice(0, 10), [data]);
 
+  const statusChartData: BarChartDatum[] = byStatus.map(({ key, count }) => ({
+    label: STATUS_LABEL[key] ?? key,
+    value: count,
+  }));
+  const priorityChartData: BarChartDatum[] = byPriority.map(({ key, count }) => ({
+    label: key,
+    value: count,
+    color: `var(--mantine-color-${PRIORITY_COLOR[key]}-6)`,
+  }));
+
   if (isLoading) return <div>Loading…</div>;
   if (error) return <ApiErrorMessage error={error} />;
 
@@ -120,38 +131,19 @@ export function DashboardPage() {
 
       <SearchBox />
 
-      <Text fw={600} mb="xs">
-        By status
-      </Text>
-      <SimpleGrid cols={{ base: 2, sm: 4 }} mb="xl">
-        {byStatus.map(({ key, count }) => (
-          <Card key={key} withBorder padding="md">
-            <Text size="xl" fw={700}>
-              {count}
-            </Text>
-            <Text size="sm" c="dimmed">
-              {STATUS_LABEL[key] ?? key}
-            </Text>
-          </Card>
-        ))}
-      </SimpleGrid>
-
-      <Text fw={600} mb="xs">
-        By priority
-      </Text>
-      <SimpleGrid cols={{ base: 2, sm: 4 }} mb="xl">
-        {byPriority.map(({ key, count }) => (
-          <Card key={key} withBorder padding="md">
-            <Group gap="xs" align="baseline">
-              <Text size="xl" fw={700}>
-                {count}
-              </Text>
-              <Badge color={PRIORITY_COLOR[key]} variant="light">
-                {key}
-              </Badge>
-            </Group>
-          </Card>
-        ))}
+      <SimpleGrid cols={{ base: 1, sm: 2 }} mb="xl">
+        <Card withBorder padding="md">
+          <Text fw={600} mb="xs">
+            By status
+          </Text>
+          <BarChart data={statusChartData} ariaLabel="Issues by status" />
+        </Card>
+        <Card withBorder padding="md">
+          <Text fw={600} mb="xs">
+            By priority
+          </Text>
+          <BarChart data={priorityChartData} ariaLabel="Issues by priority" />
+        </Card>
       </SimpleGrid>
 
       <Text fw={600} mb="xs">

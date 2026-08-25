@@ -44,7 +44,15 @@ pub fn customer_entity() -> EntityDefinition {
     EntityDefinition {
         name: "crm.customers".to_string(),
         label: "Customer".to_string(),
-        table_name: "records".to_string(),
+        // Table-per-entity (`docs/roadmap/19-table-per-entity.md`, wired in for real 2026-08-25,
+        // `docs/roadmap/36-crm-server-table-per-entity.md`) — the first code-authored entity in
+        // `crm-server` to move off the shared `records` table, same mechanism
+        // `apps/jira-server`'s entities already use (`reconcile()` at boot, see this crate's
+        // `main.rs`). Existing pre-migration rows were moved with a one-time `INSERT ... SELECT`
+        // from `records`, not reconciler machinery (schema reconcile only manages DDL/column
+        // promotion, never row placement between tables) — see that roadmap doc for the exact
+        // migration and its verification.
+        table_name: metap_reconciler::qualified_table_name_for("crm.customers"),
         fields: vec![
             field("code", "Code", FieldKind::String, true, true, true, true),
             field("name", "Name", FieldKind::String, true, false, true, true),

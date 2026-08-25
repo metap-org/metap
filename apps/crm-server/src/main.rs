@@ -45,6 +45,25 @@ async fn main() -> anyhow::Result<()> {
     code_registry.validate_references()?;
     let metadata_base = Arc::new(code_registry);
 
+    // Table-per-entity for `crm.customers` (`docs/roadmap/36-crm-server-table-per-entity.md`) —
+    // same mechanism `apps/jira-server`'s boot sequence already uses, applied here for the
+    // first time to a `Schema`-strategy tenant's *shared* platform pool rather than a
+    // `DedicatedDb` tenant's own one. The dedicated table this reconciles is genuinely shared
+    // across every schema-tenant on this pool (same as `records` already is) — the fixed
+    // `tenant_id` below is only bookkeeping for `reconcile()`'s advisory-lock/introspection
+    // calls, not a scope on the table itself; safe here specifically because this call happens
+    // once at boot, never concurrently from multiple tenants the way a real multi-tenant
+    // orchestrator would run it.
+    let default_tenant_id: uuid::Uuid = "00000000-0000-0000-0000-000000000001".parse().unwrap();
+    let customer_reconcile =
+        metap_reconciler::reconcile(&pool, default_tenant_id, &customer_entity::customer_entity(), &[]).await?;
+    tracing::info!(
+        entity = "crm.customers",
+        table = customer_reconcile.table,
+        ops_applied = customer_reconcile.ops_applied,
+        "reconciled dedicated table"
+    );
+
     // DB-authored entities (`metap-lowcode`, Phase A sub-project 1/2) — every *enabled*
     // entity that has been published at least once, merged on top of the code-authored base
     // (a disabled entity stays out of the registry entirely, same as if it had never been

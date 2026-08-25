@@ -1,0 +1,44 @@
+name: Nightly benchmark
+
+# Report-only, same convention `codeql.yml` established for a new signal on an existing codebase
+# — this doesn't fail the build, it prints criterion's own regression/improvement comparison to
+# the job log for a human to notice (`testing/performance/run-nightly-benchmark.sh`'s doc comment
+# explains why this runs the fast in-process micro-benchmarks, not the 10M-row sustained-load
+# tests). `target/criterion/` is cached across runs (a fixed key, not tied to the lockfile hash)
+# specifically so each night's run has the previous night's numbers to compare against — without
+# that, every run would look like a fresh baseline with no "regressed/improved" line at all.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  benchmark:
+    name: Criterion micro-benchmarks (plan_list, compile/diff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # `restore` + `save` as two separate steps (not the combined `actions/cache@v4`) — that
+      # action only ever saves once per key and silently skips every run after the first, which
+      # would freeze the comparison baseline at night one forever. A per-run-id key (via `save`)
+      # plus a prefix `restore-keys` (via `restore`, matching GitHub's "most recent cache whose
+      # key starts with this prefix" rule) is the idiomatic way to get an always-updating cache —
+      # a *fixed* key would make `save` fail outright on the second run, since a given cache key
+      # is immutable once written.
+      - name: Restore criterion history
+        uses: actions/cache/restore@v4
+        with:
+          path: target/criterion
+          key: criterion-history-${{ github.run_id }}
+          restore-keys: |
+            criterion-history-
+      - run: bash testing/performance/run-nightly-benchmark.sh
+      - name: Save criterion history
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: target/criterion
+          key: criterion-history-${{ github.run_id }}

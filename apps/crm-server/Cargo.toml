@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 metap = { path = "../../crates/metap" }
+metap-reconciler = { path = "../../crates/metap-reconciler" }
 notification-worker = { package = "metap-notification-worker", path = "../../crates/notification-worker" }
 anyhow = "1"
 arc-swap = "1"
@@ -18,3 +19,4 @@ tower-http = { version = "0.6", features = ["fs"] }
 jsonwebtoken = "9"
 serde_json = "1"
 tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }

@@ -2,8 +2,27 @@
 
 Số liệu tham chiếu cho chế độ **direct** (`crates/metap-crud/tests/support/mod.rs`, bỏ qua HTTP,
 đo thẳng `CrudService`) — xem `testing/README.md`'s Performance section. Không có
-seed/nightly-workflow tự động so lệch với các số này (chưa làm, xem `docs/roadmap.md`'s Phase 20
-"Chưa làm"); cập nhật file này bằng tay mỗi khi chạy lại benchmark trên máy/ngày mới.
+seed/nightly-workflow tự động so lệch với các số 10M-row này — 10 phút traffic thật trên DB đã
+seed sẵn (`seed_10m.sql`) không hợp với ngân sách thời gian/tài nguyên của GitHub-hosted runner,
+vẫn là việc chạy tay trên máy dev/perf thật; cập nhật file này bằng tay mỗi khi chạy lại benchmark
+trên máy/ngày mới. Tự động hoá thật sự tồn tại ở một tầng khác — xem "Criterion micro-benchmark"
+bên dưới.
+
+## Criterion micro-benchmark (tự động, chạy nightly)
+
+Khác các benchmark trên (đo network+DB round-trip qua traffic thật), 2 benchmark này đo phần
+**CPU thuần** — sinh SQL (`plan_list`) và so sánh schema (`compile`/`diff`) — không cần Postgres,
+đủ nhanh để chạy tự động mỗi đêm (`.github/workflows/nightly-benchmark.yml`, cron 03:00 UTC,
+report-only giống `codeql.yml`, không chặn build). `target/criterion/` được cache giữa các lần
+chạy nên criterion tự in dòng "Performance has regressed/improved" so với đêm trước.
+
+- `crates/metap-query/benches/plan_list_bench.rs` — `plan_list/simple_filter` (~1.25µs),
+  `plan_list/jql_and_or_range_order` (~5.47µs, câu JQL có AND/OR/range/ORDER BY).
+- `crates/metap-reconciler/benches/diff_bench.rs` — `reconciler/compile` (~2.43µs),
+  `reconciler/diff_cold_create_everything` (~1.63µs), `reconciler/diff_converged_zero_ops`
+  (~4.60µs — case chạy nhiều nhất thực tế, sau khi entity đã reconcile hội tụ).
+
+Chạy tay: `bash testing/performance/run-nightly-benchmark.sh`.
 
 Máy đo: 1 dev host, debug/release ghi rõ theo từng dòng, không phải production.
 

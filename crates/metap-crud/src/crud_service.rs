@@ -16,8 +16,8 @@ use metap_control::{Router, RouterError};
 use metap_metadata::{field_has_real_column, EntityDefinition, EntityField, FieldKind, MetadataRegistry};
 use metap_permission::{EntityAction, PermissionDecision, PermissionService, PermissionSnapshot, RequestContext};
 use metap_query::{
-    apply_params, encode_cursor, plan_list, CrossRecordConditionInListError, Cursor, InvalidCursorError, ListInput,
-    SortDir, UnknownListViewError,
+    apply_params, encode_cursor, plan_list, CrossRecordConditionInListError, Cursor, InvalidCursorError,
+    InvalidJqlError, ListInput, SortDir, UnknownListViewError,
 };
 use metap_workflow::{
     emit_created, emit_deleted, emit_transitioned, emit_updated, find_transition, get_initial_status, record_event,
@@ -310,6 +310,9 @@ impl CrudService {
                 }
                 if e.downcast_ref::<UnknownListViewError>().is_some() {
                     return Ok(ServiceResult::err_with_message(400, "unknown_list_view", e.to_string()));
+                }
+                if e.downcast_ref::<InvalidJqlError>().is_some() {
+                    return Ok(ServiceResult::err_with_message(400, "invalid_jql", e.to_string()));
                 }
                 // Deterministic/permanent (an entity read-policy misconfiguration, not
                 // something this specific request can fix) — still a `5xx`, but with its own

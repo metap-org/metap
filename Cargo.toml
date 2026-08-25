@@ -14,6 +14,7 @@ members = [
   "crates/metap-control-http",
   "crates/metap-cron",
   "crates/metap-crud",
+  "crates/metap-dashboards",
   "crates/metap-lowcode",
   "crates/metap-lowcode-http",
   "crates/metap-http",

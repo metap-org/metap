@@ -21,6 +21,9 @@ import { BoardPage } from "./pages/BoardPage";
 import { BacklogPage } from "./pages/BacklogPage";
 import { IssueDetailPage } from "./pages/IssueDetailPage";
 import { SprintReportPage } from "./pages/SprintReportPage";
+import { AdvancedSearchPage } from "./pages/AdvancedSearchPage";
+import { LogworkReportPage } from "./pages/LogworkReportPage";
+import { CustomizableDashboardPage } from "./pages/CustomizableDashboardPage";
 
 // No `LowCodeEntitiesAdminPage`/nav item here, unlike crm-fe — jira-server's `main.rs`
 // deliberately doesn't merge `metap_lowcode_http`'s router (this PoC doesn't need the low-code
@@ -34,9 +37,12 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
   const navItems: ShellNavItem[] = [
     { to: "/", label: "Dashboard" },
+    { to: "/dashboard/custom", label: "My Dashboard" },
     { to: "/board", label: "Board" },
     { to: "/backlog", label: "Backlog" },
     { to: "/reports/sprint", label: "Sprint Report" },
+    { to: "/search", label: "Advanced Search" },
+    { to: "/reports/logwork", label: "Logwork Report" },
     { to: "/records/jira.projects", label: "Projects" },
     { to: "/records/jira.sprints", label: "Sprints" },
     { to: "/records/jira.issues", label: "Issues" },
@@ -110,6 +116,14 @@ export default function App() {
             }
           />
           <Route
+            path="/dashboard/custom"
+            element={
+              <RequireAuth>
+                <CustomizableDashboardPage />
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/board"
             element={
               <RequireAuth>
@@ -138,6 +152,22 @@ export default function App() {
             element={
               <RequireAuth>
                 <SprintReportPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/search"
+            element={
+              <RequireAuth>
+                <AdvancedSearchPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/reports/logwork"
+            element={
+              <RequireAuth>
+                <LogworkReportPage />
               </RequireAuth>
             }
           />

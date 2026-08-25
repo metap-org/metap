@@ -2,9 +2,13 @@
 //! (`docs/roadmap.md` Phase 11 / Phase A sub-project 4, retargeted from
 //! `docs/low-code-metadata-storage-design.md`). Same shape as `metap-http`'s
 //! `routes/admin.rs`/`routes/cron.rs`: every handler uses `AdminContext`. Unlike
-//! `routes/cron.rs`, nothing here is tenant-scoped — DB-authored entity metadata is global by
-//! design for Phase A (see the spec's "Các quyết định đã chốt"), so there's no `tenant_id` in
-//! any query.
+//! `routes/cron.rs`, entity metadata itself carries no `tenant_id` column — DB-authored entity
+//! metadata is global *within whichever database it lives in*, by design for Phase A (see the
+//! spec's "Các quyết định đã chốt"). That's not the same as "which database it lives in doesn't
+//! matter": every handler resolves `Router::pool_for(caller's tenant)` (`resolve_pool`) before
+//! touching storage, so a `DedicatedDb` tenant's low-code entities land in that tenant's own
+//! database rather than always the platform's shared one (2026-08-25 fix — previously every
+//! handler read `state.pool` directly, see `resolve_pool`'s doc comment for the concrete leak).
 //!
 //! **Deliberately its own crate, not a module inside `metap-http`** — the low-code control
 //! plane is an optional platform capability, not core (`docs/roadmap.md` Phase 11 is a
@@ -30,13 +34,40 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use metap_http::auth::AdminContext;
-use metap_http::error::{internal_error_response, service_error_response};
+use metap_http::error::{internal_error_response, router_unavailable_response, service_error_response};
 use metap_http::AppState;
 use metap_lowcode::audit::{self, AuditAction, AuditActor, AuditVersionInfo};
 use metap_lowcode::{LowCodeEntityDefinition, PublishError};
 use metap_metadata::{EntityField, EntityListView, EntityWorkflow, MetadataRegistry};
+use metap_permission::RequestContext;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sqlx::PgPool;
+
+/// Resolves the `PgPool` a low-code request should actually read/write — `Router::pool_for`,
+/// the same tenant→pool resolution every other tenant-scoped route uses. Low-code entity
+/// definitions are still global *within that pool* (see this file's top doc comment — no
+/// `tenant_id` column exists on `low_code_entity_drafts`/`..._versions`, deliberate Phase A
+/// design), but which pool a given request lands in must still route through the caller's own
+/// tenant: previously every handler here read `state.pool` directly (the platform's shared
+/// pool, always — `AppState.pool` is never `Router`-resolved on its own), so a `DedicatedDb`
+/// tenant (e.g. `apps/jira-server`'s tenant) publishing a low-code entity would have silently
+/// written it into the *platform's* database instead of its own — the same class of leak
+/// `dev-tools`/login already had and fixed (`docs/roadmap/28-dev-tools-tenant-aware.md`). For a
+/// `Schema`-strategy tenant `pool_for` returns the same shared pool as before (no behavior
+/// change there); for `DedicatedDb` it now correctly returns that tenant's own pool, so its
+/// low-code entities live in its own database rather than mixed into the platform's.
+async fn resolve_pool(state: &AppState, context: &RequestContext) -> Result<PgPool, Response> {
+    let tenant_id = state
+        .permissions
+        .scoped_tenant(context)
+        .map_err(internal_error_response)?;
+    state
+        .router
+        .pool_for(tenant_id.into())
+        .await
+        .map_err(router_unavailable_response)
+}
 
 #[derive(Deserialize)]
 struct DraftBody {
@@ -91,22 +122,29 @@ fn publish_error_response(err: PublishError) -> Response {
 /// registry disagreeing with no way to retry just the reload half. Reusing the registry here
 /// makes this function infallible (`store`/`reconcile_indexes` can't fail outwardly), so that
 /// failure mode no longer exists.
-pub async fn apply_registry(state: &AppState, registry: MetadataRegistry) {
+///
+/// Takes `pool` explicitly (the caller's `resolve_pool`-resolved pool) rather than reaching for
+/// `state.pool` itself, same reasoning as every other handler in this file.
+pub async fn apply_registry(state: &AppState, pool: &PgPool, registry: MetadataRegistry) {
     let entities = registry.list_entities();
     state.metadata.store(Arc::new(registry));
-    metap_peripherals::reconcile_indexes(&state.pool, &entities).await;
+    metap_peripherals::reconcile_indexes(pool, &entities).await;
 }
 
-async fn list_entities(State(state): State<AppState>, AdminContext(_context): AdminContext) -> Response {
+async fn list_entities(State(state): State<AppState>, AdminContext(context): AdminContext) -> Response {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
     // `list_all_published` here is deliberately the *unfiltered* one (includes disabled
     // entities) — this listing is what tells an operator an entity has been published at
     // all, regardless of its current enabled state; `list_enabled_published` would make a
     // disabled-but-published entity look indistinguishable from one that was never published.
-    let published = match metap_lowcode::list_all_published(&state.pool).await {
+    let published = match metap_lowcode::list_all_published(&pool).await {
         Ok(p) => p,
         Err(e) => return internal_error_response(e),
     };
-    let statuses = match metap_lowcode::list_draft_statuses(&state.pool).await {
+    let statuses = match metap_lowcode::list_draft_statuses(&pool).await {
         Ok(s) => s,
         Err(e) => return internal_error_response(e),
     };
@@ -136,10 +174,14 @@ async fn set_enabled(
     AdminContext(context): AdminContext,
     Json(body): Json<SetEnabledBody>,
 ) -> Response {
-    if let Err(e) = metap_lowcode::set_enabled(&state.pool, &name, body.enabled).await {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    if let Err(e) = metap_lowcode::set_enabled(&pool, &name, body.enabled).await {
         return internal_error_response(e);
     }
-    let db_entities: Vec<_> = match metap_lowcode::list_enabled_published(&state.pool).await {
+    let db_entities: Vec<_> = match metap_lowcode::list_enabled_published(&pool).await {
         Ok(entities) => entities
             .into_iter()
             .map(|(_, def)| def.to_entity_definition())
@@ -150,14 +192,14 @@ async fn set_enabled(
         Ok(r) => r,
         Err(e) => return internal_error_response(e.into()),
     };
-    apply_registry(&state, registry).await;
+    apply_registry(&state, &pool, registry).await;
     let action = if body.enabled {
         AuditAction::Enabled
     } else {
         AuditAction::Disabled
     };
     audit::record(
-        &state.pool,
+        &pool,
         &name,
         action,
         &AuditActor {
@@ -183,10 +225,14 @@ async fn save_draft(
         list_views: body.list_views,
         workflow: body.workflow,
     };
-    match metap_lowcode::save_draft(&state.pool, &name, &definition).await {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match metap_lowcode::save_draft(&pool, &name, &definition).await {
         Ok(()) => {
             audit::record(
-                &state.pool,
+                &pool,
                 &name,
                 AuditAction::DraftSaved,
                 &AuditActor {
@@ -205,9 +251,13 @@ async fn save_draft(
 async fn get_draft(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    AdminContext(_context): AdminContext,
+    AdminContext(context): AdminContext,
 ) -> Response {
-    match metap_lowcode::get_draft(&state.pool, &name).await {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match metap_lowcode::get_draft(&pool, &name).await {
         Ok(Some(def)) => Json(json!({ "data": def })).into_response(),
         Ok(None) => service_error_response(404, "lowcode_draft_not_found", None, None),
         Err(e) => internal_error_response(e),
@@ -219,12 +269,16 @@ async fn publish(
     Path(name): Path<String>,
     AdminContext(context): AdminContext,
 ) -> Response {
-    match metap_lowcode::publish(&state.pool, &name, &state.metadata_base).await {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match metap_lowcode::publish(&pool, &name, &state.metadata_base).await {
         Ok(outcome) => {
             let version_number = outcome.version_number;
-            apply_registry(&state, outcome.registry).await;
+            apply_registry(&state, &pool, outcome.registry).await;
             audit::record(
-                &state.pool,
+                &pool,
                 &name,
                 AuditAction::Published,
                 &AuditActor {
@@ -255,9 +309,13 @@ struct RollbackBody {
 async fn preview_publish(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    AdminContext(_context): AdminContext,
+    AdminContext(context): AdminContext,
 ) -> Response {
-    match metap_lowcode::preview_publish(&state.pool, &name, &state.metadata_base).await {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match metap_lowcode::preview_publish(&pool, &name, &state.metadata_base).await {
         Ok(preview) => Json(json!({
             "data": { "wouldBeVersion": preview.would_be_version, "valid": true, "impact": preview.impact }
         }))
@@ -272,12 +330,16 @@ async fn rollback(
     AdminContext(context): AdminContext,
     Json(body): Json<RollbackBody>,
 ) -> Response {
-    match metap_lowcode::rollback(&state.pool, &name, body.to_version_number, &state.metadata_base).await {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match metap_lowcode::rollback(&pool, &name, body.to_version_number, &state.metadata_base).await {
         Ok(outcome) => {
             let version_number = outcome.version_number;
-            apply_registry(&state, outcome.registry).await;
+            apply_registry(&state, &pool, outcome.registry).await;
             audit::record(
-                &state.pool,
+                &pool,
                 &name,
                 AuditAction::RolledBack,
                 &AuditActor {
@@ -299,9 +361,13 @@ async fn rollback(
 async fn get_published(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    AdminContext(_context): AdminContext,
+    AdminContext(context): AdminContext,
 ) -> Response {
-    match metap_lowcode::get_published(&state.pool, &name).await {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match metap_lowcode::get_published(&pool, &name).await {
         Ok(Some(v)) => Json(json!({
             "data": {
                 "versionNumber": v.version_number,
@@ -319,9 +385,13 @@ async fn get_published(
 async fn list_versions(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    AdminContext(_context): AdminContext,
+    AdminContext(context): AdminContext,
 ) -> Response {
-    match metap_lowcode::list_versions(&state.pool, &name).await {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match metap_lowcode::list_versions(&pool, &name).await {
         Ok(versions) => {
             let data: Vec<_> = versions
                 .into_iter()
@@ -346,7 +416,11 @@ async fn list_audit_events(
     Path(name): Path<String>,
     AdminContext(context): AdminContext,
 ) -> Response {
-    match audit::list_for_entity(&state.pool, &name, &context.tenant_id).await {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match audit::list_for_entity(&pool, &name, &context.tenant_id).await {
         Ok(events) => {
             let data: Vec<_> = events.into_iter().map(audit_event_to_json).collect();
             Json(json!({ "data": data })).into_response()
@@ -386,7 +460,11 @@ async fn list_recent_audit_events(
         .filter(|&n| n > 0)
         .unwrap_or(DEFAULT_RECENT_AUDIT_LIMIT)
         .min(MAX_RECENT_AUDIT_LIMIT);
-    match audit::list_recent(&state.pool, &context.tenant_id, limit).await {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    match audit::list_recent(&pool, &context.tenant_id, limit).await {
         Ok(events) => {
             let data: Vec<_> = events.into_iter().map(audit_event_to_json).collect();
             Json(json!({ "data": data })).into_response()
@@ -405,9 +483,13 @@ async fn list_recent_audit_events(
 /// `notFound` instead of erroring the whole request.
 async fn export_entities(
     State(state): State<AppState>,
-    AdminContext(_context): AdminContext,
+    AdminContext(context): AdminContext,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
     let requested: Option<Vec<String>> = params.get("entities").map(|s| {
         s.split(',')
             .map(str::trim)
@@ -416,7 +498,7 @@ async fn export_entities(
             .collect()
     });
 
-    let found = match metap_lowcode::export_entities(&state.pool, requested.as_deref()).await {
+    let found = match metap_lowcode::export_entities(&pool, requested.as_deref()).await {
         Ok(entities) => entities,
         Err(e) => return internal_error_response(e),
     };
@@ -459,13 +541,17 @@ async fn import_entities(
     AdminContext(context): AdminContext,
     Json(body): Json<ImportBody>,
 ) -> Response {
+    let pool = match resolve_pool(&state, &context).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
     let mut imported = Vec::new();
     let mut failed = Vec::new();
     for item in body.entities {
-        match metap_lowcode::save_draft(&state.pool, &item.name, &item.definition).await {
+        match metap_lowcode::save_draft(&pool, &item.name, &item.definition).await {
             Ok(()) => {
                 audit::record(
-                    &state.pool,
+                    &pool,
                     &item.name,
                     AuditAction::DraftSaved,
                     &AuditActor {

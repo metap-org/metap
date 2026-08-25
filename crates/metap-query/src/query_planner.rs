@@ -64,6 +64,10 @@ pub struct ListInput {
     /// mean a totally different filter/column set with no indication anything went wrong,
     /// whereas one extra ignored filter is a much smaller degradation.
     pub list_view: Option<String>,
+    /// `crate::jql`'s small query language — `AND`ed together with `filters`/the list view's
+    /// implicit conditions, not a replacement for them (a caller can combine `?status=done&jql=...`
+    /// freely). `None` (every caller before this field existed) skips JQL parsing entirely.
+    pub jql: Option<String>,
 }
 
 pub struct PlannedListQuery {
@@ -262,6 +266,16 @@ pub fn plan_list(
         }
     }
 
+    let jql_order = if let Some(jql) = input.jql.as_deref() {
+        let (where_sql, order) = crate::jql::parse_and_compile_jql(jql, entity, dedicated_table, &mut params)?;
+        if let Some(where_sql) = where_sql {
+            conditions.push(where_sql);
+        }
+        order
+    } else {
+        None
+    };
+
     let mut sortable_fields: HashSet<String> = entity
         .fields
         .iter()
@@ -271,7 +285,14 @@ pub fn plan_list(
     sortable_fields.insert("createdAt".to_string());
     sortable_fields.insert("updatedAt".to_string());
 
-    if let Some(requested) = input.sort.as_deref() {
+    // `jql`'s own `ORDER BY` (already validated sortable by `crate::jql::parse_and_compile_jql`)
+    // takes priority over the plain `?sort=` param when both are present — same "explicit query
+    // wins" convention Jira's own JQL vs. quick-sort dropdown follows.
+    let effective_sort: Option<String> = jql_order
+        .map(|(field, descending)| format!("{}{field}", if descending { "-" } else { "" }))
+        .or_else(|| input.sort.clone());
+
+    if let Some(requested) = effective_sort.as_deref() {
         if parse_sort(Some(requested), &sortable_fields).is_none() {
             tracing::debug!(
                 entity = entity.name,
@@ -280,7 +301,7 @@ pub fn plan_list(
             );
         }
     }
-    let resolved_sort = parse_sort(input.sort.as_deref(), &sortable_fields)
+    let resolved_sort = parse_sort(effective_sort.as_deref(), &sortable_fields)
         .or_else(|| parse_sort(list_view.and_then(|lv| lv.default_sort.as_deref()), &sortable_fields))
         .unwrap_or(ResolvedSort {
             field: "createdAt".to_string(),

@@ -17,7 +17,7 @@ use crate::auth::AuthContext;
 use crate::error::{internal_error_response, service_error_response};
 use crate::state::AppState;
 
-const RESERVED_QUERY_KEYS: [&str; 4] = ["limit", "sort", "cursor", "listView"];
+const RESERVED_QUERY_KEYS: [&str; 5] = ["limit", "sort", "cursor", "listView", "jql"];
 
 fn parse_list_input(params: &HashMap<String, String>) -> Result<ListInput, Box<Response>> {
     let limit = match params.get("limit") {
@@ -47,6 +47,7 @@ fn parse_list_input(params: &HashMap<String, String>) -> Result<ListInput, Box<R
         filters,
         cursor: params.get("cursor").cloned(),
         list_view: params.get("listView").cloned(),
+        jql: params.get("jql").cloned(),
     })
 }
 

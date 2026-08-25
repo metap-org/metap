@@ -25,3 +25,8 @@ tracing = "0.1"
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 async-trait = "0.1"
+criterion = "0.5"
+
+[[bench]]
+name = "plan_list_bench"
+harness = false

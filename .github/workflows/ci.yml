@@ -52,6 +52,20 @@ jobs:
       - run: cargo install cargo-audit --locked
       - run: cargo audit
 
+  semgrep:
+    name: Semgrep — logic/secrets scan (SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Same command as the local dev workflow (`.semgrep.yml`'s doc comment) — registry packs
+      # can't be referenced from the file's own `rules:` list, they're passed on the command
+      # line and merged with it. Was local-only by original request; wired into CI once the one
+      # known finding (`crates/dev-tools/src/main.rs`'s CLI-arg dispatch, not security-sensitive)
+      # was suppressed inline with `# nosemgrep`, so this is a real 0-findings gate, not
+      # permanently red.
+      - run: pip install semgrep
+      - run: semgrep scan --config p/rust --config p/secrets --config .semgrep.yml --error
+
   rust-e2e:
     name: Rust — e2e (real Postgres/RabbitMQ)
     runs-on: ubuntu-latest
