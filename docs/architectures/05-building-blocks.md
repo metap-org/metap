@@ -24,6 +24,7 @@ C4Container
   System_Boundary(metap, "Metap") {
     Container(web, "Web Frontend", "React, Vite, TanStack Query", "Dev harness SPA — apps/crm-fe, dùng packages/platform-react qua workspace:*")
     Container(api, "API Server", "Rust, axum", "apps/crm-server: một process, router gộp 3 crate — metap-http (/api, /auth, /admin, /metadata), metap-lowcode-http (/admin/lowcode), metap-control-http (/platform/tenants)")
+    Container(api2, "API Server (Jira)", "Rust, axum", "apps/jira-server, Phase 21+: module nghiệp vụ thứ hai, process/port riêng (3100), entity trên bảng riêng (table-per-entity) thay vì records chung, tenant dedicated_db riêng")
     Container(outboxworker, "Outbox Publisher", "Rust", "crates/outbox-publisher, binary riêng — outbox drain/publish loop của metap-infra")
     Container(cronworker, "Cron Scheduler", "Rust", "crates/cron-scheduler, binary riêng — ticker (poll cron_jobs) + executor (workflow_transition/bulk_query_action gọi lại API Server, webhook gọi ngoài)")
     Container(notifworker, "Notification Worker", "Rust", "crates/notification-worker, binary riêng theo mặc định — hoặc chạy inline trong API Server khi NOTIFICATION_WORKER_INLINE=true; subscribe EventBus, log mọi workflow transition")
@@ -39,6 +40,7 @@ C4Container
   Rel(web, api, "Gọi", "REST/JSON, Bearer JWT")
   Rel(api, db, "Đọc/ghi records, metadata, policies, control.tenants; ghi outbox rows trong cùng transaction với business write — mọi transaction tenant-scoped đi qua metap-control::Router", "sqlx/SQL")
   Rel(api, vault, "Resolve DSN cho tenant dedicated_db (VaultStore, token hoặc AppRole)", "HTTPS")
+  Rel(api2, db, "Đọc/ghi entity trên bảng riêng (entities schema) qua tenant dedicated_db riêng", "sqlx/SQL")
   Rel(outboxworker, db, "Poll các outbox row đang pending", "SQL, ~1s loop, FOR UPDATE SKIP LOCKED")
   Rel(outboxworker, mq, "Publish", "AMQP")
   Rel(cronworker, db, "Poll cron_jobs đến hạn (FOR UPDATE SKIP LOCKED), ghi cron_job_runs", "SQL")
@@ -127,7 +129,7 @@ classDiagram
     +get(entity, id, context)
     +create(entity, data, context)
     +update(entity, id, version, data, context)
-    +transition(entity, id, action, version, context)
+    +transition(entity, id, action, version, payload, context)
     +delete(entity, id, version, context)
     -enrich_record_for_actions(entity, snapshot, actions, tenant_id, record) JsonObject
   }
@@ -167,6 +169,8 @@ classDiagram
     +get_initial_status(entity, data)
     +find_transition(entity, action, from_state)
     +run_guard(transition, data, context)
+    +run_validator(transition, next_data, context)
+    +apply_set_fields(transition, data, context)
   }
   class OutboxFns {
     <<module: metap-infra::outbox>>
@@ -533,6 +537,12 @@ graph TD
     lowcode["metap-lowcode<br/>draft/publish/rollback storage cho DB-authored entity (Phase 11)"]
     lowcodehttp["metap-lowcode-http<br/>/admin/lowcode/entities/* — crate riêng, opt-in qua extra_routes"]
     controlhttp["metap-control-http<br/>/platform/tenants/* — crate riêng, opt-in qua extra_routes"]
+    reconciler["metap-reconciler<br/>reconcile() table-per-entity: introspect/diff/plan/execute DDL (Phase 19/21)"]
+    storage["metap-storage<br/>ObjectStore trait + S3ObjectStore (S3-compatible, vd SeaweedFS) (Phase 22)"]
+    cache["metap-cache<br/>Cache trait + MokaCache/RedisCache, dùng bởi PermissionService::with_cache (Phase 23)"]
+    auth["metap-auth<br/>pluggable tenant auth: Local/Basic/OIDC (Phase 25)"]
+    attachments["metap-attachments<br/>file attachment trên record, dùng metap-storage"]
+    dashboards["metap-dashboards<br/>dashboard_configs: layout/widget catalog per-user + per-tenant default (Phase 33)"]
   end
 
   subgraph opsbin["ops binaries (Cargo workspace members, built trên metap-*)"]
@@ -543,9 +553,14 @@ graph TD
     devtools["dev-tools<br/>gen-keys / mint-token / seed-admin / create-user /<br/>provision-tenant / bootstrap-platform-admin"]
   end
 
-  subgraph appscrmserver["apps/crm-server (Cargo + pnpm member) — module duy nhất được deploy hiện nay"]
+  subgraph appscrmserver["apps/crm-server (Cargo + pnpm member) — module nghiệp vụ đầu tiên"]
     customerentity["src/entities/customer_entity.rs"]
     mainrs["src/main.rs<br/>inline wiring, boot sequence — gộp cả metap-http + lowcode-http + control-http"]
+  end
+
+  subgraph appsjiraserver["apps/jira-server (Cargo member, Phase 21+) — module nghiệp vụ thứ hai, PoC table-per-entity"]
+    issueentity["src/entities/issue_entity.rs, project/sprint/comment_entity.rs"]
+    jiramainrs["src/main.rs<br/>reconcile() các entity lên bảng riêng lúc boot, port 3100 riêng"]
   end
 
   subgraph pkgplatform["packages/platform-react (pnpm workspace member)"]
@@ -576,6 +591,16 @@ graph TD
   mainrs -.->|"opt-in: merge metap::lowcode_http::router + control_http::router vào build_router"| lowcodehttp
   mainrs -.->|"opt-in"| controlhttp
   customerentity -.->|"entity definition, không có business knowledge của metap-*"| mainrs
+  issueentity -.->|"entity definition"| jiramainrs
+  jiramainrs -->|"phụ thuộc vào"| http
+  jiramainrs -->|"reconcile() lúc boot"| reconciler
+  mainrs -.->|"opt-in, dùng bởi crm.customers table-per-entity (Phase 36)"| reconciler
+  http --> auth
+  http --> storage
+  http --> attachments
+  http --> dashboards
+  attachments --> storage
+  permission --> cache
   outboxpub --> infra
   cronsched --> cron
   cronsched -.->|"gọi lại /api/:entity qua HTTP với service JWT, không link metap-crud/metap-metadata trực tiếp"| mainrs
@@ -587,4 +612,4 @@ graph TD
   demoapp -.->|"chỉ qua HTTP, không bao giờ import Rust code"| http
 ```
 
-`apps/crm-server` phụ thuộc vào `crates/metap-*`; không có crate `metap-*` nào có đường phụ thuộc quay ngược lại `apps/crm-server` hay bất kỳ package `apps/*` nào khác — chính hướng phụ thuộc này giữ cho `metap-*` thực sự entity-agnostic, chứ không chỉ mang tính quy ước. `apps/crm-fe` là phần tương đương bên frontend: nó chỉ có thể tiếp cận backend qua HTTP (đường nét đứt), không bao giờ bằng cách import backend code, và nó dùng `packages/platform-react` theo cùng cách `apps/crm-server` dùng `crates/metap-*`. `metap-control` (control plane multi-tenancy) phụ thuộc `metap-peripherals` để có `Router::begin` khớp với cùng hạ tầng user/role — chiều phụ thuộc `metap-permission -> metap-control` sẽ khép vòng lặp, đó là lý do `PostgresPolicyStore` sống ở `metap-control` dù trait `PolicyStore` nó implement thì ở `metap-permission`.
+`apps/crm-server` phụ thuộc vào `crates/metap-*`; không có crate `metap-*` nào có đường phụ thuộc quay ngược lại `apps/crm-server` hay bất kỳ package `apps/*` nào khác — chính hướng phụ thuộc này giữ cho `metap-*` thực sự entity-agnostic, chứ không chỉ mang tính quy ước. `apps/crm-fe` là phần tương đương bên frontend: nó chỉ có thể tiếp cận backend qua HTTP (đường nét đứt), không bao giờ bằng cách import backend code, và nó dùng `packages/platform-react` theo cùng cách `apps/crm-server` dùng `crates/metap-*`. `metap-control` (control plane multi-tenancy) phụ thuộc `metap-peripherals` để có `Router::begin` khớp với cùng hạ tầng user/role — chiều phụ thuộc `metap-permission -> metap-control` sẽ khép vòng lặp, đó là lý do `PostgresPolicyStore` sống ở `metap-control` dù trait `PolicyStore` nó implement thì ở `metap-permission`. `apps/jira-server` là module nghiệp vụ thứ hai (Phase 21+), cùng hình dạng phụ thuộc như `apps/crm-server` (chỉ phụ thuộc `crates/metap-*`, không có crate nào phụ thuộc ngược lại nó) — điểm khác biệt duy nhất là nó gọi thẳng `metap-reconciler::reconcile()` lúc boot để đưa entity của mình lên bảng riêng (table-per-entity) thay vì dùng bảng `records` chung.
