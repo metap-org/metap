@@ -54,6 +54,10 @@ async fn retry_or_give_up_requeues_via_ttl_then_dead_letters_once_exhausted() {
         0,
         "first delivery must have no prior x-death entries"
     );
+    assert_eq!(
+        first.routing_key, routing_key,
+        "first delivery's routing key must be the one published"
+    );
     first
         .retry_or_give_up(&policy)
         .await
@@ -69,6 +73,11 @@ async fn retry_or_give_up_requeues_via_ttl_then_dead_letters_once_exhausted() {
         second.retry_count(),
         1,
         "redelivered message must carry exactly one x-death entry (one retry hop)"
+    );
+    assert_eq!(
+        second.routing_key, routing_key,
+        "redelivered message's routing key must still be the original topic, not the retry-tier's \
+         dead-letter target (the plain queue name) — this is the bug ORIGINAL_ROUTING_KEY_HEADER fixes"
     );
     second
         .retry_or_give_up(&policy)

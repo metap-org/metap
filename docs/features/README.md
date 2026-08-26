@@ -57,6 +57,7 @@ Khi viết brief, tự hỏi: thay đổi này có ảnh hưởng gì tới mộ
 | [Organization & Identity Layer](03-organization-identity.md) | P0 done | Backend Core | Phase 18 |
 | [Table-per-entity — readiness brief](04-table-per-entity.md) | in-progress — 5/5 bước code+e2e xong (2026-08-23), chưa wire vào binary nào | Backend Core | chưa gắn phase |
 | [Cross-entity relations trong list view (3 mode)](05-cross-entity-relations.md) | Mode 2 done | Backend Core | không thuộc phase nào |
+| [Pattern xác minh bất đồng bộ + gap logic tùy biến cho low-code](06-async-verification-pattern-and-lowcode-custom-logic.md) | proposed (ghi chú thảo luận, chỉ Option B là đề xuất code) | Backend Core | không thuộc phase nào |
 
 **Demo app** (`apps/crm-server`, `apps/crm-fe` — xem `demo/`):
 

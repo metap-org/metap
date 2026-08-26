@@ -25,6 +25,21 @@ use lapin::{BasicProperties, Connection, ConnectionProperties, ExchangeKind};
 
 const EXCHANGE: &str = "metap.events";
 
+/// Custom header `retry_or_give_up` stamps onto a retry-tier publish, carrying the message's
+/// true original routing key. Needed because the retry-tier queue's own `x-dead-letter-routing-key`
+/// is set to the plain queue name (deliberately — so its default-exchange redelivery reaches
+/// only that one queue directly, not every consumer bound to the shared topic exchange the way
+/// republishing via `EXCHANGE` with the original key would) — but AMQP overwrites a message's
+/// `routing_key` with whatever the dead-letter *republish* used, so without this header a
+/// redelivered message's `delivery.routing_key` would read as the bare queue name instead of
+/// the topic that actually produced it (`crm.customers.record.created`, say) — breaking any
+/// handler that dispatches on `ConsumedEvent::routing_key` (`cron-scheduler::trigger`'s
+/// `classify_topic`, `HandlerRegistry`'s pattern matching). `RabbitEventBus::subscribe` reads
+/// this header back (falling back to `delivery.routing_key` when absent, i.e. every non-retried
+/// message) to reconstruct the true routing key regardless of how many retry hops a message has
+/// been through.
+const ORIGINAL_ROUTING_KEY_HEADER: &str = "x-original-routing-key";
+
 /// A per-message retry-with-backoff schedule for `ConsumedEvent::retry_or_give_up` — distinct
 /// from `run_resilient_consumer`'s `backoff_delay` (that one backs off *reconnecting the whole
 /// consumer* after a connection loss; this one backs off *redelivering one specific message*
@@ -109,11 +124,15 @@ impl ConsumedEvent {
         // entries from earlier retry hops) — RabbitMQ's own TTL-triggered dead-letter on the
         // tier queue appends the *next* `x-death` entry on top of these when it routes the
         // message back to the main queue, which is what keeps `retry_count()` accurate across
-        // more than one hop.
-        let mut props = BasicProperties::default().with_delivery_mode(2);
-        if let Some(headers) = self.delivery.properties.headers() {
-            props = props.with_headers(headers.clone());
-        }
+        // more than one hop. Also (re-)stamp the original-routing-key header from `self.routing_key`
+        // (already correctly reconstructed by `subscribe`, whatever hop this delivery is on) —
+        // see `ORIGINAL_ROUTING_KEY_HEADER`'s doc comment for why this is needed at all.
+        let mut headers = self.delivery.properties.headers().as_ref().cloned().unwrap_or_default();
+        headers.insert(
+            ORIGINAL_ROUTING_KEY_HEADER.into(),
+            AMQPValue::LongString(self.routing_key.clone().into()),
+        );
+        let props = BasicProperties::default().with_delivery_mode(2).with_headers(headers);
         self.retry_channel
             .basic_publish("", &retry_queue, BasicPublishOptions::default(), &payload_bytes, props)
             .await?;
@@ -413,13 +432,31 @@ impl EventBus for RabbitEventBus {
             async move {
                 match delivery {
                     Ok(delivery) => match serde_json::from_slice(&delivery.data) {
-                        Ok(payload) => Some(ConsumedEvent {
-                            routing_key: delivery.routing_key.to_string(),
-                            payload,
-                            delivery,
-                            retry_channel,
-                            queue: queue_name.to_string(),
-                        }),
+                        Ok(payload) => {
+                            // A retried (redelivered-via-DLX) message's `delivery.routing_key`
+                            // reads as the retry-tier's dead-letter target (the plain queue
+                            // name), not the topic that actually produced it — recover the true
+                            // one from `ORIGINAL_ROUTING_KEY_HEADER` when present (see its doc
+                            // comment). Absent on every non-retried message, which is the common
+                            // case — falls back to `delivery.routing_key` there, unchanged.
+                            let routing_key = delivery
+                                .properties
+                                .headers()
+                                .as_ref()
+                                .and_then(|headers| headers.inner().get(ORIGINAL_ROUTING_KEY_HEADER))
+                                .and_then(|value| match value {
+                                    AMQPValue::LongString(s) => Some(s.to_string()),
+                                    _ => None,
+                                })
+                                .unwrap_or_else(|| delivery.routing_key.to_string());
+                            Some(ConsumedEvent {
+                                routing_key,
+                                payload,
+                                delivery,
+                                retry_channel,
+                                queue: queue_name.to_string(),
+                            })
+                        }
                         Err(err) => {
                             tracing::warn!(
                                 queue = %queue_name,
@@ -444,5 +481,194 @@ impl EventBus for RabbitEventBus {
         self.channel.close(200, "shutdown").await.ok();
         self.connection.close(200, "shutdown").await.ok();
         Ok(())
+    }
+}
+
+/// `true` if `routing_key` matches `pattern` under AMQP topic-exchange rules: `.`-separated
+/// words, `*` matches exactly one word, `#` matches zero or more words (only meaningful as a
+/// whole segment, same as RabbitMQ's own topic matching — `classify_topic`-style suffix/prefix
+/// checks elsewhere in this codebase (`cron-scheduler::trigger`) are a special case of this same
+/// rule, hand-rolled per caller; `HandlerRegistry` is what generalizes it into a reusable
+/// primitive instead of every consumer reimplementing its own matcher).
+fn topic_matches(pattern: &str, routing_key: &str) -> bool {
+    let pattern: Vec<&str> = pattern.split('.').collect();
+    let key: Vec<&str> = routing_key.split('.').collect();
+    matches_segments(&pattern, &key)
+}
+
+fn matches_segments(pattern: &[&str], key: &[&str]) -> bool {
+    match pattern.split_first() {
+        None => key.is_empty(),
+        Some((&"#", rest)) => {
+            if rest.is_empty() {
+                return true;
+            }
+            (0..=key.len()).any(|i| matches_segments(rest, &key[i..]))
+        }
+        Some((&"*", rest)) => !key.is_empty() && matches_segments(rest, &key[1..]),
+        Some((seg, rest)) => key.first() == Some(seg) && matches_segments(rest, &key[1..]),
+    }
+}
+
+type BoxHandlerResult = std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>;
+type BoxHandlerFn = Box<dyn Fn(&ConsumedEvent) -> BoxHandlerResult + Send + Sync>;
+
+/// A generic, entity-agnostic mechanism for a process to react to events with more than one
+/// independent handler on a single subscription — the piece `notification-worker`
+/// (one fixed, unconfigurable handler) and `cron-scheduler`'s trigger-listener (a data-driven
+/// dispatch to `cron_jobs` rows, not arbitrary Rust code) don't cover: a business binary
+/// (`crm-server`/`jira-server`) that wants its own in-process code to run for `entity.event`
+/// patterns it cares about, without hand-rolling a new consume loop (what every consumer in this
+/// codebase did before this existed) or spinning up a whole new ops binary. `metap-infra` stays
+/// entity-agnostic — the *registry* is generic, but the handler closures registered into it are
+/// written and owned by whichever binary calls `.on(...)`, same split as `MetadataRegistry`
+/// (generic registry, entity-aware registrations live in the owning binary's `main.rs`).
+///
+/// One AMQP subscription (`routing_key = "#"`, catch-all — this registry serves N independently
+/// registered patterns on one queue, so RabbitMQ's own binding can't do the filtering the way a
+/// single-purpose consumer's fixed `routing_key` does) backs every registered handler; matching
+/// against each handler's own pattern happens in-process via `topic_matches`.
+#[derive(Default)]
+pub struct HandlerRegistry {
+    handlers: Vec<(String, BoxHandlerFn)>,
+}
+
+impl HandlerRegistry {
+    pub fn new() -> Self {
+        Self { handlers: Vec::new() }
+    }
+
+    /// Registers `handler` to run for every event whose routing key matches `pattern` (AMQP
+    /// topic wildcards `*`/`#` allowed, same syntax `EventBus::subscribe`'s `routing_key` already
+    /// takes). More than one handler can match the same event — see `run`'s doc comment for how
+    /// they're run and how a failure is treated.
+    pub fn on<F, Fut>(mut self, pattern: impl Into<String>, handler: F) -> Self
+    where
+        F: Fn(&ConsumedEvent) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    {
+        let boxed: BoxHandlerFn = Box::new(move |event| Box::pin(handler(event)));
+        self.handlers.push((pattern.into(), boxed));
+        self
+    }
+
+    /// Runs every registered handler against every event on `queue` until `shutdown` resolves —
+    /// a thin wrapper around `run_resilient_consumer` (same reconnect-with-backoff every other
+    /// consumer in this codebase gets). For each event, every handler whose pattern matches runs
+    /// concurrently (`futures_util::future::join_all`); the delivery acks only once **all**
+    /// matching handlers return `Ok`. Any handler returning `Err` fails the whole event —
+    /// `retry_policy` (`Some`) retries it with backoff (`ConsumedEvent::retry_or_give_up`),
+    /// `None` dead-letters it immediately. There's no partial-success bookkeeping (ack the
+    /// handlers that succeeded, retry only the ones that didn't) — a handler is expected to be
+    /// safely re-runnable in full on redelivery, the same at-least-once posture every other
+    /// consumer here already has. An event matching no registered handler is acked (not an
+    /// error — expected under the catch-all subscription, same reasoning as
+    /// `cron-scheduler::trigger`'s `classify_topic` returning `None`).
+    pub async fn run<B, F, Fut>(
+        self,
+        queue: &str,
+        retry_policy: Option<&RetryPolicy>,
+        connect: F,
+        shutdown: impl std::future::Future<Output = ()>,
+    ) -> anyhow::Result<()>
+    where
+        B: EventBus,
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<B>>,
+    {
+        let handlers = std::sync::Arc::new(self.handlers);
+        run_resilient_consumer(
+            queue,
+            "#",
+            retry_policy,
+            connect,
+            move |event| {
+                let handlers = handlers.clone();
+                async move {
+                    let matches: Vec<&BoxHandlerFn> = handlers
+                        .iter()
+                        .filter(|(pattern, _)| topic_matches(pattern, &event.routing_key))
+                        .map(|(_, handler)| handler)
+                        .collect();
+
+                    if matches.is_empty() {
+                        event.ack().await.ok();
+                        return;
+                    }
+
+                    let results = futures_util::future::join_all(matches.iter().map(|handler| handler(&event))).await;
+                    let failures: Vec<_> = results.into_iter().filter_map(Result::err).collect();
+                    if failures.is_empty() {
+                        event.ack().await.ok();
+                        return;
+                    }
+                    for err in &failures {
+                        tracing::warn!(routing_key = event.routing_key, error = %err, "event handler failed");
+                    }
+                    match retry_policy {
+                        Some(policy) => {
+                            event.retry_or_give_up(policy).await.ok();
+                        }
+                        None => {
+                            event.nack(false).await.ok();
+                        }
+                    }
+                }
+            },
+            shutdown,
+        )
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::topic_matches;
+
+    #[test]
+    fn exact_match() {
+        assert!(topic_matches(
+            "crm.customers.record.created",
+            "crm.customers.record.created"
+        ));
+        assert!(!topic_matches(
+            "crm.customers.record.created",
+            "crm.customers.record.updated"
+        ));
+    }
+
+    #[test]
+    fn star_matches_exactly_one_word() {
+        assert!(topic_matches(
+            "crm.customers.workflow.*",
+            "crm.customers.workflow.transitioned"
+        ));
+        assert!(!topic_matches(
+            "crm.customers.workflow.*",
+            "crm.customers.workflow.transitioned.extra"
+        ));
+        assert!(!topic_matches("crm.customers.workflow.*", "crm.customers.workflow"));
+    }
+
+    #[test]
+    fn hash_matches_zero_or_more_words() {
+        assert!(topic_matches("#", "crm.customers.record.created"));
+        assert!(topic_matches(
+            "#.workflow.transitioned",
+            "crm.customers.workflow.transitioned"
+        ));
+        assert!(topic_matches("#.workflow.transitioned", "workflow.transitioned"));
+        assert!(!topic_matches(
+            "#.workflow.transitioned",
+            "crm.customers.workflow.updated"
+        ));
+        assert!(topic_matches("crm.customers.#", "crm.customers.record.created"));
+        assert!(topic_matches("crm.customers.#", "crm.customers"));
+    }
+
+    #[test]
+    fn no_match_on_prefix_or_suffix_only() {
+        assert!(!topic_matches("crm.customers", "crm.customers.record.created"));
+        assert!(!topic_matches("crm.customers.record.created", "crm.customers"));
     }
 }
