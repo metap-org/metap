@@ -97,6 +97,49 @@ async fn claimed_entity_is_not_reclaimed_until_failed_or_requeued() {
     cleanup(&pool, entity_name).await;
 }
 
+/// Regression for the finding in `AUDIT_2.md`: `lease_heartbeat` was written at claim time and
+/// never read back anywhere — a worker that crashed mid-`reconcile_one` (after `claim_due`,
+/// before `record_success`/`record_failure`) left that row `'running'` forever, permanently
+/// excluded from `claim_due`'s own claim filter. `claim_due` now also reclaims a `'running'` row
+/// whose `lease_heartbeat` is older than `LEASE_STALE_AFTER_MINUTES`.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn stale_running_lease_is_reclaimed() {
+    let pool = connect().await;
+    let entity_name = "test.orchestrator_stale_reclaim";
+    cleanup(&pool, entity_name).await;
+    let tenant_id = Uuid::new_v4();
+    seed_pending(&pool, entity_name, &[tenant_id], 1).await;
+
+    let first = claim_due(&pool, "w1", Some(entity_name), 5, 10).await.unwrap();
+    assert_eq!(first.len(), 1, "first claim picks up the pending row");
+
+    let too_soon = claim_due(&pool, "w2", Some(entity_name), 5, 10).await.unwrap();
+    assert!(too_soon.is_empty(), "a fresh lease must not be reclaimed immediately");
+
+    // Simulate a worker that crashed mid-`reconcile_one`: the lease is never refreshed and
+    // neither `record_success` nor `record_failure` ever runs, so `status` stays `'running'`.
+    sqlx::query(
+        "UPDATE reconciler_entity_deployments SET lease_heartbeat = now() - interval '2 hours' \
+         WHERE tenant_id = $1 AND entity_name = $2",
+    )
+    .bind(tenant_id)
+    .bind(entity_name)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let reclaimed = claim_due(&pool, "w3", Some(entity_name), 5, 10).await.unwrap();
+    assert_eq!(
+        reclaimed.len(),
+        1,
+        "a lease stale past LEASE_STALE_AFTER_MINUTES must be reclaimed"
+    );
+    assert_eq!(reclaimed[0].tenant_id, tenant_id);
+
+    cleanup(&pool, entity_name).await;
+}
+
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn record_success_and_failure_update_status_correctly() {

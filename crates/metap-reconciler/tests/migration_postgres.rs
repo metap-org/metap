@@ -62,7 +62,7 @@ async fn preflight_counts_bad_rows_without_touching_data() {
         field: "amount".to_string(),
         to_sql_type: "numeric(18,4)".to_string(),
     };
-    let report = preflight(&pool, table, &op).await.unwrap();
+    let report = preflight(&pool, tenant_id, table, &op).await.unwrap();
     assert_eq!(report.bad_rows, 2);
 
     let still_three: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM \"{table}\""))
@@ -153,6 +153,72 @@ async fn coerce_policy_uses_fallback_for_bad_rows_and_transforms_good_ones() {
         .await
         .unwrap();
     assert_eq!(row_count, 2, "Coerce never removes a row");
+
+    sqlx::query(&format!("DROP TABLE \"{table}\""))
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// Regression for the finding in `AUDIT_2.md`: a `Coerce` fallback that's a JSON *string* (the
+/// existing `coerce_policy_uses_fallback_for_bad_rows_and_transforms_good_ones` test above uses
+/// `json!(0)`, a *number* — which happens to render identically whether or not it's
+/// double-JSON-encoded, exactly why that test never caught this) used to go through
+/// `fallback.to_string()`, which for a string `Value` renders as JSON — quote marks included
+/// (`"0"`, 3 characters, not `0`) — before that gets wrapped in SQL quotes again and cast.
+/// `'"0"'::numeric(18,4)` is not valid numeric input syntax at all — this used to make the whole
+/// migration fail outright for any string fallback, instead of coercing the bad row as intended.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn coerce_policy_with_a_string_fallback_does_not_double_json_encode_it() {
+    let pool = connect().await;
+    let table = "test_migration_coerce_string_fallback";
+    make_table(&pool, table).await;
+    let tenant_id = Uuid::new_v4();
+    let good = insert_row(&pool, table, tenant_id, "42.50").await;
+    let bad = insert_row(&pool, table, tenant_id, "garbage").await;
+
+    let op = MigrationOp::WidenType {
+        field: "amount".to_string(),
+        to_sql_type: "numeric(18,4)".to_string(),
+    };
+    // A JSON *string* fallback (not `json!(0)`, a number) — the shape that actually exercised
+    // the bug.
+    let policy = QuarantinePolicy::Coerce {
+        fallback: serde_json::json!("0"),
+    };
+    run_migration(
+        &pool,
+        tenant_id,
+        "test.migration_coerce_string",
+        table,
+        &op,
+        &policy,
+        "m1",
+    )
+    .await
+    .unwrap();
+
+    let good_value: f64 = sqlx::query_scalar(&format!(
+        "SELECT (data->>'amount')::float8 FROM \"{table}\" WHERE id = $1"
+    ))
+    .bind(good)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(good_value, 42.50);
+
+    let bad_value: f64 = sqlx::query_scalar(&format!(
+        "SELECT (data->>'amount')::float8 FROM \"{table}\" WHERE id = $1"
+    ))
+    .bind(bad)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        bad_value, 0.0,
+        "a string fallback must coerce to its raw value, not fail via double-JSON-encoding"
+    );
 
     sqlx::query(&format!("DROP TABLE \"{table}\""))
         .execute(&pool)
@@ -259,7 +325,7 @@ async fn quarantine_skips_a_row_still_referenced_by_another_table() {
     .unwrap();
 
     let bad_predicate = "NOT pg_input_is_valid(t.data ->> 'amount', 'numeric')";
-    let outcome = quarantine::quarantine_bad_rows(&pool, parent, bad_predicate, "m1", "test")
+    let outcome = quarantine::quarantine_bad_rows(&pool, tenant_id, parent, bad_predicate, "m1", "test")
         .await
         .unwrap();
     assert_eq!(outcome.quarantined, 0);

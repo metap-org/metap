@@ -171,16 +171,19 @@ pub trait EventBus: Send + Sync {
     async fn close(&self) -> anyhow::Result<()>;
 }
 
-/// Backoff schedule for `run_resilient_consumer`'s reconnect attempts — exponential, capped at
-/// 30s (1s, 2s, 4s, 8s, 16s, 30s, 30s, ...): long enough that a broker restart/failover isn't
-/// hammered with reconnect attempts, short enough that a transient blip recovers quickly.
-fn backoff_delay(attempt: u32) -> std::time::Duration {
+/// Backoff schedule for reconnecting to the event bus after a connection loss — exponential,
+/// capped at 30s (1s, 2s, 4s, 8s, 16s, 30s, 30s, ...): long enough that a broker restart/failover
+/// isn't hammered with reconnect attempts, short enough that a transient blip recovers quickly.
+/// `pub` (not just `run_resilient_consumer`'s private helper) since `outbox-publisher` needs the
+/// exact same schedule for its own reconnect loop on the *publish* side, which
+/// `run_resilient_consumer` doesn't cover (it's subscribe-only).
+pub fn backoff_delay(attempt: u32) -> std::time::Duration {
     std::time::Duration::from_secs(2u64.saturating_pow(attempt.min(4)).min(30))
 }
 
 /// `false` if `shutdown` resolved first — the caller should stop retrying and exit rather than
-/// sleeping through a requested shutdown.
-async fn sleep_or_shutdown(
+/// sleeping through a requested shutdown. `pub` for the same reason as `backoff_delay`.
+pub async fn sleep_or_shutdown(
     delay: std::time::Duration,
     shutdown: &mut (impl std::future::Future<Output = ()> + Unpin),
 ) -> bool {

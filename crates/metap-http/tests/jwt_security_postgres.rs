@@ -180,6 +180,16 @@ async fn cleanup(pool: &PgPool, tenant_id: Uuid) {
         .execute(pool)
         .await
         .ok();
+    sqlx::query("DELETE FROM tenant_auth_configs WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM users WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .ok();
 }
 
 #[tokio::test]
@@ -337,6 +347,78 @@ async fn a_valid_token_for_one_tenant_cannot_read_another_tenants_record() {
         listed["data"].as_array().map(|a| a.len()),
         Some(0),
         "tenant B's list must not include tenant A's record"
+    );
+
+    cleanup(&server.pool, tenant_a).await;
+    cleanup(&server.pool, tenant_b).await;
+}
+
+/// Regression for the finding in `AUDIT_2.md`: `basic_auth` (`crates/metap-http/src/auth.rs`)
+/// trusted the caller-supplied `X-Tenant-Id` header outright once the password verified, never
+/// checking it against the user's real `tenant_id` — a valid password for tenant A's user plus
+/// `X-Tenant-Id: <tenant B>` used to authenticate the request *as* tenant B. `users.email` has a
+/// global unique index (no `tenant_id` component), so a correct password can only ever belong to
+/// one specific tenant; declaring a different one must be rejected outright, not silently
+/// corrected to the real one (`POST /auth/login` gets to do that because it mints the token for
+/// `user.tenant_id`; `basic_auth` returns the header value directly into `RequestContext`, so it
+/// has to refuse instead).
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn basic_auth_rejects_a_declared_tenant_that_does_not_match_the_users_real_tenant() {
+    let tenant_a = Uuid::new_v4();
+    let user_a = Uuid::new_v4();
+    let server = boot_server(tenant_a, user_a).await;
+    let tenant_b = Uuid::new_v4();
+
+    let email = format!("{}@example.test", Uuid::new_v4());
+    let password = "correct-horse-battery-staple";
+    let user = metap_peripherals::create_user(&server.pool, tenant_a, &email, password)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')")
+        .bind(tenant_a)
+        .bind(user.id)
+        .execute(&server.pool)
+        .await
+        .unwrap();
+    for tenant in [tenant_a, tenant_b] {
+        sqlx::query("INSERT INTO tenant_auth_configs (tenant_id, provider_kind, enabled) VALUES ($1, 'basic', true)")
+            .bind(tenant)
+            .execute(&server.pool)
+            .await
+            .unwrap();
+    }
+
+    let client = reqwest::Client::new();
+
+    // Correct password, but declaring tenant B (not this user's real tenant A) — must be
+    // rejected, not silently authenticated as tenant B.
+    let cross_tenant = client
+        .get(format!("{}/api/test.jwt_orders", server.base))
+        .basic_auth(&email, Some(password))
+        .header("X-Tenant-Id", tenant_b.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        cross_tenant.status(),
+        401,
+        "a valid password declaring the wrong tenant must not authenticate as that tenant"
+    );
+
+    // Sanity: the same credential against its *real* tenant still works — the fix must not have
+    // broken the legitimate path.
+    let same_tenant = client
+        .get(format!("{}/api/test.jwt_orders", server.base))
+        .basic_auth(&email, Some(password))
+        .header("X-Tenant-Id", tenant_a.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        same_tenant.status(),
+        200,
+        "the user's own real tenant must still authenticate"
     );
 
     cleanup(&server.pool, tenant_a).await;

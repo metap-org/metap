@@ -11,6 +11,24 @@ use crate::schema::FkSpec;
 use crate::sqlfmt::{quote_ident, quote_literal, quote_qualified_ident};
 use crate::{backfill, quarantine};
 
+/// The fallback's *raw* text, for interpolating into a scalar SQL cast (`::text`/`::date`/...) —
+/// distinct from `Value::to_string()`, which renders as JSON (a `Value::String("N/A")` becomes
+/// the 4-character JSON text `"N/A"`, quote marks included). `apply_sql`'s `AddField` branch
+/// wants that JSON rendering (its target is `::jsonb`, where `'"N/A"'::jsonb` correctly parses
+/// back to the string `N/A`) — `WidenType`'s `Coerce` fallback does not, since its target is a
+/// bare scalar cast: `'"N/A"'::text` would store the literal 4 characters `"N/A"` (quotes and
+/// all) into every coerced row, and `'"N/A"'::date` would simply fail. Mirrors
+/// `metap-query::condition_to_sql`'s private `json_scalar_to_text` (not reused directly — no
+/// existing dependency from this crate on `metap-query` for one small helper).
+fn scalar_fallback_text(value: &Value) -> anyhow::Result<String> {
+    match value {
+        Value::String(s) => Ok(s.clone()),
+        Value::Bool(b) => Ok(b.to_string()),
+        Value::Number(n) => Ok(n.to_string()),
+        _ => anyhow::bail!("WidenType coerce fallback must be a string, bool, or number, got {value}"),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum MigrationOp {
     RenameField {
@@ -69,14 +87,26 @@ pub struct PreflightReport {
 /// mutation. Only `WidenType` can ever report `bad_rows > 0`; every other op is safe by
 /// construction (rename/add/drop never fail a cast, `remove_enum` always has an explicit
 /// `remap_to`).
-pub async fn preflight(pool: &PgPool, table: &str, op: &MigrationOp) -> anyhow::Result<PreflightReport> {
+pub async fn preflight(
+    pool: &PgPool,
+    tenant_id: uuid::Uuid,
+    table: &str,
+    op: &MigrationOp,
+) -> anyhow::Result<PreflightReport> {
     let Some(predicate) = bad_row_predicate(op) else {
         return Ok(PreflightReport { bad_rows: 0 });
     };
     let quoted_table = quote_qualified_ident(table);
-    let bad_rows: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {quoted_table} t WHERE {predicate}"))
-        .fetch_one(pool)
-        .await?;
+    // `t.tenant_id = $1` — scoped for the same reason `backfill::run_batched_update`/
+    // `quarantine::quarantine_bad_rows` are (`AUDIT_2.md`): a count across a table shared by more
+    // than one tenant (never supposed to happen, previously unchecked) would otherwise report a
+    // number that includes rows this migration will never actually touch.
+    let bad_rows: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM {quoted_table} t WHERE t.tenant_id = $1 AND ({predicate})"
+    ))
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await?;
     Ok(PreflightReport { bad_rows })
 }
 
@@ -135,7 +165,7 @@ pub async fn run_migration(
     policy: &QuarantinePolicy,
     migration_id: &str,
 ) -> anyhow::Result<MigrationOutcome> {
-    let report = preflight(pool, table, op).await?;
+    let report = preflight(pool, tenant_id, table, op).await?;
     let mut outcome = MigrationOutcome::default();
 
     if report.bad_rows > 0 {
@@ -150,6 +180,7 @@ pub async fn run_migration(
                 if let Some(predicate) = bad_row_predicate(op) {
                     let q = quarantine::quarantine_bad_rows(
                         pool,
+                        tenant_id,
                         table,
                         &predicate,
                         migration_id,
@@ -169,7 +200,7 @@ pub async fn run_migration(
     }
 
     let op_id = format!("migration:{table}:{migration_id}");
-    if let Some((set_clause, where_extra)) = apply_sql(op, policy) {
+    if let Some((set_clause, where_extra)) = apply_sql(op, policy)? {
         backfill::run_batched_update(
             pool,
             tenant_id,
@@ -188,8 +219,8 @@ pub async fn run_migration(
 /// Builds the `(SET clause, optional extra WHERE)` for `backfill::run_batched_update` — `None`
 /// for an op with nothing to backfill (a `DropField { keep_data: true }` only ever needs a
 /// metadata change, no data touched).
-fn apply_sql(op: &MigrationOp, policy: &QuarantinePolicy) -> Option<(String, Option<String>)> {
-    match op {
+fn apply_sql(op: &MigrationOp, policy: &QuarantinePolicy) -> anyhow::Result<Option<(String, Option<String>)>> {
+    Ok(match op {
         MigrationOp::RenameField { from, to } => {
             let from_lit = quote_literal(from);
             let to_lit = quote_literal(to);
@@ -199,7 +230,9 @@ fn apply_sql(op: &MigrationOp, policy: &QuarantinePolicy) -> Option<(String, Opt
             ))
         }
         MigrationOp::AddField { name, default } => {
-            let default = default.as_ref()?;
+            let Some(default) = default.as_ref() else {
+                return Ok(None);
+            };
             let name_lit = quote_literal(name);
             Some((
                 format!(
@@ -217,7 +250,7 @@ fn apply_sql(op: &MigrationOp, policy: &QuarantinePolicy) -> Option<(String, Opt
                      ELSE {fallback}::{sql_type} END",
                     ty = quote_literal(to_sql_type),
                     sql_type = to_sql_type,
-                    fallback = quote_literal(&fallback.to_string()),
+                    fallback = quote_literal(&scalar_fallback_text(fallback)?),
                 ),
                 _ => format!("(t.data ->> {f})::{to_sql_type}"),
             };
@@ -228,7 +261,7 @@ fn apply_sql(op: &MigrationOp, policy: &QuarantinePolicy) -> Option<(String, Opt
         }
         MigrationOp::DropField { field, keep_data } => {
             if *keep_data {
-                return None;
+                return Ok(None);
             }
             let f = quote_literal(field);
             Some((format!("data = t.data - {f}"), Some(format!("t.data ? {f}"))))
@@ -243,5 +276,5 @@ fn apply_sql(op: &MigrationOp, policy: &QuarantinePolicy) -> Option<(String, Opt
                 Some(format!("t.data ->> {f} = {}", quote_literal(value))),
             ))
         }
-    }
+    })
 }

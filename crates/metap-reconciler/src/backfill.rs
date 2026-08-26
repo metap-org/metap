@@ -54,14 +54,26 @@ pub async fn run_batched_update(
 
     let quoted_table = quote_qualified_ident(table);
     let extra = where_extra.map(|w| format!(" AND ({w})")).unwrap_or_default();
+    // `t.tenant_id = $2` — found live (`AUDIT_2.md`): this batch's own `SELECT` had no tenant
+    // scoping at all, relying entirely on the convention "every dedicated table belongs to
+    // exactly one `DedicatedDb` tenant" (documented in `CLAUDE.md`, never checked in code). Safe
+    // today only because that convention has always held in practice; this makes it structurally
+    // true instead — a future caller reconciling a shared (`Schema`-strategy) table for the
+    // wrong tenant now can't touch another tenant's rows even if that convention were ever
+    // violated.
     let sql = format!(
-        "WITH batch AS (SELECT id FROM {quoted_table} t WHERE id > $1{extra} ORDER BY id LIMIT {BATCH_SIZE}) \
+        "WITH batch AS (SELECT id FROM {quoted_table} t WHERE t.tenant_id = $2 AND id > $1{extra} \
+         ORDER BY id LIMIT {BATCH_SIZE}) \
          UPDATE {quoted_table} t SET {set_clause} FROM batch WHERE t.id = batch.id RETURNING t.id"
     );
 
     loop {
         let mut tx = pool.begin().await?;
-        let ids: Vec<Uuid> = sqlx::query_scalar(&sql).bind(cursor).fetch_all(&mut *tx).await?;
+        let ids: Vec<Uuid> = sqlx::query_scalar(&sql)
+            .bind(cursor)
+            .bind(tenant_id)
+            .fetch_all(&mut *tx)
+            .await?;
         if ids.is_empty() {
             tx.commit().await?;
             break;

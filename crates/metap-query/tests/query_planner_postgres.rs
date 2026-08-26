@@ -128,6 +128,24 @@ async fn insert_fixture(pool: &PgPool, tenant_id: Uuid, name: &str, status: &str
     id
 }
 
+/// Same shape as `insert_fixture`, but the `score` key is entirely absent from `data` — a real
+/// `NULL` under `jsonb_extract_path_text(data, 'score')`, not just a JSON `null`, matching how a
+/// field genuinely never set (rather than explicitly nulled) looks on a real record.
+async fn insert_fixture_no_score(pool: &PgPool, tenant_id: Uuid, name: &str) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO records (id, tenant_id, entity, data, deleted) \
+         VALUES ($1, $2, 'test.widgets', $3, false)",
+    )
+    .bind(id)
+    .bind(tenant_id)
+    .bind(serde_json::json!({ "name": name, "status": "active" }))
+    .execute(pool)
+    .await
+    .expect("insert fixture row with no score");
+    id
+}
+
 async fn run_plan(pool: &PgPool, planned: &metap_query::PlannedListQuery) -> Vec<Uuid> {
     let sql = format!(
         "SELECT id FROM records WHERE {} ORDER BY {} LIMIT {}",
@@ -410,7 +428,7 @@ async fn keyset_pagination_produces_disjoint_consecutive_pages() {
         .get("created_at");
     let cursor = metap_query::Cursor {
         field: "createdAt".to_string(),
-        value: created_at.to_rfc3339(),
+        value: Some(created_at.to_rfc3339()),
         id: last_id.to_string(),
         dir: metap_query::SortDir::Desc,
     };
@@ -441,6 +459,130 @@ async fn keyset_pagination_produces_disjoint_consecutive_pages() {
     h.cleanup(&ids).await;
 }
 
+/// Regression for the finding in `AUDIT_2.md`: a `NULL` sort value used to be encoded as an
+/// empty string in the cursor, which can never satisfy `sort_expr > ''`/`sort_expr = ''` under
+/// SQL's three-valued logic — every row from the first `NULL` onward silently vanished from
+/// later pages. Sorts `score` ascending (`NULLS LAST`, Postgres's own default, now made explicit
+/// in `plan_list`) across a mix of scored and unscored rows, paging with `limit: 2` through to
+/// the end, and asserts every single row was eventually seen — including the `NULL`-scored ones.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn keyset_pagination_does_not_lose_rows_with_a_null_sort_value() {
+    let h = setup().await;
+
+    let mut ids = Vec::new();
+    ids.push(insert_fixture(&h.pool, h.tenant_id, "scored-1", "active", 1, false).await);
+    ids.push(insert_fixture(&h.pool, h.tenant_id, "scored-2", "active", 2, false).await);
+    ids.push(insert_fixture_no_score(&h.pool, h.tenant_id, "unscored-1").await);
+    ids.push(insert_fixture_no_score(&h.pool, h.tenant_id, "unscored-2").await);
+    ids.push(insert_fixture(&h.pool, h.tenant_id, "scored-3", "active", 3, false).await);
+
+    let mut seen: Vec<Uuid> = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..10 {
+        let input = ListInput {
+            limit: 2,
+            sort: Some("score".to_string()),
+            cursor: cursor.clone(),
+            ..Default::default()
+        };
+        let planned = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]).unwrap();
+        let sql = format!(
+            "SELECT id, jsonb_extract_path_text(data, 'score') AS score FROM records WHERE {} ORDER BY {} LIMIT {}",
+            planned.where_sql, planned.order_by_sql, planned.limit
+        );
+        let query = apply_params(sqlx::query(&sql), &planned.params);
+        let rows = query
+            .fetch_all(&h.pool)
+            .await
+            .unwrap_or_else(|err| panic!("query failed: {err}\nsql: {sql}"));
+        if rows.is_empty() {
+            break;
+        }
+        for row in &rows {
+            seen.push(row.get::<Uuid, _>("id"));
+        }
+        let last = rows.last().unwrap();
+        cursor = Some(metap_query::encode_cursor(&metap_query::Cursor {
+            field: "score".to_string(),
+            value: last.get::<Option<String>, _>("score"),
+            id: last.get::<Uuid, _>("id").to_string(),
+            dir: metap_query::SortDir::Asc,
+        }));
+    }
+
+    seen.sort();
+    let mut expected = ids.clone();
+    expected.sort();
+    assert_eq!(
+        seen, expected,
+        "every row must be seen exactly once across all pages, including the NULL-scored ones"
+    );
+
+    h.cleanup(&ids).await;
+}
+
+/// Same as `keyset_pagination_does_not_lose_rows_with_a_null_sort_value` but descending —
+/// `cursor_condition`'s `DESC` branches are genuinely different code from its `ASC` ones (the
+/// leading vs. trailing `NULL` block under `NULLS FIRST` vs. `NULLS LAST`), so this is a
+/// distinct code path worth its own live check, not just the mirror of the `ASC` case.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn keyset_pagination_does_not_lose_rows_with_a_null_sort_value_descending() {
+    let h = setup().await;
+
+    let mut ids = Vec::new();
+    ids.push(insert_fixture(&h.pool, h.tenant_id, "scored-1", "active", 1, false).await);
+    ids.push(insert_fixture(&h.pool, h.tenant_id, "scored-2", "active", 2, false).await);
+    ids.push(insert_fixture_no_score(&h.pool, h.tenant_id, "unscored-1").await);
+    ids.push(insert_fixture_no_score(&h.pool, h.tenant_id, "unscored-2").await);
+    ids.push(insert_fixture(&h.pool, h.tenant_id, "scored-3", "active", 3, false).await);
+
+    let mut seen: Vec<Uuid> = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..10 {
+        let input = ListInput {
+            limit: 2,
+            sort: Some("-score".to_string()),
+            cursor: cursor.clone(),
+            ..Default::default()
+        };
+        let planned = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]).unwrap();
+        let sql = format!(
+            "SELECT id, jsonb_extract_path_text(data, 'score') AS score FROM records WHERE {} ORDER BY {} LIMIT {}",
+            planned.where_sql, planned.order_by_sql, planned.limit
+        );
+        let query = apply_params(sqlx::query(&sql), &planned.params);
+        let rows = query
+            .fetch_all(&h.pool)
+            .await
+            .unwrap_or_else(|err| panic!("query failed: {err}\nsql: {sql}"));
+        if rows.is_empty() {
+            break;
+        }
+        for row in &rows {
+            seen.push(row.get::<Uuid, _>("id"));
+        }
+        let last = rows.last().unwrap();
+        cursor = Some(metap_query::encode_cursor(&metap_query::Cursor {
+            field: "score".to_string(),
+            value: last.get::<Option<String>, _>("score"),
+            id: last.get::<Uuid, _>("id").to_string(),
+            dir: metap_query::SortDir::Desc,
+        }));
+    }
+
+    seen.sort();
+    let mut expected = ids.clone();
+    expected.sort();
+    assert_eq!(
+        seen, expected,
+        "every row must be seen exactly once across all pages, including the NULL-scored ones"
+    );
+
+    h.cleanup(&ids).await;
+}
+
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn cursor_mismatched_with_current_sort_is_rejected() {
@@ -448,7 +590,7 @@ async fn cursor_mismatched_with_current_sort_is_rejected() {
 
     let cursor = metap_query::Cursor {
         field: "score".to_string(), // query below sorts by createdAt (default) — mismatch
-        value: "1".to_string(),
+        value: Some("1".to_string()),
         id: Uuid::new_v4().to_string(),
         dir: metap_query::SortDir::Desc,
     };

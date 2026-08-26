@@ -33,6 +33,20 @@ pub struct ClaimedEntity {
 /// production shape too (sharding orchestrator workers by entity, not just a test-isolation
 /// convenience), not just how the tests in `tests/orchestrator_postgres.rs` avoid stealing each
 /// other's rows when Rust runs test functions concurrently in one process.
+/// A `'running'` row whose `lease_heartbeat` is older than this is reclaimed by `claim_due` as
+/// abandoned — found live (`AUDIT_2.md`): `lease_heartbeat` was written at claim time and never
+/// read back anywhere, so a worker that crashed mid-`reconcile_one` (after `claim_due`, before
+/// `record_success`/`record_failure`) left that `(tenant, entity)` permanently `'running'`,
+/// excluded from `claim_due`'s own `status IN ('pending', 'failed')` filter forever. No caller in
+/// this codebase currently refreshes `lease_heartbeat` *during* a long-running reconcile (nothing
+/// wires this orchestrator into a running service yet — see this module's own doc comment), so
+/// this window has to be generous enough to outlast a legitimately slow reconcile (a large
+/// backfill can run for a while) rather than tuned tight — a real always-on deployment of this
+/// orchestrator would want a periodic heartbeat refresh from inside `reconcile_one` so this could
+/// shrink; that's a separate future improvement, not needed while nothing runs this loop
+/// continuously.
+const LEASE_STALE_AFTER_MINUTES: i64 = 60;
+
 pub async fn claim_due(
     pool: &PgPool,
     worker_id: &str,
@@ -40,12 +54,15 @@ pub async fn claim_due(
     max_attempts: i32,
     limit: i64,
 ) -> anyhow::Result<Vec<ClaimedEntity>> {
+    let stale_before = chrono::Utc::now() - chrono::Duration::minutes(LEASE_STALE_AFTER_MINUTES);
     let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(
         "UPDATE reconciler_entity_deployments SET status = 'running', lease_worker = $1, \
          lease_heartbeat = now(), attempts = attempts + 1, updated_at = now() \
          WHERE (tenant_id, entity_name) IN ( \
            SELECT tenant_id, entity_name FROM reconciler_entity_deployments \
-           WHERE desired_version > COALESCE(applied_version, 0) AND status IN ('pending', 'failed') \
+           WHERE desired_version > COALESCE(applied_version, 0) \
+                 AND (status IN ('pending', 'failed') \
+                      OR (status = 'running' AND lease_heartbeat < $5)) \
                  AND attempts < $2 AND ($4::text IS NULL OR entity_name = $4) \
            ORDER BY (status = 'failed') ASC, priority_tier ASC, updated_at ASC \
            LIMIT $3 FOR UPDATE SKIP LOCKED \
@@ -55,6 +72,7 @@ pub async fn claim_due(
     .bind(max_attempts)
     .bind(limit)
     .bind(entity_name_filter)
+    .bind(stale_before)
     .fetch_all(pool)
     .await?;
     Ok(rows

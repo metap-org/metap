@@ -342,6 +342,86 @@ async fn failed_run_with_attempts_remaining_schedules_a_retry_that_claim_due_ret
     cleanup(&pool, tenant_id).await;
 }
 
+/// Regression for the finding in `AUDIT_2.md`: `started_at` used to be the *only* claim marker,
+/// set the instant a retry is claimed (its outbox event enqueued) rather than when it actually
+/// finishes — so a retry whose outbox never drains (RabbitMQ down long-term, a dedicated-DB
+/// tenant's outbox pointed at the wrong pool) stayed claimed forever, permanently excluded from
+/// `WHERE started_at IS NULL`, with no way back. `claim_due_retries` now also reclaims a claim
+/// older than `RETRY_CLAIM_STALE_AFTER` whose `status` never advanced past `enqueued`.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn claim_due_retries_reclaims_a_stale_claim_that_never_finished() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let job_id = create_on_transition_job(&pool, tenant_id, DispatchMode::Outbox).await;
+
+    dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate", Uuid::new_v4())
+        .await
+        .expect("dispatch_on_transition_matches");
+    let run_id = sqlx::query("SELECT id FROM cron_job_runs WHERE job_id = $1")
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .expect("run row")
+        .get::<Uuid, _>("id");
+
+    let payload = metap_cron::CronJobDuePayload {
+        run_id,
+        job_id,
+        tenant_id,
+        target_type: TargetType::Webhook.as_str().to_string(),
+        target_config: json!({}),
+        attempt: 1,
+        max_attempts: 3,
+        retry_backoff_seconds: 1,
+        dispatch_mode: DispatchMode::Outbox.as_str().to_string(),
+        trigger_record_id: None,
+        trigger_entity: None,
+    };
+    finish_run_with_retry(&pool, &payload, RunStatus::Failed, Some("connection refused"), None)
+        .await
+        .expect("finish_run_with_retry");
+
+    let now_plus_2s = chrono::Utc::now() + chrono::Duration::seconds(2);
+    let first_claim = claim_due_retries(&pool, now_plus_2s, 10)
+        .await
+        .expect("claim_due_retries");
+    assert_eq!(first_claim.claimed, 1, "first claim picks up the due retry");
+
+    // Simulate the outbox never draining: the retry's row is now `started_at`-set but its
+    // `status` stays `enqueued` forever, since nothing ever calls
+    // `finish_run`/`finish_run_with_retry` for it. A claim this fresh must not be reclaimed yet.
+    let not_yet_stale = claim_due_retries(&pool, now_plus_2s, 10)
+        .await
+        .expect("claim_due_retries");
+    assert_eq!(
+        not_yet_stale.claimed, 0,
+        "a freshly-claimed retry must not be reclaimed immediately"
+    );
+
+    // Backdate `started_at` past the reclaim window to simulate time passing with no progress —
+    // on the *retry's* row (attempt 2), not `run_id` (the original attempt 1, a separate row
+    // `finish_run_with_retry` leaves untouched once it schedules the retry).
+    sqlx::query(
+        "UPDATE cron_job_runs SET started_at = now() - interval '10 minutes' \
+         WHERE job_id = $1 AND attempt = 2",
+    )
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let reclaimed = claim_due_retries(&pool, now_plus_2s, 10)
+        .await
+        .expect("claim_due_retries");
+    assert_eq!(
+        reclaimed.claimed, 1,
+        "a claim stale past the reclaim window must be reclaimed"
+    );
+
+    cleanup(&pool, tenant_id).await;
+}
+
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn failed_run_with_no_attempts_remaining_does_not_schedule_a_retry() {

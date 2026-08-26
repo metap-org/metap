@@ -44,8 +44,14 @@ pub async fn ensure_quarantine_table(pool: &PgPool, table: &str) -> anyhow::Resu
 /// `bad_predicate` is a raw SQL boolean expression over the main table (aliased `t`) selecting
 /// which rows to move out — callers pass the *same* predicate `migration::preflight` used to
 /// count them, so "how many are bad" and "which ones get quarantined" can never drift apart.
+///
+/// Scoped to `tenant_id` throughout (found live, `AUDIT_2.md`: the candidate `SELECT` had no
+/// tenant filter at all, relying purely on the "one dedicated table per `DedicatedDb` tenant"
+/// convention) — makes that convention structurally true for this operation rather than only
+/// documented.
 pub async fn quarantine_bad_rows(
     pool: &PgPool,
+    tenant_id: Uuid,
     table: &str,
     bad_predicate: &str,
     migration_id: &str,
@@ -55,26 +61,31 @@ pub async fn quarantine_bad_rows(
     let quoted_table = quote_qualified_ident(table);
     let quoted_quarantine = quote_qualified_ident(&quarantine_table_name(table));
 
-    let candidate_ids: Vec<Uuid> =
-        sqlx::query_scalar(&format!("SELECT t.id FROM {quoted_table} t WHERE {bad_predicate}"))
-            .fetch_all(pool)
-            .await?;
+    let candidate_ids: Vec<Uuid> = sqlx::query_scalar(&format!(
+        "SELECT t.id FROM {quoted_table} t WHERE t.tenant_id = $1 AND ({bad_predicate})"
+    ))
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await?;
 
     let mut outcome = QuarantineOutcome::default();
     for id in candidate_ids {
         let mut tx = pool.begin().await?;
-        let fetched: Option<(Uuid, Value)> =
-            sqlx::query_as(&format!("SELECT tenant_id, data FROM {quoted_table} WHERE id = $1"))
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?;
+        let fetched: Option<(Uuid, Value)> = sqlx::query_as(&format!(
+            "SELECT tenant_id, data FROM {quoted_table} WHERE id = $1 AND tenant_id = $2"
+        ))
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?;
         let Some((tenant_id, data)) = fetched else {
             tx.rollback().await?;
             continue; // already gone (concurrent write) — nothing to quarantine
         };
 
-        let delete_result = sqlx::query(&format!("DELETE FROM {quoted_table} WHERE id = $1"))
+        let delete_result = sqlx::query(&format!("DELETE FROM {quoted_table} WHERE id = $1 AND tenant_id = $2"))
             .bind(id)
+            .bind(tenant_id)
             .execute(&mut *tx)
             .await;
 

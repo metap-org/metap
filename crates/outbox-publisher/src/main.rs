@@ -1,6 +1,6 @@
 use std::env;
 
-use metap_infra::{connect_db, load_config, EventBus, RabbitEventBus};
+use metap_infra::{connect_db, load_config, RabbitEventBus};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -19,14 +19,15 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("connecting to postgres...");
     let pool = connect_db(config.outbox_database_url()).await?;
 
-    tracing::info!("connecting to rabbitmq...");
-    let bus = RabbitEventBus::connect(&config.rabbitmq_url).await?;
-
     tracing::info!(poll_ms, batch_size, "ready, polling");
 
-    outbox_publisher::run(&pool, &bus, poll_ms, batch_size, shutdown_signal()).await?;
+    let rabbitmq_url = config.rabbitmq_url.clone();
+    let connect = move || {
+        let url = rabbitmq_url.clone();
+        async move { RabbitEventBus::connect(&url).await }
+    };
+    outbox_publisher::run(&pool, connect, poll_ms, batch_size, shutdown_signal()).await?;
 
-    bus.close().await.ok();
     pool.close().await;
 
     Ok(())

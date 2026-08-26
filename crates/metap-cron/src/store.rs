@@ -446,6 +446,19 @@ async fn fire_matched_jobs(
     Ok(result)
 }
 
+/// A claimed retry (`started_at` set) that never reaches `finish_run`/`finish_run_with_retry`
+/// (status stays `enqueued` forever) is treated as abandoned after this long and reclaimed —
+/// found live (`AUDIT_2.md`): `started_at` is set the moment the retry is *claimed* (right after
+/// its outbox event is enqueued below), not when the executor actually picks it up, so a
+/// dedicated-DB tenant's outbox that never drains (wrong pool, RabbitMQ down long-term) left the
+/// retry claimed but never executed, permanently excluded from `WHERE r.started_at IS NULL` —
+/// silently lost, no timeout, nothing an admin could see. 5 minutes is generous relative to the
+/// default 5s tick interval (`cron-scheduler`'s `CRON_TICK_MS`) — long enough that a healthy
+/// outbox/executor round-trip never falsely reclaims a retry still legitimately in flight, short
+/// enough that a genuinely stuck one recovers within one operator's coffee break, not silently
+/// forever.
+const RETRY_CLAIM_STALE_AFTER: chrono::Duration = chrono::Duration::seconds(300);
+
 /// Claims every retry due at or before `now` — a `cron_job_runs` row with `attempt > 1` that a
 /// prior failed attempt scheduled (see `finish_run_with_retry`). Same `FOR UPDATE SKIP LOCKED`
 /// safety as `claim_due_jobs`, joined to the owning `cron_jobs` row for the
@@ -457,18 +470,23 @@ pub async fn claim_due_retries(pool: &PgPool, now: DateTime<Utc>, batch_size: i6
     // dispatch below, so a retry row can never be picked up twice by two ticks (the equivalent
     // of `claim_due_jobs` advancing `next_run_at` — that one moves the *source* row out of its
     // own claim window, this one has to mark itself since `cron_job_runs` is both the claim
-    // source and the audit trail here). `j.enabled` matches `claim_due_jobs`'s same filter — a
-    // job disabled after a failure scheduled its retry must not still fire it.
+    // source and the audit trail here). `OR r.started_at < $4` reclaims a stale claim (see
+    // `RETRY_CLAIM_STALE_AFTER`'s doc comment) — a row this old with `status` still `enqueued`
+    // never reached `finish_run`/`finish_run_with_retry`, so treat it as abandoned rather than
+    // lost forever. `j.enabled` matches `claim_due_jobs`'s same filter — a job disabled after a
+    // failure scheduled its retry must not still fire it.
+    let stale_before = now - RETRY_CLAIM_STALE_AFTER;
     let rows = sqlx::query(
-        "SELECT r.id AS run_id, r.attempt, j.* FROM cron_job_runs r \
+        "SELECT r.id AS run_id, r.attempt, r.started_at AS run_started_at, j.* FROM cron_job_runs r \
          JOIN cron_jobs j ON j.id = r.job_id \
-         WHERE r.attempt > 1 AND r.status = $1 AND r.started_at IS NULL AND r.scheduled_for <= $2 \
-         AND j.enabled \
+         WHERE r.attempt > 1 AND r.status = $1 AND (r.started_at IS NULL OR r.started_at < $4) \
+         AND r.scheduled_for <= $2 AND j.enabled \
          ORDER BY r.scheduled_for LIMIT $3 FOR UPDATE OF r SKIP LOCKED",
     )
     .bind(RunStatus::Enqueued.as_str())
     .bind(now)
     .bind(batch_size)
+    .bind(stale_before)
     .fetch_all(&mut *tx)
     .await?;
 
@@ -481,12 +499,20 @@ pub async fn claim_due_retries(pool: &PgPool, now: DateTime<Utc>, batch_size: i6
         let job = job_from_row(row)?;
         let run_id: Uuid = row.try_get("run_id")?;
         let attempt: i32 = row.try_get("attempt")?;
+        let reclaimed = row.try_get::<Option<DateTime<Utc>>, _>("run_started_at")?.is_some();
         dispatch_claimed(&mut tx, &job, run_id, attempt, None, None, &mut result).await?;
         sqlx::query("UPDATE cron_job_runs SET started_at = now() WHERE id = $1")
             .bind(run_id)
             .execute(&mut *tx)
             .await?;
-        tracing::info!(job_id = %job.id, run_id = %run_id, attempt, "cron job retry claimed");
+        if reclaimed {
+            tracing::warn!(
+                job_id = %job.id, run_id = %run_id, attempt,
+                "cron job retry reclaimed (previous claim never finished — stale outbox or crashed executor)"
+            );
+        } else {
+            tracing::info!(job_id = %job.id, run_id = %run_id, attempt, "cron job retry claimed");
+        }
     }
 
     tx.commit().await?;
@@ -558,6 +584,19 @@ async fn dispatch_claimed(
         }
     }
     Ok(())
+}
+
+/// The `cron_job_runs.status` a run is currently at, or `None` if `run_id` doesn't exist —
+/// `execute`'s idempotency check before actually dispatching (`AUDIT_2.md`: a redelivered
+/// `cron.job.due` message, e.g. the process crashing between `dispatch()` finishing and the
+/// message's `ack` landing, used to re-run `webhook`/`bulk_query_action` a second time with
+/// nothing to detect the run had already completed).
+pub async fn run_status(pool: &PgPool, run_id: Uuid) -> anyhow::Result<Option<RunStatus>> {
+    let row = sqlx::query("SELECT status FROM cron_job_runs WHERE id = $1")
+        .bind(run_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.and_then(|r| RunStatus::parse(r.get::<String, _>("status").as_str())))
 }
 
 pub async fn start_run(pool: &PgPool, run_id: Uuid) -> anyhow::Result<()> {

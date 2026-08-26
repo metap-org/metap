@@ -173,6 +173,74 @@ async fn storage_column_backfills_existing_rows_and_syncs_new_ones() {
     drop_table_if_exists(&pool, "test_reconciler_storage_column").await;
 }
 
+/// Regression for the finding in `AUDIT_2.md`: `backfill::run_batched_update`'s batch-select had
+/// no `tenant_id` filter at all, relying purely on the convention "a dedicated table only ever
+/// holds one tenant's rows" — never checked in code. Simulates the convention being violated (two
+/// tenants' rows sharing one physical table, which should never happen in practice today but
+/// wasn't prevented either) and confirms a backfill scoped to tenant A leaves tenant B's row
+/// completely untouched, rather than silently backfilling across the tenant boundary.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn storage_column_backfill_does_not_touch_another_tenants_row_in_a_shared_table() {
+    let pool = connect().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let entity_name = "test.reconciler_storage_column_multitenant";
+    drop_table_if_exists(&pool, "test_reconciler_storage_column_multitenant").await;
+
+    let def_v1 = entity(entity_name, vec![plain_field("amount", FieldKind::Money)]);
+    reconcile(&pool, tenant_a, &def_v1, &[]).await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO entities.test_reconciler_storage_column_multitenant (tenant_id, data) \
+         VALUES ($1, jsonb_build_object('amount', '12.50'::text))",
+    )
+    .bind(tenant_a)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Simulates the convention being violated: tenant B's row lives in the *same* physical
+    // table (never provisioned/reconciled for tenant B — just directly inserted, matching how
+    // a real cross-tenant leak would look: a row that shouldn't be here at all).
+    sqlx::query(
+        "INSERT INTO entities.test_reconciler_storage_column_multitenant (tenant_id, data) \
+         VALUES ($1, jsonb_build_object('amount', '999.99'::text))",
+    )
+    .bind(tenant_b)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let mut promoted = plain_field("amount", FieldKind::Money);
+    promoted.indexed = Some(true);
+    promoted.storage = Some(FieldStorage::Column);
+    let def_v2 = entity(entity_name, vec![promoted]);
+    reconcile(&pool, tenant_a, &def_v2, &[]).await.unwrap();
+
+    let tenant_a_amount: (Option<f64>,) = sqlx::query_as(
+        "SELECT amount::float8 FROM entities.test_reconciler_storage_column_multitenant WHERE tenant_id = $1",
+    )
+    .bind(tenant_a)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tenant_a_amount.0, Some(12.50), "tenant A's own row must be backfilled");
+
+    let tenant_b_amount: (Option<f64>,) = sqlx::query_as(
+        "SELECT amount::float8 FROM entities.test_reconciler_storage_column_multitenant WHERE tenant_id = $1",
+    )
+    .bind(tenant_b)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tenant_b_amount.0, None,
+        "a backfill scoped to tenant A must never touch tenant B's row, even sharing one physical table"
+    );
+
+    drop_table_if_exists(&pool, "test_reconciler_storage_column_multitenant").await;
+}
+
 /// §3.3 — a `Reference` field whose `ref_entity` already has its own table gets a real FK.
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]

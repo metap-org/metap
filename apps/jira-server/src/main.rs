@@ -60,7 +60,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
-use metap::infra::{EventBus, RabbitEventBus};
+use metap::infra::RabbitEventBus;
 use metap::prelude::*;
 use secrecy::SecretString;
 use uuid::Uuid;
@@ -198,8 +198,6 @@ async fn main() -> anyhow::Result<()> {
     // (no shared config struct field — each caller reads its own knobs at its own composition
     // root).
     let outbox_worker_handle = if env_flag_enabled("OUTBOX_WORKER_INLINE") {
-        tracing::info!("connecting outbox worker to rabbitmq (inline mode)...");
-        let outbox_bus = RabbitEventBus::connect(&config.rabbitmq_url).await?;
         let outbox_pool = tenant_pool.clone();
         let poll_ms: u64 = std::env::var("OUTBOX_POLL_MS")
             .ok()
@@ -209,13 +207,16 @@ async fn main() -> anyhow::Result<()> {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(100);
+        let rabbitmq_url = config.rabbitmq_url.clone();
+        let connect = move || {
+            let url = rabbitmq_url.clone();
+            async move { RabbitEventBus::connect(&url).await }
+        };
         Some(tokio::spawn(async move {
-            if let Err(err) =
-                outbox_publisher::run(&outbox_pool, &outbox_bus, poll_ms, batch_size, shutdown_signal()).await
+            if let Err(err) = outbox_publisher::run(&outbox_pool, connect, poll_ms, batch_size, shutdown_signal()).await
             {
                 tracing::error!(error = %err, "outbox worker exited with error");
             }
-            outbox_bus.close().await.ok();
         }))
     } else {
         None

@@ -92,6 +92,8 @@ Run a single Rust test: `cargo test -p <crate> <test_name>` (add `-- --ignored` 
 
 Node >=24.15.0 for the frontend workspace; a recent stable Rust toolchain for the backend (no pinned MSRV yet). Frontend module system is ESM throughout (`"type": "module"`).
 
+**Check `target/` size before a Rust build session, not after.** `du -sh target` — if it's past ~40GB, run `cargo clean` first. Found live (2026-08-26): an unchecked `target/` grew to 96GB across one session's worth of incremental builds and crashed the WSL VM outright (real data loss risk, not just disk pressure) — cheaper to clean proactively than to discover this mid-task.
+
 ## Architecture
 
 Request flow is strictly layered, enforced by convention rather than tooling — do not shortcut it:

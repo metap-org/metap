@@ -106,6 +106,41 @@ fn bind_scalar(col_type: &ColType, value: &Value, params: &mut ParamBuilder) -> 
     }
 }
 
+/// Builds the `(lhs, rhs)` pair for a `Gt`/`Gte`/`Lt`/`Lte` comparison — unlike `Eq`/`In`, ordering
+/// needs a real numeric cast when comparing against a JSON *number* (a bare text comparison would
+/// sort `"9"` after `"10"`), so the cast is chosen from the *value being compared against* rather
+/// than a fixed column type — `condition_to_sql` has no entity-field-kind context to draw on the
+/// way `metap-query::query_planner`'s `sort_field_expression` does. A `Timestamptz` field always
+/// casts the bound side to match its own real column type; a `Uuid` field has no meaningful
+/// ordering for this use case and is rejected outright rather than silently comparing byte order.
+fn comparable_expr_and_value(
+    expr: &str,
+    col_type: &ColType,
+    expected: &Value,
+    params: &mut ParamBuilder,
+) -> anyhow::Result<(String, String)> {
+    match col_type {
+        ColType::Uuid => anyhow::bail!("gt/gte/lt/lte is not supported on a UUID-typed field"),
+        ColType::Timestamptz => {
+            let text = json_scalar_to_text(expected)?;
+            Ok((
+                expr.to_string(),
+                format!("{}::timestamptz", params.push(BindValue::Text(text))),
+            ))
+        }
+        ColType::Text => match expected {
+            Value::Number(_) => {
+                let text = json_scalar_to_text(expected)?;
+                Ok((
+                    format!("({expr})::numeric"),
+                    format!("{}::numeric", params.push(BindValue::Text(text))),
+                ))
+            }
+            _ => Ok((expr.to_string(), bind_scalar(col_type, expected, params)?)),
+        },
+    }
+}
+
 pub fn condition_to_sql(
     condition: &PolicyCondition,
     context: &RequestContext,
@@ -166,6 +201,17 @@ pub fn condition_to_sql(
                         phs.push(bind_scalar(&col_type, v, params)?);
                     }
                     Ok(format!("{expr} NOT IN ({})", phs.join(", ")))
+                }
+                ConditionOp::Gt | ConditionOp::Gte | ConditionOp::Lt | ConditionOp::Lte => {
+                    let (lhs, rhs) = comparable_expr_and_value(&expr, &col_type, &expected, params)?;
+                    let sql_op = match op {
+                        ConditionOp::Gt => ">",
+                        ConditionOp::Gte => ">=",
+                        ConditionOp::Lt => "<",
+                        ConditionOp::Lte => "<=",
+                        _ => unreachable!(),
+                    };
+                    Ok(format!("{lhs} {sql_op} {rhs}"))
                 }
             }
         }
@@ -344,6 +390,53 @@ mod tests {
             op: ConditionOp::Eq,
             value: PolicyValue::Literal {
                 literal: serde_json::json!("not-a-uuid"),
+            },
+        };
+        assert!(condition_to_sql(&cond, &ctx, &mut params).is_err());
+    }
+
+    /// Regression for the finding in `AUDIT_2.md`: comparing a JSONB-extracted-as-text field
+    /// against a JSON *number* with a plain text `>` would sort lexicographically (`"9" >
+    /// "10"`) — wrong. Confirms `Gt` against a numeric literal casts both sides to `::numeric`.
+    #[test]
+    fn gt_condition_against_a_number_casts_both_sides_numeric() {
+        let ctx = context(None);
+        let mut params = ParamBuilder::new();
+        let cond = PolicyCondition::Attribute {
+            attribute: "amount".to_string(),
+            op: ConditionOp::Gt,
+            value: PolicyValue::Literal {
+                literal: serde_json::json!(10000),
+            },
+        };
+        let sql = condition_to_sql(&cond, &ctx, &mut params).unwrap();
+        assert_eq!(sql, "(jsonb_extract_path_text(data, $1))::numeric > $2::numeric");
+    }
+
+    #[test]
+    fn gt_condition_against_a_string_stays_a_plain_text_comparison() {
+        let ctx = context(None);
+        let mut params = ParamBuilder::new();
+        let cond = PolicyCondition::Attribute {
+            attribute: "name".to_string(),
+            op: ConditionOp::Lt,
+            value: PolicyValue::Literal {
+                literal: serde_json::json!("banana"),
+            },
+        };
+        let sql = condition_to_sql(&cond, &ctx, &mut params).unwrap();
+        assert_eq!(sql, "jsonb_extract_path_text(data, $1) < $2");
+    }
+
+    #[test]
+    fn gt_condition_on_a_uuid_field_is_rejected() {
+        let ctx = context(None);
+        let mut params = ParamBuilder::new();
+        let cond = PolicyCondition::Attribute {
+            attribute: "createdBy".to_string(),
+            op: ConditionOp::Gt,
+            value: PolicyValue::Literal {
+                literal: serde_json::json!("123e4567-e89b-12d3-a456-426614174000"),
             },
         };
         assert!(condition_to_sql(&cond, &ctx, &mut params).is_err());

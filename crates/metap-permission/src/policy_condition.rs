@@ -26,6 +26,17 @@ pub enum ConditionOp {
     Neq,
     In,
     NotIn,
+    /// Numeric/lexicographic ordering — `actual`/`expected` must both be JSON numbers (compared
+    /// as `f64`) or both JSON strings (compared lexicographically); any other pairing (a type
+    /// mismatch, or either side `null`/an array/object) fails closed (`false`), matching this
+    /// module's existing fail-closed posture elsewhere. Added (`AUDIT_2.md`) because a guard
+    /// like "amount > 10000 needs senior approval" had no way to express itself before this —
+    /// `journal_entry_entity.rs`'s `post` guard had to fake "at least one side is positive" with
+    /// `Neq 0`, which wrongly also accepted a negative amount.
+    Gt,
+    Gte,
+    Lt,
+    Lte,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,12 +127,33 @@ pub fn required_relation_fields(policies: &[PolicyRow]) -> Vec<String> {
     out
 }
 
+/// `None` for any pairing `Gt`/`Gte`/`Lt`/`Lte` can't meaningfully order — a type mismatch, or
+/// either side `null`/an array/object — so the caller can fail closed instead of guessing.
+fn compare_ordering(actual: &serde_json::Value, expected: &serde_json::Value) -> Option<std::cmp::Ordering> {
+    match (actual, expected) {
+        (serde_json::Value::Number(a), serde_json::Value::Number(b)) => a.as_f64()?.partial_cmp(&b.as_f64()?),
+        (serde_json::Value::String(a), serde_json::Value::String(b)) => Some(a.cmp(b)),
+        _ => None,
+    }
+}
+
 fn match_operator(op: ConditionOp, actual: &serde_json::Value, expected: &serde_json::Value) -> bool {
+    use std::cmp::Ordering;
     match op {
         ConditionOp::Eq => actual == expected,
         ConditionOp::Neq => actual != expected,
         ConditionOp::In => expected.as_array().is_some_and(|arr| arr.contains(actual)),
         ConditionOp::NotIn => expected.as_array().is_some_and(|arr| !arr.contains(actual)),
+        ConditionOp::Gt => compare_ordering(actual, expected) == Some(Ordering::Greater),
+        ConditionOp::Gte => matches!(
+            compare_ordering(actual, expected),
+            Some(Ordering::Greater | Ordering::Equal)
+        ),
+        ConditionOp::Lt => compare_ordering(actual, expected) == Some(Ordering::Less),
+        ConditionOp::Lte => matches!(
+            compare_ordering(actual, expected),
+            Some(Ordering::Less | Ordering::Equal)
+        ),
     }
 }
 
@@ -260,6 +292,10 @@ pub fn evaluate_condition(
                     ConditionOp::Neq => "neq",
                     ConditionOp::In => "in",
                     ConditionOp::NotIn => "notIn",
+                    ConditionOp::Gt => "gt",
+                    ConditionOp::Gte => "gte",
+                    ConditionOp::Lt => "lt",
+                    ConditionOp::Lte => "lte",
                 };
                 ConditionResult::Failed(format!(
                     "condition failed: {attribute} {op_str} {expected} (got {actual})"
@@ -369,6 +405,83 @@ mod tests {
             },
         };
         assert!(evaluate_condition(&not_in_cond, &subject, &ctx).is_passed());
+    }
+
+    /// Regression for the finding in `AUDIT_2.md`: before `Gt`/`Gte`/`Lt`/`Lte` existed, a guard
+    /// like "amount > 10000" was inexpressible — `journal_entry_entity.rs`'s `post` guard had to
+    /// fake "at least one side is positive" with `Neq 0`, which wrongly also accepted a negative
+    /// amount. Confirms `Gt` correctly rejects a negative value that `Neq 0` would have wrongly
+    /// let through.
+    #[test]
+    fn gt_correctly_excludes_a_negative_value_that_neq_zero_would_wrongly_accept() {
+        let ctx = context("t1", None);
+        let negative_subject = json!({ "debitAmount": -50 });
+        let positive_subject = json!({ "debitAmount": 50 });
+
+        let gt_zero = PolicyCondition::Attribute {
+            attribute: "debitAmount".to_string(),
+            op: ConditionOp::Gt,
+            value: PolicyValue::Literal { literal: json!(0) },
+        };
+        assert!(
+            !evaluate_condition(&gt_zero, &negative_subject, &ctx).is_passed(),
+            "a negative amount must not satisfy 'debitAmount > 0'"
+        );
+        assert!(evaluate_condition(&gt_zero, &positive_subject, &ctx).is_passed());
+
+        // The bug this replaces: `Neq 0` treats -50 as satisfying "non-zero".
+        let neq_zero = PolicyCondition::Attribute {
+            attribute: "debitAmount".to_string(),
+            op: ConditionOp::Neq,
+            value: PolicyValue::Literal { literal: json!(0) },
+        };
+        assert!(
+            evaluate_condition(&neq_zero, &negative_subject, &ctx).is_passed(),
+            "demonstrates why Neq 0 was the wrong operator for this guard"
+        );
+    }
+
+    #[test]
+    fn ordering_operators_cover_numbers_and_strings() {
+        let ctx = context("t1", None);
+
+        let gte_cond = |v: i64| PolicyCondition::Attribute {
+            attribute: "amount".to_string(),
+            op: ConditionOp::Gte,
+            value: PolicyValue::Literal { literal: json!(v) },
+        };
+        assert!(evaluate_condition(&gte_cond(100), &json!({"amount": 100}), &ctx).is_passed());
+        assert!(!evaluate_condition(&gte_cond(101), &json!({"amount": 100}), &ctx).is_passed());
+
+        let lte_cond = |v: i64| PolicyCondition::Attribute {
+            attribute: "amount".to_string(),
+            op: ConditionOp::Lte,
+            value: PolicyValue::Literal { literal: json!(v) },
+        };
+        assert!(evaluate_condition(&lte_cond(100), &json!({"amount": 100}), &ctx).is_passed());
+        assert!(!evaluate_condition(&lte_cond(99), &json!({"amount": 100}), &ctx).is_passed());
+
+        let lt_cond = PolicyCondition::Attribute {
+            attribute: "name".to_string(),
+            op: ConditionOp::Lt,
+            value: PolicyValue::Literal {
+                literal: json!("banana"),
+            },
+        };
+        assert!(evaluate_condition(&lt_cond, &json!({"name": "apple"}), &ctx).is_passed());
+        assert!(!evaluate_condition(&lt_cond, &json!({"name": "cherry"}), &ctx).is_passed());
+    }
+
+    #[test]
+    fn ordering_operator_with_mismatched_types_fails_closed() {
+        let ctx = context("t1", None);
+        let cond = PolicyCondition::Attribute {
+            attribute: "amount".to_string(),
+            op: ConditionOp::Gt,
+            value: PolicyValue::Literal { literal: json!(10) },
+        };
+        // `amount` is a string on this subject, not a number — not comparable, must fail closed.
+        assert!(!evaluate_condition(&cond, &json!({"amount": "not-a-number"}), &ctx).is_passed());
     }
 
     #[test]

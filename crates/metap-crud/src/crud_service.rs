@@ -1461,16 +1461,19 @@ fn compute_capabilities(
     }
 }
 
-fn sort_field_value(row: &RecordDto, field: &str) -> String {
+/// `None` when the field is genuinely unset (missing key or explicit JSON `null`) — distinct
+/// from `Some(String::new())`, an actual empty string. Collapsing the two used to be the root
+/// cause of `AUDIT_2.md`'s keyset-pagination data-loss bug: see `Cursor::value`'s doc comment.
+fn sort_field_value(row: &RecordDto, field: &str) -> Option<String> {
     match field {
-        "createdAt" => row.created_at.to_rfc3339(),
-        "updatedAt" => row.updated_at.to_rfc3339(),
+        "createdAt" => Some(row.created_at.to_rfc3339()),
+        "updatedAt" => Some(row.updated_at.to_rfc3339()),
         _ => match row.data.get(field) {
-            Some(Value::String(s)) => s.clone(),
-            Some(Value::Number(n)) => n.to_string(),
-            Some(Value::Bool(b)) => b.to_string(),
-            Some(v) if !v.is_null() => v.to_string(),
-            _ => String::new(),
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::Number(n)) => Some(n.to_string()),
+            Some(Value::Bool(b)) => Some(b.to_string()),
+            Some(v) if !v.is_null() => Some(v.to_string()),
+            _ => None,
         },
     }
 }

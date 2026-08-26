@@ -67,9 +67,32 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
     let mut issues = Vec::new();
     let mut field_names: HashSet<&str> = HashSet::new();
 
+    // `field.name` is interpolated directly into SQL just like `table_name` below — as a real
+    // column identifier (`metap-reconciler::compile`'s table-per-entity DDL, e.g.
+    // `format!("\"{}\"", field.name)`) or as a JSONB path literal
+    // (`data ->> '{field.name}'`, `metap-crud::find_referencing_record`) — but unlike
+    // `table_name` had no charset check at all until this validation existed. Since a
+    // low-code-authored entity's field names come from admin-supplied metadata (not a
+    // developer's own source), an unvalidated name is a live SQL-injection vector at every one
+    // of those interpolation sites. Every field name in this codebase is camelCase
+    // (`customerId`, `dueDate`, ...), so this whitelist matches existing usage rather than
+    // tightening it.
+    fn is_safe_field_name(name: &str) -> bool {
+        !name.is_empty()
+            && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
     for field in &entity.fields {
         if !field_names.insert(field.name.as_str()) {
             issues.push(format!("duplicate field name \"{}\"", field.name));
+        }
+
+        if !is_safe_field_name(&field.name) {
+            issues.push(format!(
+                "field name \"{}\" must match ^[A-Za-z][A-Za-z0-9_]*$",
+                field.name
+            ));
         }
 
         if matches!(field.kind, crate::entity::FieldKind::Enum)
@@ -150,6 +173,57 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
                     "duplicate transition action \"{}\" from state \"{}\"",
                     transition.action, transition.from
                 ));
+            }
+        }
+
+        // Cross-check every state name workflow metadata mentions against `stateField`'s own
+        // `enumValues` — found live (`AUDIT_2.md`): before this, a typo'd `from`/`to`/
+        // `initialState`/`terminalStates` entry (e.g. `"actvie"` for `"active"`) compiled and
+        // validated cleanly, then `CrudService::transition` wrote that exact typo'd value
+        // straight into the record's state column with no further check
+        // (`crud_service.rs`'s `to_state = transition.to.clone()`) — a permanently "broken"
+        // status no other transition could ever match `from` against again. Only checkable when
+        // `stateField` is actually an `Enum` with declared `enumValues` — a plain `String`
+        // state field (never seen in this codebase, but not structurally forbidden) has no
+        // fixed vocabulary to check against, so this degrades to a no-op rather than an error.
+        let state_enum_values = entity
+            .fields
+            .iter()
+            .find(|f| f.name == workflow.state_field)
+            .filter(|f| matches!(f.kind, crate::entity::FieldKind::Enum))
+            .and_then(|f| f.enum_values.as_ref());
+        if let Some(enum_values) = state_enum_values {
+            let enum_set: HashSet<&str> = enum_values.iter().map(String::as_str).collect();
+            if !workflow.initial_state.is_empty() && !enum_set.contains(workflow.initial_state.as_str()) {
+                issues.push(format!(
+                    "workflow.initialState \"{}\" is not one of stateField \"{}\"'s enumValues",
+                    workflow.initial_state, workflow.state_field
+                ));
+            }
+            for state in &workflow.terminal_states {
+                if !state.is_empty() && !enum_set.contains(state.as_str()) {
+                    issues.push(format!(
+                        "workflow.terminalStates contains \"{state}\", not one of stateField \"{}\"'s enumValues",
+                        workflow.state_field
+                    ));
+                }
+            }
+            for transition in &workflow.transitions {
+                if transition.from.is_empty() || transition.to.is_empty() {
+                    continue; // already reported above
+                }
+                if !enum_set.contains(transition.from.as_str()) {
+                    issues.push(format!(
+                        "workflow transition \"{}\" has from-state \"{}\", not one of stateField \"{}\"'s enumValues",
+                        transition.action, transition.from, workflow.state_field
+                    ));
+                }
+                if !enum_set.contains(transition.to.as_str()) {
+                    issues.push(format!(
+                        "workflow transition \"{}\" has to-state \"{}\", not one of stateField \"{}\"'s enumValues",
+                        transition.action, transition.to, workflow.state_field
+                    ));
+                }
             }
         }
     }
@@ -234,6 +308,27 @@ mod tests {
     }
 
     #[test]
+    fn field_name_with_unsafe_characters_is_rejected() {
+        // Regression test for the SQL-injection vector `AUDIT_2.md` flagged: `field.name` is
+        // interpolated directly into SQL as a column identifier
+        // (`metap-reconciler::compile`) and a JSONB path literal
+        // (`metap-crud::find_referencing_record`) — a name like `x") OR 1=1 --` must be
+        // rejected here, at the trust boundary, since low-code-authored fields come from
+        // admin-supplied metadata.
+        let mut entity = minimal_entity();
+        entity.fields.push(field("x\") OR 1=1 --", FieldKind::String));
+        let err = validate(&entity).unwrap_err();
+        assert!(err.issues.iter().any(|i| i.contains("must match")));
+    }
+
+    #[test]
+    fn field_name_with_underscore_and_digits_is_allowed() {
+        let mut entity = minimal_entity();
+        entity.fields.push(field("field_2", FieldKind::String));
+        assert!(validate(&entity).is_ok());
+    }
+
+    #[test]
     fn enum_without_values_is_rejected() {
         let mut entity = minimal_entity();
         entity.fields.push(field("status", FieldKind::Enum));
@@ -282,6 +377,76 @@ mod tests {
         let mut changed = minimal_entity();
         changed.fields.push(field("extra", FieldKind::String));
         assert_ne!(hash(&entity).unwrap(), hash(&changed).unwrap());
+    }
+
+    /// Regression for the finding in `AUDIT_2.md`: a workflow transition's `from`/`to` (or
+    /// `initialState`/`terminalStates`) that doesn't match any of `stateField`'s own
+    /// `enumValues` — a typo, most realistically — used to validate cleanly and let
+    /// `CrudService::transition` write that exact typo'd value straight into a record's state
+    /// column, permanently unreachable by any other transition's `from`.
+    #[test]
+    fn transition_to_state_not_in_enum_values_is_rejected() {
+        use crate::entity::{EntityWorkflow, WorkflowTransition};
+
+        let mut entity = minimal_entity();
+        entity.fields.push(field("status", FieldKind::Enum));
+        entity.fields[1].enum_values = Some(vec!["draft".to_string(), "active".to_string()]);
+        entity.workflow = Some(EntityWorkflow {
+            state_field: "status".to_string(),
+            initial_state: "draft".to_string(),
+            terminal_states: vec![],
+            transitions: vec![WorkflowTransition {
+                action: "activate".to_string(),
+                from: "draft".to_string(),
+                to: "actvie".to_string(), // typo — not one of enumValues
+                label: "Activate".to_string(),
+                guard: None,
+            }],
+        });
+
+        let err = validate(&entity).unwrap_err();
+        assert!(err.issues.iter().any(|i| i.contains("to-state \"actvie\"")));
+    }
+
+    #[test]
+    fn workflow_initial_state_not_in_enum_values_is_rejected() {
+        use crate::entity::EntityWorkflow;
+
+        let mut entity = minimal_entity();
+        entity.fields.push(field("status", FieldKind::Enum));
+        entity.fields[1].enum_values = Some(vec!["draft".to_string(), "active".to_string()]);
+        entity.workflow = Some(EntityWorkflow {
+            state_field: "status".to_string(),
+            initial_state: "pending".to_string(), // not one of enumValues
+            terminal_states: vec![],
+            transitions: vec![],
+        });
+
+        let err = validate(&entity).unwrap_err();
+        assert!(err.issues.iter().any(|i| i.contains("workflow.initialState")));
+    }
+
+    #[test]
+    fn workflow_states_matching_enum_values_pass() {
+        use crate::entity::{EntityWorkflow, WorkflowTransition};
+
+        let mut entity = minimal_entity();
+        entity.fields.push(field("status", FieldKind::Enum));
+        entity.fields[1].enum_values = Some(vec!["draft".to_string(), "active".to_string()]);
+        entity.workflow = Some(EntityWorkflow {
+            state_field: "status".to_string(),
+            initial_state: "draft".to_string(),
+            terminal_states: vec!["active".to_string()],
+            transitions: vec![WorkflowTransition {
+                action: "activate".to_string(),
+                from: "draft".to_string(),
+                to: "active".to_string(),
+                label: "Activate".to_string(),
+                guard: None,
+            }],
+        });
+
+        assert!(validate(&entity).is_ok());
     }
 
     #[test]

@@ -233,6 +233,17 @@ async fn basic_auth(app_state: &AppState, parts: &Parts, credentials_b64: &str) 
         .await
         .map_err(|_| AuthError::unauthorized("Invalid email or password."))?
         .ok_or(AuthError::unauthorized("Invalid email or password."))?;
+    // `verify_credentials`'s lookup (`WHERE email = $1`) is not itself tenant-scoped — the
+    // `users` table is genuinely shared across every `Schema`-strategy tenant (all pinned to
+    // `public` today, see `LoginBody::tenant_id`'s doc comment in `routes/auth.rs`), so a valid
+    // password for a user of tenant A would otherwise authenticate a request that *claims* to be
+    // tenant B via this header alone. `POST /auth/login` avoids this by minting the JWT for
+    // `user.tenant_id` (the row actually found), never the caller-supplied value — this must
+    // reject instead of silently substituting, since a caller-declared tenant that doesn't match
+    // is a request Basic auth's header-only scheme can't safely serve at all.
+    if user.tenant_id != tenant_id {
+        return Err(AuthError::unauthorized("Invalid email or password."));
+    }
     let roles = get_roles_for_user(&mut *tx, tenant_id, user.id)
         .await
         .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;

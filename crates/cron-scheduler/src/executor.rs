@@ -91,7 +91,31 @@ where
 /// Runs one job to completion and records its result — shared by the outbox-consuming loop
 /// above and the ticker's `Direct`-dispatch path (`ticker.rs`), so "how a job actually gets
 /// executed" has exactly one implementation regardless of which `DispatchMode` got it here.
+///
+/// Idempotency check first: `cron.job.due` is at-least-once (a crash between `dispatch()`
+/// finishing and the message's `ack` landing redelivers it), and `webhook`/`bulk_query_action`
+/// have no way to detect a duplicate call on their own — `AUDIT_2.md` found this could silently
+/// double-fire an external webhook or re-apply a bulk action to every already-matched record.
+/// `run_id`'s `cron_job_runs.status` starts `enqueued` and only ever leaves that state once via
+/// `finish_run`/`finish_run_with_retry` at the end of this function, so a status that's already
+/// `success`/`failed` means this exact firing already ran to completion — skip re-dispatching
+/// and let the caller ack the (now known-duplicate) delivery as normal.
 pub async fn execute(pool: &PgPool, http: &reqwest::Client, config: &ExecutorConfig, payload: &CronJobDuePayload) {
+    match metap_cron::run_status(pool, payload.run_id).await {
+        Ok(Some(RunStatus::Success)) | Ok(Some(RunStatus::Failed)) => {
+            tracing::warn!(
+                run_id = %payload.run_id,
+                job_id = %payload.job_id,
+                "cron job run already completed, skipping duplicate dispatch (redelivered message)"
+            );
+            return;
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::error!(run_id = %payload.run_id, error = %err, "failed to check cron job run status, proceeding anyway");
+        }
+    }
+
     if let Err(err) = metap_cron::start_run(pool, payload.run_id).await {
         tracing::error!(run_id = %payload.run_id, error = %err, "failed to mark cron job run started");
     }

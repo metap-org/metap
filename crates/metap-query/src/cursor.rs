@@ -16,7 +16,13 @@ pub enum SortDir {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cursor {
     pub field: String,
-    pub value: String,
+    /// `None` when the page's last row had a SQL `NULL` sort value — distinct from `Some("")`,
+    /// which is a real empty string. Collapsing both into the same empty-string encoding used to
+    /// be exactly the keyset-pagination bug `AUDIT_2.md` flagged: a `NULL` sort value can never
+    /// satisfy `sort_expr > ''`/`sort_expr = ''` under SQL's three-valued logic (`NULL` compared
+    /// to anything is `unknown`, never `true`), so every row after the first `NULL` silently
+    /// vanished from later pages. `QueryPlanner::plan_list` branches on this explicitly instead.
+    pub value: Option<String>,
     pub id: String,
     pub dir: SortDir,
 }
@@ -65,9 +71,21 @@ mod tests {
     fn round_trips() {
         let cursor = Cursor {
             field: "createdAt".to_string(),
-            value: "2026-08-01T00:00:00Z".to_string(),
+            value: Some("2026-08-01T00:00:00Z".to_string()),
             id: "123e4567-e89b-12d3-a456-426614174000".to_string(),
             dir: SortDir::Desc,
+        };
+        let encoded = encode_cursor(&cursor);
+        assert_eq!(decode_cursor(&encoded), Some(cursor));
+    }
+
+    #[test]
+    fn round_trips_a_null_sort_value() {
+        let cursor = Cursor {
+            field: "dueDate".to_string(),
+            value: None,
+            id: "123e4567-e89b-12d3-a456-426614174000".to_string(),
+            dir: SortDir::Asc,
         };
         let encoded = encode_cursor(&cursor);
         assert_eq!(decode_cursor(&encoded), Some(cursor));

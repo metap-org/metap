@@ -7,8 +7,12 @@
 //! endpoint exists or is added here.
 //!
 //! `post`'s guard is the first use of `PolicyCondition::Any` in this codebase (every prior
-//! guard was a single `Attribute` condition) — "at least one of debit/credit is non-zero",
+//! guard was a single `Attribute` condition) — "at least one of debit/credit is positive",
 //! which a single condition can't express.
+//!
+//! Uses `ConditionOp::Gt` (`AUDIT_2.md`, Phase after Phase 40) rather than `Neq 0` — an earlier
+//! version of this guard used `Neq 0` because `Gt` didn't exist yet, which wrongly also accepted
+//! a *negative* debit/credit amount as satisfying "at least one side is set".
 
 use metap::permission::{ConditionOp, PolicyCondition as Cond, PolicyValue};
 use metap::prelude::{
@@ -42,10 +46,10 @@ fn field(
     }
 }
 
-fn nonzero(attribute: &str) -> PolicyCondition {
+fn positive(attribute: &str) -> PolicyCondition {
     Cond::Attribute {
         attribute: attribute.to_string(),
-        op: ConditionOp::Neq,
+        op: ConditionOp::Gt,
         value: PolicyValue::Literal { literal: json!(0) },
     }
 }
@@ -144,7 +148,7 @@ pub fn journal_entry_entity() -> EntityDefinition {
                     to: "posted".to_string(),
                     label: "Post".to_string(),
                     guard: Some(Cond::Any {
-                        any: vec![nonzero("debitAmount"), nonzero("creditAmount")],
+                        any: vec![positive("debitAmount"), positive("creditAmount")],
                     }),
                 },
                 WorkflowTransition {

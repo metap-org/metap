@@ -203,6 +203,15 @@ impl RunStatus {
             RunStatus::Failed => "failed",
         }
     }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "enqueued" => Some(RunStatus::Enqueued),
+            "success" => Some(RunStatus::Success),
+            "failed" => Some(RunStatus::Failed),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

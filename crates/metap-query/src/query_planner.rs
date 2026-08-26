@@ -155,6 +155,46 @@ fn bind_cursor_value(col_type: &SortColType, value: &str, params: &mut ParamBuil
     )
 }
 
+/// Builds the keyset-pagination predicate for "every row strictly after the cursor's position",
+/// correctly accounting for Postgres's own `NULL`-ordering defaults (`NULLS LAST` for `ASC`,
+/// `NULLS FIRST` for `DESC` — made explicit in `plan_list`'s `ORDER BY` rather than left
+/// implicit) instead of assuming every sort value is comparable with plain `>`/`<`/`=`, which
+/// silently drops every row once a `NULL` sort value is involved (`AUDIT_2.md`) since SQL's
+/// three-valued logic makes `NULL > x`/`NULL = x` `unknown`, never `true`, for any `x`.
+///
+/// Under that `NULL`-ordering convention, a `NULL` sort value behaves as if it were the
+/// "largest" possible value in both directions — last under `ASC` (smallest-to-largest, `NULL`
+/// at the end), first under `DESC` (largest-to-smallest, `NULL` at the front). That gives four
+/// cases:
+/// - `ASC`, cursor value is real (`v`): next rows are `sort_expr > v` (bigger reals), the tiebreak
+///   on equal `v`, OR any `NULL` row (the trailing `NULL` block always comes after every real
+///   value).
+/// - `DESC`, cursor value is real (`v`): next rows are only smaller reals — the leading `NULL`
+///   block (if any) already sorted before `v`, so it's already been fully consumed by earlier
+///   pages.
+/// - `ASC`, cursor value is `NULL`: already inside the trailing `NULL` block, which is *last* —
+///   nothing but more `NULL`s (tiebreak on `id`) can follow.
+/// - `DESC`, cursor value is `NULL`: still inside the leading `NULL` block — next rows are either
+///   more `NULL`s (tiebreak on `id`) or, once that block ends, every real value.
+fn cursor_condition(sort_expr: &str, descending: bool, value_ph: Option<&str>, id_ph: &str) -> String {
+    match (descending, value_ph) {
+        (false, Some(value_ph)) => {
+            format!(
+                "(({sort_expr} > {value_ph}) OR ({sort_expr} = {value_ph} AND id > {id_ph}) OR {sort_expr} IS NULL)"
+            )
+        }
+        (true, Some(value_ph)) => {
+            format!("(({sort_expr} < {value_ph}) OR ({sort_expr} = {value_ph} AND id > {id_ph}))")
+        }
+        (false, None) => {
+            format!("({sort_expr} IS NULL AND id > {id_ph})")
+        }
+        (true, None) => {
+            format!("(({sort_expr} IS NULL AND id > {id_ph}) OR {sort_expr} IS NOT NULL)")
+        }
+    }
+}
+
 /// Same signature shape as `QueryPlanner.planList` (metadata + permissions injected, not
 /// held as struct state — there's no other state to hold, so a plain function is the
 /// faithful equivalent here rather than a single-method struct).
@@ -342,20 +382,31 @@ pub fn plan_list(
             tracing::warn!(entity = entity.name, "list rejected: cursor id is not a valid uuid");
             InvalidCursorError("Cursor does not match the current sort".to_string())
         })?;
-        let value_ph = bind_cursor_value(&sort_col_type, &cursor.value, &mut params);
+        let value_ph = cursor
+            .value
+            .as_deref()
+            .map(|v| bind_cursor_value(&sort_col_type, v, &mut params));
         let id_ph = params.push(BindValue::Uuid(cursor_id));
 
-        let tiebreak = format!("({sort_expr} = {value_ph} AND id > {id_ph})");
-        let cursor_condition = if resolved_sort.descending {
-            format!("(({sort_expr} < {value_ph}) OR {tiebreak})")
-        } else {
-            format!("(({sort_expr} > {value_ph}) OR {tiebreak})")
-        };
-        conditions.push(cursor_condition);
+        conditions.push(cursor_condition(
+            &sort_expr,
+            resolved_sort.descending,
+            value_ph.as_deref(),
+            &id_ph,
+        ));
     }
 
     let direction = if resolved_sort.descending { "DESC" } else { "ASC" };
-    let order_by_sql = format!("{sort_expr} {direction}, id ASC");
+    // Explicit `NULLS LAST`/`NULLS FIRST` — Postgres's own defaults for `ASC`/`DESC`
+    // respectively, made explicit here (rather than left implicit) since `cursor_condition`'s
+    // four-case branching above is written against this exact convention; relying on an
+    // unstated default would make the two silently drift if either ever changed independently.
+    let nulls = if resolved_sort.descending {
+        "NULLS FIRST"
+    } else {
+        "NULLS LAST"
+    };
+    let order_by_sql = format!("{sort_expr} {direction} {nulls}, id ASC");
 
     Ok(PlannedListQuery {
         where_sql: conditions.join(" AND "),
