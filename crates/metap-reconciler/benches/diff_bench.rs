@@ -26,6 +26,10 @@ fn field(name: &str, kind: FieldKind, indexed: bool, sortable: bool, searchable:
         search_mode: None,
         sortable: sortable.then_some(true),
         storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 

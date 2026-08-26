@@ -118,6 +118,10 @@ fn indexed_field(name: &str) -> EntityField {
         search_mode: None,
         sortable: None,
         storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 
@@ -136,6 +140,10 @@ fn fts_field(name: &str) -> EntityField {
         search_mode: Some("fts".to_string()),
         sortable: None,
         storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 
@@ -154,6 +162,10 @@ fn substring_field(name: &str) -> EntityField {
         search_mode: None, // "substring" is the default when searchable: true and not "fts"
         sortable: None,
         storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 

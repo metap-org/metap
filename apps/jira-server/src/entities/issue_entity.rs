@@ -42,6 +42,10 @@ fn field(name: &str, label: &str, kind: FieldKind, required: bool, indexed: bool
         search_mode: None,
         sortable: None,
         storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 
@@ -72,6 +76,10 @@ pub fn issue_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: Some(true),
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "project".to_string(),
@@ -87,6 +95,10 @@ pub fn issue_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "sprint".to_string(),
@@ -104,6 +116,10 @@ pub fn issue_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "epic".to_string(),
@@ -120,6 +136,10 @@ pub fn issue_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "issueType".to_string(),
@@ -135,6 +155,10 @@ pub fn issue_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: Some(true),
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "parentIssue".to_string(),
@@ -151,6 +175,10 @@ pub fn issue_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             field("storyPoints", "Story Points", FieldKind::Number, false, false, false),
             field(
@@ -191,6 +219,10 @@ pub fn issue_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: Some(true),
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
         ],
         list_views: vec![EntityListView {

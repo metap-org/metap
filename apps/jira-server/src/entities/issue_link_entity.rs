@@ -25,6 +25,10 @@ fn issue_ref(name: &str, label: &str) -> EntityField {
         search_mode: None,
         sortable: None,
         storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 
@@ -54,6 +58,10 @@ pub fn issue_link_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: Some(true),
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
         ],
         list_views: vec![EntityListView {

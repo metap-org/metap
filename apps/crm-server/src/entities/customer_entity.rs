@@ -37,6 +37,10 @@ fn field(
         search_mode: None,
         sortable: sortable.then_some(true),
         storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 
@@ -72,6 +76,10 @@ pub fn customer_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: Some(true),
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "referredBy".to_string(),
@@ -87,6 +95,10 @@ pub fn customer_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
         ],
         list_views: vec![EntityListView {

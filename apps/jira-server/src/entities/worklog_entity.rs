@@ -21,6 +21,10 @@ fn field(name: &str, label: &str, kind: FieldKind, required: bool, sortable: boo
         search_mode: None,
         sortable: sortable.then_some(true),
         storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 
@@ -44,6 +48,10 @@ pub fn worklog_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             field("authorEmail", "Author Email", FieldKind::String, true, false),
             field(

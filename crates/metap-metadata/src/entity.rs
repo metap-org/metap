@@ -68,6 +68,20 @@ pub struct EntityField {
     /// See `FieldStorage`'s doc comment. `None` (default) derives the tier from the flags above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage: Option<FieldStorage>,
+    /// Inclusive lower/upper bound, checked by `metap-crud::validate_payload` — only meaningful
+    /// on `Number`/`Money` fields (`compiler::validate` rejects it set on any other kind). `None`
+    /// means unbounded on that side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// Inclusive bound on a `String` value's character count, checked by
+    /// `metap-crud::validate_payload` — only meaningful on `String` fields (`compiler::validate`
+    /// rejects it set on any other kind). `None` means unbounded on that side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_length: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u32>,
 }
 
 /// The storage tier a field is promoted to under table-per-entity
@@ -238,6 +252,10 @@ mod storage_tier_tests {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }
     }
 

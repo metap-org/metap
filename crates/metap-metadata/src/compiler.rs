@@ -110,6 +110,42 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
                 field.name
             ));
         }
+
+        let is_numeric = matches!(
+            field.kind,
+            crate::entity::FieldKind::Number | crate::entity::FieldKind::Money
+        );
+        if !is_numeric && (field.min.is_some() || field.max.is_some()) {
+            issues.push(format!(
+                "field \"{}\" declares min/max but is kind \"{:?}\", not number/money",
+                field.name, field.kind
+            ));
+        }
+        if let (Some(min), Some(max)) = (field.min, field.max) {
+            if min > max {
+                issues.push(format!(
+                    "field \"{}\" has min ({min}) greater than max ({max})",
+                    field.name
+                ));
+            }
+        }
+
+        if !matches!(field.kind, crate::entity::FieldKind::String)
+            && (field.min_length.is_some() || field.max_length.is_some())
+        {
+            issues.push(format!(
+                "field \"{}\" declares minLength/maxLength but is kind \"{:?}\", not string",
+                field.name, field.kind
+            ));
+        }
+        if let (Some(min_length), Some(max_length)) = (field.min_length, field.max_length) {
+            if min_length > max_length {
+                issues.push(format!(
+                    "field \"{}\" has minLength ({min_length}) greater than maxLength ({max_length})",
+                    field.name
+                ));
+            }
+        }
     }
 
     let is_known_field = |name: &str| -> bool { field_names.contains(name) || IMPLICIT_SYSTEM_FIELDS.contains(&name) };
@@ -297,6 +333,10 @@ mod tests {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }
     }
 
@@ -351,6 +391,58 @@ mod tests {
         entity.fields.push(field("status", FieldKind::Enum));
         let err = validate(&entity).unwrap_err();
         assert!(err.issues.iter().any(|i| i.contains("no enumValues")));
+    }
+
+    #[test]
+    fn min_max_on_a_non_numeric_field_is_rejected() {
+        let mut entity = minimal_entity();
+        let mut f = field("title", FieldKind::String);
+        f.min = Some(1.0);
+        entity.fields.push(f);
+        let err = validate(&entity).unwrap_err();
+        assert!(err.issues.iter().any(|i| i.contains("declares min/max")));
+    }
+
+    #[test]
+    fn min_greater_than_max_is_rejected() {
+        let mut entity = minimal_entity();
+        let mut f = field("qty", FieldKind::Number);
+        f.min = Some(10.0);
+        f.max = Some(1.0);
+        entity.fields.push(f);
+        let err = validate(&entity).unwrap_err();
+        assert!(err.issues.iter().any(|i| i.contains("greater than max")));
+    }
+
+    #[test]
+    fn min_max_on_a_numeric_field_passes() {
+        let mut entity = minimal_entity();
+        let mut f = field("qty", FieldKind::Number);
+        f.min = Some(1.0);
+        f.max = Some(10.0);
+        entity.fields.push(f);
+        assert!(validate(&entity).is_ok());
+    }
+
+    #[test]
+    fn min_length_max_length_on_a_non_string_field_is_rejected() {
+        let mut entity = minimal_entity();
+        let mut f = field("qty", FieldKind::Number);
+        f.max_length = Some(10);
+        entity.fields.push(f);
+        let err = validate(&entity).unwrap_err();
+        assert!(err.issues.iter().any(|i| i.contains("declares minLength/maxLength")));
+    }
+
+    #[test]
+    fn min_length_greater_than_max_length_is_rejected() {
+        let mut entity = minimal_entity();
+        let mut f = field("code", FieldKind::String);
+        f.min_length = Some(10);
+        f.max_length = Some(1);
+        entity.fields.push(f);
+        let err = validate(&entity).unwrap_err();
+        assert!(err.issues.iter().any(|i| i.contains("greater than maxLength")));
     }
 
     #[test]

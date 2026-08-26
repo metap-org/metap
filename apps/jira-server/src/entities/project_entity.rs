@@ -23,6 +23,10 @@ fn field(name: &str, label: &str, kind: FieldKind, required: bool, indexed: bool
         search_mode: None,
         sortable: None,
         storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 
@@ -53,6 +57,10 @@ pub fn project_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             field("description", "Description", FieldKind::String, false, false, false),
         ],

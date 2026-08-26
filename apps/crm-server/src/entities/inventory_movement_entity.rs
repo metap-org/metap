@@ -34,6 +34,10 @@ fn field(
         search_mode: None,
         sortable: sortable.then_some(true),
         storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 
@@ -58,6 +62,10 @@ pub fn inventory_movement_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: Some(true),
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             field("warehouse", "Warehouse", FieldKind::String, true, true, true, true),
             field("quantity", "Quantity", FieldKind::Number, true, false, false, true),
@@ -75,6 +83,10 @@ pub fn inventory_movement_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "status".to_string(),
@@ -97,6 +109,10 @@ pub fn inventory_movement_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: Some(true),
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             field("notes", "Notes", FieldKind::String, false, false, true, false),
         ],

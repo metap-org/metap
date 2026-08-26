@@ -7,10 +7,10 @@
 //! Known simplification vs. the Zod schemas seen in practice (e.g.
 //! `apps/crm/src/modules/crm/customer.entity.ts`'s `email: z.string().email()`,
 //! `referredBy: z.string().uuid()`): this validates JSON *type* per `FieldKind`
-//! (string/number/boolean/enum-membership), not per-field string formats (email, UUID
-//! shape, length bounds) — `EntityField` metadata has no format/length concept to drive
-//! that from. A real format constraint would need a new metadata property, not a smarter
-//! validator; out of scope for this port.
+//! (string/number/boolean/enum-membership) and, since `EntityField.min`/`max`/`minLength`/
+//! `maxLength` were added, numeric range and string-length bounds — but not free-form string
+//! *formats* (email, UUID shape). A real format constraint would need a new metadata property
+//! (e.g. a `pattern` regex), not a smarter validator; out of scope for this port.
 
 use std::collections::HashMap;
 
@@ -89,6 +89,42 @@ pub fn validate_payload(entity: &EntityDefinition, data: &JsonObject) -> Result<
             let canonical = Uuid::parse_str(value.as_str().expect("checked by kind_matches")).unwrap();
             result.insert(field.name.clone(), Value::String(canonical.to_string()));
         }
+
+        // `compiler::validate` already rejects `min`/`max`/`minLength`/`maxLength` set on a
+        // kind they don't apply to, so it's safe to check both pairs unconditionally here —
+        // only the pair matching this field's actual kind (Number/Money vs. String) will ever
+        // be `Some`.
+        if let (FieldKind::Number | FieldKind::Money, Some(n)) = (field.kind, value.as_f64()) {
+            if let Some(min) = field.min {
+                if n < min {
+                    errors.entry(field.name.clone()).or_default().push("min".to_string());
+                }
+            }
+            if let Some(max) = field.max {
+                if n > max {
+                    errors.entry(field.name.clone()).or_default().push("max".to_string());
+                }
+            }
+        }
+        if let (FieldKind::String, Some(s)) = (field.kind, value.as_str()) {
+            let len = s.chars().count() as u32;
+            if let Some(min_length) = field.min_length {
+                if len < min_length {
+                    errors
+                        .entry(field.name.clone())
+                        .or_default()
+                        .push("min_length".to_string());
+                }
+            }
+            if let Some(max_length) = field.max_length {
+                if len > max_length {
+                    errors
+                        .entry(field.name.clone())
+                        .or_default()
+                        .push("max_length".to_string());
+                }
+            }
+        }
     }
 
     if errors.is_empty() {
@@ -119,6 +155,10 @@ mod tests {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }
     }
 
@@ -207,5 +247,59 @@ mod tests {
         let data = obj(&[("parentId", json!("550E8400-E29B-41D4-A716-446655440000"))]);
         let result = validate_payload(&e, &data).unwrap();
         assert_eq!(result["parentId"], json!("550e8400-e29b-41d4-a716-446655440000"));
+    }
+
+    #[test]
+    fn number_below_min_is_rejected() {
+        let mut f = field("qty", FieldKind::Number, false);
+        f.min = Some(1.0);
+        let e = entity(vec![f]);
+        let errors = validate_payload(&e, &obj(&[("qty", json!(0))])).unwrap_err();
+        assert_eq!(errors["qty"], vec!["min".to_string()]);
+    }
+
+    #[test]
+    fn number_above_max_is_rejected() {
+        let mut f = field("qty", FieldKind::Number, false);
+        f.max = Some(10.0);
+        let e = entity(vec![f]);
+        let errors = validate_payload(&e, &obj(&[("qty", json!(11))])).unwrap_err();
+        assert_eq!(errors["qty"], vec!["max".to_string()]);
+    }
+
+    #[test]
+    fn number_within_min_max_passes() {
+        let mut f = field("qty", FieldKind::Number, false);
+        f.min = Some(1.0);
+        f.max = Some(10.0);
+        let e = entity(vec![f]);
+        assert!(validate_payload(&e, &obj(&[("qty", json!(5))])).is_ok());
+    }
+
+    #[test]
+    fn string_shorter_than_min_length_is_rejected() {
+        let mut f = field("code", FieldKind::String, false);
+        f.min_length = Some(3);
+        let e = entity(vec![f]);
+        let errors = validate_payload(&e, &obj(&[("code", json!("ab"))])).unwrap_err();
+        assert_eq!(errors["code"], vec!["min_length".to_string()]);
+    }
+
+    #[test]
+    fn string_longer_than_max_length_is_rejected() {
+        let mut f = field("code", FieldKind::String, false);
+        f.max_length = Some(3);
+        let e = entity(vec![f]);
+        let errors = validate_payload(&e, &obj(&[("code", json!("abcd"))])).unwrap_err();
+        assert_eq!(errors["code"], vec!["max_length".to_string()]);
+    }
+
+    #[test]
+    fn string_within_length_bounds_passes() {
+        let mut f = field("code", FieldKind::String, false);
+        f.min_length = Some(2);
+        f.max_length = Some(4);
+        let e = entity(vec![f]);
+        assert!(validate_payload(&e, &obj(&[("code", json!("abc"))])).is_ok());
     }
 }

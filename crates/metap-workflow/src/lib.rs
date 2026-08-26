@@ -268,6 +268,10 @@ mod tests {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             }],
             list_views: vec![],
             workflow: Some(EntityWorkflow {

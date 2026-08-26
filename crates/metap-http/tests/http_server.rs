@@ -89,6 +89,10 @@ fn test_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: Some(true),
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "status".to_string(),
@@ -104,6 +108,10 @@ fn test_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
         ],
         list_views: vec![EntityListView {
@@ -534,6 +542,10 @@ fn string_field(name: &str) -> EntityField {
         search_mode: None,
         sortable: None,
         storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 

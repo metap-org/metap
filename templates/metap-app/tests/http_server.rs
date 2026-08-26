@@ -79,6 +79,10 @@ fn test_entity() -> EntityDefinition {
             searchable: None,
             search_mode: None,
             sortable: Some(true),
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
         }],
         list_views: vec![EntityListView {
             name: "default".to_string(),

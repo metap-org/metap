@@ -40,6 +40,10 @@ fn test_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: Some(true),
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "amount".to_string(),
@@ -55,6 +59,10 @@ fn test_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "status".to_string(),
@@ -70,6 +78,10 @@ fn test_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "resolution".to_string(),
@@ -85,6 +97,10 @@ fn test_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
             EntityField {
                 name: "closedBy".to_string(),
@@ -100,6 +116,10 @@ fn test_entity() -> EntityDefinition {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             },
         ],
         list_views: vec![metap_metadata::EntityListView {
@@ -180,6 +200,10 @@ fn unique_field_entity() -> EntityDefinition {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -208,6 +232,10 @@ fn parent_entity() -> EntityDefinition {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -235,6 +263,10 @@ fn child_entity() -> EntityDefinition {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -264,6 +296,10 @@ fn grandchild_entity() -> EntityDefinition {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -292,6 +328,10 @@ fn self_ref_entity() -> EntityDefinition {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -1158,6 +1198,10 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }
     }
     fn plain_field(name: &str, kind: FieldKind) -> EntityField {
@@ -1175,6 +1219,10 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }
     }
 
@@ -1371,6 +1419,10 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }
     }
     fn plain_field(name: &str, kind: FieldKind) -> EntityField {
@@ -1388,6 +1440,10 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
             search_mode: None,
             sortable: None,
             storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
         }
     }
 

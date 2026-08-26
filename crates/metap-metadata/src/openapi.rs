@@ -35,7 +35,22 @@ fn field_schema(field: &EntityField) -> Value {
             "enum": field.enum_values.clone().unwrap_or_default(),
         });
     }
-    field_kind_json_schema(field.kind)
+    let mut schema = field_kind_json_schema(field.kind);
+    if let Value::Object(map) = &mut schema {
+        if let Some(min) = field.min {
+            map.insert("minimum".to_string(), json!(min));
+        }
+        if let Some(max) = field.max {
+            map.insert("maximum".to_string(), json!(max));
+        }
+        if let Some(min_length) = field.min_length {
+            map.insert("minLength".to_string(), json!(min_length));
+        }
+        if let Some(max_length) = field.max_length {
+            map.insert("maxLength".to_string(), json!(max_length));
+        }
+    }
+    schema
 }
 
 fn entity_schema(entity: &EntitySummary) -> Value {
@@ -76,6 +91,10 @@ fn entity_field_json_schema() -> Value {
             "searchMode": { "type": "string", "enum": ["substring", "fts"] },
             "sortable": { "type": "boolean" },
             "storage": { "type": "string", "enum": ["native", "column"] },
+            "min": { "type": "number" },
+            "max": { "type": "number" },
+            "minLength": { "type": "number" },
+            "maxLength": { "type": "number" },
         },
         "required": ["name", "label", "kind"],
     })
@@ -297,6 +316,10 @@ mod tests {
                 search_mode: None,
                 sortable: None,
                 storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
             }],
             list_views: vec![],
             workflow: None,

@@ -22,6 +22,11 @@ fn field(name: &str, label: &str, kind: FieldKind) -> EntityField {
         searchable: None,
         search_mode: None,
         sortable: None,
+        storage: None,
+        min: None,
+        max: None,
+        min_length: None,
+        max_length: None,
     }
 }
 
@@ -66,6 +71,8 @@ pub fn example_entity() -> EntityDefinition {
                     op: ConditionOp::Neq,
                     value: PolicyValue::Literal { literal: serde_json::json!("") },
                 }),
+                validator: None,
+                set_fields: None,
             }],
         }),
     }
