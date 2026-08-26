@@ -122,6 +122,8 @@ pub fn sales_order_entity() -> EntityDefinition {
                         op: ConditionOp::Neq,
                         value: PolicyValue::Literal { literal: json!("") },
                     }),
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "ship".to_string(),
@@ -129,6 +131,8 @@ pub fn sales_order_entity() -> EntityDefinition {
                     to: "shipped".to_string(),
                     label: "Ship".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "cancel".to_string(),
@@ -136,6 +140,8 @@ pub fn sales_order_entity() -> EntityDefinition {
                     to: "cancelled".to_string(),
                     label: "Cancel".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
             ],
         }),

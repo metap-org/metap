@@ -218,6 +218,8 @@ async fn delete_record(
 #[derive(Deserialize)]
 struct TransitionBody {
     version: i32,
+    #[serde(default)]
+    data: Option<HashMap<String, Value>>,
 }
 
 async fn transition_record(
@@ -226,9 +228,10 @@ async fn transition_record(
     AuthContext(context): AuthContext,
     Json(body): Json<TransitionBody>,
 ) -> Response {
+    let payload: Option<metap_crud::JsonObject> = body.data.map(|d| d.into_iter().collect());
     match state
         .crud
-        .transition(&entity, id, &action, body.version, &context)
+        .transition(&entity, id, &action, body.version, payload.as_ref(), &context)
         .await
     {
         Ok(ServiceResult::Ok { data, .. }) => Json(json!({ "data": data })).into_response(),

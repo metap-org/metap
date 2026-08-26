@@ -63,7 +63,37 @@ fn test_entity() -> EntityDefinition {
                 required: None,
                 indexed: None,
                 unique: None,
-                enum_values: Some(vec!["draft".to_string(), "approved".to_string()]),
+                enum_values: Some(vec!["draft".to_string(), "approved".to_string(), "closed".to_string()]),
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+            },
+            EntityField {
+                name: "resolution".to_string(),
+                label: "Resolution".to_string(),
+                kind: FieldKind::String,
+                required: None,
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+            },
+            EntityField {
+                name: "closedBy".to_string(),
+                label: "Closed By".to_string(),
+                kind: FieldKind::String,
+                required: None,
+                indexed: None,
+                unique: None,
+                enum_values: None,
                 ref_entity: None,
                 ref_display_field: None,
                 searchable: None,
@@ -84,17 +114,44 @@ fn test_entity() -> EntityDefinition {
             state_field: "status".to_string(),
             initial_state: "draft".to_string(),
             terminal_states: vec!["approved".to_string()],
-            transitions: vec![WorkflowTransition {
-                action: "approve".to_string(),
-                from: "draft".to_string(),
-                to: "approved".to_string(),
-                label: "Approve".to_string(),
-                guard: Some(PolicyCondition::Attribute {
-                    attribute: "amount".to_string(),
-                    op: ConditionOp::Eq,
-                    value: PolicyValue::Literal { literal: json!(100) },
-                }),
-            }],
+            transitions: vec![
+                WorkflowTransition {
+                    action: "approve".to_string(),
+                    from: "draft".to_string(),
+                    to: "approved".to_string(),
+                    label: "Approve".to_string(),
+                    guard: Some(PolicyCondition::Attribute {
+                        attribute: "amount".to_string(),
+                        op: ConditionOp::Eq,
+                        value: PolicyValue::Literal { literal: json!(100) },
+                    }),
+                    validator: None,
+                    set_fields: None,
+                },
+                WorkflowTransition {
+                    action: "close".to_string(),
+                    from: "approved".to_string(),
+                    to: "closed".to_string(),
+                    label: "Close".to_string(),
+                    guard: None,
+                    // Requires the caller's transition payload to actually set `resolution` —
+                    // something `run_guard` alone can't express since it only sees pre-transition
+                    // data. Exercises `CrudService::transition`'s payload-merge + validator wiring.
+                    validator: Some(PolicyCondition::Attribute {
+                        attribute: "resolution".to_string(),
+                        op: ConditionOp::Neq,
+                        value: PolicyValue::Literal { literal: json!(null) },
+                    }),
+                    // System-computed: who closed it, taken from the caller's own context, not
+                    // the payload. Exercises `apply_set_fields`.
+                    set_fields: Some(std::collections::HashMap::from([(
+                        "closedBy".to_string(),
+                        PolicyValue::FromContext {
+                            from_context: "userId".to_string(),
+                        },
+                    )])),
+                },
+            ],
         }),
     }
 }
@@ -402,7 +459,7 @@ async fn full_lifecycle_create_get_update_transition_delete() {
 
     // transition guard now passes (amount == 100)
     let transitioned = match crud
-        .transition("test.orders", created.id, "approve", updated.version, &ctx)
+        .transition("test.orders", created.id, "approve", updated.version, None, &ctx)
         .await
         .unwrap()
     {
@@ -415,7 +472,7 @@ async fn full_lifecycle_create_get_update_transition_delete() {
 
     // transition again from a now-invalid from-state -> invalid_transition
     match crud
-        .transition("test.orders", created.id, "approve", transitioned.version, &ctx)
+        .transition("test.orders", created.id, "approve", transitioned.version, None, &ctx)
         .await
         .unwrap()
     {
@@ -472,6 +529,82 @@ async fn full_lifecycle_create_get_update_transition_delete() {
             "test.orders.record.deleted",
         ]
     );
+
+    cleanup(&pool, tenant_id).await;
+}
+
+/// Exercises the 3-part transition upgrade end to end: a caller-submitted payload merged
+/// into the transition write, a `validator` that runs against that merged data (rejecting a
+/// payload that omits a required field, something `guard` alone can't do since it only ever
+/// sees pre-transition data), and `set_fields` layering in a system-computed value from the
+/// caller's own context. See `test_entity()`'s `"close"` transition.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn transition_payload_is_validated_and_set_fields_are_applied() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+    let caller_user_id = ctx.user_id.clone().unwrap();
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(test_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
+
+    let mut payload = JsonObject::new();
+    payload.insert("name".to_string(), json!("Order to close"));
+    payload.insert("amount".to_string(), json!(100));
+    let created = match crud.create("test.orders", &payload, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+    let approved = match crud
+        .transition("test.orders", created.id, "approve", created.version, None, &ctx)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected approve to succeed, got {other:?}"),
+    };
+
+    // close without a `resolution` in the payload -> validator rejects it
+    match crud
+        .transition("test.orders", created.id, "close", approved.version, None, &ctx)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Err { status, error, .. } => {
+            assert_eq!(status, 422);
+            assert_eq!(error, "validator_failed");
+        }
+        other => panic!("expected validator_failed, got {other:?}"),
+    }
+
+    // close with `resolution` set -> validator passes, set_fields stamps `closedBy` from context
+    let mut close_payload = JsonObject::new();
+    close_payload.insert("resolution".to_string(), json!("fixed"));
+    let closed = match crud
+        .transition(
+            "test.orders",
+            created.id,
+            "close",
+            approved.version,
+            Some(&close_payload),
+            &ctx,
+        )
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected close to succeed, got {other:?}"),
+    };
+    assert_eq!(closed.status.as_deref(), Some("closed"));
+    assert_eq!(closed.data["resolution"], json!("fixed"));
+    assert_eq!(closed.data["closedBy"], json!(caller_user_id));
 
     cleanup(&pool, tenant_id).await;
 }
@@ -1543,7 +1676,7 @@ async fn sustained_concurrent_create_update_transition_delete_cycle() {
                 };
 
                 let transitioned = match crud
-                    .transition("test.orders", created.id, "approve", updated.version, &ctx)
+                    .transition("test.orders", created.id, "approve", updated.version, None, &ctx)
                     .await?
                 {
                     ServiceResult::Ok { data, .. } => data,

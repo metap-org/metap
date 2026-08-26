@@ -100,6 +100,8 @@ pub fn sprint_entity() -> EntityDefinition {
                     to: "active".to_string(),
                     label: "Start sprint".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "complete".to_string(),
@@ -107,6 +109,8 @@ pub fn sprint_entity() -> EntityDefinition {
                     to: "completed".to_string(),
                     label: "Complete sprint".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
             ],
         }),

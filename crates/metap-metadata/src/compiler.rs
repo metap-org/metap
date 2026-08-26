@@ -174,6 +174,23 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
                     transition.action, transition.from
                 ));
             }
+
+            if let Some(set_fields) = &transition.set_fields {
+                for field_name in set_fields.keys() {
+                    if field_name == &workflow.state_field {
+                        issues.push(format!(
+                            "transition \"{}\" setFields sets \"{field_name}\", which is stateField — \
+                             use `to` instead",
+                            transition.action
+                        ));
+                    } else if !is_known_field(field_name) {
+                        issues.push(format!(
+                            "transition \"{}\" setFields references unknown field \"{field_name}\"",
+                            transition.action
+                        ));
+                    }
+                }
+            }
         }
 
         // Cross-check every state name workflow metadata mentions against `stateField`'s own
@@ -401,6 +418,8 @@ mod tests {
                 to: "actvie".to_string(), // typo — not one of enumValues
                 label: "Activate".to_string(),
                 guard: None,
+                validator: None,
+                set_fields: None,
             }],
         });
 
@@ -443,6 +462,8 @@ mod tests {
                 to: "active".to_string(),
                 label: "Activate".to_string(),
                 guard: None,
+                validator: None,
+                set_fields: None,
             }],
         });
 
@@ -471,6 +492,8 @@ mod tests {
                     to: "active".to_string(),
                     label: "Activate".to_string(),
                     guard,
+                    validator: None,
+                    set_fields: None,
                 }],
             });
             entity

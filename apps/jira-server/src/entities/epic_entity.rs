@@ -82,6 +82,8 @@ pub fn epic_entity() -> EntityDefinition {
                 to: "closed".to_string(),
                 label: "Close epic".to_string(),
                 guard: None,
+                validator: None,
+                set_fields: None,
             }],
         }),
     }

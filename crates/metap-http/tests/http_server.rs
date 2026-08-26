@@ -124,6 +124,8 @@ fn test_entity() -> EntityDefinition {
                 to: "active".to_string(),
                 label: "Activate".to_string(),
                 guard: None,
+                validator: None,
+                set_fields: None,
             }],
         }),
     }

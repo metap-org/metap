@@ -55,7 +55,11 @@ pub enum PolicyCondition {
     },
 }
 
-fn resolve_value(value: &PolicyValue, context: &RequestContext) -> serde_json::Value {
+/// `pub` so callers besides this module's own `evaluate_condition` can resolve a `PolicyValue`
+/// against a `RequestContext` — `metap-workflow`'s `set_fields` (a transition's declarative
+/// post-function: "set this field to a literal or `fromContext` value on transition") reuses
+/// this exact resolution instead of re-implementing the `Literal`/`FromContext` match.
+pub fn resolve_value(value: &PolicyValue, context: &RequestContext) -> serde_json::Value {
     match value {
         PolicyValue::Literal { literal } => literal.clone(),
         PolicyValue::FromContext { from_context } => context

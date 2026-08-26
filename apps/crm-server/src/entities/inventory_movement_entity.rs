@@ -136,6 +136,8 @@ pub fn inventory_movement_entity() -> EntityDefinition {
                         op: ConditionOp::Neq,
                         value: PolicyValue::Literal { literal: json!(0) },
                     }),
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "approve".to_string(),
@@ -143,6 +145,8 @@ pub fn inventory_movement_entity() -> EntityDefinition {
                     to: "approved".to_string(),
                     label: "Approve".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "reject".to_string(),
@@ -150,6 +154,8 @@ pub fn inventory_movement_entity() -> EntityDefinition {
                     to: "rejected".to_string(),
                     label: "Reject".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "post".to_string(),
@@ -157,6 +163,8 @@ pub fn inventory_movement_entity() -> EntityDefinition {
                     to: "posted".to_string(),
                     label: "Post".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "reverse".to_string(),
@@ -164,6 +172,8 @@ pub fn inventory_movement_entity() -> EntityDefinition {
                     to: "reversed".to_string(),
                     label: "Reverse".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
             ],
         }),

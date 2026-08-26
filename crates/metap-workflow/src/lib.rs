@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use metap_infra::{enqueue_outbox_event, OutboxEvent};
 use metap_metadata::{EntityDefinition, WorkflowTransition};
-use metap_permission::{evaluate_condition, RequestContext};
+use metap_permission::{evaluate_condition, resolve_value, RequestContext};
 use serde_json::{json, Value};
 use sqlx::{FromRow, PgExecutor};
 use uuid::Uuid;
@@ -50,6 +50,44 @@ pub fn run_guard(transition: &WorkflowTransition, data: &JsonObject, context: &R
         Ok(())
     } else {
         Err(result.reason().unwrap_or("guard failed").to_string())
+    }
+}
+
+/// The other half of the "condition vs. validator" split (see `WorkflowTransition::validator`'s
+/// doc comment) — same `PolicyCondition` type and evaluator as `run_guard`, but meant to be
+/// called against `next_data` (the record's data *after* the caller's transition payload has
+/// been merged in and field-validated, *before* `apply_set_fields` runs), not the pre-transition
+/// `existing.data` `run_guard` checks. Lets a transition require its payload to actually contain
+/// something (e.g. "resolution must be set to close this issue") — something `run_guard` alone
+/// can never express, since it only ever sees data from *before* the caller's submission.
+pub fn run_validator(
+    transition: &WorkflowTransition,
+    next_data: &JsonObject,
+    context: &RequestContext,
+) -> Result<(), String> {
+    let Some(validator) = &transition.validator else {
+        return Ok(());
+    };
+    let subject = Value::Object(next_data.clone());
+    let result = evaluate_condition(validator, &subject, context);
+    if result.is_passed() {
+        Ok(())
+    } else {
+        Err(result.reason().unwrap_or("validator failed").to_string())
+    }
+}
+
+/// The declarative post-function: writes `transition.setFields` into `data` in place, each
+/// value resolved via `resolve_value` (a literal, or `fromContext` — e.g. `assignee` pulled from
+/// the caller's own `userId`). Called after `run_validator` passes and before the record is
+/// written, so these system-computed values are never themselves subject to a validator meant
+/// for user-submitted payload fields. A no-op when the transition declares no `setFields`.
+pub fn apply_set_fields(transition: &WorkflowTransition, data: &mut JsonObject, context: &RequestContext) {
+    let Some(set_fields) = &transition.set_fields else {
+        return;
+    };
+    for (field_name, value) in set_fields {
+        data.insert(field_name.clone(), resolve_value(value, context));
     }
 }
 
@@ -242,6 +280,8 @@ mod tests {
                     to: "active".to_string(),
                     label: "Activate".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 }],
             }),
         }
@@ -307,6 +347,8 @@ mod tests {
                 op: ConditionOp::Eq,
                 value: PolicyValue::Literal { literal: json!(100) },
             }),
+            validator: None,
+            set_fields: None,
         };
         let ctx = context(None);
 

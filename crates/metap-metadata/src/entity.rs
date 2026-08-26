@@ -171,6 +171,31 @@ pub struct WorkflowTransition {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard: Option<metap_permission::PolicyCondition>,
+    /// A second, distinct check from `guard` — matches the real "condition vs. validator" split
+    /// a workflow engine like Jira's makes: `guard` decides whether this transition is even
+    /// offered/attemptable, evaluated against the record's *current* data before any payload is
+    /// merged in; `validator` decides whether *this specific attempt* is acceptable, evaluated
+    /// against the record's data *after* `CrudService::transition`'s payload is merged in (e.g.
+    /// `{"attribute": "resolution", "op": "neq", "value": {"literal": null}}` to require a
+    /// `resolution` field be submitted with the transition). Same `PolicyCondition` type as
+    /// `guard` — no new evaluator needed, `metap_workflow::run_validator` just points it at
+    /// different data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validator: Option<metap_permission::PolicyCondition>,
+    /// A declarative, entity-agnostic post-function: field values to set automatically when
+    /// this transition fires, applied *after* `validator` passes (so these system-computed
+    /// values are never themselves subject to a validator meant for user-submitted input) and
+    /// *before* the record is written. Each value is a `PolicyValue` — a literal, or
+    /// `fromContext` (e.g. `{"assignee": {"fromContext": "userId"}}` to auto-assign to whoever
+    /// performed the transition) — reusing the exact type `guard`/`validator` already resolve
+    /// values with, not arbitrary code: a transition that needs to run real business logic
+    /// (call another service, compute something from other records) still goes through the
+    /// existing outbox → `EventBus`/`metap-cron` path, matching every other entity-specific
+    /// side-effect in this codebase (`CLAUDE.md`'s "no `metap-*` library crate gets
+    /// business-entity knowledge" boundary rules out anything more dynamic than this living
+    /// here).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_fields: Option<std::collections::HashMap<String, metap_permission::PolicyValue>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

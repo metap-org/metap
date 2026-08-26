@@ -240,6 +240,8 @@ pub fn issue_entity() -> EntityDefinition {
                     to: "in_progress".to_string(),
                     label: "Start work".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "submit_for_review".to_string(),
@@ -247,6 +249,8 @@ pub fn issue_entity() -> EntityDefinition {
                     to: "in_review".to_string(),
                     label: "Submit for review".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "request_changes".to_string(),
@@ -254,6 +258,8 @@ pub fn issue_entity() -> EntityDefinition {
                     to: "in_progress".to_string(),
                     label: "Request changes".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "approve".to_string(),
@@ -265,6 +271,8 @@ pub fn issue_entity() -> EntityDefinition {
                         op: ConditionOp::Neq,
                         value: PolicyValue::Literal { literal: json!("") },
                     }),
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "reopen".to_string(),
@@ -272,6 +280,8 @@ pub fn issue_entity() -> EntityDefinition {
                     to: "todo".to_string(),
                     label: "Reopen".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
             ],
         }),

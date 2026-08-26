@@ -124,6 +124,8 @@ pub fn customer_entity() -> EntityDefinition {
                         op: ConditionOp::Neq,
                         value: PolicyValue::Literal { literal: json!("") },
                     }),
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "block".to_string(),
@@ -131,6 +133,8 @@ pub fn customer_entity() -> EntityDefinition {
                     to: "blocked".to_string(),
                     label: "Block".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
             ],
         }),

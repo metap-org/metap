@@ -150,6 +150,8 @@ pub fn journal_entry_entity() -> EntityDefinition {
                     guard: Some(Cond::Any {
                         any: vec![positive("debitAmount"), positive("creditAmount")],
                     }),
+                    validator: None,
+                    set_fields: None,
                 },
                 WorkflowTransition {
                     action: "void".to_string(),
@@ -157,6 +159,8 @@ pub fn journal_entry_entity() -> EntityDefinition {
                     to: "voided".to_string(),
                     label: "Void".to_string(),
                     guard: None,
+                    validator: None,
+                    set_fields: None,
                 },
             ],
         }),

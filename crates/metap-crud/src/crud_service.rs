@@ -20,8 +20,8 @@ use metap_query::{
     InvalidJqlError, ListInput, SortDir, UnknownListViewError,
 };
 use metap_workflow::{
-    emit_created, emit_deleted, emit_transitioned, emit_updated, find_transition, get_initial_status, record_event,
-    run_guard,
+    apply_set_fields, emit_created, emit_deleted, emit_transitioned, emit_updated, find_transition, get_initial_status,
+    record_event, run_guard, run_validator,
 };
 use serde_json::Value;
 use sqlx::{PgExecutor, Row};
@@ -734,6 +734,7 @@ impl CrudService {
         id: Uuid,
         action: &str,
         expected_version: i32,
+        payload: Option<&JsonObject>,
         context: &RequestContext,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let Some(entity) = self.get_entity(entity_name) else {
@@ -817,8 +818,52 @@ impl CrudService {
         }
         let to_state = transition.to.clone();
 
-        let mut next_data = existing.data.clone();
-        next_data.insert(workflow.state_field.clone(), Value::String(to_state.clone()));
+        // A transition's payload goes through the same writable-fields check and
+        // field-metadata validation as `update()` — the state field itself is always driven
+        // by `to`, never by the caller, even if the payload tries to include it.
+        let mut merged = existing.data.clone();
+        if let Some(payload) = payload {
+            let keys: Vec<String> = payload.keys().cloned().collect();
+            let write_decision = snapshot.assert_writable_fields(context, &keys, Some(&existing.data));
+            if !write_decision.allowed {
+                return Ok(forbidden_with_field(write_decision));
+            }
+            for (k, v) in payload {
+                merged.insert(k.clone(), v.clone());
+            }
+        }
+        merged.insert(workflow.state_field.clone(), Value::String(to_state.clone()));
+
+        let mut next_data = match validate_payload(&entity, &merged) {
+            Ok(d) => d,
+            Err(field_errors) => {
+                tracing::warn!(
+                    entity = entity.name,
+                    record_id = %id,
+                    fields = ?field_errors.keys().collect::<Vec<_>>(),
+                    "transition rejected: validation failed"
+                );
+                return Ok(ServiceResult::err_with_field_errors(
+                    400,
+                    "validation_failed",
+                    field_errors,
+                ));
+            }
+        };
+
+        if let Err(reason) = run_validator(transition, &next_data, context) {
+            tracing::warn!(
+                entity = entity.name,
+                record_id = %id,
+                action,
+                from_state,
+                reason,
+                "transition rejected: validator failed"
+            );
+            return Ok(ServiceResult::err_with_message(422, "validator_failed", reason));
+        }
+
+        apply_set_fields(transition, &mut next_data, context);
 
         let user_id = parse_user_id(context)?;
 

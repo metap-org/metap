@@ -540,6 +540,8 @@ async fn workflow_with_guard_round_trips_through_draft_and_publish() {
                     literal: serde_json::json!(""),
                 },
             }),
+            validator: None,
+            set_fields: None,
         }],
     });
 
