@@ -51,9 +51,10 @@ export function ReferenceFieldInput({
   // it wasn't loading anything at all). `?field=` (empty) would now mean "IS NULL" since
   // `metap-query`'s empty-filter-value fix, so this branch omits the param entirely rather than
   // sending it empty.
-  const searchPath = debouncedSearch.length > 0
-    ? `/api/${refEntity}?${field.refDisplayField}=${encodeURIComponent(debouncedSearch)}&limit=10`
-    : `/api/${refEntity}?limit=10`;
+  const searchPath =
+    debouncedSearch.length > 0
+      ? `/api/${refEntity}?${field.refDisplayField}=${encodeURIComponent(debouncedSearch)}&limit=10`
+      : `/api/${refEntity}?limit=10`;
   const { data: searchResults } = useApiQuery<{ data: RecordDto[] }, RecordDto[]>(
     ["reference-search", refEntity, field.refDisplayField, debouncedSearch],
     searchPath,

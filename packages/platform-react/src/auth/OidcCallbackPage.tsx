@@ -17,7 +17,9 @@ export function OidcCallbackPage() {
 
   useEffect(() => {
     const hash = window.location.hash;
-    const token = hash.startsWith("#token=") ? decodeURIComponent(hash.slice("#token=".length)) : null;
+    const token = hash.startsWith("#token=")
+      ? decodeURIComponent(hash.slice("#token=".length))
+      : null;
     if (token) {
       setToken(token);
       navAdapter.navigate(navAdapter.toHome());

@@ -59,16 +59,16 @@ use sqlx::PgPool;
 /// `Schema`-strategy tenant `pool_for` returns the same shared pool as before (no behavior
 /// change there); for `DedicatedDb` it now correctly returns that tenant's own pool, so its
 /// low-code entities live in its own database rather than mixed into the platform's.
-async fn resolve_pool(state: &AppState, context: &RequestContext) -> Result<PgPool, Response> {
+async fn resolve_pool(state: &AppState, context: &RequestContext) -> Result<PgPool, Box<Response>> {
     let tenant_id = state
         .permissions
         .scoped_tenant(context)
-        .map_err(internal_error_response)?;
+        .map_err(|e| Box::new(internal_error_response(e)))?;
     state
         .router
         .pool_for(tenant_id.into())
         .await
-        .map_err(router_unavailable_response)
+        .map_err(|e| Box::new(router_unavailable_response(e)))
 }
 
 #[derive(Deserialize)]
@@ -136,7 +136,7 @@ pub async fn apply_registry(state: &AppState, pool: &PgPool, registry: MetadataR
 async fn list_entities(State(state): State<AppState>, AdminContext(context): AdminContext) -> Response {
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     // `list_all_published` here is deliberately the *unfiltered* one (includes disabled
     // entities) — this listing is what tells an operator an entity has been published at
@@ -178,7 +178,7 @@ async fn set_enabled(
 ) -> Response {
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     if let Err(e) = metap_lowcode::set_enabled(&pool, &name, body.enabled).await {
         return internal_error_response(e);
@@ -229,7 +229,7 @@ async fn save_draft(
     };
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match metap_lowcode::save_draft(&pool, &name, &definition).await {
         Ok(()) => {
@@ -257,7 +257,7 @@ async fn get_draft(
 ) -> Response {
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match metap_lowcode::get_draft(&pool, &name).await {
         Ok(Some(def)) => Json(json!({ "data": def })).into_response(),
@@ -273,7 +273,7 @@ async fn publish(
 ) -> Response {
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match metap_lowcode::publish(&pool, &name, &state.metadata_base).await {
         Ok(outcome) => {
@@ -315,7 +315,7 @@ async fn preview_publish(
 ) -> Response {
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match metap_lowcode::preview_publish(&pool, &name, &state.metadata_base).await {
         Ok(preview) => Json(json!({
@@ -334,7 +334,7 @@ async fn rollback(
 ) -> Response {
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match metap_lowcode::rollback(&pool, &name, body.to_version_number, &state.metadata_base).await {
         Ok(outcome) => {
@@ -367,7 +367,7 @@ async fn get_published(
 ) -> Response {
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match metap_lowcode::get_published(&pool, &name).await {
         Ok(Some(v)) => Json(json!({
@@ -391,7 +391,7 @@ async fn list_versions(
 ) -> Response {
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match metap_lowcode::list_versions(&pool, &name).await {
         Ok(versions) => {
@@ -420,7 +420,7 @@ async fn list_audit_events(
 ) -> Response {
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match audit::list_for_entity(&pool, &name, &context.tenant_id).await {
         Ok(events) => {
@@ -464,7 +464,7 @@ async fn list_recent_audit_events(
         .min(MAX_RECENT_AUDIT_LIMIT);
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match audit::list_recent(&pool, &context.tenant_id, limit).await {
         Ok(events) => {
@@ -490,7 +490,7 @@ async fn export_entities(
 ) -> Response {
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let requested: Option<Vec<String>> = params.get("entities").map(|s| {
         s.split(',')
@@ -545,7 +545,7 @@ async fn import_entities(
 ) -> Response {
     let pool = match resolve_pool(&state, &context).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let mut imported = Vec::new();
     let mut failed = Vec::new();

@@ -6,7 +6,19 @@ edition.workspace = true
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
-aws-sdk-s3 = "1"
+# Default features on `aws-sdk-s3` pull in *both* the modern rustls/hyper-1.x HTTP client
+# (`default-https-client`) and a legacy hyper-0.14/h2-0.3/rustls-0.21 one (`rustls` — kept for
+# callers still on the old `HttpConnector` API) at once, so both stacks land in Cargo.lock even
+# though nothing here ever touches the legacy one. That old stack is exactly where `cargo audit`
+# found RUSTSEC-2026-0258 (h2)/-0098/-0099/-0104 (rustls-webpki) — dropping `rustls` (keeping
+# `default-https-client`, the one actually used) removes the vulnerable versions from the
+# dependency graph entirely rather than pinning around them.
+aws-sdk-s3 = { version = "1", default-features = false, features = [
+  "sigv4a",
+  "http-1x",
+  "default-https-client",
+  "rt-tokio",
+] }
 bytes = "1"
 secrecy = "0.10"
 uuid = "1"

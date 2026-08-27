@@ -169,19 +169,19 @@ async fn load_owned_attachment(
     attachment_id: Uuid,
     tenant_id: Uuid,
     table: &str,
-) -> Result<AttachmentRecord, Response> {
+) -> Result<AttachmentRecord, Box<Response>> {
     let mut tx = state
         .router
         .begin(tenant_id.into())
         .await
-        .map_err(router_unavailable_response)?;
+        .map_err(|e| Box::new(router_unavailable_response(e)))?;
     let record = metap_attachments::get_attachment(&mut *tx, table, tenant_id, attachment_id)
         .await
-        .map_err(internal_error_response)?
-        .ok_or_else(|| service_error_response(404, "record_not_found", None, None))?;
+        .map_err(|e| Box::new(internal_error_response(e)))?
+        .ok_or_else(|| Box::new(service_error_response(404, "record_not_found", None, None)))?;
     let _ = tx.commit().await;
     if record.entity_name != entity || record.record_id != record_id {
-        return Err(service_error_response(404, "record_not_found", None, None));
+        return Err(Box::new(service_error_response(404, "record_not_found", None, None)));
     }
     Ok(record)
 }
@@ -213,7 +213,7 @@ async fn download_attachment(
     let table = table_for(&state, &entity).to_string();
     let record = match load_owned_attachment(&state, &entity, record_id, attachment_id, tenant_id, &table).await {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
     let bytes = match store.get(tenant_id, &record.key).await {
@@ -280,7 +280,7 @@ async fn delete_attachment(
     let table = table_for(&state, &entity).to_string();
     let record = match load_owned_attachment(&state, &entity, record_id, attachment_id, tenant_id, &table).await {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
     let mut tx = match state.router.begin(tenant_id.into()).await {

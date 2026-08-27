@@ -134,7 +134,9 @@ export function CronJobsAdminPage() {
         <Title order={4}>{t("admin.cronJobs.createTitle")}</Title>
         {createJob.error ? (
           <Alert color="red">
-            {createJob.error instanceof ApiError ? createJob.error.message : t("common.somethingWentWrong")}
+            {createJob.error instanceof ApiError
+              ? createJob.error.message
+              : t("common.somethingWentWrong")}
           </Alert>
         ) : null}
         <TextInput
@@ -227,9 +229,13 @@ export function CronJobsAdminPage() {
                       <Button
                         variant="subtle"
                         size="compact-sm"
-                        onClick={() => setExpandedJobId((current) => (current === job.id ? null : job.id))}
+                        onClick={() =>
+                          setExpandedJobId((current) => (current === job.id ? null : job.id))
+                        }
                       >
-                        {expandedJobId === job.id ? t("workflow.hide") : t("admin.cronJobs.runs.title")}
+                        {expandedJobId === job.id
+                          ? t("workflow.hide")
+                          : t("admin.cronJobs.runs.title")}
                       </Button>
                       <Button
                         color="red"

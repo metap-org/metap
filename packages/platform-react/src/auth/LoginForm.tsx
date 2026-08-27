@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Container, Divider, PasswordInput, Stack, TextInput, Title } from "@mantine/core";
+import {
+  Alert,
+  Button,
+  Container,
+  Divider,
+  PasswordInput,
+  Stack,
+  TextInput,
+  Title,
+} from "@mantine/core";
 import { useTranslation } from "react-i18next";
 import { apiFetch, ApiError } from "../api/client";
 import { useNavigationAdapter } from "../navigation/NavigationContext";
@@ -91,7 +100,11 @@ export function LoginForm({ tenantId }: LoginFormProps = {}) {
         {oidcEnabled && tenantId ? (
           <>
             <Divider label={t("login.orDivider")} labelPosition="center" />
-            <Button component="a" href={`/auth/oidc/${encodeURIComponent(tenantId)}/login`} variant="outline">
+            <Button
+              component="a"
+              href={`/auth/oidc/${encodeURIComponent(tenantId)}/login`}
+              variant="outline"
+            >
               {t("login.ssoButton")}
             </Button>
           </>
