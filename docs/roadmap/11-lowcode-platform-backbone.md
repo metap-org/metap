@@ -154,6 +154,33 @@ trước, `limit` được tôn trọng, `list_for_entity` không bị ảnh hư
 publish 2 entity mới → `GET .../audit?limit=5` trả về đúng 4 event (draft+publish mỗi entity),
 mới nhất trước, kèm `entityName` phân biệt; `limit=99999` bị kẹp, không trả nguyên bảng.
 
+**Đưa `/admin/lowcode/*` vào OpenAPI/FE codegen (2026-08-27).** Gap thật tìm được khi chủ dự án
+chuẩn bị build UI admin cho low-code trên FE: `GET /metadata/openapi.json`
+(`metap_metadata::generate_openapi_document`) từ trước tới giờ chỉ mô tả `/metadata/*` và
+`/api/{entity}*` sinh động theo `MetadataRegistry` — toàn bộ `/admin/lowcode/*` (9 route: draft/
+publish/preview/rollback/published/versions/audit/export/import), cộng `/platform/tenants*`
+(`metap-control-http`) và các route tĩnh khác của `metap-http` (`auth`/`admin`/`cron`/
+`dashboards`/`attachments`/`preferences`/`users`/`workflow-events`) chưa từng được khai báo, nên
+`openapi-typescript` không sinh được type gì cho chúng — FE không thể bắt đầu build UI admin low-
+code với type an toàn. Thêm `openapi_paths()` viết tay ở cả 3 crate (`metap-http`,
+`metap-lowcode-http`, `metap-control-http`), đúng phong cách hand-written JSON Schema
+`generate_openapi_document` đã dùng từ đầu (repo chưa có bước derive/reflection nào, xem doc
+comment hàm đó) — cân nhắc `utoipa` nhưng bỏ vì phần lớn handler trả `Json(json!({...}))` ad-hoc,
+không có struct request/response, nên derive sẽ đòi refactor lớn hơn giá trị mang lại lúc này.
+`AppState` thêm field `extra_openapi_paths` để `metap-lowcode-http`/`metap-control-http` (2 crate
+`metap-http` cố tình không phụ thuộc, xem đầu file mỗi crate) đóng góp path vào doc được
+`GET /metadata/openapi.json` phục vụ mà không phá ranh giới phụ thuộc. 3 hàm schema builder
+(`entity_field_json_schema`/`entity_list_view_json_schema`/`entity_workflow_json_schema`) đổi
+thành `pub` để `metap-lowcode-http` tái dùng cho draft/publish/export/import body (cùng wire
+shape `EntitySummary` dùng) thay vì viết lại. Tiện thể phát hiện + sửa luôn 1 gap khác không
+liên quan low-code: `/api/{entity}/{id}` sinh động trước đó chỉ khai `PATCH`, thiếu hẳn `GET`/
+`DELETE` dù `routes::records::router()` có đăng ký cả hai. Verify sống: build + chạy `crm-server`
+thật trên Postgres local (Docker Hub bị chặn bởi network policy môi trường build, dựng Postgres
+qua `apt` thay vì `docker compose`), số path trong `/metadata/openapi.json` từ 14 lên 54; `cargo
+build/test/fmt/clippy -D warnings` sạch; `pnpm typecheck` sạch; `generated-types.ts` regenerate
+lại từ server thật sau mỗi thay đổi. (`PR #4`, 3 commit: regenerate types cho Phase 43 +
+mở rộng OpenAPI coverage + fix gap GET/DELETE.)
+
 Còn lại của Phase C: **publish approval workflow** — chính spec gốc
 (`docs/low-code-platform-v1.md`) ghi là "nếu cần", chưa có tín hiệu nhu cầu thật (mọi hành động
 draft/publish hôm nay chỉ gate bởi `AdminContext` chung, chưa có nhu cầu tách vai trò soạn/duyệt).
