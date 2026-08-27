@@ -192,8 +192,21 @@ jobs:
             echo "VAULT_SINGLE_USE_ROLE_ID=$(role_id metap-renew-single-use)"
             echo "VAULT_SINGLE_USE_SECRET_ID=$(secret_id metap-renew-single-use)"
           } >> "$GITHUB_ENV"
+      # `crates/metap-crud/tests/crud_service_postgres.rs` has 3 `#[ignore]`d tests whose own
+      # ignore reason says "manual benchmark ... not part of a normal e2e run" — `#[ignore]` here
+      # means something different from the rest of the codebase's convention (an e2e test that
+      # just needs DATABASE_URL): these need an out-of-band multi-million-row seed CI never
+      # creates, so 2 of them panic immediately ("hr.departments must already be seeded"), and the
+      # 3rd (self-contained, no seed needed) still burns ~60s doing a 20-worker sustained-load run
+      # whose only output is `eprintln!` numbers this invocation doesn't even capture (no
+      # `--nocapture`) — pure CI cost with no assertion value. `--ignored` was too blunt to tell
+      # the two categories apart; skip these 3 explicitly by name instead.
       - name: Run e2e tests
-        run: cargo test --workspace --locked -- --ignored
+        run: |
+          cargo test --workspace --locked -- --ignored \
+            --skip sustained_concurrent_list_against_a_real_multi_entity_abac_workflow \
+            --skip sustained_concurrent_list_across_many_tenants_at_ten_million_rows \
+            --skip sustained_concurrent_create_update_transition_delete_cycle
 
   frontend:
     name: Frontend — typecheck, lint, format, test
