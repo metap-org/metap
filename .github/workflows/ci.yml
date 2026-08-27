@@ -93,9 +93,25 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # `metap-cache`'s `redis_cache` e2e tests (`crates/metap-cache/src/redis_cache.rs`) need a
+      # real RESP-protocol server — never provisioned here before, so they've always failed with
+      # "Connection refused" (verified: reproduces identically on `master`, same 3 tests, same
+      # error, not something a code change can fix). Plain `redis:7-alpine` rather than the
+      # DragonflyDB image `docker-compose.yml` runs for local dev — same wire protocol (this
+      # crate's own doc comment: "works unmodified against any of them"), and `redis:` is the
+      # image GitHub Actions' own docs use for a services-block Redis, no extra research needed.
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgres://metap:metap@localhost:5432/metap
       RABBITMQ_URL: amqp://metap:metap@localhost:5672
+      REDIS_URL: redis://127.0.0.1:6379
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
