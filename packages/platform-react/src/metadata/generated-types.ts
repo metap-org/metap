@@ -1540,10 +1540,74 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get?: never;
+    /** Get one Journal Entry */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                account: string;
+                code: string;
+                creditAmount: number;
+                debitAmount: number;
+                description?: string;
+                /** Format: date */
+                entryDate: string;
+                referenceMovement?: string;
+                /** @enum {string} */
+                status?: "draft" | "posted" | "voided";
+              };
+            };
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     put?: never;
     post?: never;
-    delete?: never;
+    /** Delete Journal Entry */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            version?: number;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     options?: never;
     head?: never;
     /** Update Journal Entry */
@@ -1698,10 +1762,71 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get?: never;
+    /** Get one Customer */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                code: string;
+                email?: string;
+                name: string;
+                phone?: string;
+                referredBy?: string;
+                /** @enum {string} */
+                status?: "draft" | "active" | "blocked";
+              };
+            };
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     put?: never;
     post?: never;
-    delete?: never;
+    /** Delete Customer */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            version?: number;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     options?: never;
     head?: never;
     /** Update Customer */
@@ -1856,10 +1981,74 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get?: never;
+    /** Get one Inventory Movement */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                code: string;
+                /** @enum {string} */
+                movementType: "in" | "out" | "transfer";
+                notes?: string;
+                quantity: number;
+                referenceOrder?: string;
+                /** @enum {string} */
+                status?:
+                  "draft" | "pending_approval" | "approved" | "posted" | "reversed" | "rejected";
+                warehouse: string;
+              };
+            };
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     put?: never;
     post?: never;
-    delete?: never;
+    /** Delete Inventory Movement */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            version?: number;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     options?: never;
     head?: never;
     /** Update Inventory Movement */
@@ -2015,10 +2204,72 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get?: never;
+    /** Get one Sales Order */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                code: string;
+                customer: string;
+                notes?: string;
+                /** Format: date */
+                orderDate: string;
+                /** @enum {string} */
+                status?: "draft" | "confirmed" | "shipped" | "cancelled";
+                totalAmount: number;
+              };
+            };
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     put?: never;
     post?: never;
-    delete?: never;
+    /** Delete Sales Order */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            version?: number;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     options?: never;
     head?: never;
     /** Update Sales Order */

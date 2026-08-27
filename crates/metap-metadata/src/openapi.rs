@@ -247,6 +247,20 @@ pub fn generate_openapi_document(entities: &[EntitySummary]) -> Value {
         paths.insert(
             item_path,
             json!({
+                "get": {
+                    "summary": format!("Get one {}", entity.label),
+                    "responses": {
+                        "200": {
+                            "description": "OK",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "type": "object", "properties": { "data": schema.clone() } },
+                                },
+                            },
+                        },
+                        "404": { "description": "Not found" },
+                    },
+                },
                 "patch": {
                     "summary": format!("Update {}", entity.label),
                     "requestBody": {
@@ -254,8 +268,19 @@ pub fn generate_openapi_document(entities: &[EntitySummary]) -> Value {
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "properties": { "version": { "type": "number" }, "data": schema },
+                                    "properties": { "version": { "type": "number" }, "data": schema.clone() },
                                 },
+                            },
+                        },
+                    },
+                    "responses": { "200": { "description": "OK" } },
+                },
+                "delete": {
+                    "summary": format!("Delete {}", entity.label),
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": { "type": "object", "properties": { "version": { "type": "number" } } },
                             },
                         },
                     },
@@ -340,7 +365,9 @@ mod tests {
         };
         let doc = generate_openapi_document(&[summary]);
         assert!(doc["paths"]["/api/crm.customers"]["post"].is_object());
+        assert!(doc["paths"]["/api/crm.customers/{id}"]["get"].is_object());
         assert!(doc["paths"]["/api/crm.customers/{id}"]["patch"].is_object());
+        assert!(doc["paths"]["/api/crm.customers/{id}"]["delete"].is_object());
         assert!(doc["paths"]["/api/crm.customers/{id}/transitions/{action}"].is_null());
         assert_eq!(
             doc["paths"]["/api/crm.customers"]["post"]["requestBody"]["content"]["application/json"]["schema"]
