@@ -216,6 +216,22 @@ lập `curl`/`jq` cục bộ để xác nhận từng JSON payload gửi cho Vau
 tạo role, đọc `role_id`/`secret_id`) đúng escaping. `cargo fmt --all --check` sạch (không đổi code
 Rust nào cho phần Vault, chỉ `.github/workflows/ci.yml`).
 
+Vault service chạy thật trong CI xác nhận đúng thiết kế — `vault_store.rs` không còn lỗi
+connection-refused, đúng như kỳ vọng — nhưng vì `cargo test` giờ chạy sâu hơn vào workspace
+(qua khỏi `metap-cache`/`metap-control`), lộ ra tiếp (7) một race khác từng bị che dấu cùng lý do:
+`metap-cron`'s `cron_store_postgres.rs` có 2 test assert đúng số lượng `claimed` từ
+`claim_due_retries` — hàm này **cố ý** global/cross-tenant (ticker thật poll due-retry của mọi
+tenant trong 1 query, giống `claim_due_jobs`), nên assert "claimed đúng 1" chỉ đúng nếu không có
+row due nào của test khác lởn vởn cùng lúc; mặc định test harness chạy song song mọi
+`#[tokio::test]` trong 1 file, nên không có gì ngăn 2 test này giẫm lên nhau. Xác nhận: `master`'s
+log CI cũng dừng đúng tại `metap-cache` nên chưa từng chạy tới đây — cùng một kiểu che dấu domino
+như (6) ở trên. Fix theo đúng mẫu có sẵn trong repo (`metap-peripherals/tests/peripherals_postgres.rs`'s
+`INDEX_BUILD_LOCK`): thêm `static Mutex` giữ khoá suốt **toàn bộ thân test** (không chỉ quanh lệnh
+gọi `claim_due_retries`, vì race nằm ở cấp độ row chứ không chỉ ở câu query) cho 2 test liên quan.
+Verify sống: build lại toàn workspace sau khi dọn `target/` bị đầy đĩa giữa chừng (`cargo clean`,
+`du -sh target` xuống 14G, dưới ngưỡng 40G CLAUDE.md cảnh báo), `cargo test -p metap-cron --
+--ignored` chạy lặp lại nhiều lần đều pass ổn định, `cargo build/fmt --check` sạch.
+
 Còn lại của Phase C: **publish approval workflow** — chính spec gốc
 (`docs/low-code-platform-v1.md`) ghi là "nếu cần", chưa có tín hiệu nhu cầu thật (mọi hành động
 draft/publish hôm nay chỉ gate bởi `AdminContext` chung, chưa có nhu cầu tách vai trò soạn/duyệt).
