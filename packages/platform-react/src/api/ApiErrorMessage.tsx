@@ -16,6 +16,8 @@ export function ApiErrorMessage({ error }: { error: unknown }) {
   }
 
   return (
-    <div>{t("error.prefix", { message: error instanceof Error ? error.message : String(error) })}</div>
+    <div>
+      {t("error.prefix", { message: error instanceof Error ? error.message : String(error) })}
+    </div>
   );
 }

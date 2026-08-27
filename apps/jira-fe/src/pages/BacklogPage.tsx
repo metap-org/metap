@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DragEvent } from "react";
-import { Badge, Card, Container, Group, Select, SimpleGrid, Stack, Text, Title } from "@mantine/core";
+import {
+  Badge,
+  Card,
+  Container,
+  Group,
+  Select,
+  SimpleGrid,
+  Stack,
+  Text,
+  Title,
+} from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -19,7 +29,13 @@ type Column = { id: string | null; label: string };
 
 type DragPayload = { id: string; version: number };
 
-function IssueCard({ issue, onDragStart }: { issue: IssueRecord; onDragStart: (e: DragEvent) => void }) {
+function IssueCard({
+  issue,
+  onDragStart,
+}: {
+  issue: IssueRecord;
+  onDragStart: (e: DragEvent) => void;
+}) {
   return (
     <Card withBorder padding="sm" draggable onDragStart={onDragStart} style={{ cursor: "grab" }}>
       <Text size="sm" fw={600} component={Link} to={`/issues/${issue.id}`}>
@@ -46,11 +62,10 @@ export function BacklogPage() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: projects, isLoading: projectsLoading } = useApiQuery<ListResponse<ProjectRecord>, ProjectRecord[]>(
-    ["backlog-projects"],
-    "/api/jira.projects?limit=100",
-    (response) => response.data,
-  );
+  const { data: projects, isLoading: projectsLoading } = useApiQuery<
+    ListResponse<ProjectRecord>,
+    ProjectRecord[]
+  >(["backlog-projects"], "/api/jira.projects?limit=100", (response) => response.data);
 
   const [projectId, setProjectId] = useState<string | null>(null);
 
@@ -132,7 +147,10 @@ export function BacklogPage() {
         <Select
           w={280}
           placeholder="Select a project"
-          data={(projects ?? []).map((p) => ({ value: p.id, label: `${p.data.key} — ${p.data.name}` }))}
+          data={(projects ?? []).map((p) => ({
+            value: p.id,
+            label: `${p.data.key} — ${p.data.name}`,
+          }))}
           value={projectId}
           onChange={setProjectId}
         />
@@ -156,7 +174,11 @@ export function BacklogPage() {
                 {column.label} ({grouped.get(column.id)?.length ?? 0})
               </Text>
               {(grouped.get(column.id) ?? []).map((issue) => (
-                <IssueCard key={issue.id} issue={issue} onDragStart={(e) => handleDragStart(e, issue)} />
+                <IssueCard
+                  key={issue.id}
+                  issue={issue}
+                  onDragStart={(e) => handleDragStart(e, issue)}
+                />
               ))}
             </Stack>
           ))}

@@ -11,7 +11,20 @@ use metap_cron::{
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
+use tokio::sync::Mutex;
 use uuid::Uuid;
+
+/// `claim_due_retries` is deliberately global/cross-tenant (the real ticker polls every tenant's
+/// due retries in one query, same as `claim_due_jobs`) — it has no per-test scoping knob. The two
+/// tests below assert exact `claimed` counts, which only holds if no other test's due retry rows
+/// are sitting in the table at the same moment; by default the test harness runs every
+/// `#[tokio::test]` in this file concurrently, so without serialization one test's row can become
+/// due and get swept up by the *other* test's claim call, or vice versa. Same style of fix as
+/// `metap-peripherals/tests/peripherals_postgres.rs`'s `INDEX_BUILD_LOCK`, but held for each
+/// test's *entire* body (see the two `#[tokio::test]`s below) rather than only around the
+/// `claim_due_retries` call — a claim is only exact-count-safe if no other test's retry row can
+/// become due anywhere in between this test creating its own row and claiming it.
+static CLAIM_DUE_RETRIES_LOCK: Mutex<()> = Mutex::const_new(());
 
 async fn connect() -> PgPool {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
@@ -283,6 +296,11 @@ async fn on_transition_direct_mode_job_is_returned_for_immediate_execution() {
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn failed_run_with_attempts_remaining_schedules_a_retry_that_claim_due_retries_picks_up() {
+    // Held for the whole test, not just the `claim_due_retries` calls below: `claim_due_retries`
+    // has no tenant scoping (deliberately — see `CLAIM_DUE_RETRIES_LOCK`'s doc comment), so this
+    // test's own retry row is claimable by the *other* test in this file the moment it becomes
+    // due, not only during this test's own call.
+    let _guard = CLAIM_DUE_RETRIES_LOCK.lock().await;
     let pool = connect().await;
     let tenant_id = Uuid::new_v4();
     let job_id = create_on_transition_job(&pool, tenant_id, DispatchMode::Outbox).await;
@@ -351,6 +369,8 @@ async fn failed_run_with_attempts_remaining_schedules_a_retry_that_claim_due_ret
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn claim_due_retries_reclaims_a_stale_claim_that_never_finished() {
+    // See the sibling test's identical guard above for why this is held for the whole test.
+    let _guard = CLAIM_DUE_RETRIES_LOCK.lock().await;
     let pool = connect().await;
     let tenant_id = Uuid::new_v4();
     let job_id = create_on_transition_job(&pool, tenant_id, DispatchMode::Outbox).await;

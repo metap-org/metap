@@ -4,6 +4,1466 @@
  */
 
 export interface paths {
+  "/admin/cron-jobs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List cron jobs for the caller's tenant */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    put?: never;
+    /** Create a cron job */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            cronExpr?: string;
+            /** @enum {string} */
+            dispatchMode?: "outbox" | "direct";
+            enabled?: boolean;
+            maxAttempts?: number;
+            name?: string;
+            retryBackoffSeconds?: number;
+            targetConfig?: unknown;
+            /** @enum {string} */
+            targetType?: "workflow_transition" | "bulk_query_action" | "webhook" | "email";
+            timezone?: string;
+            triggerConfig?: unknown;
+            /** @enum {string} */
+            triggerType?: "schedule" | "on_transition" | "on_record_event";
+          };
+        };
+      };
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/cron-jobs/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get one cron job */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    /** Delete a cron job */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description No content */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    /** Update a cron job (partial) */
+    patch: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    trace?: never;
+  };
+  "/admin/cron-jobs/{id}/runs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List recent runs for a cron job */
+    get: {
+      parameters: {
+        query?: {
+          limit?: number;
+        };
+        header?: never;
+        path: {
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/lowcode/audit": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Cross-entity audit feed for the caller's tenant, newest first */
+    get: {
+      parameters: {
+        query?: {
+          limit?: number;
+        };
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                /** @enum {string} */
+                action?: "draft_saved" | "published" | "rolled_back" | "enabled" | "disabled";
+                actorTenantId?: string | null;
+                actorUserId?: string | null;
+                entityName?: string;
+                /** Format: date-time */
+                occurredAt?: string;
+                restoredFromVersion?: number | null;
+                versionNumber?: number | null;
+              }[];
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/lowcode/entities": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List every DB-authored entity (draft/published status, enabled flag) */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                entities?: {
+                  enabled?: boolean;
+                  name?: string;
+                  published?: boolean;
+                }[];
+              };
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/lowcode/entities/{name}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Enable/disable a published entity — takes effect immediately, no restart */
+    patch: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            enabled: boolean;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    trace?: never;
+  };
+  "/admin/lowcode/entities/{name}/audit": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Audit log for one entity (draft-saved/published/rolled-back/enabled/disabled) */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                /** @enum {string} */
+                action?: "draft_saved" | "published" | "rolled_back" | "enabled" | "disabled";
+                actorTenantId?: string | null;
+                actorUserId?: string | null;
+                entityName?: string;
+                /** Format: date-time */
+                occurredAt?: string;
+                restoredFromVersion?: number | null;
+                versionNumber?: number | null;
+              }[];
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/lowcode/entities/{name}/draft": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get the current draft for an entity */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                fields?: {
+                  enumValues?: string[];
+                  indexed?: boolean;
+                  /** @enum {string} */
+                  kind:
+                    | "id"
+                    | "string"
+                    | "number"
+                    | "boolean"
+                    | "date"
+                    | "datetime"
+                    | "money"
+                    | "enum"
+                    | "reference"
+                    | "json";
+                  label: string;
+                  max?: number;
+                  maxLength?: number;
+                  min?: number;
+                  minLength?: number;
+                  name: string;
+                  refDisplayField?: string;
+                  refEntity?: string;
+                  required?: boolean;
+                  /** @enum {string} */
+                  searchMode?: "substring" | "fts";
+                  searchable?: boolean;
+                  sortable?: boolean;
+                  /** @enum {string} */
+                  storage?: "native" | "column";
+                  unique?: boolean;
+                }[];
+                label: string;
+                listViews?: {
+                  defaultSort?: string;
+                  fields: string[];
+                  filters: string[];
+                  label: string;
+                  maxLimit: number;
+                  name: string;
+                }[];
+                name?: string;
+                workflow?: {
+                  initialState: string;
+                  stateField: string;
+                  terminalStates: string[];
+                  transitions: {
+                    action: string;
+                    from: string;
+                    guard?: unknown;
+                    label: string;
+                    to: string;
+                  }[];
+                };
+              };
+            };
+          };
+        };
+        /** @description No draft exists for this entity */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    /** Save (create or overwrite) the draft for an entity */
+    put: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            fields?: {
+              enumValues?: string[];
+              indexed?: boolean;
+              /** @enum {string} */
+              kind:
+                | "id"
+                | "string"
+                | "number"
+                | "boolean"
+                | "date"
+                | "datetime"
+                | "money"
+                | "enum"
+                | "reference"
+                | "json";
+              label: string;
+              max?: number;
+              maxLength?: number;
+              min?: number;
+              minLength?: number;
+              name: string;
+              refDisplayField?: string;
+              refEntity?: string;
+              required?: boolean;
+              /** @enum {string} */
+              searchMode?: "substring" | "fts";
+              searchable?: boolean;
+              sortable?: boolean;
+              /** @enum {string} */
+              storage?: "native" | "column";
+              unique?: boolean;
+            }[];
+            label: string;
+            listViews?: {
+              defaultSort?: string;
+              fields: string[];
+              filters: string[];
+              label: string;
+              maxLimit: number;
+              name: string;
+            }[];
+            workflow?: {
+              initialState: string;
+              stateField: string;
+              terminalStates: string[];
+              transitions: {
+                action: string;
+                from: string;
+                guard?: unknown;
+                label: string;
+                to: string;
+              }[];
+            };
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/lowcode/entities/{name}/publish": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Publish the current draft as a new version — validates shape, name-reservation, cross-reference */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                versionNumber?: number;
+              };
+            };
+          };
+        };
+        /** @description No draft exists for this entity */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Entity name reserved by a code-authored entity */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Draft failed shape validation */
+        422: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/lowcode/entities/{name}/publish/preview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Dry-run `publish` — same checks, no side effect */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                impact?: unknown;
+                valid?: boolean;
+                wouldBeVersion?: number;
+              };
+            };
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/lowcode/entities/{name}/published": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get the currently published version's definition */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                definition?: {
+                  fields?: {
+                    enumValues?: string[];
+                    indexed?: boolean;
+                    /** @enum {string} */
+                    kind:
+                      | "id"
+                      | "string"
+                      | "number"
+                      | "boolean"
+                      | "date"
+                      | "datetime"
+                      | "money"
+                      | "enum"
+                      | "reference"
+                      | "json";
+                    label: string;
+                    max?: number;
+                    maxLength?: number;
+                    min?: number;
+                    minLength?: number;
+                    name: string;
+                    refDisplayField?: string;
+                    refEntity?: string;
+                    required?: boolean;
+                    /** @enum {string} */
+                    searchMode?: "substring" | "fts";
+                    searchable?: boolean;
+                    sortable?: boolean;
+                    /** @enum {string} */
+                    storage?: "native" | "column";
+                    unique?: boolean;
+                  }[];
+                  label: string;
+                  listViews?: {
+                    defaultSort?: string;
+                    fields: string[];
+                    filters: string[];
+                    label: string;
+                    maxLimit: number;
+                    name: string;
+                  }[];
+                  name?: string;
+                  workflow?: {
+                    initialState: string;
+                    stateField: string;
+                    terminalStates: string[];
+                    transitions: {
+                      action: string;
+                      from: string;
+                      guard?: unknown;
+                      label: string;
+                      to: string;
+                    }[];
+                  };
+                };
+                /** Format: date-time */
+                publishedAt?: string;
+                restoredFromVersion?: number | null;
+                versionNumber?: number;
+              };
+            };
+          };
+        };
+        /** @description Never published */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/lowcode/entities/{name}/rollback": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Restore a previously published version as the new current version */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            toVersionNumber: number;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                versionNumber?: number;
+              };
+            };
+          };
+        };
+        /** @description Version not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/lowcode/entities/{name}/versions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List every published version's metadata (newest first) */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                /** Format: date-time */
+                publishedAt?: string;
+                restoredFromVersion?: number | null;
+                versionNumber?: number;
+              }[];
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/lowcode/export": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Export published entity definitions as a portable snapshot */
+    get: {
+      parameters: {
+        query?: {
+          /** @description Comma-separated entity names; omitted exports every published entity */
+          entities?: string;
+        };
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                entities?: {
+                  definition?: {
+                    fields?: {
+                      enumValues?: string[];
+                      indexed?: boolean;
+                      /** @enum {string} */
+                      kind:
+                        | "id"
+                        | "string"
+                        | "number"
+                        | "boolean"
+                        | "date"
+                        | "datetime"
+                        | "money"
+                        | "enum"
+                        | "reference"
+                        | "json";
+                      label: string;
+                      max?: number;
+                      maxLength?: number;
+                      min?: number;
+                      minLength?: number;
+                      name: string;
+                      refDisplayField?: string;
+                      refEntity?: string;
+                      required?: boolean;
+                      /** @enum {string} */
+                      searchMode?: "substring" | "fts";
+                      searchable?: boolean;
+                      sortable?: boolean;
+                      /** @enum {string} */
+                      storage?: "native" | "column";
+                      unique?: boolean;
+                    }[];
+                    label: string;
+                    listViews?: {
+                      defaultSort?: string;
+                      fields: string[];
+                      filters: string[];
+                      label: string;
+                      maxLimit: number;
+                      name: string;
+                    }[];
+                    name?: string;
+                    workflow?: {
+                      initialState: string;
+                      stateField: string;
+                      terminalStates: string[];
+                      transitions: {
+                        action: string;
+                        from: string;
+                        guard?: unknown;
+                        label: string;
+                        to: string;
+                      }[];
+                    };
+                  };
+                  name?: string;
+                }[];
+                notFound?: string[];
+              };
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/lowcode/import": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Import a snapshot as drafts (never auto-publishes) — best-effort, per-entity outcome */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            entities: {
+              definition: {
+                fields?: {
+                  enumValues?: string[];
+                  indexed?: boolean;
+                  /** @enum {string} */
+                  kind:
+                    | "id"
+                    | "string"
+                    | "number"
+                    | "boolean"
+                    | "date"
+                    | "datetime"
+                    | "money"
+                    | "enum"
+                    | "reference"
+                    | "json";
+                  label: string;
+                  max?: number;
+                  maxLength?: number;
+                  min?: number;
+                  minLength?: number;
+                  name: string;
+                  refDisplayField?: string;
+                  refEntity?: string;
+                  required?: boolean;
+                  /** @enum {string} */
+                  searchMode?: "substring" | "fts";
+                  searchable?: boolean;
+                  sortable?: boolean;
+                  /** @enum {string} */
+                  storage?: "native" | "column";
+                  unique?: boolean;
+                }[];
+                label: string;
+                listViews?: {
+                  defaultSort?: string;
+                  fields: string[];
+                  filters: string[];
+                  label: string;
+                  maxLimit: number;
+                  name: string;
+                }[];
+                workflow?: {
+                  initialState: string;
+                  stateField: string;
+                  terminalStates: string[];
+                  transitions: {
+                    action: string;
+                    from: string;
+                    guard?: unknown;
+                    label: string;
+                    to: string;
+                  }[];
+                };
+              };
+              name: string;
+            }[];
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                failed?: {
+                  error?: string;
+                  name?: string;
+                }[];
+                imported?: string[];
+              };
+            };
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/policies": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List policies for the caller's tenant, optionally filtered by entity */
+    get: {
+      parameters: {
+        query?: {
+          entity?: string;
+        };
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    put?: never;
+    /** Create a policy */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            action: string;
+            condition?: unknown;
+            /** @enum {string} */
+            effect?: "allow" | "deny";
+            entity: string;
+            field?: string;
+            roles?: string[];
+            /** @enum {string} */
+            subject?: "context" | "record";
+          };
+        };
+      };
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/policies/explain": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Explain why a given entity/action/field/record would be allowed or denied for the caller */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            action: string;
+            entity: string;
+            field?: string;
+            record?: Record<string, never>;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/policies/seed-defaults": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Bulk-create one context-subject, no-condition RBAC policy per action for `roles` on `entity` */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            actions?: string[];
+            entity: string;
+            roles: string[];
+          };
+        };
+      };
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/policies/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Delete a policy */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description No content */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/users": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List every user + their role assignments in the caller's tenant */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    put?: never;
+    /** Provision a new local-login user, optionally assigning roles */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            email: string;
+            password: string;
+            roles?: string[];
+          };
+        };
+      };
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Email already taken */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/users/{userId}/context/invalidate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Invalidate this user's cached `AUTH_CONTEXT_ENTITY` attributes */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          userId: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description No content */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/users/{userId}/roles": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Assign a role to a user */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          userId: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            role: string;
+          };
+        };
+      };
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/users/{userId}/roles/{role}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Revoke a role from a user */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          userId: string;
+          role: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description No content */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/accounting.journal": {
     parameters: {
       query?: never;
@@ -80,10 +1540,74 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get?: never;
+    /** Get one Journal Entry */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                account: string;
+                code: string;
+                creditAmount: number;
+                debitAmount: number;
+                description?: string;
+                /** Format: date */
+                entryDate: string;
+                referenceMovement?: string;
+                /** @enum {string} */
+                status?: "draft" | "posted" | "voided";
+              };
+            };
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     put?: never;
     post?: never;
-    delete?: never;
+    /** Delete Journal Entry */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            version?: number;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     options?: never;
     head?: never;
     /** Update Journal Entry */
@@ -238,10 +1762,71 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get?: never;
+    /** Get one Customer */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                code: string;
+                email?: string;
+                name: string;
+                phone?: string;
+                referredBy?: string;
+                /** @enum {string} */
+                status?: "draft" | "active" | "blocked";
+              };
+            };
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     put?: never;
     post?: never;
-    delete?: never;
+    /** Delete Customer */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            version?: number;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     options?: never;
     head?: never;
     /** Update Customer */
@@ -396,10 +1981,74 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get?: never;
+    /** Get one Inventory Movement */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                code: string;
+                /** @enum {string} */
+                movementType: "in" | "out" | "transfer";
+                notes?: string;
+                quantity: number;
+                referenceOrder?: string;
+                /** @enum {string} */
+                status?:
+                  "draft" | "pending_approval" | "approved" | "posted" | "reversed" | "rejected";
+                warehouse: string;
+              };
+            };
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     put?: never;
     post?: never;
-    delete?: never;
+    /** Delete Inventory Movement */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            version?: number;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     options?: never;
     head?: never;
     /** Update Inventory Movement */
@@ -555,10 +2204,72 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get?: never;
+    /** Get one Sales Order */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                code: string;
+                customer: string;
+                notes?: string;
+                /** Format: date */
+                orderDate: string;
+                /** @enum {string} */
+                status?: "draft" | "confirmed" | "shipped" | "cancelled";
+                totalAmount: number;
+              };
+            };
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     put?: never;
     post?: never;
-    delete?: never;
+    /** Delete Sales Order */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            version?: number;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     options?: never;
     head?: never;
     /** Update Sales Order */
@@ -632,6 +2343,652 @@ export interface paths {
         };
       };
     };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/{entity}/{record_id}/attachments": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List attachments on a record */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          entity: string;
+          record_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                contentType?: string | null;
+                /** Format: date-time */
+                createdAt?: string;
+                entityName?: string;
+                filename?: string;
+                id?: string;
+                key?: string;
+                recordId?: string;
+                size?: number;
+              }[];
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    /** Upload an attachment (multipart/form-data, one file field) */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          entity: string;
+          record_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "multipart/form-data": Record<string, never>;
+        };
+      };
+      responses: {
+        /** @description Created */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                contentType?: string | null;
+                /** Format: date-time */
+                createdAt?: string;
+                entityName?: string;
+                filename?: string;
+                id?: string;
+                key?: string;
+                recordId?: string;
+                size?: number;
+              };
+            };
+          };
+        };
+        /** @description Object storage not configured */
+        503: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/{entity}/{record_id}/attachments/{attachment_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Delete an attachment */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          entity: string;
+          record_id: string;
+          attachment_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description No content */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Object storage not configured */
+        503: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/{entity}/{record_id}/attachments/{attachment_id}/download": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Download an attachment's bytes */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          entity: string;
+          record_id: string;
+          attachment_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/octet-stream": unknown;
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Object storage not configured */
+        503: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/{entity}/{record_id}/workflow-events": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Transition history for one record */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          entity: string;
+          record_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                action?: string;
+                fromState?: string | null;
+                /** Format: date-time */
+                occurredAt?: string;
+                toState?: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/login": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Local email/password login — mints a JWT */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            email: string;
+            password: string;
+            tenantId?: string;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                token?: string;
+              };
+            };
+          };
+        };
+        /** @description Invalid credentials */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/me": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Identity + roles for the caller's own token */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                roles?: string[];
+                tenantId?: string;
+                userId?: string;
+              };
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/oidc/{tenant_id}/callback": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** OIDC callback — verifies the IdP response, JIT-provisions the user, mints a JWT */
+    get: {
+      parameters: {
+        query: {
+          code: string;
+          state: string;
+        };
+        header?: never;
+        path: {
+          tenant_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Redirect back to the tenant's frontend with `#token=...` */
+        302: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Invalid/expired OIDC flow state */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description OIDC verification failed */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/oidc/{tenant_id}/login": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Redirects the browser to the tenant's configured IdP */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          tenant_id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Redirect to IdP */
+        302: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description OIDC not configured for this tenant */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/providers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Which login providers (local/basic/oidc) a tenant has enabled */
+    get: {
+      parameters: {
+        query: {
+          tenantId: string;
+        };
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                providers?: string[];
+              };
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dashboards/me": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get the caller's own dashboard layout (falls back to the tenant default) */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                id?: string;
+                layout?: unknown;
+                ownerUserId?: string | null;
+                /** Format: date-time */
+                updatedAt?: string;
+              };
+            };
+          };
+        };
+      };
+    };
+    /** Save the caller's own dashboard layout */
+    put: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            layout: unknown;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dashboards/tenant-default": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get the tenant's default dashboard layout */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    /** Save the tenant's default dashboard layout (admin only) */
+    put: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            layout: unknown;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/health": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Liveness/readiness check */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              checks?: {
+                database?: boolean;
+              };
+              /** @enum {string} */
+              status?: "ok" | "degraded";
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -721,6 +3078,359 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/platform/tenants": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List every tenant (platform-admin only) */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                /** Format: date-time */
+                createdAt?: string;
+                id?: string;
+                /** @enum {string} */
+                status?: "active" | "suspended" | "deleted";
+                strategy?: {
+                  dsnSecretRef?: string;
+                  schemaName?: string;
+                  /** @enum {string} */
+                  type?: "schema" | "dedicated_db";
+                };
+                tier?: string;
+                /** Format: date-time */
+                trialExpiresAt?: string | null;
+              }[];
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    /** Provision a new tenant (schema or dedicated_db strategy) and its first admin user */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            adminEmail: string;
+            adminPassword: string;
+            /** @description Required when strategy is "dedicated_db" */
+            dedicatedDatabaseUrl?: string;
+            /** @description Required when strategy is "dedicated_db" */
+            dsnSecretRef?: string;
+            /** @enum {string} */
+            strategy: "schema" | "dedicated_db";
+            tenantId: string;
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                adminUserId?: string;
+                tenantId?: string;
+              };
+            };
+          };
+        };
+        /** @description Validation failed (unknown strategy, or missing dedicated_db fields) */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description A tenant with this id already exists */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/platform/tenants/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get one tenant's routing info */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                id?: string;
+                /** @enum {string} */
+                status?: "active" | "suspended" | "deleted";
+                strategy?: {
+                  dsnSecretRef?: string;
+                  schemaName?: string;
+                  /** @enum {string} */
+                  type?: "schema" | "dedicated_db";
+                };
+              };
+            };
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    /** Deprovision a tenant permanently — refuses future routing, does not touch or drop its data */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description No content */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/platform/tenants/{id}/status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Suspend or resume a tenant */
+    patch: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            /** @enum {string} */
+            status: "active" | "suspended";
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Invalid status */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    trace?: never;
+  };
+  "/preferences": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get the caller's own preferences */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                locale?: string;
+              };
+            };
+          };
+        };
+      };
+    };
+    /** Update the caller's own preferences */
+    put: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            /** @enum {string} */
+            locale: "en" | "vi";
+          };
+        };
+      };
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/users": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List every user in the caller's tenant (id + email only) */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description OK */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              data?: {
+                email?: string;
+                id?: string;
+              }[];
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -742,6 +3452,10 @@ export interface components {
           | "reference"
           | "json";
         label: string;
+        max?: number;
+        maxLength?: number;
+        min?: number;
+        minLength?: number;
         name: string;
         refDisplayField?: string;
         refEntity?: string;

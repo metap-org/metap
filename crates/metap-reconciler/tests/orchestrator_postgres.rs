@@ -2,7 +2,7 @@
 //! `metap-query/tests/query_planner_postgres.rs`'s doc comment for the convention.
 
 use metap_reconciler::orchestrator::{
-    advance_wave, claim_due, record_failure, record_success, run_claimed_batch, WaveDecision,
+    advance_wave, claim_due, enqueue_deployment, record_failure, record_success, run_claimed_batch, WaveDecision,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -230,6 +230,59 @@ async fn run_claimed_batch_isolates_per_entity_failures() {
     .await
     .unwrap();
     assert_eq!(ok_status, "done");
+
+    cleanup(&pool, entity_name).await;
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn enqueue_deployment_seeds_then_ignores_a_non_newer_version() {
+    let pool = connect().await;
+    let entity_name = "test.orchestrator_enqueue";
+    cleanup(&pool, entity_name).await;
+    let tenant_id = Uuid::new_v4();
+
+    enqueue_deployment(&pool, tenant_id, entity_name, 3).await.unwrap();
+    let (status, desired): (String, i64) = sqlx::query_as(
+        "SELECT status, desired_version FROM reconciler_entity_deployments WHERE tenant_id = $1 AND entity_name = $2",
+    )
+    .bind(tenant_id)
+    .bind(entity_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "pending");
+    assert_eq!(desired, 3);
+
+    // Mark it blocked, as if a prior attempt failed permanently, then try to re-enqueue the
+    // *same* version — must stay blocked (no version bump means no reason to retry).
+    sqlx::query(
+        "UPDATE reconciler_entity_deployments SET status = 'blocked' WHERE tenant_id = $1 AND entity_name = $2",
+    )
+    .bind(tenant_id)
+    .bind(entity_name)
+    .execute(&pool)
+    .await
+    .unwrap();
+    enqueue_deployment(&pool, tenant_id, entity_name, 3).await.unwrap();
+    let status: String = sqlx::query_scalar(
+        "SELECT status FROM reconciler_entity_deployments WHERE tenant_id = $1 AND entity_name = $2",
+    )
+    .bind(tenant_id)
+    .bind(entity_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        status, "blocked",
+        "re-enqueuing the same version must not reset a blocked row"
+    );
+
+    // A genuinely newer version resets it back to pending and is claimable again.
+    enqueue_deployment(&pool, tenant_id, entity_name, 4).await.unwrap();
+    let claimed = claim_due(&pool, "w1", Some(entity_name), 5, 10).await.unwrap();
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].desired_version, 4);
 
     cleanup(&pool, entity_name).await;
 }

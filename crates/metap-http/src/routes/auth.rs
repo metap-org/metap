@@ -107,26 +107,29 @@ async fn list_providers(State(state): State<AppState>, Query(query): Query<Provi
     Json(json!({ "data": { "providers": kinds.iter().map(|k| k.as_str()).collect::<Vec<_>>() } })).into_response()
 }
 
-async fn oidc_config_or_404(state: &AppState, tenant_id: Uuid) -> Result<(metap_auth::OidcConfig, String), Response> {
+async fn oidc_config_or_404(
+    state: &AppState,
+    tenant_id: Uuid,
+) -> Result<(metap_auth::OidcConfig, String), Box<Response>> {
     let mut tx = state
         .router
         .begin(tenant_id.into())
         .await
-        .map_err(router_unavailable_response)?;
+        .map_err(|e| Box::new(router_unavailable_response(e)))?;
     let config = metap_auth::oidc_config(&mut *tx, tenant_id)
         .await
-        .map_err(internal_error_response)?
+        .map_err(|e| Box::new(internal_error_response(e)))?
         .ok_or_else(|| {
-            service_error_response(
+            Box::new(service_error_response(
                 404,
                 "oidc_not_configured",
                 Some("OIDC is not enabled for this tenant."),
                 None,
-            )
+            ))
         })?;
     let _ = tx.commit().await;
-    let client_secret =
-        metap_auth::resolve_client_secret_env(&config.client_secret_ref).map_err(internal_error_response)?;
+    let client_secret = metap_auth::resolve_client_secret_env(&config.client_secret_ref)
+        .map_err(|e| Box::new(internal_error_response(e)))?;
     Ok((config, client_secret))
 }
 
@@ -137,7 +140,7 @@ async fn oidc_config_or_404(state: &AppState, tenant_id: Uuid) -> Result<(metap_
 async fn oidc_login(State(state): State<AppState>, Path(tenant_id): Path<Uuid>) -> Response {
     let (config, client_secret) = match oidc_config_or_404(&state, tenant_id).await {
         Ok(v) => v,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let (auth_url, csrf_token, nonce, pkce_verifier) =
         match metap_auth::oidc_authorize_url(&config, &client_secret).await {
@@ -194,7 +197,7 @@ async fn oidc_callback(
 
     let (config, client_secret) = match oidc_config_or_404(&state, tenant_id).await {
         Ok(v) => v,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let identity =
         match metap_auth::oidc_verify_callback(&config, &client_secret, &query.code, &flow.nonce, &flow.pkce_verifier)

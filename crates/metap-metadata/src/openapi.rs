@@ -71,7 +71,11 @@ fn entity_schema(entity: &EntitySummary) -> Value {
     })
 }
 
-fn entity_field_json_schema() -> Value {
+/// `pub` (unlike the rest of this file's schema builders) so `metap-lowcode-http` can describe
+/// its draft/publish/export/import request-and-response bodies — which embed
+/// `Vec<EntityField>`/`Vec<EntityListView>`/`Option<EntityWorkflow>` verbatim, the same wire
+/// shape `EntitySummary` uses — without duplicating this mapping by hand.
+pub fn entity_field_json_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -100,7 +104,8 @@ fn entity_field_json_schema() -> Value {
     })
 }
 
-fn entity_list_view_json_schema() -> Value {
+/// `pub` — see [`entity_field_json_schema`]'s doc comment.
+pub fn entity_list_view_json_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -133,7 +138,8 @@ fn workflow_transition_json_schema() -> Value {
     })
 }
 
-fn entity_workflow_json_schema() -> Value {
+/// `pub` — see [`entity_field_json_schema`]'s doc comment.
+pub fn entity_workflow_json_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -241,6 +247,20 @@ pub fn generate_openapi_document(entities: &[EntitySummary]) -> Value {
         paths.insert(
             item_path,
             json!({
+                "get": {
+                    "summary": format!("Get one {}", entity.label),
+                    "responses": {
+                        "200": {
+                            "description": "OK",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "type": "object", "properties": { "data": schema.clone() } },
+                                },
+                            },
+                        },
+                        "404": { "description": "Not found" },
+                    },
+                },
                 "patch": {
                     "summary": format!("Update {}", entity.label),
                     "requestBody": {
@@ -248,8 +268,19 @@ pub fn generate_openapi_document(entities: &[EntitySummary]) -> Value {
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "properties": { "version": { "type": "number" }, "data": schema },
+                                    "properties": { "version": { "type": "number" }, "data": schema.clone() },
                                 },
+                            },
+                        },
+                    },
+                    "responses": { "200": { "description": "OK" } },
+                },
+                "delete": {
+                    "summary": format!("Delete {}", entity.label),
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": { "type": "object", "properties": { "version": { "type": "number" } } },
                             },
                         },
                     },
@@ -334,7 +365,9 @@ mod tests {
         };
         let doc = generate_openapi_document(&[summary]);
         assert!(doc["paths"]["/api/crm.customers"]["post"].is_object());
+        assert!(doc["paths"]["/api/crm.customers/{id}"]["get"].is_object());
         assert!(doc["paths"]["/api/crm.customers/{id}"]["patch"].is_object());
+        assert!(doc["paths"]["/api/crm.customers/{id}"]["delete"].is_object());
         assert!(doc["paths"]["/api/crm.customers/{id}/transitions/{action}"].is_null());
         assert_eq!(
             doc["paths"]["/api/crm.customers"]["post"]["requestBody"]["content"]["application/json"]["schema"]

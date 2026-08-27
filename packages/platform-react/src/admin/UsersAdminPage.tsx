@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { Alert, Badge, Button, Container, Group, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import {
+  Alert,
+  Badge,
+  Button,
+  Container,
+  Group,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../api/client";
 import { ApiErrorMessage } from "../api/ApiErrorMessage";
@@ -158,7 +169,11 @@ export function UsersAdminPage() {
                         setRoleInputs((prev) => ({ ...prev, [user.userId]: value }));
                       }}
                     />
-                    <Button size="xs" variant="light" onClick={() => void handleAssign(user.userId)}>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      onClick={() => void handleAssign(user.userId)}
+                    >
                       {t("admin.users.assignRole")}
                     </Button>
                   </Group>

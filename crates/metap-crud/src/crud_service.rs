@@ -1237,14 +1237,13 @@ async fn find_referencing_record(
             }
         } else {
             let mut clauses = Vec::with_capacity(group.len());
-            let mut param_idx = 3;
-            for r in &group {
+            for (i, r) in group.iter().enumerate() {
+                let param_idx = i + 3;
                 if r.has_real_column {
                     clauses.push(format!("\"{}\" = ${}::uuid", r.ref_field, param_idx));
                 } else {
                     clauses.push(format!("data ->> '{}' = ${}", r.ref_field, param_idx));
                 }
-                param_idx += 1;
             }
             let sql = format!(
                 "SELECT id FROM {table} WHERE tenant_id = $1 AND deleted = false AND id != $2 AND ({}) LIMIT 1",
