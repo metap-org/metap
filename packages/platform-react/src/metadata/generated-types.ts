@@ -742,6 +742,10 @@ export interface components {
           | "reference"
           | "json";
         label: string;
+        max?: number;
+        maxLength?: number;
+        min?: number;
+        minLength?: number;
         name: string;
         refDisplayField?: string;
         refEntity?: string;
