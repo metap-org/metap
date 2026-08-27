@@ -181,6 +181,41 @@ build/test/fmt/clippy -D warnings` sạch; `pnpm typecheck` sạch; `generated-t
 lại từ server thật sau mỗi thay đổi. (`PR #4`, 3 commit: regenerate types cho Phase 43 +
 mở rộng OpenAPI coverage + fix gap GET/DELETE.)
 
+**Dọn CI trong lúc babysit `PR #4` (2026-08-27).** Không thuộc scope OpenAPI ở trên nhưng phát
+hiện lúc theo dõi PR tới khi xanh hoàn toàn: (1) `clippy::explicit_counter_loop`/
+`clippy::result_large_err` mới xuất hiện do runner CI resolve `dtolnay/rust-toolchain@stable` lên
+Rust 1.98.0 (cache local trước đó là 1.94.1) — fix bằng cách bọc thêm 2 hàm nội bộ trả
+`Result<_, Box<Response>>` (mẫu có sẵn ở `routes/dashboards.rs`) và đổi 1 vòng lặp thủ công thành
+`.enumerate()`; (2) `aws-sdk-s3` kéo cùng lúc 2 stack HTTP client (một hiện đại qua
+`default-https-client`, một cũ qua `rustls`/hyper-0.14/h2-0.3) do bật default features — advisory
+thật từ `cargo audit`, fix bằng `default-features = false` + khai rõ feature cần; (3) `prettier`
+lệch định dạng ở 7 file FE không liên quan PR này — chạy `prettier --write`; (4) `metap-cache`'s
+`redis_cache` e2e test luôn fail "Connection refused" vì `rust-e2e` job chưa từng có Redis — thêm
+service `redis:7-alpine`; (5) race thật: `provisioning_postgres.rs`'s
+`provision_dedicated_db_tenant_migrates_and_creates_admin` tái dùng `DATABASE_URL` chung của CI
+làm database "dedicated" giả (tradeoff có ghi chú từ trước), nhưng `provision_dedicated_db_tenant`
+production code chạy `DROP SCHEMA control CASCADE` thật trên DB đó — vô hại khi chạy đơn lẻ,
+nhưng crate e2e mới của Phase 44 (bên dưới) đẩy nhiều test chạy đồng thời hơn, lần đầu trúng race
+`relation "control.tenants" does not exist` trên các test khác đang chạy song song. Fix bằng
+database throwaway thật (tạo/dùng/xoá qua database `postgres` mặc định), sửa luôn assertion admin
+user để query đúng pool "dedicated" mới thay vì pool chung (trước đó "đúng" chỉ vì tình cờ trỏ
+chung 1 DB). (6) Gap lớn nhất, tồn tại từ lâu nhưng chưa ai thấy: `metap-control`'s `vault_store.rs`
+(AppRole login/renew, đọc/ghi DSN qua Vault KV) chưa từng chạy được trong CI — không có Vault
+service, nên luôn fail connection-refused. Không lộ ra trước đây vì `cargo test --workspace --
+--ignored` không có `--no-fail-fast`: `metap-cache` (lỗi Redis ở trên) đứng trước `metap-control`
+theo thứ tự alphabet nên cả run luôn dừng sớm, chưa bao giờ chạy tới `vault_store.rs`. Xác nhận có
+thật trên `master` (không phải do PR này) bằng cách đọc log CI gần nhất của `master`: đúng y hệt,
+dừng ngay sau khi `redis_cache` fail. Fix: thêm service `vault` (`hashicorp/vault:1.15`, dev mode,
+root token cố định, cùng cấu hình `docker-compose.yml`'s `vault` service) cộng 1 step provision
+bằng `curl`+`jq` (không cài Vault CLI riêng) — bật `approle` auth, ghi policy `metap-dsn-read`, tạo
+3 role đúng TTL từng test cần (`metap-crm-server`/`metap-renew-test`/`metap-renew-single-use`),
+generate `role_id`/`secret_id` rồi export qua `$GITHUB_ENV`. Không dựng được Vault thật trong sandbox
+dev (Docker Hub bị chặn, không có Vault CLI qua `apt`) nên không chạy trực tiếp được — verify bằng
+cách khác: parse `ci.yml` bằng `pyyaml` để chắc cấu trúc hợp lệ, `bash -n` cho step script, và giả
+lập `curl`/`jq` cục bộ để xác nhận từng JSON payload gửi cho Vault API hợp lệ (bật auth, ghi policy,
+tạo role, đọc `role_id`/`secret_id`) đúng escaping. `cargo fmt --all --check` sạch (không đổi code
+Rust nào cho phần Vault, chỉ `.github/workflows/ci.yml`).
+
 Còn lại của Phase C: **publish approval workflow** — chính spec gốc
 (`docs/low-code-platform-v1.md`) ghi là "nếu cần", chưa có tín hiệu nhu cầu thật (mọi hành động
 draft/publish hôm nay chỉ gate bởi `AdminContext` chung, chưa có nhu cầu tách vai trò soạn/duyệt).

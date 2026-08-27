@@ -108,10 +108,36 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # `metap-control`'s `vault_store.rs` e2e tests (AppRole login/renewal, KV DSN read/write)
+      # need a real dev Vault server — never provisioned in CI before, so they've always failed
+      # with connection-refused. Went unnoticed because `cargo test --workspace -- --ignored` has
+      # no `--no-fail-fast`, and `metap-cache` (whose redis_cache tests failed for the reason
+      # above) sorts alphabetically before `metap-control` — so the run always aborted before
+      # ever reaching these tests. Confirmed pre-existing on `master`, not caused by this PR: once
+      # the redis gap above is fixed, `master`'s workspace run reaches metap-control and fails the
+      # same way. Same image/root-token/port as `docker-compose.yml`'s `vault` service (dev mode —
+      # auto-unsealed, no TLS) so local and CI match; `VAULT_ADDR` is set in the container's own
+      # env (not just the job's) so the `vault status` health check — run via `docker exec`, which
+      # inherits the container's declared env — can reach it without inline exporting.
+      vault:
+        image: hashicorp/vault:1.15
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: metap-dev-root-token
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+          VAULT_ADDR: http://127.0.0.1:8200
+        ports: ["8200:8200"]
+        options: >-
+          --cap-add=IPC_LOCK
+          --health-cmd "vault status"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgres://metap:metap@localhost:5432/metap
       RABBITMQ_URL: amqp://metap:metap@localhost:5672
       REDIS_URL: redis://127.0.0.1:6379
+      VAULT_ADDR: http://127.0.0.1:8200
+      VAULT_TOKEN: metap-dev-root-token
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -122,6 +148,50 @@ jobs:
       - name: Apply migrations
         working-directory: apps/crm-server
         run: cargo run --release -p db-migrate --locked
+      # Provisions exactly the AppRole setup `crates/metap-control/tests/vault_store.rs`'s doc
+      # comment documents as a one-time manual `vault` CLI operator step for local dev — done here
+      # via curl+jq instead (no Vault CLI on the runner, and installing one just for this is more
+      # than the job needs) against the dev Vault service container above. 3 roles: `metap-crm-server`
+      # (the plain AppRole-login read test), `metap-renew-test` (token_ttl=5s, shorter than the
+      # store's 60s renew buffer — exercises the fresh-login fallback), `metap-renew-single-use`
+      # (token_ttl=65s + secret_id_num_uses=1 — exercises `renew_self`, which needs no `secret_id`,
+      # as the regression this role's test guards against).
+      - name: Provision Vault AppRole roles for the vault_store e2e tests
+        run: |
+          set -euo pipefail
+          curl -sf --request POST --header "X-Vault-Token: $VAULT_TOKEN" \
+            --data '{"type":"approle"}' "$VAULT_ADDR/v1/sys/auth/approle"
+          curl -sf --request PUT --header "X-Vault-Token: $VAULT_TOKEN" \
+            --data '{"policy":"path \"secret/data/metap/dsn/*\" { capabilities = [\"read\"] }"}' \
+            "$VAULT_ADDR/v1/sys/policies/acl/metap-dsn-read"
+
+          write_role() {
+            local name="$1" extra_json="$2"
+            curl -sf --request PUT --header "X-Vault-Token: $VAULT_TOKEN" \
+              --data "{\"token_policies\":\"metap-dsn-read\"${extra_json}}" \
+              "$VAULT_ADDR/v1/auth/approle/role/$name"
+          }
+          role_id() {
+            curl -sf --header "X-Vault-Token: $VAULT_TOKEN" \
+              "$VAULT_ADDR/v1/auth/approle/role/$1/role-id" | jq -r '.data.role_id'
+          }
+          secret_id() {
+            curl -sf --request POST --header "X-Vault-Token: $VAULT_TOKEN" \
+              "$VAULT_ADDR/v1/auth/approle/role/$1/secret-id" | jq -r '.data.secret_id'
+          }
+
+          write_role metap-crm-server ',"token_ttl":"1h","token_max_ttl":"4h"'
+          write_role metap-renew-test ',"token_ttl":"5s","token_max_ttl":"1h"'
+          write_role metap-renew-single-use ',"token_ttl":"65s","token_max_ttl":"1h","secret_id_num_uses":1'
+
+          {
+            echo "VAULT_ROLE_ID=$(role_id metap-crm-server)"
+            echo "VAULT_SECRET_ID=$(secret_id metap-crm-server)"
+            echo "VAULT_RENEW_ROLE_ID=$(role_id metap-renew-test)"
+            echo "VAULT_RENEW_SECRET_ID=$(secret_id metap-renew-test)"
+            echo "VAULT_SINGLE_USE_ROLE_ID=$(role_id metap-renew-single-use)"
+            echo "VAULT_SINGLE_USE_SECRET_ID=$(secret_id metap-renew-single-use)"
+          } >> "$GITHUB_ENV"
       - name: Run e2e tests
         run: cargo test --workspace --locked -- --ignored
 
