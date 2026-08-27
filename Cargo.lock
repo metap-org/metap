@@ -1657,6 +1657,7 @@ dependencies = [
  "dotenvy",
  "metap-control",
  "metap-peripherals",
+ "metap-reconciler",
  "sqlx",
  "tokio",
  "uuid",
@@ -3432,6 +3433,22 @@ dependencies = [
  "metap-metadata",
  "serde",
  "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "metap-reconciler-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "metap-control",
+ "metap-infra",
+ "metap-lowcode",
+ "metap-metadata",
+ "metap-reconciler",
  "sqlx",
  "tokio",
  "tracing",

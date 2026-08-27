@@ -28,6 +28,7 @@ members = [
   "crates/metap-workflow",
   "crates/notification-worker",
   "crates/outbox-publisher",
+  "crates/reconciler-orchestrator",
 ]
 
 [workspace.package]

@@ -39,6 +39,7 @@ fn usage() -> ! {
     );
     eprintln!("  dev-tools bootstrap-platform-admin <email> <password>");
     eprintln!("  dev-tools vault-put-dsn <dsnSecretRef> <dsn>                     (reads VAULT_ADDR/VAULT_TOKEN)");
+    eprintln!("  dev-tools enqueue-reconcile <tenantId> <entityName> <desiredVersion>");
     std::process::exit(1);
 }
 
@@ -55,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
         Some("provision-tenant") => provision_tenant(&args).await,
         Some("bootstrap-platform-admin") => bootstrap_platform_admin(&args).await,
         Some("vault-put-dsn") => vault_put_dsn(&args).await,
+        Some("enqueue-reconcile") => enqueue_reconcile(&args).await,
         _ => usage(),
     }
 }
@@ -298,6 +300,39 @@ async fn vault_put_dsn(args: &[String]) -> anyhow::Result<()> {
     store.put_dsn(dsn_secret_ref, dsn).await?;
 
     println!("Wrote dsn_secret_ref \"{dsn_secret_ref}\" to Vault at {vault_addr}.");
+    Ok(())
+}
+
+/// Seeds/bumps one `(tenant, entity)`'s desired version in `reconciler_entity_deployments` —
+/// the manual trigger for `metap-reconciler-orchestrator`'s ticker loop to pick up on its next
+/// poll (`metap_reconciler::orchestrator::enqueue_deployment`, see that function's doc comment
+/// for why this is the single-tenant counterpart to the fleet-wide `advance_wave`). `entityName`
+/// must be a **published low-code entity** — the orchestrator resolves what to reconcile against
+/// via `metap_lowcode::get_published`, not any code-authored registry (see
+/// `reconciler-orchestrator`'s crate-level doc comment for why). Writes to the same
+/// `DATABASE_URL` pool the orchestrator itself polls (`reconciler_entity_deployments` lives per
+/// physical database, not per logical tenant — see that crate's doc comment), not through
+/// `Router`, matching how the orchestrator reads this table.
+async fn enqueue_reconcile(args: &[String]) -> anyhow::Result<()> {
+    let (Some(tenant_id), Some(entity_name), Some(desired_version)) = (args.get(2), args.get(3), args.get(4)) else {
+        eprintln!("Usage: dev-tools enqueue-reconcile <tenantId> <entityName> <desiredVersion>");
+        std::process::exit(1);
+    };
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
+
+    let tenant_id: Uuid = tenant_id.parse()?;
+    let desired_version: i64 = desired_version
+        .parse()
+        .map_err(|_| anyhow::anyhow!("desiredVersion must be an integer"))?;
+
+    metap_reconciler::orchestrator::enqueue_deployment(&pool, tenant_id, entity_name, desired_version).await?;
+
+    println!(
+        "Enqueued entity \"{entity_name}\" for tenant {tenant_id} at desired_version={desired_version} \
+         — a running reconciler-orchestrator will pick this up on its next poll."
+    );
     Ok(())
 }
 

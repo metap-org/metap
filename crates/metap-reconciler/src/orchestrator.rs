@@ -85,6 +85,37 @@ pub async fn claim_due(
         .collect())
 }
 
+/// Seeds or bumps one `(tenant, entity)`'s desired version — the missing "who populates the
+/// work queue" half of §6.1 (`advance_wave` is the fleet-wide/canary version of this same
+/// UPSERT; this is the single-tenant shape a CLI trigger or an admin action needs, without
+/// wave/cohort bookkeeping). No-op if `desired_version` isn't actually newer — same
+/// `WHERE ... < EXCLUDED.desired_version` guard `advance_wave` uses, so calling this twice with
+/// the same version is harmless. Resets `attempts`/`failure_class`/`last_error` back to a clean
+/// `pending` state so a previously `blocked` row can be retried by bumping the version (the
+/// intended way to move past a `DataError`/`Fatal` block: fix the metadata/data, republish a
+/// new version, re-enqueue).
+pub async fn enqueue_deployment(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    entity_name: &str,
+    desired_version: i64,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO reconciler_entity_deployments (tenant_id, entity_name, desired_version) \
+         VALUES ($1, $2, $3) \
+         ON CONFLICT (tenant_id, entity_name) DO UPDATE \
+         SET desired_version = EXCLUDED.desired_version, status = 'pending', attempts = 0, \
+             failure_class = NULL, last_error = NULL, updated_at = now() \
+         WHERE reconciler_entity_deployments.desired_version < EXCLUDED.desired_version",
+    )
+    .bind(tenant_id)
+    .bind(entity_name)
+    .bind(desired_version)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// §6.4's three SQLSTATE buckets: retry automatically, or don't (data needs a human to fix, or
 /// the metadata/code itself is wrong).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
