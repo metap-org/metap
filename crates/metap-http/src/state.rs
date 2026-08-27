@@ -88,6 +88,15 @@ pub struct AppState {
     /// `.collect()` (called by the `/metrics` handler on every scrape, not on a background
     /// timer) refreshes the values read from `/proc` just before rendering.
     pub process_collector: metrics_process::Collector,
+    /// OpenAPI path fragments contributed by optional platform capabilities this crate has zero
+    /// dependency on (`metap-lowcode-http`, `metap-control-http` — same "extra_routes" boundary
+    /// this file's doc comment already draws for the axum routes themselves). Empty by default;
+    /// the composition root (`apps/crm-server/src/main.rs`) assigns it after construction, same
+    /// pattern as `object_store`/`attachment_tables`/`auth_context_entity` above. Merged into
+    /// `GET /metadata/openapi.json`'s `paths` alongside this crate's own static routes
+    /// (`crate::openapi_paths::static_paths`) and the per-entity dynamic ones
+    /// (`metap_metadata::generate_openapi_document`) — see `routes::metadata::openapi_json`.
+    pub extra_openapi_paths: Arc<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl AppState {
@@ -125,6 +134,7 @@ impl AppState {
             oidc_flow_cache: OidcFlowCache::new(Duration::from_secs(600)),
             metrics_handle: prometheus_handle(),
             process_collector: process_collector(),
+            extra_openapi_paths: Arc::new(serde_json::Map::new()),
         }
     }
 }

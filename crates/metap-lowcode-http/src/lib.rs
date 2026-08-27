@@ -26,6 +26,8 @@
 //! sub-project 2) — any request after the response comes back is guaranteed to see the new
 //! registry.
 
+pub mod openapi_paths;
+
 use std::collections::HashSet;
 use std::sync::Arc;
 

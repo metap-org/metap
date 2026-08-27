@@ -71,7 +71,11 @@ fn entity_schema(entity: &EntitySummary) -> Value {
     })
 }
 
-fn entity_field_json_schema() -> Value {
+/// `pub` (unlike the rest of this file's schema builders) so `metap-lowcode-http` can describe
+/// its draft/publish/export/import request-and-response bodies — which embed
+/// `Vec<EntityField>`/`Vec<EntityListView>`/`Option<EntityWorkflow>` verbatim, the same wire
+/// shape `EntitySummary` uses — without duplicating this mapping by hand.
+pub fn entity_field_json_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -100,7 +104,8 @@ fn entity_field_json_schema() -> Value {
     })
 }
 
-fn entity_list_view_json_schema() -> Value {
+/// `pub` — see [`entity_field_json_schema`]'s doc comment.
+pub fn entity_list_view_json_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -133,7 +138,8 @@ fn workflow_transition_json_schema() -> Value {
     })
 }
 
-fn entity_workflow_json_schema() -> Value {
+/// `pub` — see [`entity_field_json_schema`]'s doc comment.
+pub fn entity_workflow_json_schema() -> Value {
     json!({
         "type": "object",
         "properties": {

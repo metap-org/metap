@@ -160,6 +160,19 @@ async fn main() -> anyhow::Result<()> {
     state.auth_context_entity = config.auth_context_entity.as_deref().map(Arc::from);
     state.context_attributes_cache =
         ContextAttributesCache::new(std::time::Duration::from_secs(config.auth_context_cache_ttl_seconds));
+    // Same optional-capability boundary as the routers merged below — `GET
+    // /metadata/openapi.json` (`metap_http::routes::metadata::openapi_json`) only knows how to
+    // describe its own static routes and the per-entity dynamic ones; it has zero knowledge of
+    // `metap-lowcode-http`/`metap-control-http`'s paths, so this app (which does mount both)
+    // hands their hand-written OpenAPI fragments in here explicitly. A downstream project that
+    // skips one or both routers below should skip the matching `openapi_paths()` call too.
+    state.extra_openapi_paths = Arc::new(
+        metap::lowcode_http::openapi_paths::openapi_paths()
+            .into_iter()
+            .chain(metap::control_http::openapi_paths::openapi_paths())
+            .collect(),
+    );
+
     // `metap::lowcode_http::router()` is the low-code control plane's admin API
     // (`docs/roadmap.md` Phase 11 / Phase A) and `metap::control_http::router()` is the
     // platform-tenant provisioning API (Phase 16 Giai đoạn 3) — both optional platform

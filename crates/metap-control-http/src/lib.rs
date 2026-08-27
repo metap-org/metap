@@ -22,6 +22,8 @@
 //! deprovisioning stops at "nothing can route to this tenant id again" rather than also purging
 //! rows or dropping a `DedicatedDb` tenant's physical database.
 
+pub mod openapi_paths;
+
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};

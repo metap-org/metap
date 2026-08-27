@@ -22,6 +22,7 @@ pub mod auth;
 pub mod cache;
 pub mod error;
 pub mod metrics;
+pub mod openapi_paths;
 pub mod request_context;
 pub mod request_id;
 pub mod routes;
