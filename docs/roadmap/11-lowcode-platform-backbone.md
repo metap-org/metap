@@ -232,6 +232,20 @@ Verify sống: build lại toàn workspace sau khi dọn `target/` bị đầy �
 `du -sh target` xuống 14G, dưới ngưỡng 40G CLAUDE.md cảnh báo), `cargo test -p metap-cron --
 --ignored` chạy lặp lại nhiều lần đều pass ổn định, `cargo build/fmt --check` sạch.
 
+Domino tiếp tục sang (8): sau khi qua khỏi `metap-cron`, `cargo test` chạy tới `metap-crud` và fail
+2 test trong `crud_service_postgres.rs` — nhưng đây không phải bug, mà là gap thật trong chính
+`ci.yml`: file này dùng `#[ignore]` cho 2 mục đích khác nhau — phần lớn là "e2e test cần
+`DATABASE_URL`" (quy ước chuẩn toàn repo), nhưng 3 test cuối file là **manual benchmark**, tự ghi rõ
+trong `ignore` reason của chính nó ("not part of a normal e2e run"): 2 test cần seed thật ngoài
+băng thông (out-of-band) hàng triệu row/nhiều tenant CI chưa từng tạo, nên panic ngay
+("hr.departments must already be seeded"); test thứ 3 tự chứa dữ liệu nên không fail nhưng vẫn tốn
+~60s chạy sustained-load 20-worker mà kết quả (`eprintln!` số liệu) không hiện ra do CI không chạy
+`--nocapture` — tốn CI time, không giá trị. `-- --ignored` quá thô để phân biệt 2 loại `#[ignore]`
+này. Fix: thêm `--skip <tên test>` đích danh cho cả 3 test thay vì đổi ý nghĩa `--ignored` toàn cục.
+Verify sống: `cargo test -p metap-crud --test crud_service_postgres -- --ignored --skip ... --skip
+... --skip ...` chạy đúng 11 test e2e thật (3 filtered out đúng), `cargo fmt --all --check` sạch
+(không đổi code Rust, chỉ `ci.yml`).
+
 Còn lại của Phase C: **publish approval workflow** — chính spec gốc
 (`docs/low-code-platform-v1.md`) ghi là "nếu cần", chưa có tín hiệu nhu cầu thật (mọi hành động
 draft/publish hôm nay chỉ gate bởi `AdminContext` chung, chưa có nhu cầu tách vai trò soạn/duyệt).
