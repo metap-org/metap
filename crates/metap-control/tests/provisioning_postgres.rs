@@ -2,12 +2,19 @@
 //! `docker compose up -d postgres`, `pnpm db:migrate`). `#[ignore]`d so a plain `cargo test`
 //! never touches a database — run with `cargo test -p metap-control -- --ignored`.
 //!
-//! `provision_dedicated_db_tenant`'s "dedicated" database is the *same* `DATABASE_URL` this
-//! test connects to, same limitation `router_postgres.rs`'s dedicated-db tests already accept
-//! (see that file's doc comment) — `sqlx::migrate!` is idempotent against an already-migrated
-//! database, so this still exercises the real code path (migrate -> registry write -> create
-//! user -> assign role), just not genuine physical separation. A real second database is
-//! covered by manual smoke testing, not this suite.
+//! `provision_dedicated_db_tenant`'s "dedicated" database used to be the *same* `DATABASE_URL`
+//! this test connects to — found live (2026-08-27): that function runs `DROP SCHEMA control
+//! CASCADE` against whatever it migrates (see its own doc comment: a dedicated tenant's own DB
+//! shouldn't carry a redundant `control` schema), so reusing the shared database here meant
+//! this test dropped `control.tenants` out from under every *other* e2e test concurrently
+//! relying on it — latent for a while (this test and everything racing it had to actually
+//! overlap in time), then a real collision in CI once the workspace grew enough e2e test
+//! crates to shift `cargo test --workspace -- --ignored`'s timing (`relation control.tenants
+//! does not exist` mid-run). Fixed at the root: `create_throwaway_database`/
+//! `drop_throwaway_database` below give this one test a genuinely separate database on the
+//! same server, so the drop can never touch anything another test needs. `router_postgres.rs`'s
+//! dedicated-db tests don't need the same fix — they insert into `control.tenants` directly and
+//! never call `provision_dedicated_db_tenant`, so they never run that drop.
 
 use std::sync::Arc;
 
@@ -24,6 +31,45 @@ async fn connect() -> sqlx::PgPool {
         .connect(&database_url)
         .await
         .expect("connect to dev postgres")
+}
+
+/// Creates a throwaway database on the same Postgres server `DATABASE_URL` points at, connected
+/// to via the always-present `postgres` maintenance database (you can't `CREATE`/`DROP DATABASE`
+/// against the database you're currently connected to). Returns the new database's own
+/// connection URL.
+async fn create_throwaway_database(database_url: &str, name: &str) -> String {
+    let (base, _dbname) = database_url
+        .rsplit_once('/')
+        .expect("DATABASE_URL must end in /<dbname>");
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("{base}/postgres"))
+        .await
+        .expect("connect to postgres maintenance db");
+    sqlx::query(&format!("CREATE DATABASE \"{name}\""))
+        .execute(&admin_pool)
+        .await
+        .expect("create throwaway database");
+    admin_pool.close().await;
+    format!("{base}/{name}")
+}
+
+async fn drop_throwaway_database(database_url: &str, name: &str) {
+    let (base, _dbname) = database_url
+        .rsplit_once('/')
+        .expect("DATABASE_URL must end in /<dbname>");
+    let Ok(admin_pool) = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("{base}/postgres"))
+        .await
+    else {
+        return;
+    };
+    // `WITH (FORCE)` (Postgres 13+) disconnects any lingering session first — best-effort
+    // cleanup, not asserted, so a leaked connection from the test itself can't fail the test.
+    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
+        .execute(&admin_pool)
+        .await;
 }
 
 async fn cleanup(pool: &sqlx::PgPool, tenant_id: Uuid) {
@@ -89,11 +135,14 @@ async fn provision_dedicated_db_tenant_migrates_and_creates_admin() {
     let tenant_id = Uuid::new_v4();
     let dsn_secret_ref = format!("METAP_TEST_PROVISION_DSN_{}", tenant_id.simple());
 
+    let db_name = format!("test_dedicated_{}", tenant_id.simple());
+    let dedicated_url = create_throwaway_database(&database_url, &db_name).await;
+
     let provisioned = metap_control::provision_dedicated_db_tenant(
         &registry,
         tenant_id,
         &dsn_secret_ref,
-        &database_url,
+        &dedicated_url,
         &format!("admin-{}@test.local", tenant_id.simple()),
         "pass123",
     )
@@ -107,13 +156,22 @@ async fn provision_dedicated_db_tenant_migrates_and_creates_admin() {
         .expect("tenant row exists");
     assert!(matches!(routing.strategy, TenantStrategy::DedicatedDb { dsn_secret_ref: r } if r == dsn_secret_ref));
 
+    // The admin user lives on the dedicated database now that it's genuinely separate, not the
+    // shared `pool` above (which only ever holds `control.tenants`/the registry for this test).
+    let dedicated_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&dedicated_url)
+        .await
+        .expect("connect to dedicated database");
     let email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
         .bind(provisioned.admin_user_id)
-        .fetch_one(&pool)
+        .fetch_one(&dedicated_pool)
         .await
         .expect("admin user exists");
     assert!(email.starts_with("admin-"));
+    dedicated_pool.close().await;
 
+    drop_throwaway_database(&database_url, &db_name).await;
     cleanup(&pool, tenant_id).await;
 }
 
