@@ -15,6 +15,7 @@ path = "src/main.rs"
 metap-control = { path = "../metap-control" }
 metap-infra = { path = "../metap-infra" }
 metap-lowcode = { path = "../metap-lowcode" }
+metap-metadata = { path = "../metap-metadata" }
 metap-reconciler = { path = "../metap-reconciler" }
 anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
@@ -27,6 +28,3 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
-
-[dev-dependencies]
-metap-metadata = { path = "../metap-metadata" }

@@ -8,17 +8,30 @@ gap đó là thứ được đóng lại đầu tiên, tiếp theo là các mụ
 Mục tiêu:
 
 - **Tích hợp secret manager** — **Vault impl xong 2026-08-17** (`metap-control::VaultStore`, xem
-  Phase 16 Giai đoạn 4), đúng theo hướng thiết kế đã ghi trước đó ở
-  `docs/architectures/07-deployment.md`'s "Secret manager — hướng thiết kế":
+  Phase 16 Giai đoạn 4; AppRole + auto-renewal thêm 2026-08-20), đúng theo hướng thiết kế đã ghi
+  trước đó ở `docs/architectures/07-deployment.md`'s "Secret manager — hướng thiết kế":
   `metap-control::SecretStore` trait (xây cho Phase 16's `DedicatedDb`) chỉ cần thêm một impl
-  mới của cùng trait, không phải thiết kế lại. Chỉ mới bao phủ `dsn_secret_ref` của
-  `DedicatedDb` (Vault token auth, static KV v2 — không phải AppRole, không phải dynamic
-  database-credentials engine, cả hai vẫn deferred tới khi có trigger production thật).
-  `AppConfig` (đọc `DATABASE_URL`/`RABBITMQ_URL`/JWT key path từ env) là phạm vi rộng hơn còn
-  chưa qua abstraction nào, cần mở rộng riêng — config hiện tại vẫn là file `.env` (phù hợp cho
-  dev, không phải tư thế production). Vẫn chưa có production deployment topology nào được chốt
-  (cloud secret manager của provider nào, nếu không self-host Vault) — quyết định đó vẫn thuộc
-  về lúc chọn hạ tầng production thật, không chặn phần đã làm ở trên.
+  mới của cùng trait, không phải thiết kế lại. **2026-08-28: thêm 2 impl cloud** —
+  `AwsSecretsManagerStore` (credentials tường minh qua `Credentials`/`Region`/`Builder`, cùng
+  style `metap-storage::S3ObjectStore` đã có, không dùng default credential chain của SDK) và
+  `GcpSecretManagerStore` (Application Default Credentials — GCP không có khái niệm access
+  key/secret key như AWS) — cả 2 kỳ vọng payload cùng shape JSON `{"dsn": "..."}` như Vault's
+  `DsnSecret`, để một operator có 1 mental model chung dù chạy backend nào.
+  `metap_control::build_secret_store(&AppConfig)` (hàm mới) gom logic chọn 1 trong 4 backend từ
+  env — trước đó mỗi binary (`crm-server`/`jira-server`/`reconciler-orchestrator`) tự lặp lại
+  đoạn `match` Vault/Env, giờ gọi chung 1 hàm nên không thể lệch nhau; thêm 4 field mới vào
+  `metap-infra::AppConfig` (`aws_secrets_*`, `gcp_secrets_project_id`). `dev-tools
+  {vault,aws-secrets,gcp-secrets}-put-dsn <dsnSecretRef> <dsn>` là bộ 3 lệnh ghi tay tương ứng.
+  Vẫn chỉ mới bao phủ `dsn_secret_ref` của `DedicatedDb` (không phải AppRole/dynamic
+  database-credentials engine cho Vault — vẫn deferred tới khi có trigger production thật, không
+  đổi so với trước). `AppConfig` (đọc `DATABASE_URL`/`RABBITMQ_URL`/JWT key path từ env) là phạm
+  vi rộng hơn còn chưa qua abstraction nào, cần mở rộng riêng — config hiện tại vẫn là file
+  `.env` (phù hợp cho dev, không phải tư thế production). Vẫn chưa có production deployment
+  topology nào được chốt (cloud secret manager của provider nào, nếu không self-host Vault) —
+  quyết định đó vẫn thuộc về lúc chọn hạ tầng production thật, không chặn phần đã làm ở trên; cả
+  4 backend chỉ mới build/clippy/fmt sạch + unit test, **chưa verify sống với 1 Vault/AWS/GCP
+  thật** (sandbox lúc code không có mạng tới Vault/AWS/GCP để test, cũng không có tài khoản
+  cloud thật để thử) — cần verify tay trước khi dùng backend nào đó cho production thật.
 - ~~CORS allowlist theo environment~~ — **Đã xong**, có trước khi phase này được track:
   `CORS_ORIGINS` (`crates/metap-infra/src/config.rs`) là một env var theo từng environment,
   phân tách bằng dấu phẩy, chỉ mặc định rỗng (permissive `CorsLayer::new()`) khi không được

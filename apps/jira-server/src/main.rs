@@ -89,10 +89,11 @@ async fn main() -> anyhow::Result<()> {
     // `Router` built before reconcile() runs — reconcile needs it to resolve the tenant's own
     // pool, not the platform's `pool` above (see this file's top doc comment).
     let tenant_registry = Arc::new(metap::control::PostgresTenantRegistry::new(pool.clone()));
+    let secret_store = metap::control::build_secret_store(&config).await?;
     let router = metap::control::Router::new(
         pool.clone(),
         metap::control::RegistryCache::new(tenant_registry),
-        Arc::new(metap::control::EnvStore),
+        secret_store,
     );
 
     // Must already be a provisioned `control.tenants` row (`dev-tools provision-tenant`) —

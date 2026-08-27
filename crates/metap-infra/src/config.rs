@@ -53,6 +53,25 @@ pub struct AppConfig {
     /// See `vault_addr`. AppRole auth backend mount path — defaults to `"approle"` (Vault's own
     /// default) when `vault_role_id`/`vault_secret_id` are set but this isn't.
     pub vault_approle_mount: Option<String>,
+    /// Opt-in, alternative to Vault — when set, `metap_control::build_secret_store` builds an
+    /// `AwsSecretsManagerStore` instead of `VaultStore`/`EnvStore` (`docs/roadmap.md` Phase 8,
+    /// cloud secret-manager target). Takes precedence over Vault if both `aws_secrets_region`
+    /// and `vault_addr` are somehow set — see `build_secret_store`'s own doc comment for the
+    /// full precedence order across all four backends.
+    pub aws_secrets_region: Option<String>,
+    /// See `aws_secrets_region`. Required alongside it — `AwsSecretsManagerStore` uses explicit
+    /// credentials, not the SDK's default provider chain (see that type's doc comment for why).
+    pub aws_secrets_access_key: Option<String>,
+    /// See `aws_secrets_region`.
+    pub aws_secrets_secret_key: Option<String>,
+    /// See `aws_secrets_region`. LocalStack or another AWS-API-compatible test double — unset
+    /// for real AWS Secrets Manager.
+    pub aws_secrets_endpoint_url: Option<String>,
+    /// Opt-in, alternative to Vault/AWS — when set, `metap_control::build_secret_store` builds a
+    /// `GcpSecretManagerStore` (`docs/roadmap.md` Phase 8). No access-key/secret-key pair here —
+    /// GCP resolves identity via Application Default Credentials (see that type's doc comment).
+    /// Takes precedence over both AWS and Vault if more than one is somehow configured at once.
+    pub gcp_secrets_project_id: Option<String>,
     /// Opt-in — when set, names the entity `metap-http`'s `AuthContext` extractor reads a
     /// caller's own record from (matched by a `userId` field) to enrich `RequestContext` with
     /// attributes beyond identity/role, e.g. `"hr.employees"` so a `departmentId` field becomes
@@ -166,6 +185,12 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
     let vault_secret_id = env::var("VAULT_SECRET_ID").ok().filter(|s| !s.is_empty());
     let vault_approle_mount = env::var("VAULT_APPROLE_MOUNT").ok().filter(|s| !s.is_empty());
 
+    let aws_secrets_region = env::var("AWS_SECRETS_REGION").ok().filter(|s| !s.is_empty());
+    let aws_secrets_access_key = env::var("AWS_SECRETS_ACCESS_KEY").ok().filter(|s| !s.is_empty());
+    let aws_secrets_secret_key = env::var("AWS_SECRETS_SECRET_KEY").ok().filter(|s| !s.is_empty());
+    let aws_secrets_endpoint_url = env::var("AWS_SECRETS_ENDPOINT_URL").ok().filter(|s| !s.is_empty());
+    let gcp_secrets_project_id = env::var("GCP_SECRETS_PROJECT_ID").ok().filter(|s| !s.is_empty());
+
     let auth_context_entity = env::var("AUTH_CONTEXT_ENTITY").ok().filter(|s| !s.is_empty());
     let auth_context_cache_ttl_seconds: u64 = env::var("AUTH_CONTEXT_CACHE_TTL_SECONDS")
         .ok()
@@ -200,6 +225,11 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         vault_role_id,
         vault_secret_id,
         vault_approle_mount,
+        aws_secrets_region,
+        aws_secrets_access_key,
+        aws_secrets_secret_key,
+        aws_secrets_endpoint_url,
+        gcp_secrets_project_id,
         auth_context_entity,
         auth_context_cache_ttl_seconds,
         policy_cache_redis_url,

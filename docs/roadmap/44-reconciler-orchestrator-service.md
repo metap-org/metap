@@ -87,14 +87,61 @@ gì, HTTP contract ra sao — để lại cho lúc có trigger thật).
 
 ### Còn lại (cố ý chưa làm, ghi nhận rõ)
 
-- Không có API HTTP publish/rollout (`advance_wave` vẫn chỉ gọi được từ Rust trực tiếp, chưa có
-  route) — chưa có nhu cầu thật, một entity low-code cụ thể muốn fan-out multi-tenant qua
-  orchestrator này mới là trigger hợp lý để xây nó.
-- Không poll riêng cho tenant `DedicatedDb` (chỉ pool chung platform) — xem "Quyết định phạm vi"
-  ở trên.
-- Không topo-sort phụ thuộc FK giữa nhiều entity trong cùng 1 batch claim (đúng giới hạn đã ghi
-  trong `reconcile()`'s doc comment từ trước — "a caller driving many entities is responsible for
-  reconciling a referenced entity before the one that references it, exactly what the
-  orchestrator will automate later"; batch hiện tại xử lý độc lập từng entity, không sắp thứ tự).
 - Không thread `renames` (migration/rename ops) qua vòng lặp — giống mọi call site `reconcile()`
   trực tiếp khác trong repo hôm nay, một entity đang giữa quá trình rename cần được gọi riêng.
+- Không topo-sort FK *xuyên* biên tenant `DedicatedDb` — chỉ trong phạm vi 1 tenant (đúng, vì FK
+  target luôn nằm trong cùng database vật lý với entity tham chiếu nó).
+- `POST /platform/reconciler/wave-rollout` chỉ chạy được cho tenant `Schema`-strategy (pool
+  chung) — một tenant `DedicatedDb` muốn wave-rollout vẫn phải gọi `dev-tools enqueue-reconcile`
+  từng tenant một, chưa có endpoint HTTP tương đương cho trường hợp đó.
+
+### 2026-08-28 — đóng nốt 3 gap còn lại ở trên (topo-sort, DedicatedDb fan-out, HTTP wave-rollout)
+
+Cả 3 gap "cố ý chưa làm" ghi ở bản gốc phase này (2026-08-27) đã được đóng, theo yêu cầu chủ dự
+án làm tiếp phần "Phase 44 gaps":
+
+- **Topo-sort FK trong 1 batch** — `metap_reconciler::orchestrator::topo_sort_waves` (hàm thuần,
+  không I/O): với mỗi tenant trong batch, dựng đồ thị phụ thuộc từ field `Reference` (entity A có
+  field trỏ `ref_entity: B`, cả A và B cùng nằm trong batch → A phụ thuộc B), rồi chạy Kahn's
+  algorithm thành các "wave" — wave sau chỉ chạy sau khi wave trước xong hết. Chỉ xét cạnh trong
+  cùng 1 tenant (FK target luôn ở cùng database vật lý); phụ thuộc vào entity ngoài batch (đã
+  reconcile từ trước) không cần sắp thứ tự. Cycle (2 entity tham chiếu vòng nhau) rơi vào 1 wave
+  chung, best-effort — không crash, chỉ mất tác dụng sắp thứ tự cho riêng phần đó. `run_once` giờ
+  chạy `run_claimed_batch` theo từng wave tuần tự thay vì 1 lần cho cả batch — trước đây
+  `buffer_unordered` có thể race FK constraint của entity tham chiếu với `CREATE TABLE` của entity
+  bị tham chiếu nếu cả hai lần đầu cùng được claim chung 1 tick. 5 unit test pure-function (không
+  cần DB): thứ tự đúng khi có phụ thuộc, độc lập thì cùng 1 wave, bỏ qua phụ thuộc ngoài batch,
+  không sắp thứ tự xuyên tenant, cycle rơi về 1 wave.
+- **Fan-out cho tenant `DedicatedDb`** — hàm mới `run_tick(control_pool, router, tenant_registry,
+  config)`: chạy `run_once` như cũ cho pool chung (mọi tenant `Schema`-strategy), sau đó liệt kê
+  mọi tenant `DedicatedDb` đang `Active` (`PostgresTenantRegistry::list`) và chạy thêm 1 lượt
+  `run_once` riêng cho pool của từng tenant đó (`Router::pool_for`) — đóng đúng gap
+  `crates/migrations/*.sql` áp cho mọi database tenant nên mỗi `DedicatedDb` tenant có bản
+  `reconciler_entity_deployments` riêng, nhưng trước đây không ai poll nó (cùng loại gap
+  `outbox-publisher` từng gặp — xem bullet của binary đó trong `CLAUDE.md`). 1 tenant fail (pool
+  không resolve được, hoặc tick lỗi) chỉ log warning, không chặn tenant khác hay pool chung. Kèm
+  fix liên quan bắt buộc phải sửa để fan-out này thật sự hữu dụng: `dev-tools enqueue-reconcile`
+  trước đây luôn ghi thẳng vào pool chung `DATABASE_URL` — với tenant `DedicatedDb`, dòng đó nằm ở
+  bảng không ai poll (vì `run_tick` giờ poll đúng bảng riêng của tenant) — sửa bằng
+  `Router::pool_for(tenantId)` trước khi `enqueue_deployment`, giống pattern Phase 28 đã dùng cho
+  `seed-admin`/`create-user`. 1 e2e test mới (`run_tick_reaches_a_dedicated_db_tenant_own_database`,
+  `crates/reconciler-orchestrator/tests/e2e_postgres.rs`) dựng 1 database thật thứ hai
+  (`create_throwaway_database`, cùng pattern `metap-control/tests/provisioning_postgres.rs`),
+  provision thật qua `provision_dedicated_db_tenant`, publish + enqueue trên đúng database đó, rồi
+  assert `run_tick` (không phải `run_once`) claim và reconcile đúng — **`#[ignore]`d, chưa tự chạy
+  được trong phiên code này vì sandbox không có Docker/Postgres, cần chạy tay để verify sống trước
+  khi merge**.
+- **HTTP publish/wave-rollout API** — `POST /platform/reconciler/wave-rollout`
+  (`metap-control-http`, `PlatformAdminContext`-gated — đây là thao tác toàn platform trên nhiều
+  tenant tuỳ ý, không phải quyền admin của riêng 1 tenant): bọc thẳng
+  `metap_reconciler::orchestrator::advance_wave` (đã có unit test từ Phase 44 gốc), luôn chạy
+  trên pool chung của platform (`state.pool`) vì `advance_wave` UPSERT nhiều tenant trong 1 câu
+  lệnh trên 1 connection — đúng kịch bản §6.4 (nhiều tenant `Schema`-strategy dùng chung 1
+  database), không áp dụng được cho tenant `DedicatedDb` (mỗi tenant loại đó ở 1 database riêng,
+  không thể UPSERT chung 1 câu). Thêm path vào `metap-control-http/src/openapi_paths.rs` +
+  1 test đảm bảo path này luôn có mặt trong OpenAPI doc.
+
+`cargo build/clippy -D warnings/fmt --check` sạch toàn workspace; `cargo test --workspace` (chỉ
+unit test, không cần DB) pass. `cargo test --workspace -- --ignored` (e2e) **chưa chạy được trong
+phiên này** — không có Docker/Postgres trong sandbox — cần chạy tay trước khi merge, đặc biệt là
+e2e test fan-out mới ở trên.

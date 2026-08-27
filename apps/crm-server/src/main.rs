@@ -90,22 +90,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Which `SecretStore` resolves a `DedicatedDb` tenant's DSN — decided here, not inside
     // `AppState::new`, same "wiring inline at the composition root" pattern as everything else
-    // in this file. `EnvStore` (unchanged default) unless `VAULT_ADDR` is configured
-    // (`docs/roadmap.md` Phase 16 Giai đoạn 4) — opt-in, no downstream project is forced to run
-    // a Vault container to develop normally. Two auth methods when Vault is in play: AppRole
-    // (`vault_role_id`/`vault_secret_id`, added 2026-08-20 — preferred, see `VaultStore`'s doc
-    // comment for why) takes precedence over a plain `vault_token` if both are somehow set.
-    let secret_store: Arc<dyn metap::control::SecretStore> = match &config.vault_addr {
-        Some(addr) => match (&config.vault_role_id, &config.vault_secret_id, &config.vault_token) {
-            (Some(role_id), Some(secret_id), _) => {
-                let mount = config.vault_approle_mount.as_deref().unwrap_or("approle");
-                Arc::new(metap::control::VaultStore::new_with_approle(addr, mount, role_id, secret_id).await?)
-            }
-            (_, _, Some(token)) => Arc::new(metap::control::VaultStore::new(addr, token)?),
-            _ => anyhow::bail!("VAULT_ADDR is set but neither VAULT_TOKEN nor VAULT_ROLE_ID+VAULT_SECRET_ID is"),
-        },
-        None => Arc::new(metap::control::EnvStore),
-    };
+    // in this file. `metap::control::build_secret_store` picks `EnvStore` (unchanged default)
+    // unless one of `GCP_SECRETS_PROJECT_ID`/`AWS_SECRETS_REGION`/`VAULT_ADDR` is configured
+    // (`docs/roadmap.md` Phase 8/16) — opt-in, no downstream project is forced to run a Vault
+    // container or hold cloud credentials to develop normally. See that function's own doc
+    // comment for the exact precedence order when more than one is somehow set.
+    let secret_store = metap::control::build_secret_store(&config).await?;
 
     // Built once here, not inside `AppState::new`, and shared with `PostgresPolicyStore` below
     // (`docs/roadmap.md` Phase 16 gap, closed 2026-08-20 — role lookup and RBAC/policy storage

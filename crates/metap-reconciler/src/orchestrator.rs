@@ -13,7 +13,10 @@
 //! vs. `cron-scheduler` (the binary that ticks it on a timer), turning this into a long-running
 //! process is a separate deliverable this crate doesn't include.
 
+use std::collections::{HashMap, HashSet};
+
 use futures::stream::{self, StreamExt};
+use metap_metadata::{EntityDefinition, FieldKind};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -22,6 +25,75 @@ pub struct ClaimedEntity {
     pub tenant_id: Uuid,
     pub entity_name: String,
     pub desired_version: i64,
+}
+
+/// Orders a claimed batch into dependency waves so a `Reference` field's target entity is
+/// reconciled before the entity that references it, when both are claimed together — without
+/// this, `run_claimed_batch`'s `buffer_unordered` can race the two, and a first-time FK
+/// constraint can be attempted against a target table that doesn't exist yet purely because of
+/// scheduling, not a real data problem. Only intra-tenant edges matter (FK targets live in the
+/// claiming tenant's own database) — entities from different tenants never gate each other, and
+/// a dependency on an entity outside this batch (already reconciled in an earlier tick) needs no
+/// ordering here since its table already exists. A dependency cycle can't be linearized: the
+/// remaining cyclic entities are placed together in one final wave, best-effort (same outcome as
+/// today's unordered batch for that subset — this only removes the race for the common acyclic
+/// case).
+pub fn topo_sort_waves(entities: Vec<(ClaimedEntity, EntityDefinition)>) -> Vec<Vec<ClaimedEntity>> {
+    let mut by_tenant: HashMap<Uuid, Vec<(ClaimedEntity, EntityDefinition)>> = HashMap::new();
+    for pair in entities {
+        by_tenant.entry(pair.0.tenant_id).or_default().push(pair);
+    }
+
+    let per_tenant_waves: Vec<Vec<Vec<ClaimedEntity>>> = by_tenant.into_values().map(tenant_waves).collect();
+
+    let wave_count = per_tenant_waves.iter().map(Vec::len).max().unwrap_or(0);
+    let mut merged = vec![Vec::new(); wave_count];
+    for waves in per_tenant_waves {
+        for (i, wave) in waves.into_iter().enumerate() {
+            merged[i].extend(wave);
+        }
+    }
+    merged
+}
+
+/// Kahn's algorithm over one tenant's claimed entities, edges from `Reference` fields pointing at
+/// another entity claimed in the same batch.
+fn tenant_waves(items: Vec<(ClaimedEntity, EntityDefinition)>) -> Vec<Vec<ClaimedEntity>> {
+    let names: HashSet<&str> = items.iter().map(|(c, _)| c.entity_name.as_str()).collect();
+    let mut claimed_by_name: HashMap<String, ClaimedEntity> = HashMap::new();
+    let mut deps: HashMap<String, HashSet<String>> = HashMap::new();
+    for (claimed, def) in &items {
+        let entity_deps = def
+            .fields
+            .iter()
+            .filter(|f| f.kind == FieldKind::Reference)
+            .filter_map(|f| f.ref_entity.as_deref())
+            .filter(|&r| r != claimed.entity_name && names.contains(r))
+            .map(str::to_string)
+            .collect();
+        deps.insert(claimed.entity_name.clone(), entity_deps);
+        claimed_by_name.insert(claimed.entity_name.clone(), claimed.clone());
+    }
+
+    let mut remaining: HashSet<String> = claimed_by_name.keys().cloned().collect();
+    let mut waves = Vec::new();
+    while !remaining.is_empty() {
+        let ready: Vec<String> = remaining
+            .iter()
+            .filter(|name| deps[*name].iter().all(|dep| !remaining.contains(dep)))
+            .cloned()
+            .collect();
+        if ready.is_empty() {
+            // Cycle among everything left — no valid order, run them together as a last wave.
+            waves.push(remaining.iter().map(|n| claimed_by_name[n].clone()).collect());
+            break;
+        }
+        waves.push(ready.iter().map(|n| claimed_by_name[n].clone()).collect());
+        for name in &ready {
+            remaining.remove(name);
+        }
+    }
+    waves
 }
 
 /// §6.2 — `FOR UPDATE SKIP LOCKED`: many workers can call this concurrently against the same
@@ -340,6 +412,128 @@ async fn cohort_error_rate_percent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use metap_metadata::EntityField;
+
+    fn claimed(tenant: Uuid, entity_name: &str) -> ClaimedEntity {
+        ClaimedEntity {
+            tenant_id: tenant,
+            entity_name: entity_name.to_string(),
+            desired_version: 1,
+        }
+    }
+
+    fn def(name: &str, fields: Vec<EntityField>) -> EntityDefinition {
+        EntityDefinition {
+            name: name.to_string(),
+            label: name.to_string(),
+            table_name: "records".to_string(),
+            fields,
+            list_views: vec![],
+            workflow: None,
+        }
+    }
+
+    fn plain_field(name: &str) -> EntityField {
+        EntityField {
+            name: name.to_string(),
+            label: name.to_string(),
+            kind: FieldKind::String,
+            required: None,
+            indexed: None,
+            unique: None,
+            enum_values: None,
+            ref_entity: None,
+            ref_display_field: None,
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+            storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
+        }
+    }
+
+    fn reference_field(name: &str, ref_entity: &str) -> EntityField {
+        EntityField {
+            kind: FieldKind::Reference,
+            ref_entity: Some(ref_entity.to_string()),
+            ..plain_field(name)
+        }
+    }
+
+    fn wave_names(waves: &[Vec<ClaimedEntity>]) -> Vec<Vec<String>> {
+        waves
+            .iter()
+            .map(|wave| {
+                let mut names: Vec<String> = wave.iter().map(|e| e.entity_name.clone()).collect();
+                names.sort();
+                names
+            })
+            .collect()
+    }
+
+    #[test]
+    fn topo_sort_orders_referenced_entity_before_referencer() {
+        let tenant = Uuid::new_v4();
+        let sprints = def("jira.sprints", vec![plain_field("name")]);
+        let issues = def("jira.issues", vec![reference_field("sprint", "jira.sprints")]);
+        let waves = topo_sort_waves(vec![
+            (claimed(tenant, "jira.issues"), issues),
+            (claimed(tenant, "jira.sprints"), sprints),
+        ]);
+        assert_eq!(
+            wave_names(&waves),
+            vec![vec!["jira.sprints".to_string()], vec!["jira.issues".to_string()]]
+        );
+    }
+
+    #[test]
+    fn topo_sort_puts_independent_entities_in_the_same_wave() {
+        let tenant = Uuid::new_v4();
+        let a = def("a", vec![plain_field("name")]);
+        let b = def("b", vec![plain_field("name")]);
+        let waves = topo_sort_waves(vec![(claimed(tenant, "a"), a), (claimed(tenant, "b"), b)]);
+        assert_eq!(wave_names(&waves), vec![vec!["a".to_string(), "b".to_string()]]);
+    }
+
+    #[test]
+    fn topo_sort_ignores_reference_to_an_entity_outside_the_batch() {
+        let tenant = Uuid::new_v4();
+        // Depends on "jira.projects", which wasn't claimed this round — no ordering to enforce,
+        // its table is assumed to already exist from an earlier reconcile.
+        let issues = def("jira.issues", vec![reference_field("project", "jira.projects")]);
+        let waves = topo_sort_waves(vec![(claimed(tenant, "jira.issues"), issues)]);
+        assert_eq!(wave_names(&waves), vec![vec!["jira.issues".to_string()]]);
+    }
+
+    #[test]
+    fn topo_sort_does_not_order_across_different_tenants() {
+        let tenant_a = Uuid::new_v4();
+        let tenant_b = Uuid::new_v4();
+        let sprints = def("jira.sprints", vec![plain_field("name")]);
+        let issues = def("jira.issues", vec![reference_field("sprint", "jira.sprints")]);
+        // Tenant B only has the referencing entity claimed (its "jira.sprints" table already
+        // exists from before) — it must land in wave 0, not wait on tenant A's wave 1.
+        let waves = topo_sort_waves(vec![
+            (claimed(tenant_a, "jira.issues"), issues.clone()),
+            (claimed(tenant_a, "jira.sprints"), sprints),
+            (claimed(tenant_b, "jira.issues"), issues),
+        ]);
+        assert_eq!(waves.len(), 2);
+        assert_eq!(waves[0].len(), 2); // tenant A's sprints + tenant B's issues
+        assert_eq!(waves[1].len(), 1); // tenant A's issues
+    }
+
+    #[test]
+    fn topo_sort_falls_back_to_one_wave_on_a_dependency_cycle() {
+        let tenant = Uuid::new_v4();
+        let a = def("a", vec![reference_field("b_ref", "b")]);
+        let b = def("b", vec![reference_field("a_ref", "a")]);
+        let waves = topo_sort_waves(vec![(claimed(tenant, "a"), a), (claimed(tenant, "b"), b)]);
+        assert_eq!(wave_names(&waves), vec![vec!["a".to_string(), "b".to_string()]]);
+    }
 
     #[test]
     fn wave_size_is_canary_then_percentages_capped_at_total() {

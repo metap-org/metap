@@ -247,6 +247,56 @@ async fn delete_tenant(
     }
 }
 
+#[derive(Deserialize)]
+struct WaveRolloutBody {
+    #[serde(rename = "entityName")]
+    entity_name: String,
+    #[serde(rename = "packVersion")]
+    pack_version: i64,
+    #[serde(rename = "tenantIds")]
+    tenant_ids: Vec<Uuid>,
+    wave: u32,
+    #[serde(rename = "maxErrorRatePercent")]
+    max_error_rate_percent: u32,
+}
+
+/// `docs/multi-tenant-platform-design.md` §6.4's canary → wave rollout, over HTTP — the missing
+/// piece `docs/roadmap.md` Phase 44 left "cố ý chưa làm" (`metap_reconciler::orchestrator::advance_wave`
+/// was Rust-only, no route). Platform-level, not tenant-scoped — `tenantIds` names arbitrary
+/// tenants across the fleet, so this is `PlatformAdminContext`-gated like every other route in
+/// this crate, not a per-tenant `AdminContext` one. Always runs against `state.pool` (the
+/// platform's shared pool): `advance_wave` UPSERTs every tenant in one query against one
+/// connection, matching the §6.4 scenario this backs — many `Schema`-strategy tenants sharing
+/// `reconciler_entity_deployments` in that one database. A `DedicatedDb` tenant's own separate
+/// copy of that table (see `reconciler-orchestrator`'s crate doc comment) isn't reachable from
+/// here — put a `DedicatedDb` tenant through `dev-tools enqueue-reconcile` (or a future
+/// per-tenant equivalent of this route) instead, one at a time.
+async fn wave_rollout(
+    State(state): State<AppState>,
+    PlatformAdminContext(_context): PlatformAdminContext,
+    Json(body): Json<WaveRolloutBody>,
+) -> Response {
+    match metap_reconciler::orchestrator::advance_wave(
+        &state.pool,
+        &body.entity_name,
+        body.pack_version,
+        &body.tenant_ids,
+        body.wave,
+        body.max_error_rate_percent,
+    )
+    .await
+    {
+        Ok(metap_reconciler::orchestrator::WaveDecision::Advanced { tenants_in_wave }) => {
+            Json(json!({ "data": { "decision": "advanced", "tenantsInWave": tenants_in_wave } })).into_response()
+        }
+        Ok(metap_reconciler::orchestrator::WaveDecision::Halted { error_rate_percent }) => Json(json!({
+            "data": { "decision": "halted", "errorRatePercent": error_rate_percent }
+        }))
+        .into_response(),
+        Err(e) => internal_error_response(e),
+    }
+}
+
 /// Merge this into `metap_http::build_router`'s `extra_routes` argument to expose the
 /// platform-tenant admin API on a running server — never merged automatically by `metap-http`
 /// itself.
@@ -255,4 +305,5 @@ pub fn router() -> AxumRouter<AppState> {
         .route("/platform/tenants", post(provision_tenant).get(list_tenants))
         .route("/platform/tenants/{id}", get(get_tenant).delete(delete_tenant))
         .route("/platform/tenants/{id}/status", axum::routing::patch(set_tenant_status))
+        .route("/platform/reconciler/wave-rollout", post(wave_rollout))
 }

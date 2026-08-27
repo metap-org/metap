@@ -5,20 +5,26 @@
 //! fallback this stage relies on. No HTTP, no business-entity knowledge — a plain library, same
 //! shape as `metap-permission`.
 
+mod aws_secrets_manager_store;
 mod cache;
+mod gcp_secret_manager_store;
 mod policy_store;
 mod provisioning;
 mod registry;
 mod router;
 mod secret_store;
+mod secret_store_factory;
 mod tenant;
 mod vault_store;
 
+pub use aws_secrets_manager_store::{AwsSecretsManagerStore, AwsSecretsManagerStoreConfig};
 pub use cache::RegistryCache;
+pub use gcp_secret_manager_store::GcpSecretManagerStore;
 pub use policy_store::PostgresPolicyStore;
 pub use provisioning::{provision_dedicated_db_tenant, provision_schema_tenant, ProvisionedTenant};
 pub use registry::{PostgresTenantRegistry, TenantRegistry, TenantSummary};
 pub use router::{validate_schema_name, Router, RouterError};
 pub use secret_store::{DbCreds, EnvStore, SecretStore};
+pub use secret_store_factory::build_secret_store;
 pub use tenant::{TenantId, TenantRouting, TenantStatus, TenantStrategy, PLATFORM_TENANT_ID};
 pub use vault_store::VaultStore;

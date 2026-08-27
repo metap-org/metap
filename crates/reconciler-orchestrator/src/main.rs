@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use metap_control::{PostgresTenantRegistry, RegistryCache, Router, SecretStore};
+use metap_control::{PostgresTenantRegistry, RegistryCache, Router};
 use metap_infra::{connect_db, load_config};
 use reconciler_orchestrator::{run, OrchestratorConfig};
 
@@ -36,24 +36,18 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("connecting to postgres...");
     let pool = connect_db(&config.database_url).await?;
 
-    // Same Vault/EnvStore branching `apps/crm-server/src/main.rs` uses to build its own
-    // `Router` — duplicated rather than shared because there's no lower-level crate both this
-    // binary and `crm-server` could pull it from without introducing a new dependency neither
-    // otherwise needs; see `metap-control`'s own doc comment on `SecretStore` for why this
-    // branch exists at all (`docs/roadmap.md` Phase 16 Giai đoạn 4).
-    let secret_store: Arc<dyn SecretStore> = match &config.vault_addr {
-        Some(addr) => match (&config.vault_role_id, &config.vault_secret_id, &config.vault_token) {
-            (Some(role_id), Some(secret_id), _) => {
-                let mount = config.vault_approle_mount.as_deref().unwrap_or("approle");
-                Arc::new(metap_control::VaultStore::new_with_approle(addr, mount, role_id, secret_id).await?)
-            }
-            (_, _, Some(token)) => Arc::new(metap_control::VaultStore::new(addr, token)?),
-            _ => anyhow::bail!("VAULT_ADDR is set but neither VAULT_TOKEN nor VAULT_ROLE_ID+VAULT_SECRET_ID is"),
-        },
-        None => Arc::new(metap_control::EnvStore),
-    };
+    // `metap_control::build_secret_store` picks the right `SecretStore` from env — same helper
+    // `apps/crm-server`/`apps/jira-server` use to build their own `Router`, see that function's
+    // doc comment for the precedence order across `EnvStore`/`VaultStore`/`AwsSecretsManagerStore`/
+    // `GcpSecretManagerStore`.
+    let secret_store = metap_control::build_secret_store(&config).await?;
     let tenant_registry = Arc::new(PostgresTenantRegistry::new(pool.clone()));
     let router = Router::new(pool.clone(), RegistryCache::new(tenant_registry), secret_store);
+    // A second, separate handle (not the `Arc` above, already moved into `RegistryCache`) —
+    // `run`'s `DedicatedDb` fan-out (`run_tick`) needs `PostgresTenantRegistry::list`, which
+    // isn't on the `TenantRegistry` trait `RegistryCache` wraps. Cheap: just another `PgPool`
+    // clone, same handle shape `Router::new` above already takes one of.
+    let fanout_tenant_registry = PostgresTenantRegistry::new(pool.clone());
 
     let orchestrator_config = OrchestratorConfig {
         worker_id,
@@ -73,7 +67,14 @@ async fn main() -> anyhow::Result<()> {
         "ready, polling reconciler_entity_deployments"
     );
 
-    let result = run(pool.clone(), router, orchestrator_config, shutdown_signal()).await;
+    let result = run(
+        pool.clone(),
+        router,
+        fanout_tenant_registry,
+        orchestrator_config,
+        shutdown_signal(),
+    )
+    .await;
     pool.close().await;
     result
 }

@@ -113,6 +113,35 @@ pub fn openapi_paths() -> Map<String, Value> {
             },
         }),
     );
+    insert(
+        &mut paths,
+        "/platform/reconciler/wave-rollout",
+        json!({
+            "post": {
+                "summary": "Canary → wave rollout of a published low-code entity pack across a list of Schema-strategy tenants (platform-admin only)",
+                "requestBody": { "content": { "application/json": { "schema": {
+                    "type": "object",
+                    "properties": {
+                        "entityName": { "type": "string" },
+                        "packVersion": { "type": "integer" },
+                        "tenantIds": { "type": "array", "items": { "type": "string" } },
+                        "wave": { "type": "integer", "description": "0 = canary, 1 = 5%, 2 = 25%, 3+ = 100%" },
+                        "maxErrorRatePercent": { "type": "integer", "description": "Halts (does not advance) if the previous wave's blocked rate exceeds this" },
+                    },
+                    "required": ["entityName", "packVersion", "tenantIds", "wave", "maxErrorRatePercent"],
+                } } } },
+                "responses": {
+                    "200": { "description": "OK", "content": { "application/json": { "schema": {
+                        "type": "object", "properties": { "data": { "type": "object", "properties": {
+                            "decision": { "type": "string", "enum": ["advanced", "halted"] },
+                            "tenantsInWave": { "type": "integer" },
+                            "errorRatePercent": { "type": "integer" },
+                        } } },
+                    } } } },
+                },
+            },
+        }),
+    );
 
     paths
 }
@@ -128,6 +157,7 @@ mod tests {
             "/platform/tenants",
             "/platform/tenants/{id}",
             "/platform/tenants/{id}/status",
+            "/platform/reconciler/wave-rollout",
         ] {
             assert!(paths.contains_key(expected), "missing path: {expected}");
         }

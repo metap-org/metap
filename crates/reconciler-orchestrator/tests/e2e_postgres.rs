@@ -9,7 +9,7 @@ use metap_control::{EnvStore, PostgresTenantRegistry, RegistryCache, Router};
 use metap_lowcode::LowCodeEntityDefinition;
 use metap_metadata::{EntityField, EntityListView, FieldKind, MetadataRegistry};
 use metap_reconciler::orchestrator::enqueue_deployment;
-use reconciler_orchestrator::{run_once, OrchestratorConfig};
+use reconciler_orchestrator::{run_once, run_tick, OrchestratorConfig};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -55,6 +55,77 @@ fn config(worker_id: &str, entity_filter: &str) -> OrchestratorConfig {
 async fn router_for(pool: &PgPool) -> Router {
     let tenant_registry = Arc::new(PostgresTenantRegistry::new(pool.clone()));
     Router::new(pool.clone(), RegistryCache::new(tenant_registry), Arc::new(EnvStore))
+}
+
+/// Same throwaway-database pattern `metap-control/tests/provisioning_postgres.rs` uses to test
+/// `DedicatedDb` for real — duplicated here rather than shared, no test-support crate exists yet
+/// for e2e helpers to live in (same reasoning that file's own copy gives).
+async fn create_throwaway_database(database_url: &str, name: &str) -> String {
+    let (base, _dbname) = database_url
+        .rsplit_once('/')
+        .expect("DATABASE_URL must end in /<dbname>");
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("{base}/postgres"))
+        .await
+        .expect("connect to postgres maintenance db");
+    sqlx::query(&format!("CREATE DATABASE \"{name}\""))
+        .execute(&admin_pool)
+        .await
+        .expect("create throwaway database");
+    admin_pool.close().await;
+    format!("{base}/{name}")
+}
+
+async fn drop_throwaway_database(database_url: &str, name: &str) {
+    let (base, _dbname) = database_url
+        .rsplit_once('/')
+        .expect("DATABASE_URL must end in /<dbname>");
+    let Ok(admin_pool) = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("{base}/postgres"))
+        .await
+    else {
+        return;
+    };
+    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
+        .execute(&admin_pool)
+        .await;
+}
+
+fn sample_low_code_definition(entity_name: &str) -> LowCodeEntityDefinition {
+    LowCodeEntityDefinition {
+        name: entity_name.to_string(),
+        label: "Orchestrator E2E".to_string(),
+        fields: vec![EntityField {
+            name: "title".to_string(),
+            label: "Title".to_string(),
+            kind: FieldKind::String,
+            required: Some(true),
+            indexed: None,
+            unique: None,
+            enum_values: None,
+            ref_entity: None,
+            ref_display_field: None,
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+            storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
+        }],
+        list_views: vec![EntityListView {
+            name: "default".to_string(),
+            label: "Default".to_string(),
+            fields: vec!["title".to_string()],
+            filters: vec![],
+            default_sort: None,
+            max_limit: 50,
+        }],
+        workflow: None,
+    }
 }
 
 async fn drop_entity_table(pool: &PgPool, entity_name: &str) {
@@ -220,4 +291,97 @@ async fn run_once_with_no_due_work_returns_zero() {
         .await
         .unwrap();
     assert_eq!(claimed, 0);
+}
+
+/// `run_tick` must reach a `DedicatedDb` tenant's own database, not just the platform's shared
+/// one — the fan-out this crate's module doc comment calls out as previously missing. A real
+/// second physical database is provisioned (`provision_dedicated_db_tenant` runs every
+/// `crates/migrations/*.sql` against it, so it has its own private `reconciler_entity_deployments`
+/// and `low_code_entity_versions` tables, same as any real dedicated-db tenant), the entity is
+/// published *there*, and the deployment is enqueued *there* — `run_tick`'s only handle on any of
+/// this is the shared platform pool's `control.tenants` row plus `Router::pool_for` resolving the
+/// dedicated DSN from the env var `EnvStore` reads.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn run_tick_reaches_a_dedicated_db_tenant_own_database() {
+    let pool = connect().await;
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
+    let tenant_id = Uuid::new_v4();
+    let dsn_secret_ref = format!("METAP_TEST_ORCHESTRATOR_DSN_{}", tenant_id.simple());
+    let db_name = format!("test_orc_dedicated_{}", tenant_id.simple());
+    let dedicated_url = create_throwaway_database(&database_url, &db_name).await;
+    std::env::set_var(&dsn_secret_ref, &dedicated_url);
+
+    let registry = PostgresTenantRegistry::new(pool.clone());
+    metap_control::provision_dedicated_db_tenant(
+        &registry,
+        tenant_id,
+        &dsn_secret_ref,
+        &dedicated_url,
+        &format!("admin-{}@test.local", tenant_id.simple()),
+        "pass123",
+    )
+    .await
+    .expect("provision_dedicated_db_tenant");
+
+    let dedicated_pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&dedicated_url)
+        .await
+        .expect("connect to dedicated database");
+
+    let entity_name = entity_name("orc_e2e_dedic");
+    let definition = sample_low_code_definition(&entity_name);
+    metap_lowcode::save_draft(&dedicated_pool, &entity_name, &definition)
+        .await
+        .unwrap();
+    metap_lowcode::publish(&dedicated_pool, &entity_name, &MetadataRegistry::new())
+        .await
+        .unwrap();
+    enqueue_deployment(&dedicated_pool, tenant_id, &entity_name, 1)
+        .await
+        .unwrap();
+
+    let router = router_for(&pool).await;
+    let claimed = run_tick(&pool, &router, &registry, &config("e2e-dedicated-fanout", &entity_name))
+        .await
+        .unwrap();
+    assert_eq!(
+        claimed, 1,
+        "the shared pool has nothing due — this must come from the dedicated tenant's sweep"
+    );
+
+    let (status, applied_version): (String, Option<i64>) = sqlx::query_as(
+        "SELECT status, applied_version FROM reconciler_entity_deployments WHERE tenant_id = $1 AND entity_name = $2",
+    )
+    .bind(tenant_id)
+    .bind(&entity_name)
+    .fetch_one(&dedicated_pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "done");
+    assert_eq!(applied_version, Some(1));
+
+    let table = metap_reconciler::table_name_for(&entity_name);
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2)",
+    )
+    .bind(metap_reconciler::ENTITY_SCHEMA)
+    .bind(&table)
+    .fetch_one(&dedicated_pool)
+    .await
+    .unwrap();
+    assert!(
+        table_exists,
+        "reconcile() must have created the dedicated table on the tenant's OWN database"
+    );
+
+    dedicated_pool.close().await;
+    drop_throwaway_database(&database_url, &db_name).await;
+    std::env::remove_var(&dsn_secret_ref);
+    sqlx::query("DELETE FROM control.tenants WHERE id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 }

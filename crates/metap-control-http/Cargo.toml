@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 metap-control = { path = "../metap-control" }
 metap-http = { path = "../metap-http" }
+metap-reconciler = { path = "../metap-reconciler" }
 anyhow = "1"
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }
