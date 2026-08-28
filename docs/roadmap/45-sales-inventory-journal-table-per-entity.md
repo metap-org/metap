@@ -47,15 +47,28 @@ nên `main.rs` phải gọi `reconcile()` theo đúng thứ tự phụ thuộc (
 - Reconcile idempotent: boot lại lần 2 (không đổi entity definition) → `ops_applied=0` cho cả 4
   entity, khớp bảo đảm "reconcile hội tụ về 0 việc ở lần chạy 2" đã verify từ Phase 44/19.
 
-**Phát hiện phụ, không phải bug của phase này**: chạy luôn
-`apps/crm-server/scripts/permission-smoke.sh` để đối chiếu regression — 4/6 section fail
-(context-level role policy không nới quyền sau khi grant role; field-level read/write policy
-không gỡ mask/chặn sau khi xoá policy; record-level policy filter trả `null` thay vì mảng lọc
-đúng). **Xác nhận đây là bug có sẵn từ trước, không phải regression của phase này**: `git stash`
-về code chưa đổi (table_name vẫn `"records"` cho cả 3 entity), build lại, chạy lại
-`permission-smoke.sh` — **fail y hệt**, cả về nội dung lỗi lẫn traceId pattern. Không sửa trong
-phase này (ngoài phạm vi "table-per-entity", cần điều tra riêng ở tầng `metap-permission`/
-`metap-http`'s policy re-evaluation) — ghi nhận lại đây, cần một phase riêng.
+**Phát hiện phụ, không phải bug của phase này — và không phải bug của `metap-permission`/
+`metap-http` (đã tự sửa sai ban đầu)**: chạy luôn `apps/crm-server/scripts/permission-smoke.sh`
+để đối chiếu regression — 4/6 section fail. `git stash` về code chưa đổi rồi chạy lại — fail y
+hệt, nên **ban đầu ghi nhận nhầm** đây là bug có sẵn ở tầng engine cần điều tra riêng. Điều tra
+tiếp (cùng phiên, sau khi chủ dự án yêu cầu "fix chung") bằng cách tái hiện từng section thủ công
+qua curl + đọc thẳng bảng `policies` — hoá ra là **2 lỗi trong chính script, không phải engine**:
+1. Section 2 tạo policy với `action: "update"` nhưng lại gọi workflow transition
+   (`POST .../transitions/confirm`) — transition check qua `can_transition_entity`
+   (`EntityAction::Transition`, chuỗi hành động `"transition"`), không phải `"update"`; policy sai
+   action nên không bao giờ match, user 403 cả trước lẫn sau khi grant role, nhưng sai lý do.
+2. Section 3/4/5 mỗi cái đặt 1 policy field-scoped hoặc record-scoped **mà không tạo policy
+   general (không field/record-scope) trước** — `PostgresPolicyStore::find_context_policies` lọc
+   `field IS NULL` cho quyết định "actor này có được đọc/sửa entity này không" ở tầng cơ bản, theo
+   đúng thiết kế (mask/filter là một lượt riêng, chạy sau khi request cơ bản đã được allow) — nên
+   thiếu policy general, request cơ bản 403 ngay trước khi mask/filter kịp chạy.
+
+Verify từng lỗi: dùng curl thủ công + `psql` đọc bảng `policies` trực tiếp, xác nhận thêm đúng
+policy còn thiếu (hoặc sửa đúng action name) làm cho scenario chạy đúng y như thiết kế — engine
+hoàn toàn đúng. Sửa `permission-smoke.sh` (đổi action name section 2; thêm + dọn policy general
+cho section 3/4/5) — chạy lại từ DB sạch: **6/6 section pass**. Không đổi code Rust nào (đúng bug
+nằm ở script, không phải `metap-permission`/`metap-http`). Commit riêng
+(`df194d1`, ngoài phạm vi Phase 45 nhưng cùng phiên).
 
 `cargo build/fmt --check/clippy -p crm-server --all-targets -D warnings` sạch; `cargo build
 --workspace` (toàn bộ, sau khi dọn `target/` bị đầy đĩa giữa phiên — `rm -rf target`, dựng lại
