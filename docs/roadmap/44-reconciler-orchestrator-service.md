@@ -128,9 +128,14 @@ Cả 3 gap "cố ý chưa làm" ghi ở bản gốc phase này (2026-08-27) đã
   `crates/reconciler-orchestrator/tests/e2e_postgres.rs`) dựng 1 database thật thứ hai
   (`create_throwaway_database`, cùng pattern `metap-control/tests/provisioning_postgres.rs`),
   provision thật qua `provision_dedicated_db_tenant`, publish + enqueue trên đúng database đó, rồi
-  assert `run_tick` (không phải `run_once`) claim và reconcile đúng — **`#[ignore]`d, chưa tự chạy
-  được trong phiên code này vì sandbox không có Docker/Postgres, cần chạy tay để verify sống trước
-  khi merge**.
+  assert `run_tick` (không phải `run_once`) claim và reconcile đúng — `#[ignore]`d, đã **verify
+  sống 2026-08-28** (phiên có Postgres thật): pass, kể cả dưới test mặc định chạy song song lẫn
+  `--test-threads=1`; cùng lúc pass cả 3 e2e còn lại trong file (`run_once_reconciles_a_claimed_
+  published_entity_into_its_own_table`/`run_once_records_failure_for_an_unpublished_entity`/
+  `run_once_with_no_due_work_returns_zero`) và toàn bộ e2e của `metap-reconciler` (bao gồm
+  `enqueue_deployment_seeds_then_ignores_a_non_newer_version`, `concurrent_claim_due_never_
+  double_claims`). `cargo fmt --all --check`/`clippy -p metap-reconciler-orchestrator -p
+  metap-reconciler --all-targets -- -D warnings` sạch.
 - **HTTP publish/wave-rollout API** — `POST /platform/reconciler/wave-rollout`
   (`metap-control-http`, `PlatformAdminContext`-gated — đây là thao tác toàn platform trên nhiều
   tenant tuỳ ý, không phải quyền admin của riêng 1 tenant): bọc thẳng
@@ -142,6 +147,5 @@ Cả 3 gap "cố ý chưa làm" ghi ở bản gốc phase này (2026-08-27) đã
   1 test đảm bảo path này luôn có mặt trong OpenAPI doc.
 
 `cargo build/clippy -D warnings/fmt --check` sạch toàn workspace; `cargo test --workspace` (chỉ
-unit test, không cần DB) pass. `cargo test --workspace -- --ignored` (e2e) **chưa chạy được trong
-phiên này** — không có Docker/Postgres trong sandbox — cần chạy tay trước khi merge, đặc biệt là
-e2e test fan-out mới ở trên.
+unit test, không cần DB) pass. `cargo test --workspace -- --ignored` (e2e) đã **verify sống
+2026-08-28** ở phiên có Postgres thật — xem chi tiết ở bullet fan-out phía trên.
