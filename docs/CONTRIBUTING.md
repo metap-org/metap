@@ -45,9 +45,12 @@ cargo test --workspace              # backend unit test, không cần DB
 cargo test --workspace -- --ignored # backend e2e — cần DATABASE_URL + Postgres/RabbitMQ đang chạy
 ```
 
-`.github/workflows/ci.yml` chạy tương đương (job `rust`, `rust-e2e`, `frontend`) — hiện chưa phải
-merge gate bắt buộc (chưa cấu hình branch protection, xem Phase 8 trong `docs/roadmap.md`), nên
-trước khi việc đó thay đổi, coi CI là tham khảo và tự chạy check ở trên trước khi xin review.
+`.github/workflows/ci.yml` chạy tương đương phần unit test (job `rust`, `frontend`) tự động trên
+mọi push/PR — hiện chưa phải merge gate bắt buộc (chưa cấu hình branch protection, xem Phase 8
+trong `docs/roadmap.md`), nên trước khi việc đó thay đổi, coi CI là tham khảo và tự chạy check ở
+trên trước khi xin review. Riêng backend e2e (`cargo test --workspace -- --ignored`) không còn
+chạy tự động trong CI (2026-08-28, `.github/workflows/e2e-manual.yml`, chạy tay hoặc trigger thủ
+công) — cần tự chạy dòng cuối ở trên trước khi mở PR nếu thay đổi chạm tới phần có e2e coverage.
 
 Với bất kỳ thay đổi nào đụng tới `apps/crm-fe` hoặc UI của `packages/platform-react`, phải test tay
 qua dev stack thật (`pnpm dev:rs` + `pnpm dev:web`) — typecheck/lint/unit test không bắt được bug

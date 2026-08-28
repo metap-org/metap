@@ -73,8 +73,17 @@ async fn dispatches_to_every_matching_handler_and_acks_once_all_succeed() {
     });
 
     // Give the subscription time to actually bind before publishing — same ordering lesson as
-    // `retry_policy_rabbitmq.rs` (publishing before a queue is bound drops the message).
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // `retry_policy_rabbitmq.rs` (publishing before a queue is bound drops the message, silently
+    // — RabbitMQ has nowhere to route it). `retry_policy_rabbitmq.rs` avoids the race entirely by
+    // awaiting `EventBus::subscribe()` directly before publishing; `HandlerRegistry::run` spawns
+    // the whole consume loop as a background task with no readiness signal exposed to the caller
+    // (adding one would mean changing `run_resilient_consumer`'s signature, shared by
+    // `cron-scheduler`/`notification-worker`'s production consumers too — out of scope for a
+    // test-only flake fix), so this is a fixed delay, not a deterministic wait. Found live
+    // (2026-08-28): 500ms was long enough locally but not under CI's contended, parallel e2e run
+    // — the connect+declare+bind round trip can genuinely take longer than that when every e2e
+    // test binary is fighting for CPU/network at once. 2s is a wide enough margin for that.
+    tokio::time::sleep(Duration::from_millis(2000)).await;
     let publisher = RabbitEventBus::connect(&rabbitmq_url())
         .await
         .expect("connect publisher");
@@ -155,7 +164,9 @@ async fn retries_the_whole_event_when_a_handler_fails_then_succeeds_on_redeliver
             .await
     });
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // See the sibling test's comment above for why this is a fixed delay (not a deterministic
+    // wait) and why 2s — same fix, same root cause.
+    tokio::time::sleep(Duration::from_millis(2000)).await;
     let publisher = RabbitEventBus::connect(&rabbitmq_url())
         .await
         .expect("connect publisher");
