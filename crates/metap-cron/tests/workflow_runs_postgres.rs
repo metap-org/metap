@@ -176,8 +176,15 @@ async fn a_step_failure_stops_the_chain_and_records_which_step_and_why() {
         run.current_step_index, 1,
         "current_step_index stays pointed at the failed step, not advanced past it"
     );
-    assert_eq!(run.context, json!({ "step_0": { "status": 200 } }), "step 0's result is still recorded");
-    assert_eq!(run.error.as_deref(), Some("step 1 (webhook) failed: connection refused"));
+    assert_eq!(
+        run.context,
+        json!({ "step_0": { "status": 200 } }),
+        "step 0's result is still recorded"
+    );
+    assert_eq!(
+        run.error.as_deref(),
+        Some("step 1 (webhook) failed: connection refused")
+    );
     assert!(run.finished_at.is_some());
 
     cleanup(&pool, tenant_id).await;
@@ -209,9 +216,10 @@ async fn get_workflow_run_returns_none_for_a_cron_job_run_with_no_workflow_run()
     )
     .await
     .expect("create_job");
-    let result = metap_cron::dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate", Uuid::new_v4())
-        .await
-        .expect("dispatch_on_transition_matches");
+    let result =
+        metap_cron::dispatch_on_transition_matches(&pool, tenant_id, "crm.customers", "activate", Uuid::new_v4())
+            .await
+            .expect("dispatch_on_transition_matches");
     assert_eq!(result.claimed, 1);
     let cron_job_run_id = sqlx::query("SELECT id FROM cron_job_runs WHERE job_id = $1")
         .bind(job.id)
