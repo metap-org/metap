@@ -3,7 +3,12 @@
 # Sibling to smoke.sh (entity CRUD/workflow) — this one exercises admin gating, context-level
 # role restriction, field-level read/write gating, and record-level row filtering, using the
 # real /admin/* HTTP surface, not unit tests. Cleans up every policy/role it creates so re-runs
-# don't accumulate state.
+# don't accumulate state — designed to also run clean against a tenant with zero pre-existing
+# policies (found live, 2026-08-28: a field-scoped or record-scoped policy alone is never enough
+# to unblock its action — PostgresPolicyStore::find_context_policies filters `field IS NULL` for
+# the base entity-level "can this actor even read/update/etc. this entity" check, so every
+# section below that layers a field- or record-scoped policy on top first creates a general
+# (unscoped) allow policy for that action, and tears it down again after).
 #
 # Requires: crm-server running (pnpm dev:rs), docker compose postgres/rabbitmq up, jq.
 # Run from anywhere — paths are absolute.
@@ -68,9 +73,15 @@ STATUS=$(user_api GET /admin/users); expect_status "$STATUS" 403 "non-admin toke
 STATUS=$(admin_api GET /admin/users); expect_status "$STATUS" 200 "admin token -> 200"
 
 # ---------------------------------------------------------------------------
-section "2. Context-level policy: restrict sales.orders/update to role 'sales_manager'"
+section "2. Context-level policy: restrict sales.orders/transition to role 'sales_manager'"
 # ---------------------------------------------------------------------------
-admin_api POST /admin/policies '{"entity":"sales.orders","action":"update","roles":["sales_manager"]}' > /dev/null
+# Gates workflow transitions specifically (crates/metap-permission's EntityAction::Transition ->
+# action "transition", checked by CrudService::transition via can_transition_entity) — not
+# "update", which only gates PATCH /api/:entity/:id and never applies to a transitions/:action
+# call. Using "update" here would silently no-op this whole policy: PermissionService denies by
+# default when no policy matches an (entity, action) pair, so the plain user would 403 both
+# before *and* after the role grant, for the wrong reason (found live, 2026-08-28).
+admin_api POST /admin/policies '{"entity":"sales.orders","action":"transition","roles":["sales_manager"]}' > /dev/null
 POLICY1_ID=$(jq -r '.data.id' /tmp/resp_body)
 ok "created policy $POLICY1_ID"
 
@@ -96,6 +107,15 @@ ok "cleaned up: revoked role, deleted policy"
 # ---------------------------------------------------------------------------
 section "3. Field-level read policy: mask crm.customers.email unless role 'hr'"
 # ---------------------------------------------------------------------------
+# A field-scoped policy (field != null) never counts toward the base "can this actor read this
+# entity at all" decision — PostgresPolicyStore::find_context_policies filters `field IS NULL`
+# for that check by design, masking is a separate, later pass over an already-allowed read. So a
+# plain user needs a general read-allow policy first, or the base read 403s outright before
+# masking ever gets a chance to apply (found live, 2026-08-28 — this section previously had no
+# such policy and always 403'd, for both the masked and unmasked assertions).
+admin_api POST /admin/policies '{"entity":"crm.customers","action":"read"}' > /dev/null
+POLICY_BASE_READ_ID=$(jq -r '.data.id' /tmp/resp_body)
+
 admin_api POST /admin/policies '{"entity":"crm.customers","action":"read","field":"email","roles":["hr"]}' > /dev/null
 POLICY2_ID=$(jq -r '.data.id' /tmp/resp_body)
 
@@ -112,11 +132,17 @@ HAS_EMAIL=$(jq -r '.data.data | has("email")' /tmp/resp_body)
 [ "$HAS_EMAIL" = "true" ] && ok "email visible once user has 'hr' role" || fail "email still masked: $(cat /tmp/resp_body)"
 
 admin_api DELETE "/admin/policies/$POLICY2_ID" > /dev/null
+admin_api DELETE "/admin/policies/$POLICY_BASE_READ_ID" > /dev/null
 ok "cleaned up policy (role 'hr' kept for section 4)"
 
 # ---------------------------------------------------------------------------
 section "4. Field-level write policy: only role 'hr' may write crm.customers.phone"
 # ---------------------------------------------------------------------------
+# Same reasoning as section 3's base-read policy, but for the base "can update this entity at
+# all" decision (action "update", not "write" — "write" is the field-level action name only).
+admin_api POST /admin/policies '{"entity":"crm.customers","action":"update"}' > /dev/null
+POLICY_BASE_UPDATE_ID=$(jq -r '.data.id' /tmp/resp_body)
+
 admin_api POST /admin/policies '{"entity":"crm.customers","action":"write","field":"phone","roles":["hr"]}' > /dev/null
 POLICY3_ID=$(jq -r '.data.id' /tmp/resp_body)
 
@@ -128,11 +154,18 @@ STATUS=$(user_api PATCH "/api/crm.customers/$CUSTOMER2_ID" '{"version":1,"data":
 expect_status "$STATUS" 200 "same user, omitting 'phone' from payload -> 200 (other fields unaffected)"
 
 admin_api DELETE "/admin/policies/$POLICY3_ID" > /dev/null
+admin_api DELETE "/admin/policies/$POLICY_BASE_UPDATE_ID" > /dev/null
 ok "cleaned up policy"
 
 # ---------------------------------------------------------------------------
 section "5. Record-level policy: only show sales.orders with status=shipped (pure condition, roles=null)"
 # ---------------------------------------------------------------------------
+# Same reasoning as sections 3/4's base policies: a record-scoped condition policy still needs a
+# general context-level read-allow policy first, or the base read on sales.orders 403s before the
+# record filter is ever evaluated.
+admin_api POST /admin/policies '{"entity":"sales.orders","action":"read"}' > /dev/null
+POLICY_BASE_READ2_ID=$(jq -r '.data.id' /tmp/resp_body)
+
 admin_api POST /api/sales.orders "{\"data\":{\"code\":\"PERM-SO-SHIPPED\",\"customer\":\"$CUSTOMER_ID\",\"orderDate\":\"2026-08-11\",\"totalAmount\":10}}" > /dev/null
 SHIPPED_ID=$(jq -r '.data.id' /tmp/resp_body)
 admin_api POST "/api/sales.orders/$SHIPPED_ID/transitions/confirm" '{"version":1}' > /dev/null
@@ -156,6 +189,7 @@ else
 fi
 
 admin_api DELETE "/admin/policies/$POLICY4_ID" > /dev/null
+admin_api DELETE "/admin/policies/$POLICY_BASE_READ2_ID" > /dev/null
 ok "cleaned up policy"
 
 # ---------------------------------------------------------------------------
