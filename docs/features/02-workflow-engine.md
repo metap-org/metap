@@ -1,6 +1,6 @@
 # Metadata-driven Workflow Engine (State Machine + Workflow composition)
 
-- **Trạng thái:** Increment 1 done (2026-08-21); Increment 2 done (2026-08-28); Increment 3 vẫn approved, chưa code — chờ Increment 1+2 chạy thật lộ ra nhu cầu cụ thể (đúng kỷ luật trigger-based đã ghi ở Phạm vi bên dưới)
+- **Trạng thái:** Increment 1 done (2026-08-21); Increment 2 done (2026-08-28); **Increment 3 done (2026-08-28)** — `wait_event`, chờ 1 domain event khớp pattern (chủ dự án chọn hướng này qua 3 lựa chọn khác khi được hỏi trực tiếp, không suy đoán trước)
 - **Người đề xuất:** chủ dự án, 2026-08-21
 - **Track sở hữu:** Backend Core
 - **Phase roadmap liên quan:** Phase 17
@@ -176,6 +176,90 @@ hướng dẫn `/root/.ccr/README.md`). Postgres 16 hoá ra đã có sẵn dư�
 cài mới qua `apt-get install rabbitmq-server` (từ kho Ubuntu chính thức, không phải Docker Hub —
 không vướng policy) rồi tạo user `metap`/`metap` khớp `.env`. Không ảnh hưởng gì tới code hay kết
 quả verify — cùng phiên bản Postgres 16/protocol AMQP y hệt `docker-compose.yml` dùng.
+
+## Tiêu chí chấp nhận (Increment 3 — `wait_event`) — Done (2026-08-28)
+
+Chủ dự án được hỏi trực tiếp giữa 4 hướng ("chờ domain event khớp pattern", "chờ external callback
+qua HTTP resume token", "chỉ delay/sleep", "domain event + timeout fallback") — chọn hướng đầu
+tiên, phạm vi hẹp nhất còn đúng nghĩa "chờ event": **không có timeout**, một chain chờ mãi tới khi
+có event khớp (hoặc bị resume/huỷ thủ công qua tooling vận hành — chưa xây ở đợt này).
+
+- `TargetType::WaitEvent` thứ 6 (cạnh `workflow_transition`/`bulk_query_action`/`webhook`/`email`/
+  `steps`) — **chỉ hợp lệ như một step bên trong `steps`**, bị chặn ngay lúc tạo job nếu đặt làm
+  `targetType` cấp cao nhất của chính job đó (cùng lý do "chains cannot nest" của `steps` không
+  cho lồng chính nó). `targetConfig` của step: `{ entity, action? , event? }` — đúng một trong hai
+  `action`/`event` phải có mặt (validate ngay lúc tạo job qua
+  `metap-http::routes::cron::validate_wait_event_config`, không đợi lúc chạy mới phát hiện) — mô
+  phỏng đúng shape `OnTransitionTriggerConfig`/`OnRecordEventTriggerConfig` đã có.
+- Khi chuỗi chạy tới step `wait_event`: `cron-scheduler::executor::run_step_range` (tách ra từ
+  `run_steps` cũ để dùng chung được cho cả lần chạy đầu lẫn lần resume) dừng ngay, ghi
+  `workflow_runs.status = "waiting"` (kèm `wait_entity`/`wait_action`/`wait_record_event`, cột mới
+  — migration `0024_workflow_run_wait_event.sql`) **và** `cron_job_runs.status = "waiting"` (giá
+  trị `RunStatus` mới) trong cùng một transaction (`metap_cron::pause_workflow_run`). Không dispatch
+  gì thêm cho lần dispatch này — `executor::execute`'s idempotency check giờ coi `"waiting"` giống
+  `"success"`/`"failed"`: một message `cron.job.due` bị redeliver cho một run đang chờ sẽ bị bỏ
+  qua, không chạy lại từ đầu (sẽ vỡ do unique index `workflow_runs_cron_job_run_idx` nếu không có
+  check này).
+- **Resume**: `cron-scheduler::trigger`'s listener (đã subscribe rộng mọi
+  `<entity>.workflow.transitioned`/`<entity>.record.*` từ Increment 1/Phase 38, không cần consumer
+  mới) — mỗi event tới giờ vừa thử khớp job `on_transition`/`on_record_event` mới (như cũ) **vừa**
+  thử khớp chain đang `"waiting"` qua `metap_cron::dispatch_on_wait_event_transition_matches`/
+  `dispatch_on_wait_event_record_matches` (2 hàm mới, `FOR UPDATE SKIP LOCKED` + tự flip khỏi
+  `"waiting"` trong cùng transaction — tự nhiên idempotent, một event khớp lần 2 sẽ không thấy gì
+  vì row đã rời `"waiting"`). Khớp thì `cron-scheduler::executor::resume_steps` (hàm mới) chạy tiếp
+  từ `current_step_index + 1`, dùng lại `run_step_range` — nếu gặp `wait_event` thứ hai thì lại
+  pause tiếp, không có gì đặc biệt phải xử lý.
+- **Quyết định an toàn quan trọng**: việc "fire job mới" (query cũ) và việc "resume chain đang chờ"
+  (query mới) **không được phép cùng quyết định retry/nack của 1 message** — nếu fire thành công
+  (đã commit job mới) mà resume thất bại rồi tự động retry cả message, sẽ gọi lại
+  `dispatch_on_transition_matches` lần 2 và bắn trùng job mới. Fix: chỉ retry-cả-message khi chính
+  fire fail (y hệt hành vi trước Increment 3); resume chỉ chạy **sau khi** biết fire đã `Ok`, và
+  resume fail chỉ log cảnh báo (best-effort, chain vẫn `"waiting"`, có thể được resume bởi 1 event
+  khớp sau này) — không nack lại.
+- Fail sau khi resume (step nào đó sau wait_event lỗi) đi qua đúng `finish_run_with_retry` sẵn có
+  — retry lại từ step 0 (không phải resume tiếp từ chỗ đang dừng), y hệt chính sách "no
+  partial-resume" của Increment 2. `resume_steps` tự dựng lại một `CronJobDuePayload` từ job +
+  `cron_job_runs` row (không có sẵn payload gốc ở thời điểm resume — cùng gap đã ghi nhận ở
+  `dispatch_claimed`'s doc comment cho một lần retry thường) — `triggerRecordId`/`triggerEntity`
+  của các step sau resume là của **event vừa resume** (không phải trigger gốc của cả chain).
+- `GET /admin/cron-jobs/{jobId}/runs/{runId}/workflow-run` không đổi route — `status: "waiting"`
+  cộng 3 field mới (`waitEntity`/`waitAction`/`waitRecordEvent`) tự động lộ ra qua route có sẵn.
+
+**Migration**: `crates/migrations/0024_workflow_run_wait_event.sql` — `workflow_runs` thêm 3 cột
+nullable + 2 partial index (`WHERE status = 'waiting'`) cho 2 dạng match.
+
+**Verify**: `cargo build/clippy -D warnings/fmt --check` sạch toàn workspace, `cargo test --workspace`
+(unit, không cần DB) pass. 4 e2e test (`crates/metap-cron/tests/wait_event_postgres.rs`, `#[ignore]`d,
+chạy thật trên Postgres 16 qua `docker compose up -d postgres rabbitmq`) phủ store layer:
+`pause_workflow_run` ghi đúng cả 2 bảng; một transition khớp chỉ resume đúng chain khớp, không đụng
+chain khác đang chờ action khác; một record-event khớp resume đúng, và khớp lần 2 (chain đã rời
+`"waiting"`) trả về rỗng; chain của tenant A không bao giờ bị resume bởi event khớp của tenant B.
+Bug thật tìm thấy khi viết test (không phải bug ở code sản phẩm): helper test tạo 2 job cùng
+`trigger_config` (`{entity: crm.customers, action: "block"}`) trong cùng tenant — fire job thứ 2
+vô tình khớp luôn job thứ 1 (`dispatch_on_transition_matches` khớp mọi job enabled cùng
+entity/action, không chỉ job vừa tạo), làm `claimed` đếm sai. Fix bằng cách cho mỗi job trong test
+dùng `fire_action` riêng.
+
+**Verify sống qua HTTP + RabbitMQ + Postgres thật (2026-08-28, sau khi có Docker)**: boot thật
+`crm-server` + `outbox-publisher` + `cron-scheduler` (3 tiến trình riêng, không phải test giả
+lập). Job `on_transition` (khi `crm.customers` bị `block`) với `targetType: "steps"`, 2 step —
+`wait_event {entity: crm.customers, action: activate}` rồi `workflow_transition` activate record
+B thành `blocked`. Kịch bản: activate + block record A (nguồn trigger) → job fire →
+`run_step_range` dừng ngay ở step 0, log "workflow chain paused at wait_event step" →
+`GET .../workflow-run` xác nhận `status: "waiting"`, `waitEntity: "crm.customers"`,
+`waitAction: "activate"`, `currentStepIndex: 0` → activate record C (event khớp, entity/action
+đúng) → `cron-scheduler::trigger` resume đúng chain, log "cron job chain resumed and completed" →
+`GET .../workflow-run` lần 2: `status: "success"`, `currentStepIndex: 2`, `context.step_1` chứa
+đúng kết quả transition, `finishedAt` đã set → `GET /api/crm.customers/{B}` xác nhận `status:
+"blocked"` thật (không phải suy đoán từ log). `cron_job_runs.status` cũng `success` đúng (không
+kẹt ở `"waiting"`). Phát hiện phụ (không phải bug, hành vi đúng thiết kế): step `block` B tự nó
+cũng khớp `trigger_config` của chính job (cả hai đều `entity: crm.customers, action: block`) nên
+tự fire thêm 1 lần chạy mới của job, lại pause ở `wait_event` tiếp — xác nhận đúng tài liệu đã ghi
+("resume không được phép cùng quyết định retry/nack với fire", 2 việc độc lập nhau).
+
+**Ngoài phạm vi (cố ý, đúng lựa chọn hẹp nhất)**: timeout — một chain `wait_event` không có event
+khớp sẽ chờ vô thời hạn, không tự fail; external callback resume qua HTTP (đã cân nhắc, không
+chọn); admin/ops tooling để resume/huỷ thủ công một chain đang `"waiting"` khi không event nào tới.
 
 ## Ranh giới kiến trúc bị đụng tới
 

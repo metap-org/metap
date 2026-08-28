@@ -17,7 +17,7 @@ use metap_infra::{run_resilient_consumer, ConsumedEvent, EventBus, RetryPolicy};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::executor::{execute, ExecutorConfig};
+use crate::executor::{execute, resume_steps, ExecutorConfig};
 
 pub const QUEUE: &str = "cron.workflow-trigger";
 pub const ROUTING_KEY: &str = "#";
@@ -186,18 +186,20 @@ async fn dispatch_transition(
     action: &str,
     record_id: Uuid,
 ) {
-    let result = metap_cron::dispatch_on_transition_matches(pool, tenant_id, entity, action, record_id).await;
+    let fire_result = metap_cron::dispatch_on_transition_matches(pool, tenant_id, entity, action, record_id).await;
     finish_dispatch(
         pool,
         http,
         executor_config,
         policy,
         event,
-        result,
+        fire_result,
+        ResumeQuery::Transition { action },
         "on_transition",
         tenant_id,
         entity,
         action,
+        record_id,
     )
     .await;
 }
@@ -214,25 +216,46 @@ async fn dispatch_record_event(
     record_event: &str,
     record_id: Uuid,
 ) {
-    let result = metap_cron::dispatch_on_record_event_matches(pool, tenant_id, entity, record_event, record_id).await;
+    let fire_result =
+        metap_cron::dispatch_on_record_event_matches(pool, tenant_id, entity, record_event, record_id).await;
     finish_dispatch(
         pool,
         http,
         executor_config,
         policy,
         event,
-        result,
+        fire_result,
+        ResumeQuery::RecordEvent { event: record_event },
         "on_record_event",
         tenant_id,
         entity,
         record_event,
+        record_id,
     )
     .await;
 }
 
-/// Shared ack/nack + direct-dispatch tail for both trigger kinds — the only thing that differs
-/// between them is which `metap_cron::dispatch_on_*_matches` query ran, already done by the
-/// caller.
+/// Which `dispatch_on_wait_event_*_matches` query `finish_dispatch` should run once `fire_result`
+/// is known `Ok` — `dispatch_transition`/`dispatch_record_event` already know which trigger kind
+/// they are, so this just carries the one extra string (`action` or record `event`) each needs.
+enum ResumeQuery<'a> {
+    Transition { action: &'a str },
+    RecordEvent { event: &'a str },
+}
+
+/// Shared ack/nack + direct-dispatch/resume tail for both trigger kinds. `fire_result` is
+/// whatever `dispatch_on_transition_matches`/`dispatch_on_record_event_matches` found (brand-new
+/// firings of `on_transition`/`on_record_event` jobs) — its retry semantics are **unchanged**
+/// from before Increment 3: only a `fire_result` failure (nothing committed, since its own
+/// transaction rolled back) retries the whole event. Resuming `wait_event`-paused chains
+/// (Increment 3) only happens *after* `fire_result` is known `Ok`, and deliberately never causes
+/// a retry of the whole event on its own — doing so would call `dispatch_on_transition_matches`/
+/// `dispatch_on_record_event_matches` a second time and double-fire the brand-new jobs already
+/// committed above. `dispatch_on_wait_event_*_matches` is safe to simply drop on failure instead:
+/// it's naturally idempotent (a chain it resumes leaves `"waiting"` inside the same transaction,
+/// so a later attempt won't match it again), so a resume failure here just means this specific
+/// event didn't get to resume a matching chain — the chain stays `"waiting"` and can still be
+/// resumed by any later matching event.
 #[allow(clippy::too_many_arguments)]
 async fn finish_dispatch(
     pool: &PgPool,
@@ -240,15 +263,17 @@ async fn finish_dispatch(
     executor_config: &ExecutorConfig,
     policy: &RetryPolicy,
     event: &ConsumedEvent,
-    result: anyhow::Result<metap_cron::ClaimResult>,
+    fire_result: anyhow::Result<metap_cron::ClaimResult>,
+    resume_query: ResumeQuery<'_>,
     trigger_kind: &str,
     tenant_id: Uuid,
     entity: &str,
     detail: &str,
+    record_id: Uuid,
 ) {
-    match result {
-        Ok(result) => {
-            for direct_job in result.direct_jobs {
+    match fire_result {
+        Ok(claim) => {
+            for direct_job in claim.direct_jobs {
                 let payload = metap_cron::CronJobDuePayload {
                     run_id: direct_job.run_id,
                     job_id: direct_job.job_id,
@@ -264,6 +289,30 @@ async fn finish_dispatch(
                 };
                 execute(pool, http, executor_config, &payload).await;
             }
+
+            let resume_result = match resume_query {
+                ResumeQuery::Transition { action } => {
+                    metap_cron::dispatch_on_wait_event_transition_matches(pool, tenant_id, entity, action, record_id)
+                        .await
+                }
+                ResumeQuery::RecordEvent { event: kind } => {
+                    metap_cron::dispatch_on_wait_event_record_matches(pool, tenant_id, entity, kind, record_id).await
+                }
+            };
+            match resume_result {
+                Ok(resumed) => {
+                    for resumed_run in &resumed {
+                        resume_steps(pool, http, executor_config, resumed_run).await;
+                    }
+                }
+                Err(err) => {
+                    tracing::error!(
+                        tenant_id = %tenant_id, entity, trigger_kind, detail, error = %err,
+                        "failed to resume wait_event chains for this event — any matching chain stays waiting"
+                    );
+                }
+            }
+
             event.ack().await.ok();
         }
         Err(err) => {

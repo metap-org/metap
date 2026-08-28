@@ -41,6 +41,22 @@ pub enum TargetType {
     /// step completes) — purely for observability/audit; no step reads a prior step's output,
     /// matching this increment's static (not templated) `target_config`.
     Steps,
+    /// `target_config`: `{ entity: String, action: Option<String>, event: Option<String> }`
+    /// (`WaitEventTargetConfig`, exactly one of `action`/`event` set) — Increment 3's durable
+    /// pause. Valid **only** as a step inside a `Steps` chain (rejected as a job's own top-level
+    /// `target_type` at creation time, same posture as nesting `"steps"` inside a step), never
+    /// dispatched through `run_one_step` like the other four variants. Hitting this step pauses
+    /// the whole chain: `cron-scheduler::executor::run_steps` writes `workflow_runs.status =
+    /// "waiting"` (plus `wait_entity`/`wait_action`/`wait_record_event`) and
+    /// `cron_job_runs.status = "waiting"`, then returns without running any further step.
+    /// `cron-scheduler::trigger`'s listener (already subscribed to every
+    /// `<entity>.workflow.transitioned`/`<entity>.record.*` event since Increment 1/Phase 38)
+    /// additionally checks each incoming event against every `waiting` chain's wait criteria and
+    /// resumes a match at `current_step_index + 1` — same "one process, no new consumer" reuse
+    /// Increment 1 established for firing brand-new jobs. A step failing after resume re-fails
+    /// the whole chain through the exact same `finish_run_with_retry` (retry from step 0, not
+    /// partial-resume) Increment 2 already built — no new retry semantics needed here either.
+    WaitEvent,
 }
 
 impl TargetType {
@@ -51,6 +67,7 @@ impl TargetType {
             TargetType::Webhook => "webhook",
             TargetType::Email => "email",
             TargetType::Steps => "steps",
+            TargetType::WaitEvent => "wait_event",
         }
     }
 
@@ -61,9 +78,25 @@ impl TargetType {
             "webhook" => Some(TargetType::Webhook),
             "email" => Some(TargetType::Email),
             "steps" => Some(TargetType::Steps),
+            "wait_event" => Some(TargetType::WaitEvent),
             _ => None,
         }
     }
+}
+
+/// `target_config` shape for a `TargetType::WaitEvent` step — exactly one of `action`/`event`
+/// must be set (validated at job-creation time by `metap-http::routes::cron::validate_target_config`
+/// and defensively again by `cron-scheduler::executor::run_steps`), matching which of the two
+/// wait kinds it is: `action` waits for `<entity>.workflow.transitioned` with that `action`
+/// (mirrors `OnTransitionTriggerConfig`); `event` waits for `<entity>.record.{created,updated,
+/// deleted}` (mirrors `OnRecordEventTriggerConfig`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WaitEventTargetConfig {
+    pub entity: String,
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub event: Option<String>,
 }
 
 /// How a due firing gets from "claimed" to "executed". `Outbox` (default) is the reliable
@@ -207,6 +240,13 @@ pub enum RunStatus {
     Enqueued,
     Success,
     Failed,
+    /// A `TargetType::Steps` firing paused at a `wait_event` step (Increment 3) —
+    /// `executor::execute`'s idempotency check treats this the same as `Success`/`Failed`: a
+    /// redelivered `cron.job.due` message for a run already `waiting` must not re-run the chain
+    /// from scratch (it would re-execute already-completed steps, and would also collide with
+    /// `workflow_runs_cron_job_run_idx`'s uniqueness by trying to `start_workflow_run` twice for
+    /// the same `cron_job_run_id`).
+    Waiting,
 }
 
 impl RunStatus {
@@ -215,6 +255,7 @@ impl RunStatus {
             RunStatus::Enqueued => "enqueued",
             RunStatus::Success => "success",
             RunStatus::Failed => "failed",
+            RunStatus::Waiting => "waiting",
         }
     }
 
@@ -223,6 +264,7 @@ impl RunStatus {
             "enqueued" => Some(RunStatus::Enqueued),
             "success" => Some(RunStatus::Success),
             "failed" => Some(RunStatus::Failed),
+            "waiting" => Some(RunStatus::Waiting),
             _ => None,
         }
     }
@@ -315,6 +357,10 @@ pub enum WorkflowRunStatus {
     Running,
     Success,
     Failed,
+    /// Paused at a `wait_event` step (Increment 3), `wait_entity`/`wait_action`/
+    /// `wait_record_event` on the same row say what will resume it. See `RunStatus::Waiting`'s
+    /// doc comment for why a matching `cron_job_runs` status exists too.
+    Waiting,
 }
 
 impl WorkflowRunStatus {
@@ -323,6 +369,7 @@ impl WorkflowRunStatus {
             WorkflowRunStatus::Running => "running",
             WorkflowRunStatus::Success => "success",
             WorkflowRunStatus::Failed => "failed",
+            WorkflowRunStatus::Waiting => "waiting",
         }
     }
 
@@ -331,6 +378,7 @@ impl WorkflowRunStatus {
             "running" => Some(WorkflowRunStatus::Running),
             "success" => Some(WorkflowRunStatus::Success),
             "failed" => Some(WorkflowRunStatus::Failed),
+            "waiting" => Some(WorkflowRunStatus::Waiting),
             _ => None,
         }
     }
@@ -352,10 +400,42 @@ pub struct WorkflowRun {
     pub total_steps: i32,
     pub context: serde_json::Value,
     pub error: Option<String>,
+    /// Set only while `status == "waiting"` — the entity a `wait_event` step is pausing on,
+    /// paired with exactly one of `wait_action`/`wait_record_event` below (mirrors
+    /// `WaitEventTargetConfig`).
+    #[serde(rename = "waitEntity")]
+    pub wait_entity: Option<String>,
+    #[serde(rename = "waitAction")]
+    pub wait_action: Option<String>,
+    #[serde(rename = "waitRecordEvent")]
+    pub wait_record_event: Option<String>,
     #[serde(rename = "startedAt")]
     pub started_at: DateTime<Utc>,
     #[serde(rename = "finishedAt")]
     pub finished_at: Option<DateTime<Utc>>,
     #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,
+}
+
+/// One `workflow_runs` row a `dispatch_on_wait_event_*_matches` call resumed — everything
+/// `cron-scheduler::executor::resume_steps` needs to continue the chain from
+/// `resume_from_step_index` and, on eventual success/failure, close out the owning
+/// `cron_job_runs` row (`finish_run`/`finish_run_with_retry`) without a second DB round-trip to
+/// re-fetch the job. `record_id`/`entity` are the *resuming* event's, not the original firing's
+/// (that context isn't persisted anywhere reachable at resume time — same accepted gap
+/// `dispatch_claimed`'s doc comment already notes for a plain retry's trigger context).
+#[derive(Debug, Clone)]
+pub struct ResumedWorkflowRun {
+    pub workflow_run_id: Uuid,
+    pub cron_job_run_id: Uuid,
+    pub job_id: Uuid,
+    pub tenant_id: Uuid,
+    pub resume_from_step_index: i32,
+    pub target_config: serde_json::Value,
+    pub dispatch_mode: String,
+    pub max_attempts: i32,
+    pub retry_backoff_seconds: i32,
+    pub attempt: i32,
+    pub resuming_record_id: Uuid,
+    pub resuming_entity: String,
 }

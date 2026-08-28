@@ -10,8 +10,9 @@ use std::collections::HashMap;
 use std::future::Future;
 
 use metap_cron::{
-    advance_workflow_run, fail_workflow_run, finish_workflow_run, start_workflow_run, CronJobDuePayload, RunStatus,
-    TargetType, ROUTING_KEY,
+    advance_workflow_run, fail_workflow_run, finish_run, finish_run_with_retry, finish_workflow_run,
+    pause_workflow_run, start_workflow_run, CronJobDuePayload, ResumedWorkflowRun, RunStatus, TargetType,
+    WaitEventTargetConfig, ROUTING_KEY,
 };
 use metap_infra::{run_resilient_consumer, EventBus};
 use serde::Deserialize;
@@ -105,11 +106,11 @@ where
 /// and let the caller ack the (now known-duplicate) delivery as normal.
 pub async fn execute(pool: &PgPool, http: &reqwest::Client, config: &ExecutorConfig, payload: &CronJobDuePayload) {
     match metap_cron::run_status(pool, payload.run_id).await {
-        Ok(Some(RunStatus::Success)) | Ok(Some(RunStatus::Failed)) => {
+        Ok(Some(RunStatus::Success)) | Ok(Some(RunStatus::Failed)) | Ok(Some(RunStatus::Waiting)) => {
             tracing::warn!(
                 run_id = %payload.run_id,
                 job_id = %payload.job_id,
-                "cron job run already completed, skipping duplicate dispatch (redelivered message)"
+                "cron job run already completed or waiting, skipping duplicate dispatch (redelivered message)"
             );
             return;
         }
@@ -123,8 +124,17 @@ pub async fn execute(pool: &PgPool, http: &reqwest::Client, config: &ExecutorCon
         tracing::error!(run_id = %payload.run_id, error = %err, "failed to mark cron job run started");
     }
 
-    let (status, error, summary) = match dispatch(pool, http, config, payload).await {
-        Ok(summary) => (RunStatus::Success, None, Some(summary)),
+    let outcome = dispatch(pool, http, config, payload).await;
+    let (status, error, summary) = match outcome {
+        Ok(DispatchOutcome::Completed(summary)) => (RunStatus::Success, None, Some(summary)),
+        // `run_steps` already wrote `cron_job_runs.status = "waiting"` (via `pause_workflow_run`)
+        // before returning this — nothing left to record here, and calling
+        // `finish_run_with_retry` would incorrectly mark the run finished while it's still
+        // durably paused.
+        Ok(DispatchOutcome::Waiting) => {
+            tracing::info!(job_id = %payload.job_id, run_id = %payload.run_id, "cron job chain paused on wait_event");
+            return;
+        }
         Err(err) => (RunStatus::Failed, Some(err.to_string()), None),
     };
 
@@ -139,29 +149,47 @@ pub async fn execute(pool: &PgPool, http: &reqwest::Client, config: &ExecutorCon
     }
 }
 
+/// What a `dispatch()` call actually produced — `Completed` for every target type that finishes
+/// within one dispatch (which is all of them except `Steps` hitting a `wait_event` step), leaving
+/// `Waiting` a `Steps`-only outcome. Kept as its own type rather than folding `Value::Null` into
+/// the success case — that would make a paused chain indistinguishable from an activity that
+/// genuinely returned no summary.
+enum DispatchOutcome {
+    Completed(Value),
+    Waiting,
+}
+
 async fn dispatch(
     pool: &PgPool,
     http: &reqwest::Client,
     config: &ExecutorConfig,
     payload: &CronJobDuePayload,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<DispatchOutcome> {
     let Some(target_type) = TargetType::parse(&payload.target_type) else {
         anyhow::bail!("unknown target_type {:?}", payload.target_type);
     };
     match target_type {
-        TargetType::WorkflowTransition => run_workflow_transition(http, config, &payload.target_config).await,
-        TargetType::BulkQueryAction => run_bulk_query_action(http, config, &payload.target_config).await,
-        TargetType::Webhook => run_webhook(http, payload.job_id, payload.run_id, &payload.target_config).await,
-        TargetType::Email => {
-            run_email(
-                &config.smtp,
-                payload.trigger_entity.as_deref(),
-                payload.trigger_record_id,
-                &payload.target_config,
-            )
+        TargetType::WorkflowTransition => run_workflow_transition(http, config, &payload.target_config)
             .await
-        }
+            .map(DispatchOutcome::Completed),
+        TargetType::BulkQueryAction => run_bulk_query_action(http, config, &payload.target_config)
+            .await
+            .map(DispatchOutcome::Completed),
+        TargetType::Webhook => run_webhook(http, payload.job_id, payload.run_id, &payload.target_config)
+            .await
+            .map(DispatchOutcome::Completed),
+        TargetType::Email => run_email(
+            &config.smtp,
+            payload.trigger_entity.as_deref(),
+            payload.trigger_record_id,
+            &payload.target_config,
+        )
+        .await
+        .map(DispatchOutcome::Completed),
         TargetType::Steps => run_steps(pool, http, config, payload).await,
+        TargetType::WaitEvent => {
+            anyhow::bail!("\"wait_event\" is not a valid top-level targetType, only a step inside a \"steps\" chain")
+        }
     }
 }
 
@@ -179,18 +207,19 @@ struct StepsConfig {
 }
 
 /// Runs `payload.target_config.steps` one after another, in order, within this single dispatch
-/// — `TargetType::Steps`'s doc comment explains the increment's scope (no branching/wait, no
-/// step reading a prior step's output). Tracks progress in `workflow_runs` via
-/// `start_workflow_run`/`advance_workflow_run`/`finish_workflow_run`/`fail_workflow_run` purely
-/// for observability — a step failure stops the chain and fails the whole firing, which the
-/// existing retry-with-backoff (`finish_run_with_retry`) then retries from step 0 exactly like
-/// any other target type, no special-casing needed here.
+/// (until it either finishes, fails, or hits a `wait_event` step and pauses — Increment 3).
+/// Tracks progress in `workflow_runs` via `start_workflow_run`/`advance_workflow_run`/
+/// `finish_workflow_run`/`fail_workflow_run`/`pause_workflow_run` — a step failure stops the
+/// chain and fails the whole firing, which the existing retry-with-backoff
+/// (`finish_run_with_retry`) then retries from step 0 exactly like any other target type, no
+/// special-casing needed here (`resume_steps` below applies the exact same retry-from-0 policy
+/// for a failure *after* a resume).
 async fn run_steps(
     pool: &PgPool,
     http: &reqwest::Client,
     config: &ExecutorConfig,
     payload: &CronJobDuePayload,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<DispatchOutcome> {
     let cfg: StepsConfig = serde_json::from_value(payload.target_config.clone())?;
     if cfg.steps.is_empty() {
         anyhow::bail!("steps target_config.steps must not be empty");
@@ -205,9 +234,39 @@ async fn run_steps(
     )
     .await?;
 
-    let mut results = Vec::with_capacity(cfg.steps.len());
-    for (index, step) in cfg.steps.iter().enumerate() {
-        let step_index = index as i32;
+    run_step_range(pool, http, config, payload, workflow_run_id, &cfg.steps, 0).await
+}
+
+/// Runs `steps[start_index..]` in order against an already-existing `workflow_run_id` — shared
+/// by `run_steps` (a fresh chain, `start_index = 0`) and `resume_steps` (an already-paused chain
+/// picking back up right after its `wait_event` step). Pulled out separately so pausing again on
+/// a *second* `wait_event` step later in the same chain works identically whether this is the
+/// chain's first run or a resume — the loop doesn't know or care which.
+#[allow(clippy::too_many_arguments)]
+async fn run_step_range(
+    pool: &PgPool,
+    http: &reqwest::Client,
+    config: &ExecutorConfig,
+    payload: &CronJobDuePayload,
+    workflow_run_id: Uuid,
+    steps: &[Activity],
+    start_index: usize,
+) -> anyhow::Result<DispatchOutcome> {
+    let mut results = Vec::with_capacity(steps.len() - start_index);
+    for (offset, step) in steps[start_index..].iter().enumerate() {
+        let step_index = (start_index + offset) as i32;
+
+        if let Some(TargetType::WaitEvent) = TargetType::parse(&step.target_type) {
+            let wait: WaitEventTargetConfig = serde_json::from_value(step.target_config.clone())
+                .map_err(|err| anyhow::anyhow!("step {step_index} (wait_event) has an invalid targetConfig: {err}"))?;
+            pause_workflow_run(pool, workflow_run_id, payload.run_id, step_index, &wait).await?;
+            tracing::info!(
+                run_id = %workflow_run_id, step_index, entity = wait.entity, action = ?wait.action, event = ?wait.event,
+                "workflow chain paused at wait_event step"
+            );
+            return Ok(DispatchOutcome::Waiting);
+        }
+
         let step_result = run_one_step(http, config, payload, step).await;
         match step_result {
             Ok(value) => {
@@ -229,7 +288,81 @@ async fn run_steps(
     if let Err(err) = finish_workflow_run(pool, workflow_run_id).await {
         tracing::error!(run_id = %workflow_run_id, error = %err, "failed to mark workflow run finished");
     }
-    Ok(json!({ "steps": results }))
+    Ok(DispatchOutcome::Completed(json!({ "steps": results })))
+}
+
+/// Continues a `TargetType::Steps` chain a `wait_event` step previously paused —
+/// `cron-scheduler::trigger`'s listener calls this for every `ResumedWorkflowRun`
+/// `metap_cron::dispatch_on_wait_event_transition_matches`/`dispatch_on_wait_event_record_matches`
+/// returns. Reconstructs a `CronJobDuePayload` from the job/run row `resume_matching` (in
+/// `metap-cron`) already joined in, since the resume path doesn't have (and Increment 2's
+/// `dispatch_claimed` doc comment already accepts this gap for a plain retry too) the *original*
+/// firing's trigger context — `trigger_record_id`/`trigger_entity` here are the **resuming**
+/// event's instead, so any step running after the wait references what actually caused the chain
+/// to continue. On success, closes the run out directly (`finish_run`, no retry needed). On
+/// failure, goes through `finish_run_with_retry` exactly like a first-run failure — the chain
+/// retries from step 0 on the next attempt, not from wherever it paused; there's no
+/// resume-aware retry here, deliberately (`TargetType::WaitEvent`'s doc comment).
+pub async fn resume_steps(
+    pool: &PgPool,
+    http: &reqwest::Client,
+    config: &ExecutorConfig,
+    resumed: &ResumedWorkflowRun,
+) {
+    let payload = CronJobDuePayload {
+        run_id: resumed.cron_job_run_id,
+        job_id: resumed.job_id,
+        tenant_id: resumed.tenant_id,
+        target_type: TargetType::Steps.as_str().to_string(),
+        target_config: resumed.target_config.clone(),
+        attempt: resumed.attempt,
+        max_attempts: resumed.max_attempts,
+        retry_backoff_seconds: resumed.retry_backoff_seconds,
+        dispatch_mode: resumed.dispatch_mode.clone(),
+        trigger_record_id: Some(resumed.resuming_record_id),
+        trigger_entity: Some(resumed.resuming_entity.clone()),
+    };
+    let cfg: StepsConfig = match serde_json::from_value(payload.target_config.clone()) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            tracing::error!(run_id = %resumed.cron_job_run_id, error = %err, "failed to parse steps target_config on resume");
+            let _ = finish_run_with_retry(pool, &payload, RunStatus::Failed, Some(&err.to_string()), None).await;
+            return;
+        }
+    };
+
+    let outcome = run_step_range(
+        pool,
+        http,
+        config,
+        &payload,
+        resumed.workflow_run_id,
+        &cfg.steps,
+        resumed.resume_from_step_index as usize,
+    )
+    .await;
+
+    match outcome {
+        Ok(DispatchOutcome::Completed(summary)) => {
+            tracing::info!(job_id = %payload.job_id, run_id = %payload.run_id, "cron job chain resumed and completed");
+            if let Err(err) = finish_run(pool, payload.run_id, RunStatus::Success, None, Some(summary)).await {
+                tracing::error!(run_id = %payload.run_id, error = %err, "failed to record resumed cron job run result");
+            }
+        }
+        // Another `wait_event` step later in the same chain — already paused again by
+        // `run_step_range`/`pause_workflow_run`, nothing left to do here.
+        Ok(DispatchOutcome::Waiting) => {
+            tracing::info!(job_id = %payload.job_id, run_id = %payload.run_id, "cron job chain paused again on a later wait_event");
+        }
+        Err(err) => {
+            tracing::warn!(job_id = %payload.job_id, run_id = %payload.run_id, error = %err, "resumed cron job chain failed");
+            if let Err(record_err) =
+                finish_run_with_retry(pool, &payload, RunStatus::Failed, Some(&err.to_string()), None).await
+            {
+                tracing::error!(run_id = %payload.run_id, error = %record_err, "failed to record resumed cron job run result");
+            }
+        }
+    }
 }
 
 /// Runs one step's activity, reusing the exact same `run_*` functions the non-chained target
@@ -259,6 +392,12 @@ async fn run_one_step(
         }
         Some(TargetType::Steps) => {
             anyhow::bail!("nested \"steps\" targetType is not supported inside a step")
+        }
+        // `run_step_range` intercepts `wait_event` steps before ever calling `run_one_step` — a
+        // step reaching here as `WaitEvent` means that interception was skipped, a bug in the
+        // caller, not a config error worth a normal "unsupported" message.
+        Some(TargetType::WaitEvent) => {
+            anyhow::bail!("wait_event step reached run_one_step — should have been intercepted by run_step_range")
         }
         None => anyhow::bail!("unknown targetType {:?} in step", step.target_type),
     }

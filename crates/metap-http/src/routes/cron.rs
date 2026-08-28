@@ -8,7 +8,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use metap_cron::{
-    DispatchMode, JobUpdate, NewCronJob, OnRecordEventTriggerConfig, OnTransitionTriggerConfig, TargetType, TriggerType,
+    DispatchMode, JobUpdate, NewCronJob, OnRecordEventTriggerConfig, OnTransitionTriggerConfig, TargetType,
+    TriggerType, WaitEventTargetConfig,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -145,15 +146,51 @@ fn validate_trigger(
 struct StepActivity {
     #[serde(rename = "targetType")]
     target_type: String,
+    #[serde(rename = "targetConfig", default)]
+    target_config: Value,
+}
+
+/// A `wait_event` step's own `targetConfig` needs `entity` non-empty and **exactly one** of
+/// `action`/`event` set (`event` one of created/updated/deleted) — checked at creation time,
+/// same posture `validate_trigger`'s `on_transition`/`on_record_event` branches already use for
+/// the structurally identical `triggerConfig` shapes.
+fn validate_wait_event_config(index: usize, target_config: &Value) -> Result<(), Box<Response>> {
+    let cfg: WaitEventTargetConfig = serde_json::from_value(target_config.clone()).map_err(|_| {
+        Box::new(validation_error(&format!(
+            "`targetConfig.steps[{index}].targetConfig` must be `{{ entity: string, action?: string, event?: string }}`."
+        )))
+    })?;
+    if cfg.entity.trim().is_empty() {
+        return Err(Box::new(validation_error(&format!(
+            "`targetConfig.steps[{index}].targetConfig.entity` must not be empty."
+        ))));
+    }
+    match (&cfg.action, &cfg.event) {
+        (Some(action), None) if !action.trim().is_empty() => Ok(()),
+        (None, Some(event)) if matches!(event.as_str(), "created" | "updated" | "deleted") => Ok(()),
+        (None, Some(_)) => Err(Box::new(validation_error(&format!(
+            "`targetConfig.steps[{index}].targetConfig.event` must be one of: created, updated, deleted."
+        )))),
+        _ => Err(Box::new(validation_error(&format!(
+            "`targetConfig.steps[{index}].targetConfig` must set exactly one of `action`/`event`."
+        )))),
+    }
 }
 
 /// `targetType: "steps"` needs `targetConfig.steps` to be a non-empty array of `{targetType,
-/// targetConfig}` activities, each `targetType` one of the other four (rejecting nested `"steps"`
+/// targetConfig}` activities, each `targetType` one of the other five (rejecting nested `"steps"`
 /// at creation time — cheaper than only discovering it live in `cron-scheduler::executor::run_one_step`
-/// when the chain actually fires). Each step's own `targetConfig` shape isn't validated here
-/// (same posture as the top-level `targetConfig` for the other four target types today — shape
-/// errors surface at dispatch time, not creation time).
+/// when the chain actually fires). A `wait_event` step's `targetConfig` is validated in full
+/// (`validate_wait_event_config`) since `cron-scheduler::trigger`'s resume-matching depends on it
+/// being well-formed; every other step type's `targetConfig` shape isn't validated here (same
+/// posture as the top-level `targetConfig` for those four target types today — shape errors
+/// surface at dispatch time, not creation time).
 fn validate_target_config(target_type: &str, target_config: &Value) -> Result<(), Box<Response>> {
+    if TargetType::parse(target_type) == Some(TargetType::WaitEvent) {
+        return Err(Box::new(validation_error(
+            "`targetType` \"wait_event\" is only valid as a step inside a \"steps\" chain, not as a job's own targetType.",
+        )));
+    }
     if TargetType::parse(target_type) != Some(TargetType::Steps) {
         return Ok(());
     }
@@ -177,9 +214,10 @@ fn validate_target_config(target_type: &str, target_config: &Value) -> Result<()
                     "`targetConfig.steps[{index}].targetType` cannot be \"steps\" (chains cannot nest)."
                 ))));
             }
+            Some(TargetType::WaitEvent) => validate_wait_event_config(index, &activity.target_config)?,
             None => {
                 return Err(Box::new(validation_error(&format!(
-                    "`targetConfig.steps[{index}].targetType` must be one of: workflow_transition, bulk_query_action, webhook, email."
+                    "`targetConfig.steps[{index}].targetType` must be one of: workflow_transition, bulk_query_action, webhook, email, wait_event."
                 ))));
             }
             Some(_) => {}
