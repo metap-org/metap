@@ -62,7 +62,10 @@ pub fn journal_entry_entity() -> EntityDefinition {
     EntityDefinition {
         name: "accounting.journal".to_string(),
         label: "Journal Entry".to_string(),
-        table_name: "records".to_string(),
+        // Table-per-entity — fourth and last to move, after `inventory.movements`: its
+        // `referenceMovement` Reference field's FK targets `entities.inventory_movements`, so
+        // `main.rs` must reconcile `inventory.movements` before this entity.
+        table_name: metap_reconciler::qualified_table_name_for("accounting.journal"),
         fields: vec![
             field("code", "Code", FieldKind::String, true, true, true, true),
             field("entryDate", "Entry Date", FieldKind::Date, true, false, false, true),

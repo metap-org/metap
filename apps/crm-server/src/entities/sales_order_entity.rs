@@ -47,7 +47,12 @@ pub fn sales_order_entity() -> EntityDefinition {
     EntityDefinition {
         name: "sales.orders".to_string(),
         label: "Sales Order".to_string(),
-        table_name: "records".to_string(),
+        // Table-per-entity (`docs/roadmap/45-sales-inventory-journal-table-per-entity.md`),
+        // second code-authored entity to move after `crm.customers` (Phase 36) — its `customer`
+        // Reference field's FK targets `entities.crm_customers`, which must already exist
+        // before this entity's own `reconcile()` runs at boot (see `main.rs`'s ordering
+        // comment).
+        table_name: metap_reconciler::qualified_table_name_for("sales.orders"),
         fields: vec![
             field("code", "Code", FieldKind::String, true, true, true, true),
             EntityField {
