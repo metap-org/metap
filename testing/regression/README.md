@@ -1,13 +1,22 @@
 # Regression coverage index
 
-CI (`.github/workflows/ci.yml`) — 4 job:
+CI (`.github/workflows/ci.yml`) — 4 job tự động trên mọi push/PR:
 
 | Job | Chạy gì | Khi nào |
 |---|---|---|
 | `rust` | build + unit test + `fmt --check` + `clippy -D warnings` | mọi push/PR |
 | `security` | `cargo audit` (xem `testing/security/checklist.md`) | mọi push/PR |
-| `rust-e2e` | toàn bộ suite `#[ignore]`d qua Postgres/RabbitMQ service container thật | mọi push/PR |
+| `semgrep` | SAST (logic/secrets scan) | mọi push/PR |
 | `frontend` | typecheck + lint + format check + vitest | mọi push/PR |
+
+`rust-e2e` — toàn bộ suite `#[ignore]`d qua Postgres/RabbitMQ/Redis/Vault service container thật —
+**không còn tự động chạy trên push/PR** (chuyển ra `.github/workflows/e2e-manual.yml`,
+2026-08-28: quá chậm so với 4 job kia cộng lại, cộng vài test nhạy với timing/data-volume của môi
+trường CI song song mà một lần chạy dev bình thường không gặp — xem file đó's doc comment). Cùng
+nhóm với security checklist/performance benchmark ở dưới: coverage thật, chạy chủ động, không
+phải gate tự động trên từng commit. Chạy tay: `pnpm test:rs:e2e` (dev, cần
+`docker compose up -d postgres rabbitmq`) hoặc trigger `e2e-manual.yml` thủ công trên GitHub
+Actions (`gh workflow run e2e-manual.yml`).
 
 ## File `tests/*_postgres.rs` hiện có (theo crate)
 

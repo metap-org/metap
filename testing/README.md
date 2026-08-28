@@ -8,8 +8,9 @@ Kế hoạch gốc: `docs/architectures/11-risks.md` (hàng ghi nhận gap test-
 
 ## Regression
 
-`.github/workflows/ci.yml`'s `rust`/`rust-e2e`/`frontend` job đã cover phần lớn. Chi tiết + gap
-còn lại: [`regression/README.md`](regression/README.md).
+`.github/workflows/ci.yml`'s `rust`/`frontend` job (mọi push/PR) + `e2e-manual.yml`'s `rust-e2e`
+job (chạy tay/trigger thủ công, 2026-08-28 — xem file đó's doc comment) đã cover phần lớn. Chi
+tiết + gap còn lại: [`regression/README.md`](regression/README.md).
 
 ## Performance
 
