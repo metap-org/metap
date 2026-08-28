@@ -45,7 +45,10 @@ pub fn inventory_movement_entity() -> EntityDefinition {
     EntityDefinition {
         name: "inventory.movements".to_string(),
         label: "Inventory Movement".to_string(),
-        table_name: "records".to_string(),
+        // Table-per-entity — third to move, after `sales.orders`: its `referenceOrder`
+        // Reference field's FK targets `entities.sales_orders`, so `main.rs` must reconcile
+        // `sales.orders` before this entity.
+        table_name: metap_reconciler::qualified_table_name_for("inventory.movements"),
         fields: vec![
             field("code", "Code", FieldKind::String, true, true, true, true),
             EntityField {

@@ -64,6 +64,50 @@ async fn main() -> anyhow::Result<()> {
         "reconciled dedicated table"
     );
 
+    // `sales.orders` -> `inventory.movements` -> `accounting.journal`
+    // (`docs/roadmap/45-sales-inventory-journal-table-per-entity.md`) — the 3 remaining
+    // code-authored entities, moved after `crm.customers` above. Order is load-bearing: each
+    // entity's Reference field FKs into the previous one's dedicated table
+    // (`customer`->`crm.customers`, `referenceOrder`->`sales.orders`,
+    // `referenceMovement`->`inventory.movements`), and `reconcile()` always builds that FK
+    // against `qualified_table_name_for(ref_entity)` regardless of whether the target has
+    // been reconciled yet — so the target's table must already exist, same reasoning
+    // `apps/jira-server`'s `project_entity.rs`/`sprint_entity.rs` document.
+    let sales_order_reconcile =
+        metap_reconciler::reconcile(&pool, default_tenant_id, &sales_order_entity::sales_order_entity(), &[]).await?;
+    tracing::info!(
+        entity = "sales.orders",
+        table = sales_order_reconcile.table,
+        ops_applied = sales_order_reconcile.ops_applied,
+        "reconciled dedicated table"
+    );
+    let inventory_movement_reconcile = metap_reconciler::reconcile(
+        &pool,
+        default_tenant_id,
+        &inventory_movement_entity::inventory_movement_entity(),
+        &[],
+    )
+    .await?;
+    tracing::info!(
+        entity = "inventory.movements",
+        table = inventory_movement_reconcile.table,
+        ops_applied = inventory_movement_reconcile.ops_applied,
+        "reconciled dedicated table"
+    );
+    let journal_entry_reconcile = metap_reconciler::reconcile(
+        &pool,
+        default_tenant_id,
+        &journal_entry_entity::journal_entry_entity(),
+        &[],
+    )
+    .await?;
+    tracing::info!(
+        entity = "accounting.journal",
+        table = journal_entry_reconcile.table,
+        ops_applied = journal_entry_reconcile.ops_applied,
+        "reconciled dedicated table"
+    );
+
     // DB-authored entities (`metap-lowcode`, Phase A sub-project 1/2) — every *enabled*
     // entity that has been published at least once, merged on top of the code-authored base
     // (a disabled entity stays out of the registry entirely, same as if it had never been
