@@ -9,7 +9,10 @@
 use std::collections::HashMap;
 use std::future::Future;
 
-use metap_cron::{CronJobDuePayload, RunStatus, TargetType, ROUTING_KEY};
+use metap_cron::{
+    advance_workflow_run, fail_workflow_run, finish_workflow_run, start_workflow_run, CronJobDuePayload, RunStatus,
+    TargetType, ROUTING_KEY,
+};
 use metap_infra::{run_resilient_consumer, EventBus};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -120,7 +123,7 @@ pub async fn execute(pool: &PgPool, http: &reqwest::Client, config: &ExecutorCon
         tracing::error!(run_id = %payload.run_id, error = %err, "failed to mark cron job run started");
     }
 
-    let (status, error, summary) = match dispatch(http, config, payload).await {
+    let (status, error, summary) = match dispatch(pool, http, config, payload).await {
         Ok(summary) => (RunStatus::Success, None, Some(summary)),
         Err(err) => (RunStatus::Failed, Some(err.to_string()), None),
     };
@@ -137,6 +140,7 @@ pub async fn execute(pool: &PgPool, http: &reqwest::Client, config: &ExecutorCon
 }
 
 async fn dispatch(
+    pool: &PgPool,
     http: &reqwest::Client,
     config: &ExecutorConfig,
     payload: &CronJobDuePayload,
@@ -147,8 +151,116 @@ async fn dispatch(
     match target_type {
         TargetType::WorkflowTransition => run_workflow_transition(http, config, &payload.target_config).await,
         TargetType::BulkQueryAction => run_bulk_query_action(http, config, &payload.target_config).await,
-        TargetType::Webhook => run_webhook(http, payload).await,
-        TargetType::Email => run_email(&config.smtp, payload).await,
+        TargetType::Webhook => run_webhook(http, payload.job_id, payload.run_id, &payload.target_config).await,
+        TargetType::Email => {
+            run_email(
+                &config.smtp,
+                payload.trigger_entity.as_deref(),
+                payload.trigger_record_id,
+                &payload.target_config,
+            )
+            .await
+        }
+        TargetType::Steps => run_steps(pool, http, config, payload).await,
+    }
+}
+
+#[derive(Deserialize)]
+struct Activity {
+    #[serde(rename = "targetType")]
+    target_type: String,
+    #[serde(rename = "targetConfig")]
+    target_config: Value,
+}
+
+#[derive(Deserialize)]
+struct StepsConfig {
+    steps: Vec<Activity>,
+}
+
+/// Runs `payload.target_config.steps` one after another, in order, within this single dispatch
+/// — `TargetType::Steps`'s doc comment explains the increment's scope (no branching/wait, no
+/// step reading a prior step's output). Tracks progress in `workflow_runs` via
+/// `start_workflow_run`/`advance_workflow_run`/`finish_workflow_run`/`fail_workflow_run` purely
+/// for observability — a step failure stops the chain and fails the whole firing, which the
+/// existing retry-with-backoff (`finish_run_with_retry`) then retries from step 0 exactly like
+/// any other target type, no special-casing needed here.
+async fn run_steps(
+    pool: &PgPool,
+    http: &reqwest::Client,
+    config: &ExecutorConfig,
+    payload: &CronJobDuePayload,
+) -> anyhow::Result<Value> {
+    let cfg: StepsConfig = serde_json::from_value(payload.target_config.clone())?;
+    if cfg.steps.is_empty() {
+        anyhow::bail!("steps target_config.steps must not be empty");
+    }
+
+    let workflow_run_id = start_workflow_run(
+        pool,
+        payload.tenant_id,
+        payload.job_id,
+        payload.run_id,
+        cfg.steps.len() as i32,
+    )
+    .await?;
+
+    let mut results = Vec::with_capacity(cfg.steps.len());
+    for (index, step) in cfg.steps.iter().enumerate() {
+        let step_index = index as i32;
+        let step_result = run_one_step(http, config, payload, step).await;
+        match step_result {
+            Ok(value) => {
+                if let Err(err) = advance_workflow_run(pool, workflow_run_id, step_index, &value).await {
+                    tracing::error!(run_id = %workflow_run_id, step_index, error = %err, "failed to record workflow run step progress");
+                }
+                results.push(value);
+            }
+            Err(err) => {
+                let message = format!("step {step_index} ({}) failed: {err}", step.target_type);
+                if let Err(record_err) = fail_workflow_run(pool, workflow_run_id, step_index, &message).await {
+                    tracing::error!(run_id = %workflow_run_id, step_index, error = %record_err, "failed to record workflow run step failure");
+                }
+                anyhow::bail!(message);
+            }
+        }
+    }
+
+    if let Err(err) = finish_workflow_run(pool, workflow_run_id).await {
+        tracing::error!(run_id = %workflow_run_id, error = %err, "failed to mark workflow run finished");
+    }
+    Ok(json!({ "steps": results }))
+}
+
+/// Runs one step's activity, reusing the exact same `run_*` functions the non-chained target
+/// types dispatch through — a step is just an `Activity`'s `(targetType, targetConfig)` run in
+/// isolation. `chain` is the overall `"steps"` job's own `CronJobDuePayload` (not a per-step
+/// one — a step has no `run_id`/trigger context of its own): `run_webhook`/`run_email` get the
+/// chain's real `job_id`/`run_id`/trigger fields, same as they'd see running as a standalone
+/// (non-chained) job for that same firing.
+async fn run_one_step(
+    http: &reqwest::Client,
+    config: &ExecutorConfig,
+    chain: &CronJobDuePayload,
+    step: &Activity,
+) -> anyhow::Result<Value> {
+    match TargetType::parse(&step.target_type) {
+        Some(TargetType::WorkflowTransition) => run_workflow_transition(http, config, &step.target_config).await,
+        Some(TargetType::BulkQueryAction) => run_bulk_query_action(http, config, &step.target_config).await,
+        Some(TargetType::Webhook) => run_webhook(http, chain.job_id, chain.run_id, &step.target_config).await,
+        Some(TargetType::Email) => {
+            run_email(
+                &config.smtp,
+                chain.trigger_entity.as_deref(),
+                chain.trigger_record_id,
+                &step.target_config,
+            )
+            .await
+        }
+        Some(TargetType::Steps) => {
+            anyhow::bail!("nested \"steps\" targetType is not supported inside a step")
+        }
+        None => anyhow::bail!("unknown targetType {:?} in step", step.target_type),
     }
 }
 
@@ -269,15 +381,20 @@ fn default_method() -> String {
     "POST".to_string()
 }
 
-async fn run_webhook(http: &reqwest::Client, payload: &CronJobDuePayload) -> anyhow::Result<Value> {
-    let cfg: WebhookConfig = serde_json::from_value(payload.target_config.clone())?;
+async fn run_webhook(
+    http: &reqwest::Client,
+    job_id: Uuid,
+    run_id: Uuid,
+    target_config: &Value,
+) -> anyhow::Result<Value> {
+    let cfg: WebhookConfig = serde_json::from_value(target_config.clone())?;
     let method = reqwest::Method::from_bytes(cfg.method.as_bytes())
         .map_err(|_| anyhow::anyhow!("invalid HTTP method {:?}", cfg.method))?;
 
     let mut body = cfg.body.unwrap_or_else(|| json!({}));
     if let Value::Object(map) = &mut body {
-        map.insert("jobId".to_string(), json!(payload.job_id));
-        map.insert("runId".to_string(), json!(payload.run_id));
+        map.insert("jobId".to_string(), json!(job_id));
+        map.insert("runId".to_string(), json!(run_id));
     }
 
     let mut req = http.request(method, &cfg.url).json(&body);
@@ -320,8 +437,13 @@ impl EmailRecipients {
     }
 }
 
-async fn run_email(smtp: &SmtpConfig, payload: &CronJobDuePayload) -> anyhow::Result<Value> {
-    let cfg: EmailConfig = serde_json::from_value(payload.target_config.clone())?;
+async fn run_email(
+    smtp: &SmtpConfig,
+    trigger_entity: Option<&str>,
+    trigger_record_id: Option<Uuid>,
+    target_config: &Value,
+) -> anyhow::Result<Value> {
+    let cfg: EmailConfig = serde_json::from_value(target_config.clone())?;
     let host = smtp
         .host
         .as_deref()
@@ -341,9 +463,9 @@ async fn run_email(smtp: &SmtpConfig, payload: &CronJobDuePayload) -> anyhow::Re
     // `Some` for an `on_transition`/`on_record_event`-triggered job (see `CronJobDuePayload`'s
     // doc comment), so a plain `schedule` job's email is left as the admin wrote it.
     let mut body = cfg.body;
-    if let Some(entity) = &payload.trigger_entity {
+    if let Some(entity) = trigger_entity {
         body.push_str(&format!("\n\n---\nTriggered by: {entity}"));
-        if let Some(record_id) = payload.trigger_record_id {
+        if let Some(record_id) = trigger_record_id {
             body.push_str(&format!(" (record {record_id})"));
         }
     }

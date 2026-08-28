@@ -29,6 +29,18 @@ pub enum TargetType {
     /// stdout log of every transition — this is the "admin picks which entity/event mails whom"
     /// path Phase 39 adds instead).
     Email,
+    /// `target_config`: `{ steps: [{ targetType, targetConfig }, ...] }` — a sequential chain of
+    /// activities run one after another within a single dispatch (`docs/features/02-workflow-
+    /// engine.md` Increment 2). Each step's `targetType` must be one of the other four variants
+    /// (nesting `"steps"` inside a step is rejected, not silently flattened — this increment is
+    /// deliberately "no branching/wait", not recursive composition). A step failing stops the
+    /// chain there; the whole firing is `Failed` and retried from step 0 by the same
+    /// retry-with-backoff Increment 1 already built (no partial-resume — that's Increment 3's
+    /// `wait_event`/durable-pause territory, not this one's). Progress is tracked in the
+    /// `workflow_runs` table (one row per firing, `current_step_index`/`context` updated as each
+    /// step completes) — purely for observability/audit; no step reads a prior step's output,
+    /// matching this increment's static (not templated) `target_config`.
+    Steps,
 }
 
 impl TargetType {
@@ -38,6 +50,7 @@ impl TargetType {
             TargetType::BulkQueryAction => "bulk_query_action",
             TargetType::Webhook => "webhook",
             TargetType::Email => "email",
+            TargetType::Steps => "steps",
         }
     }
 
@@ -47,6 +60,7 @@ impl TargetType {
             "bulk_query_action" => Some(TargetType::BulkQueryAction),
             "webhook" => Some(TargetType::Webhook),
             "email" => Some(TargetType::Email),
+            "steps" => Some(TargetType::Steps),
             _ => None,
         }
     }
@@ -291,4 +305,57 @@ pub struct ClaimedDirectJob {
     pub dispatch_mode: String,
     pub trigger_record_id: Option<Uuid>,
     pub trigger_entity: Option<String>,
+}
+
+/// Progress/audit state for one `TargetType::Steps` firing — one row per `cron_job_runs` row
+/// that dispatched a `"steps"` job, not per step (a step's own outcome lands in `context`
+/// instead of its own row). See `TargetType::Steps`'s doc comment for what this is/isn't for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowRunStatus {
+    Running,
+    Success,
+    Failed,
+}
+
+impl WorkflowRunStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WorkflowRunStatus::Running => "running",
+            WorkflowRunStatus::Success => "success",
+            WorkflowRunStatus::Failed => "failed",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "running" => Some(WorkflowRunStatus::Running),
+            "success" => Some(WorkflowRunStatus::Success),
+            "failed" => Some(WorkflowRunStatus::Failed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowRun {
+    pub id: Uuid,
+    #[serde(rename = "tenantId")]
+    pub tenant_id: Uuid,
+    #[serde(rename = "jobId")]
+    pub job_id: Uuid,
+    #[serde(rename = "cronJobRunId")]
+    pub cron_job_run_id: Uuid,
+    pub status: String,
+    #[serde(rename = "currentStepIndex")]
+    pub current_step_index: i32,
+    #[serde(rename = "totalSteps")]
+    pub total_steps: i32,
+    pub context: serde_json::Value,
+    pub error: Option<String>,
+    #[serde(rename = "startedAt")]
+    pub started_at: DateTime<Utc>,
+    #[serde(rename = "finishedAt")]
+    pub finished_at: Option<DateTime<Utc>>,
+    #[serde(rename = "createdAt")]
+    pub created_at: DateTime<Utc>,
 }

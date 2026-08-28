@@ -141,6 +141,53 @@ fn validate_trigger(
     }
 }
 
+#[derive(Deserialize)]
+struct StepActivity {
+    #[serde(rename = "targetType")]
+    target_type: String,
+}
+
+/// `targetType: "steps"` needs `targetConfig.steps` to be a non-empty array of `{targetType,
+/// targetConfig}` activities, each `targetType` one of the other four (rejecting nested `"steps"`
+/// at creation time — cheaper than only discovering it live in `cron-scheduler::executor::run_one_step`
+/// when the chain actually fires). Each step's own `targetConfig` shape isn't validated here
+/// (same posture as the top-level `targetConfig` for the other four target types today — shape
+/// errors surface at dispatch time, not creation time).
+fn validate_target_config(target_type: &str, target_config: &Value) -> Result<(), Box<Response>> {
+    if TargetType::parse(target_type) != Some(TargetType::Steps) {
+        return Ok(());
+    }
+    let Some(steps) = target_config.get("steps").and_then(Value::as_array) else {
+        return Err(Box::new(validation_error(
+            "`targetConfig.steps` (a non-empty array) is required when `targetType` is \"steps\".",
+        )));
+    };
+    if steps.is_empty() {
+        return Err(Box::new(validation_error("`targetConfig.steps` must not be empty.")));
+    }
+    for (index, step) in steps.iter().enumerate() {
+        let activity: StepActivity = serde_json::from_value(step.clone()).map_err(|_| {
+            Box::new(validation_error(&format!(
+                "`targetConfig.steps[{index}]` must be `{{ targetType: string, targetConfig: object }}`."
+            )))
+        })?;
+        match TargetType::parse(&activity.target_type) {
+            Some(TargetType::Steps) => {
+                return Err(Box::new(validation_error(&format!(
+                    "`targetConfig.steps[{index}].targetType` cannot be \"steps\" (chains cannot nest)."
+                ))));
+            }
+            None => {
+                return Err(Box::new(validation_error(&format!(
+                    "`targetConfig.steps[{index}].targetType` must be one of: workflow_transition, bulk_query_action, webhook, email."
+                ))));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
+}
+
 async fn create_cron_job(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -152,8 +199,11 @@ async fn create_cron_job(
     };
     if TargetType::parse(&body.target_type).is_none() {
         return validation_error(
-            "`targetType` must be one of: workflow_transition, bulk_query_action, webhook, email.",
+            "`targetType` must be one of: workflow_transition, bulk_query_action, webhook, email, steps.",
         );
+    }
+    if let Err(response) = validate_target_config(&body.target_type, &body.target_config) {
+        return *response;
     }
     if DispatchMode::parse(&body.dispatch_mode).is_none() {
         return validation_error("`dispatchMode` must be one of: outbox, direct.");
@@ -256,7 +306,7 @@ async fn update_cron_job(
     if let Some(target_type) = &body.target_type {
         if TargetType::parse(target_type).is_none() {
             return validation_error(
-                "`targetType` must be one of: workflow_transition, bulk_query_action, webhook, email.",
+                "`targetType` must be one of: workflow_transition, bulk_query_action, webhook, email, steps.",
             );
         }
     }
@@ -293,6 +343,21 @@ async fn update_cron_job(
         let cron_expr = body.cron_expr.as_deref().or(existing.cron_expr.as_deref());
         let timezone = body.timezone.as_deref().unwrap_or(&existing.timezone);
         if let Err(response) = validate_trigger(trigger_type, trigger_config, cron_expr, timezone) {
+            return *response;
+        }
+    }
+    // Same "validate the effective value" posture as the trigger block above — an update that
+    // only touches `targetConfig` (leaving `targetType` unset) must still be checked against
+    // whichever `targetType` actually applies, and vice versa.
+    if body.target_type.is_some() || body.target_config.is_some() {
+        let existing = match metap_cron::get_job(&state.pool, tenant_id, id).await {
+            Ok(Some(job)) => job,
+            Ok(None) => return not_found(),
+            Err(e) => return internal_error_response(e),
+        };
+        let target_type = body.target_type.as_deref().unwrap_or(&existing.target_type);
+        let target_config = body.target_config.as_ref().unwrap_or(&existing.target_config);
+        if let Err(response) = validate_target_config(target_type, target_config) {
             return *response;
         }
     }
@@ -353,6 +418,28 @@ async fn list_cron_job_runs(
     }
 }
 
+/// Step-level progress for one `TargetType::Steps` firing (`docs/features/02-workflow-engine.md`
+/// Increment 2) — the `workflow_runs` counterpart to `list_cron_job_runs`'s plain `CronJobRun`
+/// row. `404 workflow_run_not_found` both when the job isn't a `"steps"` job (nothing was ever
+/// written) and when the `cron_job_runs` row belongs to a different job than `jobId` names in
+/// the path — a path/resource mismatch, not a real lookup, so it isn't worth a distinct error
+/// code from plain "doesn't exist".
+async fn get_workflow_run(
+    State(state): State<AppState>,
+    Path((job_id, run_id)): Path<(Uuid, Uuid)>,
+    AdminContext(context): AdminContext,
+) -> Response {
+    let tenant_id = match state.permissions.scoped_tenant(&context) {
+        Ok(id) => id,
+        Err(e) => return internal_error_response(e),
+    };
+    match metap_cron::get_workflow_run_by_cron_job_run(&state.pool, tenant_id, run_id).await {
+        Ok(Some(run)) if run.job_id == job_id => Json(json!({ "data": run })).into_response(),
+        Ok(_) => service_error_response(404, "workflow_run_not_found", Some("Workflow run not found."), None),
+        Err(e) => internal_error_response(e),
+    }
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/admin/cron-jobs", get(list_cron_jobs).post(create_cron_job))
@@ -361,4 +448,8 @@ pub fn router() -> Router<AppState> {
             get(get_cron_job).patch(update_cron_job).delete(delete_cron_job),
         )
         .route("/admin/cron-jobs/{id}/runs", get(list_cron_job_runs))
+        .route(
+            "/admin/cron-jobs/{jobId}/runs/{runId}/workflow-run",
+            get(get_workflow_run),
+        )
 }

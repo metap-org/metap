@@ -33,11 +33,26 @@ action, không rò cross-tenant, direct-mode job trả về đúng, retry-with-b
 
 Migration: `crates/migrations/0015_cron_jobs_trigger_and_retry.sql`.
 
-Còn lại — Increment 2 (chuỗi activity tuần tự, bảng `workflow_runs` mới) và Increment 3
-(`wait_event`, durable pause) — vẫn ở trạng thái approved, chưa code, chờ Increment 1 chạy thật
-lộ ra nhu cầu cụ thể trước khi thiết kế tiếp (trigger-based, không suy đoán trước). Admin UI cho
-`triggerType: on_transition` không nằm trong phạm vi Increment 1 (backend track, FE track khác lo
-riêng).
+**Increment 2 — chuỗi activity tuần tự (2026-08-28, done).** `TargetType::Steps` thứ 5 —
+`targetConfig: { steps: [{targetType, targetConfig}, ...] }`, chạy tuần tự trong cùng một lần
+dispatch (chưa cần durable pause), mỗi step là 1 trong 4 `TargetType` còn lại (cấm lồng `"steps"`,
+chặn ngay lúc tạo job). Bảng mới `workflow_runs` (`crates/migrations/0023_workflow_runs.sql`) theo
+dõi `current_step_index`/`context`/`status` cho từng lần dispatch — thuần audit, không step nào
+đọc lại output step trước. Step fail thì dừng cả chuỗi tại đó, `cron_job_runs` cũng `failed` và
+retry-with-backoff của Increment 1 **tái dùng nguyên vẹn** (retry lại từ step 0, không resume —
+resume có state là việc của Increment 3). `GET /admin/cron-jobs/{jobId}/runs/{runId}/workflow-run`
+route mới để xem progress. 4 e2e test mới (`crates/metap-cron/tests/workflow_runs_postgres.rs`) +
+verify sống đầy đủ qua HTTP + RabbitMQ + Postgres thật: happy path (2 step activate 2 record khác
+nhau, cả hai đúng trạng thái cuối), failure path (step 0 fail 409 → chuỗi dừng, step 1's target
+record không hề bị đụng, `workflow-run` ghi đúng step/lỗi), validation (thiếu/rỗng/lồng `steps`
+đều 400 trước khi ghi DB). Chi tiết đầy đủ + ghi chú hạ tầng phiên (Postgres/RabbitMQ cài native
+qua apt thay Docker — Docker Hub bị chặn bởi policy tổ chức lúc chạy phiên) ở
+`docs/features/02-workflow-engine.md`'s "Tiêu chí chấp nhận (Increment 2)".
+
+Còn lại — Increment 3 (`wait_event`, durable pause) — vẫn ở trạng thái approved, chưa code, chờ
+Increment 1+2 chạy thật lộ ra nhu cầu cụ thể trước khi thiết kế tiếp (trigger-based, không suy
+đoán trước). Admin UI cho `triggerType: on_transition`/`targetType: steps` không nằm trong phạm vi
+Increment 1/2 (backend track, FE track khác lo riêng).
 
 **Fix (2026-08-22, phát hiện khi nghiên cứu Organization & Identity × table-per-entity, độc lập
 với cả hai — không phải một phần của feature brief `03-organization-identity.md`, vẫn `proposed`):**
