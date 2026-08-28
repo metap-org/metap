@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Badge, Button, Card, Group, Select, Stack, Text, TextInput, Title } from "@mantine/core";
-import { apiFetch, useApiQuery, useAuth, useCurrentUser } from "@metap/platform-react";
+import { Badge, Button, Card, CardContent, Input, Select, Spinner } from "@metap/ui";
+import { apiFetch, useApiQuery, useAuth, useCurrentUser } from "@metap/platform-ui";
 import type { ListResponse } from "../api/types";
+
+const UNASSIGNED = "__unassigned__";
 
 type TenantUser = { id: string; email: string };
 type UsersResponse = { data: TenantUser[] };
@@ -71,11 +73,13 @@ export function AssigneePicker({
     <Select
       label="Assignee"
       placeholder="Unassigned"
-      data={users.map((u) => ({ value: u.email, label: u.email }))}
-      value={currentEmail}
-      onChange={(value) => void handleChange(value)}
+      options={[
+        { value: UNASSIGNED, label: "Unassigned" },
+        ...users.map((u) => ({ value: u.email, label: u.email })),
+      ]}
+      value={currentEmail ?? UNASSIGNED}
+      onValueChange={(value) => void handleChange(value === UNASSIGNED ? null : value)}
       disabled={saving}
-      clearable
     />
   );
 }
@@ -144,80 +148,76 @@ export function WorklogsPanel({
   }
 
   return (
-    <Card withBorder mt="md" padding="md">
-      <Title order={4} mb="sm">
-        Work log
-      </Title>
+    <Card className="mt-4">
+      <CardContent className="pt-4">
+        <h4 className="mb-2 font-semibold text-foreground">Work log</h4>
 
-      <Group mb="sm" gap="xl">
-        <Text size="sm">
-          Logged: <strong>{formatMinutes(totalMinutes)}</strong>
-        </Text>
-        {originalEstimateMinutes ? (
-          <Text size="sm">
-            Estimate: <strong>{formatMinutes(originalEstimateMinutes)}</strong>
-            {" — "}
-            {totalMinutes > originalEstimateMinutes ? (
-              <Text component="span" c="red">
-                over by {formatMinutes(totalMinutes - originalEstimateMinutes)}
-              </Text>
-            ) : (
-              <Text component="span" c="dimmed">
-                {formatMinutes(originalEstimateMinutes - totalMinutes)} remaining
-              </Text>
-            )}
-          </Text>
-        ) : null}
-      </Group>
+        <div className="mb-2 flex items-center gap-6">
+          <p className="text-sm text-foreground">
+            Logged: <strong>{formatMinutes(totalMinutes)}</strong>
+          </p>
+          {originalEstimateMinutes ? (
+            <p className="text-sm text-foreground">
+              Estimate: <strong>{formatMinutes(originalEstimateMinutes)}</strong>
+              {" — "}
+              {totalMinutes > originalEstimateMinutes ? (
+                <span className="text-destructive">
+                  over by {formatMinutes(totalMinutes - originalEstimateMinutes)}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">
+                  {formatMinutes(originalEstimateMinutes - totalMinutes)} remaining
+                </span>
+              )}
+            </p>
+          ) : null}
+        </div>
 
-      <Stack gap="xs" mb="md">
-        {(worklogs ?? []).map((w) => (
-          <Group key={w.id} justify="space-between">
-            <Text size="sm">
+        <div className="mb-4 flex flex-col gap-1">
+          {(worklogs ?? []).map((w) => (
+            <p key={w.id} className="text-sm text-foreground">
               {w.data.authorEmail} — {formatMinutes(w.data.timeSpentMinutes)} on {w.data.workDate}
               {w.data.description ? ` — ${w.data.description}` : ""}
-            </Text>
-          </Group>
-        ))}
-        {worklogs?.length === 0 ? (
-          <Text size="sm" c="dimmed">
-            No work logged yet.
-          </Text>
-        ) : null}
-      </Stack>
+            </p>
+          ))}
+          {worklogs?.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No work logged yet.</p>
+          ) : null}
+        </div>
 
-      <Group align="flex-end" gap="xs">
-        <TextInput
-          label="Minutes"
-          type="number"
-          w={100}
-          value={minutes}
-          onChange={(event) => setMinutes(event.currentTarget.value)}
-        />
-        <TextInput
-          label="Date"
-          type="date"
-          value={workDate}
-          onChange={(event) => setWorkDate(event.currentTarget.value)}
-        />
-        <TextInput
-          label="Description"
-          value={description}
-          onChange={(event) => setDescription(event.currentTarget.value)}
-        />
-        <Button
-          onClick={() => void handleSubmit()}
-          loading={submitting}
-          disabled={!myEmail || !minutes || Number(minutes) <= 0}
-        >
-          Log work
-        </Button>
-      </Group>
-      {!myEmail ? (
-        <Text size="xs" c="dimmed" mt={4}>
-          Can't determine your email yet — reload if this persists.
-        </Text>
-      ) : null}
+        <div className="flex items-end gap-2">
+          <Input
+            label="Minutes"
+            type="number"
+            className="w-[100px]"
+            value={minutes}
+            onChange={(event) => setMinutes(event.currentTarget.value)}
+          />
+          <Input
+            label="Date"
+            type="date"
+            value={workDate}
+            onChange={(event) => setWorkDate(event.currentTarget.value)}
+          />
+          <Input
+            label="Description"
+            value={description}
+            onChange={(event) => setDescription(event.currentTarget.value)}
+          />
+          <Button
+            onClick={() => void handleSubmit()}
+            disabled={submitting || !myEmail || !minutes || Number(minutes) <= 0}
+          >
+            {submitting ? <Spinner size="sm" className="mr-2" /> : null}
+            Log work
+          </Button>
+        </div>
+        {!myEmail ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Can't determine your email yet — reload if this persists.
+          </p>
+        ) : null}
+      </CardContent>
     </Card>
   );
 }
@@ -266,25 +266,28 @@ export function WatchersPanel({ issueId }: { issueId: string }) {
   }
 
   return (
-    <Card withBorder mt="md" padding="md">
-      <Group justify="space-between" mb="sm">
-        <Title order={4}>Watchers ({watchers?.length ?? 0})</Title>
-        <Button
-          size="compact-sm"
-          variant={myWatch ? "filled" : "outline"}
-          loading={busy}
-          onClick={() => void toggleWatch()}
-        >
-          {myWatch ? "Unwatch" : "Watch"}
-        </Button>
-      </Group>
-      <Group gap="xs">
-        {(watchers ?? []).map((w) => (
-          <Badge key={w.id} variant="light">
-            {w.data.userEmail}
-          </Badge>
-        ))}
-      </Group>
+    <Card className="mt-4">
+      <CardContent className="pt-4">
+        <div className="mb-2 flex items-center justify-between">
+          <h4 className="font-semibold text-foreground">Watchers ({watchers?.length ?? 0})</h4>
+          <Button
+            size="sm"
+            variant={myWatch ? "default" : "outline"}
+            disabled={busy}
+            onClick={() => void toggleWatch()}
+          >
+            {busy ? <Spinner size="sm" className="mr-2" /> : null}
+            {myWatch ? "Unwatch" : "Watch"}
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          {(watchers ?? []).map((w) => (
+            <Badge key={w.id} variant="secondary">
+              {w.data.userEmail}
+            </Badge>
+          ))}
+        </div>
+      </CardContent>
     </Card>
   );
 }

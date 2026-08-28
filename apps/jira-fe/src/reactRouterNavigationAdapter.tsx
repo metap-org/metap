@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
-import { NavigationContext } from "@metap/platform-react";
-import type { NavigationAdapter } from "@metap/platform-react";
+import { NavigationContext } from "@metap/platform-ui";
+import type { NavigationAdapter } from "@metap/platform-ui";
 
 function useReactRouterNavigationAdapter(): NavigationAdapter {
   const navigate = useNavigate();

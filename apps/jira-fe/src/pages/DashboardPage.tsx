@@ -1,10 +1,32 @@
-import { useMemo, useState } from "react";
-import { Badge, Card, Container, SimpleGrid, Table, Text, TextInput, Title } from "@mantine/core";
-import { useDebouncedValue } from "@mantine/hooks";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Badge,
+  Card,
+  CardContent,
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+  TableHead,
+  TableHeader,
+  Input,
+} from "@metap/ui";
 import { Link } from "react-router-dom";
-import { ApiErrorMessage, BarChart, useApiQuery } from "@metap/platform-react";
-import type { BarChartDatum } from "@metap/platform-react";
+import { ApiErrorMessage, BarChart, useApiQuery } from "@metap/platform-ui";
+import type { BarChartDatum } from "@metap/platform-ui";
 import type { IssueRecord, ListResponse } from "../api/types";
+
+/** `@metap/ui` has no `useDebouncedValue` equivalent (a component library, not a hooks
+ *  package) — hand-written, same shape `platform-ui`'s `ReferenceFieldInput`/`GeneratedList`
+ *  already duplicate locally rather than sharing a file. */
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}
 
 /**
  * `title` is `searchable` on `jira.issues` (`issue_entity.rs`) — substring/ILIKE match, so
@@ -13,7 +35,7 @@ import type { IssueRecord, ListResponse } from "../api/types";
  */
 function SearchBox() {
   const [term, setTerm] = useState("");
-  const [debounced] = useDebouncedValue(term, 300);
+  const debounced = useDebouncedValue(term, 300);
 
   const { data: results } = useApiQuery<ListResponse<IssueRecord>, IssueRecord[]>(
     ["search-issues", debounced],
@@ -23,39 +45,37 @@ function SearchBox() {
   );
 
   return (
-    <Card withBorder mb="xl" padding="md">
-      <TextInput
-        placeholder="Search issues by title…"
-        value={term}
-        onChange={(event) => setTerm(event.currentTarget.value)}
-      />
-      {debounced.trim().length > 0 ? (
-        <Table mt="sm">
-          <Table.Tbody>
-            {(results ?? []).map((issue) => (
-              <Table.Tr key={issue.id}>
-                <Table.Td>
-                  <Link to={`/issues/${issue.id}`}>{issue.data.title}</Link>
-                </Table.Td>
-                <Table.Td>
-                  <Badge size="sm" variant="light">
-                    {issue.status}
-                  </Badge>
-                </Table.Td>
-              </Table.Tr>
-            ))}
-            {results?.length === 0 ? (
-              <Table.Tr>
-                <Table.Td>
-                  <Text size="sm" c="dimmed">
-                    No matching issues.
-                  </Text>
-                </Table.Td>
-              </Table.Tr>
-            ) : null}
-          </Table.Tbody>
-        </Table>
-      ) : null}
+    <Card className="mb-8">
+      <CardContent className="pt-4">
+        <Input
+          placeholder="Search issues by title…"
+          value={term}
+          onChange={(event) => setTerm(event.currentTarget.value)}
+        />
+        {debounced.trim().length > 0 ? (
+          <Table className="mt-2">
+            <TableBody>
+              {(results ?? []).map((issue) => (
+                <TableRow key={issue.id}>
+                  <TableCell>
+                    <Link to={`/issues/${issue.id}`}>{issue.data.title}</Link>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">{issue.status}</Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {results?.length === 0 ? (
+                <TableRow>
+                  <TableCell>
+                    <span className="text-sm text-muted-foreground">No matching issues.</span>
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        ) : null}
+      </CardContent>
     </Card>
   );
 }
@@ -70,11 +90,18 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_ORDER = ["todo", "in_progress", "in_review", "done"];
 const PRIORITY_ORDER = ["urgent", "high", "medium", "low"];
 
-const PRIORITY_COLOR: Record<string, string> = {
-  urgent: "red",
-  high: "orange",
-  medium: "yellow",
-  low: "gray",
+const PRIORITY_BADGE: Record<string, "destructive" | "warning" | "default" | "secondary"> = {
+  urgent: "destructive",
+  high: "warning",
+  medium: "default",
+  low: "secondary",
+};
+
+const PRIORITY_CHART_COLOR: Record<string, string> = {
+  urgent: "hsl(var(--destructive))",
+  high: "#f59e0b",
+  medium: "#eab308",
+  low: "hsl(var(--muted-foreground))",
 };
 
 function countBy<T extends string>(
@@ -117,73 +144,69 @@ export function DashboardPage() {
   const priorityChartData: BarChartDatum[] = byPriority.map(({ key, count }) => ({
     label: key,
     value: count,
-    color: `var(--mantine-color-${PRIORITY_COLOR[key]}-6)`,
+    color: PRIORITY_CHART_COLOR[key],
   }));
 
   if (isLoading) return <div>Loading…</div>;
   if (error) return <ApiErrorMessage error={error} />;
 
   return (
-    <Container py="xl">
-      <Title order={2} mb="md">
-        Dashboard
-      </Title>
+    <div className="mx-auto max-w-5xl py-8">
+      <h2 className="mb-4 text-xl font-semibold text-foreground">Dashboard</h2>
 
       <SearchBox />
 
-      <SimpleGrid cols={{ base: 1, sm: 2 }} mb="xl">
-        <Card withBorder padding="md">
-          <Text fw={600} mb="xs">
-            By status
-          </Text>
-          <BarChart data={statusChartData} ariaLabel="Issues by status" />
+      <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Card>
+          <CardContent className="pt-4">
+            <p className="mb-2 font-semibold text-foreground">By status</p>
+            <BarChart data={statusChartData} ariaLabel="Issues by status" />
+          </CardContent>
         </Card>
-        <Card withBorder padding="md">
-          <Text fw={600} mb="xs">
-            By priority
-          </Text>
-          <BarChart data={priorityChartData} ariaLabel="Issues by priority" />
+        <Card>
+          <CardContent className="pt-4">
+            <p className="mb-2 font-semibold text-foreground">By priority</p>
+            <BarChart data={priorityChartData} ariaLabel="Issues by priority" />
+          </CardContent>
         </Card>
-      </SimpleGrid>
+      </div>
 
-      <Text fw={600} mb="xs">
-        Recently created
-      </Text>
+      <p className="mb-2 font-semibold text-foreground">Recently created</p>
       <Table>
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>Title</Table.Th>
-            <Table.Th>Priority</Table.Th>
-            <Table.Th>Status</Table.Th>
-            <Table.Th>Assignee</Table.Th>
-            <Table.Th>Due</Table.Th>
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Title</TableHead>
+            <TableHead>Priority</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Assignee</TableHead>
+            <TableHead>Due</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {recent.map((issue) => (
-            <Table.Tr key={issue.id}>
-              <Table.Td>
+            <TableRow key={issue.id}>
+              <TableCell>
                 <Link to={`/issues/${issue.id}`}>{issue.data.title}</Link>
-              </Table.Td>
-              <Table.Td>
-                <Badge color={PRIORITY_COLOR[issue.data.priority]} variant="light">
+              </TableCell>
+              <TableCell>
+                <Badge variant={PRIORITY_BADGE[issue.data.priority] ?? "default"}>
                   {issue.data.priority}
                 </Badge>
-              </Table.Td>
-              <Table.Td>{STATUS_LABEL[issue.status] ?? issue.status}</Table.Td>
-              <Table.Td>{issue.data.assigneeEmail ?? "—"}</Table.Td>
-              <Table.Td>{issue.data.dueDate ?? "—"}</Table.Td>
-            </Table.Tr>
+              </TableCell>
+              <TableCell>{STATUS_LABEL[issue.status] ?? issue.status}</TableCell>
+              <TableCell>{issue.data.assigneeEmail ?? "—"}</TableCell>
+              <TableCell>{issue.data.dueDate ?? "—"}</TableCell>
+            </TableRow>
           ))}
           {recent.length === 0 ? (
-            <Table.Tr>
-              <Table.Td colSpan={5}>
-                <Text c="dimmed">No issues yet.</Text>
-              </Table.Td>
-            </Table.Tr>
+            <TableRow>
+              <TableCell colSpan={5}>
+                <span className="text-muted-foreground">No issues yet.</span>
+              </TableCell>
+            </TableRow>
           ) : null}
-        </Table.Tbody>
+        </TableBody>
       </Table>
-    </Container>
+    </div>
   );
 }

@@ -3,19 +3,19 @@ import GridLayout, { WidthProvider } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import {
-  ActionIcon,
   Button,
   Card,
-  Container,
-  Group,
-  SegmentedControl,
+  CardContent,
+  IconButton,
+  Input,
   Select,
-  Text,
-  TextInput,
-  Title,
-} from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { apiFetch, BarChart, useApiQuery, useAuth, useHasRole } from "@metap/platform-react";
+  Spinner,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  toast,
+} from "@metap/ui";
+import { apiFetch, BarChart, useApiQuery, useAuth, useHasRole } from "@metap/platform-ui";
 import type { IssueRecord, ListResponse } from "../api/types";
 
 const ResponsiveGridLayout = WidthProvider(GridLayout);
@@ -59,9 +59,7 @@ function BarChartWidgetView({ config }: { config: BarChartWidgetConfig }) {
 
   return (
     <>
-      <Text fw={600} size="sm" mb="xs">
-        {config.title}
-      </Text>
+      <p className="mb-1 text-sm font-semibold text-foreground">{config.title}</p>
       <BarChart data={counts} height={140} ariaLabel={config.title} />
     </>
   );
@@ -76,17 +74,11 @@ function StatTileWidgetView({ config }: { config: StatTileWidgetConfig }) {
 
   return (
     <>
-      <Text fw={600} size="sm" mb="xs">
-        {config.title}
-      </Text>
+      <p className="mb-1 text-sm font-semibold text-foreground">{config.title}</p>
       {error ? (
-        <Text size="xs" c="red">
-          Query error
-        </Text>
+        <p className="text-xs text-destructive">Query error</p>
       ) : (
-        <Text size="2rem" fw={700}>
-          {issues?.length ?? "…"}
-        </Text>
+        <p className="text-3xl font-bold text-foreground">{issues?.length ?? "…"}</p>
       )}
     </>
   );
@@ -102,10 +94,10 @@ function WidgetView({ widget }: { widget: DashboardWidget }) {
  * (`GET/PUT /dashboards/me`, `GET/PUT /dashboards/tenant-default` — `crates/metap-http/src/routes/dashboards.rs`).
  * Widget catalog is deliberately small for v1 (bar chart by field, stat tile from a JQL query) —
  * `recentList` and others are natural additions later, not built here. Grid/drag/resize uses
- * `react-grid-layout` (added as a `jira-fe`-only dependency, not pushed into `platform-react` —
+ * `react-grid-layout` (added as a `jira-fe`-only dependency, not pushed into `platform-ui` —
  * unlike `BarChart`, forcing every future app onto a grid-layout library isn't justified by one
  * app's ask) while each widget's *rendering* reuses the generic `BarChart` from
- * `packages/platform-react`.
+ * `@metap/platform-ui`.
  */
 export function CustomizableDashboardPage() {
   const { token } = useAuth();
@@ -159,79 +151,80 @@ export function CustomizableDashboardPage() {
         body: JSON.stringify({ layout: { widgets } satisfies DashboardLayout }),
       });
       setDirty(false);
-      notifications.show({ color: "green", message: "Dashboard saved." });
+      toast("Dashboard saved.");
     } catch {
-      notifications.show({ color: "red", message: "Failed to save dashboard." });
+      toast("Failed to save dashboard.", { variant: "destructive" });
     } finally {
       setSaving(false);
     }
   }
 
   const [statJql, setStatJql] = useState('status != "done"');
+  const [barChartGroupBy, setBarChartGroupBy] = useState<string | undefined>(undefined);
 
   return (
-    <Container size="xl" py="xl">
-      <Group justify="space-between" mb="md">
-        <Title order={2}>Dashboard</Title>
-        <Group>
+    <div className="mx-auto max-w-6xl py-8">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-xl font-semibold text-foreground">Dashboard</h2>
+        <div className="flex items-center gap-2">
           {isAdmin ? (
-            <SegmentedControl
-              value={scope}
-              onChange={(value) => setScope(value as "personal" | "tenant")}
-              data={[
-                { label: "My dashboard", value: "personal" },
-                { label: "Organization default", value: "tenant" },
-              ]}
-            />
+            <Tabs value={scope} onValueChange={(value) => setScope(value as "personal" | "tenant")}>
+              <TabsList>
+                <TabsTrigger value="personal">My dashboard</TabsTrigger>
+                <TabsTrigger value="tenant">Organization default</TabsTrigger>
+              </TabsList>
+            </Tabs>
           ) : null}
-          <Button variant={editing ? "filled" : "outline"} onClick={() => setEditing((e) => !e)}>
+          <Button variant={editing ? "default" : "outline"} onClick={() => setEditing((e) => !e)}>
             {editing ? "Done editing" : "Edit"}
           </Button>
           {editing && dirty ? (
-            <Button onClick={() => void handleSave()} loading={saving}>
+            <Button onClick={() => void handleSave()} disabled={saving}>
+              {saving ? <Spinner size="sm" className="mr-2" /> : null}
               Save
             </Button>
           ) : null}
-        </Group>
-      </Group>
+        </div>
+      </div>
 
       {editing ? (
-        <Card withBorder mb="md" padding="md">
-          <Text fw={600} mb="xs">
-            Add a widget
-          </Text>
-          <Group align="flex-end">
-            <Select
-              label="Bar chart"
-              placeholder="Group by…"
-              data={[
-                { value: "status", label: "By status" },
-                { value: "priority", label: "By priority" },
-                { value: "issueType", label: "By issue type" },
-              ]}
-              onChange={(value) => {
-                if (!value) return;
-                const groupBy = value as BarChartWidgetConfig["groupBy"];
-                addWidget({
-                  type: "barChart",
-                  title: `Issues ${value === "status" ? "by status" : `by ${value}`}`,
-                  groupBy,
-                });
-              }}
-            />
-            <TextInput
-              label="Stat tile query"
-              w={280}
-              value={statJql}
-              onChange={(event) => setStatJql(event.currentTarget.value)}
-            />
-            <Button
-              onClick={() => addWidget({ type: "statTile", title: statJql, jql: statJql })}
-              disabled={!statJql.trim()}
-            >
-              Add stat tile
-            </Button>
-          </Group>
+        <Card className="mb-4">
+          <CardContent className="pt-4">
+            <p className="mb-2 font-semibold text-foreground">Add a widget</p>
+            <div className="flex items-end gap-2">
+              <Select
+                label="Bar chart"
+                placeholder="Group by…"
+                options={[
+                  { value: "status", label: "By status" },
+                  { value: "priority", label: "By priority" },
+                  { value: "issueType", label: "By issue type" },
+                ]}
+                value={barChartGroupBy}
+                onValueChange={(value) => {
+                  const groupBy = value as BarChartWidgetConfig["groupBy"];
+                  addWidget({
+                    type: "barChart",
+                    title: `Issues ${value === "status" ? "by status" : `by ${value}`}`,
+                    groupBy,
+                  });
+                  setBarChartGroupBy(undefined);
+                }}
+              />
+              <Input
+                label="Stat tile query"
+                className="w-[280px]"
+                value={statJql}
+                onChange={(event) => setStatJql(event.currentTarget.value)}
+              />
+              <Button
+                onClick={() => addWidget({ type: "statTile", title: statJql, jql: statJql })}
+                disabled={!statJql.trim()}
+              >
+                Add stat tile
+              </Button>
+            </div>
+          </CardContent>
         </Card>
       ) : null}
 
@@ -245,26 +238,27 @@ export function CustomizableDashboardPage() {
         >
           {widgets.map((widget) => (
             <div key={widget.id} data-grid={{ x: widget.x, y: widget.y, w: widget.w, h: widget.h }}>
-              <Card withBorder padding="sm" h="100%" style={{ overflow: "hidden" }}>
-                {editing ? (
-                  <ActionIcon
-                    size="sm"
-                    variant="subtle"
-                    color="red"
-                    style={{ position: "absolute", top: 6, right: 6, zIndex: 1 }}
-                    onClick={() => removeWidget(widget.id)}
-                  >
-                    ×
-                  </ActionIcon>
-                ) : null}
-                <WidgetView widget={widget} />
+              <Card className="relative h-full overflow-hidden">
+                <CardContent className="pt-3">
+                  {editing ? (
+                    <IconButton
+                      size="sm"
+                      variant="ghost"
+                      aria-label="Remove widget"
+                      className="absolute right-1.5 top-1.5 z-10 text-destructive hover:text-destructive"
+                      onClick={() => removeWidget(widget.id)}
+                      icon={<span className="text-base leading-none">×</span>}
+                    />
+                  ) : null}
+                  <WidgetView widget={widget} />
+                </CardContent>
               </Card>
             </div>
           ))}
         </ResponsiveGridLayout>
       ) : widgets ? (
-        <Text c="dimmed">No widgets yet — click Edit to add one.</Text>
+        <p className="text-muted-foreground">No widgets yet — click Edit to add one.</p>
       ) : null}
-    </Container>
+    </div>
   );
 }

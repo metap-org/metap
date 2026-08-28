@@ -1,19 +1,7 @@
 import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  Anchor,
-  Badge,
-  Button,
-  Card,
-  Container,
-  Group,
-  Stack,
-  Text,
-  Textarea,
-  TextInput,
-  Title,
-} from "@mantine/core";
+import { Badge, Button, Card, CardContent, Input, Spinner, Textarea } from "@metap/ui";
 import {
   ApiError,
   ApiErrorMessage,
@@ -22,7 +10,7 @@ import {
   useApiMutation,
   useApiQuery,
   useAuth,
-} from "@metap/platform-react";
+} from "@metap/platform-ui";
 import type {
   AttachmentRecord,
   CommentRecord,
@@ -52,31 +40,32 @@ function SubtasksPanel({ issueId }: { issueId: string }) {
   );
 
   return (
-    <Card withBorder mt="md" padding="md">
-      <Title order={4} mb="sm">
-        Sub-tasks
-      </Title>
+    <Card className="mt-4">
+      <CardContent className="pt-4">
+        <h4 className="mb-2 font-semibold text-foreground">Sub-tasks</h4>
 
-      {isLoading ? <Text size="sm">Loading…</Text> : null}
-      {error ? <ApiErrorMessage error={error} /> : null}
+        {isLoading ? <p className="text-sm text-foreground">Loading…</p> : null}
+        {error ? <ApiErrorMessage error={error} /> : null}
 
-      <Stack gap="xs">
-        {(subtasks ?? []).map((subtask) => (
-          <Group key={subtask.id} justify="space-between">
-            <Anchor component={Link} to={`/issues/${subtask.id}`}>
-              {subtask.data.title}
-            </Anchor>
-            <Badge size="sm" variant="light">
-              {subtask.status}
-            </Badge>
-          </Group>
-        ))}
-        {subtasks?.length === 0 ? (
-          <Text size="sm" c="dimmed">
-            No sub-tasks yet — create an issue and set its Parent Issue to this one.
-          </Text>
-        ) : null}
-      </Stack>
+        <div className="flex flex-col gap-1">
+          {(subtasks ?? []).map((subtask) => (
+            <div key={subtask.id} className="flex items-center justify-between">
+              <Link
+                to={`/issues/${subtask.id}`}
+                className="text-sm text-primary underline-offset-2 hover:underline"
+              >
+                {subtask.data.title}
+              </Link>
+              <Badge variant="secondary">{subtask.status}</Badge>
+            </div>
+          ))}
+          {subtasks?.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No sub-tasks yet — create an issue and set its Parent Issue to this one.
+            </p>
+          ) : null}
+        </div>
+      </CardContent>
     </Card>
   );
 }
@@ -164,96 +153,94 @@ function CommentsPanel({ issueId }: { issueId: string }) {
   }
 
   return (
-    <Card withBorder mt="md" padding="md">
-      <Title order={4} mb="sm">
-        Comments
-      </Title>
+    <Card className="mt-4">
+      <CardContent className="pt-4">
+        <h4 className="mb-2 font-semibold text-foreground">Comments</h4>
 
-      {isLoading ? <Text size="sm">Loading…</Text> : null}
-      {error ? <ApiErrorMessage error={error} /> : null}
-      {actionError ? (
-        <Text size="sm" c="red" mb="xs">
-          {actionError}
-        </Text>
-      ) : null}
+        {isLoading ? <p className="text-sm text-foreground">Loading…</p> : null}
+        {error ? <ApiErrorMessage error={error} /> : null}
+        {actionError ? <p className="mb-2 text-sm text-destructive">{actionError}</p> : null}
 
-      <Stack gap="sm" mb="md">
-        {(comments ?? []).map((comment) => (
-          <Card key={comment.id} withBorder padding="sm" bg="var(--mantine-color-gray-0)">
-            <Group justify="space-between" mb={4}>
-              <Text size="sm" fw={600}>
-                {comment.data.authorEmail}
-              </Text>
-              <Group gap={4}>
-                <Button size="compact-xs" variant="subtle" onClick={() => startEdit(comment)}>
-                  Edit
-                </Button>
-                <Button
-                  size="compact-xs"
-                  variant="subtle"
-                  color="red"
-                  loading={busyId === comment.id}
-                  onClick={() => void deleteComment(comment)}
-                >
-                  Delete
-                </Button>
-              </Group>
-            </Group>
-            {editingId === comment.id ? (
-              <Stack gap="xs">
-                <Textarea
-                  autosize
-                  minRows={2}
-                  value={editBody}
-                  onChange={(event) => setEditBody(event.currentTarget.value)}
-                />
-                <Group gap="xs">
-                  <Button
-                    size="compact-xs"
-                    loading={busyId === comment.id}
-                    onClick={() => void saveEdit(comment)}
-                  >
-                    Save
-                  </Button>
-                  <Button size="compact-xs" variant="subtle" onClick={() => setEditingId(null)}>
-                    Cancel
-                  </Button>
-                </Group>
-              </Stack>
-            ) : (
-              <Text size="sm">{comment.data.body}</Text>
-            )}
-          </Card>
-        ))}
-        {comments?.length === 0 ? (
-          <Text size="sm" c="dimmed">
-            No comments yet.
-          </Text>
-        ) : null}
-      </Stack>
+        <div className="mb-4 flex flex-col gap-2">
+          {(comments ?? []).map((comment) => (
+            <Card key={comment.id} className="bg-muted">
+              <CardContent className="pt-3">
+                <div className="mb-1 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-foreground">
+                    {comment.data.authorEmail}
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => startEdit(comment)}>
+                      Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busyId === comment.id}
+                      onClick={() => void deleteComment(comment)}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      {busyId === comment.id ? <Spinner size="sm" className="mr-2" /> : null}
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+                {editingId === comment.id ? (
+                  <div className="flex flex-col gap-2">
+                    <Textarea
+                      rows={2}
+                      value={editBody}
+                      onChange={(event) => setEditBody(event.currentTarget.value)}
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        disabled={busyId === comment.id}
+                        onClick={() => void saveEdit(comment)}
+                      >
+                        {busyId === comment.id ? <Spinner size="sm" className="mr-2" /> : null}
+                        Save
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-foreground">{comment.data.body}</p>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+          {comments?.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No comments yet.</p>
+          ) : null}
+        </div>
 
-      <Stack gap="xs">
-        <TextInput
-          label="Your email"
-          value={authorEmail}
-          onChange={(event) => setAuthorEmail(event.currentTarget.value)}
-        />
-        <Textarea
-          label="Comment"
-          autosize
-          minRows={2}
-          value={body}
-          onChange={(event) => setBody(event.currentTarget.value)}
-        />
-        <Button
-          onClick={() => void handleSubmit()}
-          loading={addComment.isPending}
-          disabled={authorEmail.trim().length === 0 || body.trim().length === 0}
-        >
-          Add comment
-        </Button>
-        {addComment.error ? <ApiErrorMessage error={addComment.error} /> : null}
-      </Stack>
+        <div className="flex flex-col gap-2">
+          <Input
+            label="Your email"
+            value={authorEmail}
+            onChange={(event) => setAuthorEmail(event.currentTarget.value)}
+          />
+          <Textarea
+            label="Comment"
+            rows={2}
+            value={body}
+            onChange={(event) => setBody(event.currentTarget.value)}
+          />
+          <Button
+            onClick={() => void handleSubmit()}
+            disabled={
+              addComment.isPending || authorEmail.trim().length === 0 || body.trim().length === 0
+            }
+          >
+            {addComment.isPending ? <Spinner size="sm" className="mr-2" /> : null}
+            Add comment
+          </Button>
+          {addComment.error ? <ApiErrorMessage error={addComment.error} /> : null}
+        </div>
+      </CardContent>
     </Card>
   );
 }
@@ -305,22 +292,23 @@ function IssueLinksPanel({ issueId }: { issueId: string }) {
   if (rows.length === 0) return null;
 
   return (
-    <Card withBorder mt="md" padding="md">
-      <Title order={4} mb="sm">
-        Linked issues
-      </Title>
-      <Stack gap="xs">
-        {rows.map(({ link, label, otherIssueId, otherTitle }) => (
-          <Group key={link.id} gap="xs">
-            <Badge size="sm" variant="outline">
-              {label}
-            </Badge>
-            <Anchor component={Link} to={`/issues/${otherIssueId}`}>
-              {otherTitle}
-            </Anchor>
-          </Group>
-        ))}
-      </Stack>
+    <Card className="mt-4">
+      <CardContent className="pt-4">
+        <h4 className="mb-2 font-semibold text-foreground">Linked issues</h4>
+        <div className="flex flex-col gap-1">
+          {rows.map(({ link, label, otherIssueId, otherTitle }) => (
+            <div key={link.id} className="flex items-center gap-2">
+              <Badge variant="outline">{label}</Badge>
+              <Link
+                to={`/issues/${otherIssueId}`}
+                className="text-sm text-primary underline-offset-2 hover:underline"
+              >
+                {otherTitle}
+              </Link>
+            </div>
+          ))}
+        </div>
+      </CardContent>
     </Card>
   );
 }
@@ -398,46 +386,42 @@ function AttachmentsPanel({ issueId }: { issueId: string }) {
   }
 
   return (
-    <Card withBorder mt="md" padding="md">
-      <Title order={4} mb="sm">
-        Attachments
-      </Title>
+    <Card className="mt-4">
+      <CardContent className="pt-4">
+        <h4 className="mb-2 font-semibold text-foreground">Attachments</h4>
 
-      {isLoading ? <Text size="sm">Loading…</Text> : null}
-      {error ? <ApiErrorMessage error={error} /> : null}
+        {isLoading ? <p className="text-sm text-foreground">Loading…</p> : null}
+        {error ? <ApiErrorMessage error={error} /> : null}
 
-      <Stack gap="xs" mb="md">
-        {(attachments ?? []).map((attachment) => (
-          <Group key={attachment.id} justify="space-between">
-            <Anchor onClick={() => void handleDownload(attachment)} style={{ cursor: "pointer" }}>
-              {attachment.filename}
-            </Anchor>
-            <Text size="xs" c="dimmed">
-              {formatSize(attachment.size)}
-            </Text>
-          </Group>
-        ))}
-        {attachments?.length === 0 ? (
-          <Text size="sm" c="dimmed">
-            No attachments yet.
-          </Text>
-        ) : null}
-      </Stack>
+        <div className="mb-4 flex flex-col gap-1">
+          {(attachments ?? []).map((attachment) => (
+            <div key={attachment.id} className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => void handleDownload(attachment)}
+                className="cursor-pointer text-sm text-primary underline-offset-2 hover:underline"
+              >
+                {attachment.filename}
+              </button>
+              <span className="text-xs text-muted-foreground">{formatSize(attachment.size)}</span>
+            </div>
+          ))}
+          {attachments?.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No attachments yet.</p>
+          ) : null}
+        </div>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        disabled={uploading}
-        onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          if (file) void handleFileSelected(file);
-        }}
-      />
-      {uploadError ? (
-        <Text size="sm" c="red" mt="xs">
-          {uploadError}
-        </Text>
-      ) : null}
+        <input
+          ref={fileInputRef}
+          type="file"
+          disabled={uploading}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (file) void handleFileSelected(file);
+          }}
+        />
+        {uploadError ? <p className="mt-1 text-sm text-destructive">{uploadError}</p> : null}
+      </CardContent>
     </Card>
   );
 }
@@ -465,7 +449,7 @@ export function IssueDetailPage() {
   return (
     <>
       <RecordDetail entityName="jira.issues" id={id} />
-      <Container>
+      <div className="mx-auto max-w-3xl px-4">
         <AssigneePicker issueId={id} currentEmail={issue?.data.assigneeEmail ?? null} />
         <IssueLinksPanel issueId={id} />
         <SubtasksPanel issueId={id} />
@@ -476,7 +460,7 @@ export function IssueDetailPage() {
         <WatchersPanel issueId={id} />
         <CommentsPanel issueId={id} />
         <AttachmentsPanel issueId={id} />
-      </Container>
+      </div>
     </>
   );
 }

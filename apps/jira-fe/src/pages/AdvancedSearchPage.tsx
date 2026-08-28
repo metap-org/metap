@@ -2,24 +2,29 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Alert,
+  AlertTitle,
+  AlertDescription,
   Badge,
   Button,
   Card,
-  Container,
-  Group,
+  CardContent,
   Table,
-  Text,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
   Textarea,
-  Title,
-} from "@mantine/core";
-import { ApiErrorMessage, useApiQuery } from "@metap/platform-react";
+  Spinner,
+} from "@metap/ui";
+import { ApiErrorMessage, useApiQuery } from "@metap/platform-ui";
 import type { IssueRecord, ListResponse } from "../api/types";
 
-const PRIORITY_COLOR: Record<string, string> = {
-  urgent: "red",
-  high: "orange",
-  medium: "yellow",
-  low: "gray",
+const PRIORITY_BADGE: Record<string, "destructive" | "warning" | "default" | "secondary"> = {
+  urgent: "destructive",
+  high: "warning",
+  medium: "default",
+  low: "secondary",
 };
 
 const EXAMPLES = [
@@ -56,100 +61,103 @@ export function AdvancedSearchPage() {
   }
 
   return (
-    <Container size="lg" py="xl">
-      <Title order={2} mb="md">
-        Advanced Search
-      </Title>
+    <div className="mx-auto max-w-4xl py-8">
+      <h2 className="mb-4 text-xl font-semibold text-foreground">Advanced Search</h2>
 
-      <Card withBorder mb="md" padding="md">
-        <Textarea
-          label="Query"
-          placeholder='e.g. priority = "high" AND status != "done" ORDER BY dueDate'
-          value={draft}
-          onChange={(event) => setDraft(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              handleSubmit();
-            }
-          }}
-          autosize
-          minRows={2}
-          mb="xs"
-        />
-        <Group justify="space-between">
-          <Text size="xs" c="dimmed">
-            Examples:{" "}
-            {EXAMPLES.map((ex) => (
-              <Text
-                key={ex}
-                component="span"
-                size="xs"
-                c="blue"
-                style={{ cursor: "pointer" }}
-                mr="sm"
-                onClick={() => setDraft(ex)}
-              >
-                {ex}
-              </Text>
-            ))}
-          </Text>
-          <Button size="sm" loading={isFetching} onClick={handleSubmit}>
-            Search
-          </Button>
-        </Group>
+      <Card className="mb-4">
+        <CardContent className="pt-4">
+          <Textarea
+            label="Query"
+            placeholder='e.g. priority = "high" AND status != "done" ORDER BY dueDate'
+            value={draft}
+            onChange={(event) => setDraft(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                handleSubmit();
+              }
+            }}
+            rows={2}
+            className="mb-2"
+          />
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              Examples:{" "}
+              {EXAMPLES.map((ex) => (
+                <button
+                  key={ex}
+                  type="button"
+                  onClick={() => setDraft(ex)}
+                  className="mr-2 cursor-pointer text-xs text-primary underline-offset-2 hover:underline"
+                >
+                  {ex}
+                </button>
+              ))}
+            </p>
+            <Button size="sm" disabled={isFetching} onClick={handleSubmit}>
+              {isFetching ? <Spinner size="sm" className="mr-2" /> : null}
+              Search
+            </Button>
+          </div>
+        </CardContent>
       </Card>
 
       {error ? (
-        <Alert color="red" title="Query error" mb="md">
-          <ApiErrorMessage error={error} />
+        <Alert variant="destructive" className="mb-4">
+          <AlertTitle>Query error</AlertTitle>
+          <AlertDescription>
+            <ApiErrorMessage error={error} />
+          </AlertDescription>
         </Alert>
       ) : null}
 
       {issues ? (
-        <Card withBorder padding={0}>
-          <Table striped highlightOnHover>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Title</Table.Th>
-                <Table.Th>Type</Table.Th>
-                <Table.Th>Priority</Table.Th>
-                <Table.Th>Status</Table.Th>
-                <Table.Th>Assignee</Table.Th>
-                <Table.Th>Points</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Title</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Priority</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Assignee</TableHead>
+                <TableHead>Points</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {issues.map((issue) => (
-                <Table.Tr key={issue.id}>
-                  <Table.Td>
-                    <Text component={Link} to={`/issues/${issue.id}`} size="sm" fw={600}>
+                <TableRow key={issue.id}>
+                  <TableCell>
+                    <Link
+                      to={`/issues/${issue.id}`}
+                      className="text-sm font-semibold text-foreground"
+                    >
                       {issue.data.title}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>{issue.data.issueType ?? "—"}</Table.Td>
-                  <Table.Td>
-                    <Badge size="sm" color={PRIORITY_COLOR[issue.data.priority]} variant="light">
+                    </Link>
+                  </TableCell>
+                  <TableCell>{issue.data.issueType ?? "—"}</TableCell>
+                  <TableCell>
+                    <Badge variant={PRIORITY_BADGE[issue.data.priority] ?? "default"}>
                       {issue.data.priority}
                     </Badge>
-                  </Table.Td>
-                  <Table.Td>{issue.status}</Table.Td>
-                  <Table.Td>{issue.data.assigneeEmail ?? "Unassigned"}</Table.Td>
-                  <Table.Td>{issue.data.storyPoints ?? "—"}</Table.Td>
-                </Table.Tr>
+                  </TableCell>
+                  <TableCell>{issue.status}</TableCell>
+                  <TableCell>{issue.data.assigneeEmail ?? "Unassigned"}</TableCell>
+                  <TableCell>{issue.data.storyPoints ?? "—"}</TableCell>
+                </TableRow>
               ))}
               {issues.length === 0 ? (
-                <Table.Tr>
-                  <Table.Td colSpan={6}>
-                    <Text size="sm" c="dimmed" py="md" ta="center">
+                <TableRow>
+                  <TableCell colSpan={6}>
+                    <p className="py-4 text-center text-sm text-muted-foreground">
                       No issues match this query.
-                    </Text>
-                  </Table.Td>
-                </Table.Tr>
+                    </p>
+                  </TableCell>
+                </TableRow>
               ) : null}
-            </Table.Tbody>
+            </TableBody>
           </Table>
         </Card>
       ) : null}
-    </Container>
+    </div>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Card, Container, Group, Progress, Select, Stack, Text, Title } from "@mantine/core";
+import { Card, CardContent, Progress, Select } from "@metap/ui";
 import { useQueries } from "@tanstack/react-query";
-import { apiFetch, useApiQuery, useAuth } from "@metap/platform-react";
+import { apiFetch, useApiQuery, useAuth } from "@metap/platform-ui";
 import type { IssueRecord, ListResponse, ProjectRecord, SprintRecord } from "../api/types";
 
 type WorkflowEvent = {
@@ -79,35 +79,35 @@ function BurndownChart({
         y1={padding}
         x2={padding}
         y2={height - padding}
-        stroke="var(--mantine-color-gray-4)"
+        stroke="hsl(var(--border))"
       />
       <line
         x1={padding}
         y1={height - padding}
         x2={width - padding}
         y2={height - padding}
-        stroke="var(--mantine-color-gray-4)"
+        stroke="hsl(var(--border))"
       />
-      <text x={4} y={padding + 4} fontSize={11} fill="var(--mantine-color-dimmed)">
+      <text x={4} y={padding + 4} fontSize={11} fill="hsl(var(--muted-foreground))">
         {maxY}
       </text>
-      <text x={4} y={height - padding + 4} fontSize={11} fill="var(--mantine-color-dimmed)">
+      <text x={4} y={height - padding + 4} fontSize={11} fill="hsl(var(--muted-foreground))">
         0
       </text>
       {idealPath ? (
         <path
           d={idealPath}
           fill="none"
-          stroke="var(--mantine-color-gray-5)"
+          stroke="hsl(var(--muted-foreground))"
           strokeDasharray="6 4"
           strokeWidth={2}
         />
       ) : null}
       {actualPath ? (
-        <path d={actualPath} fill="none" stroke="var(--mantine-color-blue-6)" strokeWidth={2.5} />
+        <path d={actualPath} fill="none" stroke="hsl(var(--primary))" strokeWidth={2.5} />
       ) : null}
       {actualPoints.map((p, i) => (
-        <circle key={i} cx={p.x} cy={p.y} r={3} fill="var(--mantine-color-blue-6)" />
+        <circle key={i} cx={p.x} cy={p.y} r={3} fill="hsl(var(--primary))" />
       ))}
     </svg>
   );
@@ -211,111 +211,93 @@ export function SprintReportPage() {
   }, [issues, sprint, eventsByIssueId]);
 
   return (
-    <Container size="lg" py="xl">
-      <Group justify="space-between" mb="md">
-        <Title order={2}>Sprint Report</Title>
-        <Group>
+    <div className="mx-auto max-w-4xl py-8">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-xl font-semibold text-foreground">Sprint Report</h2>
+        <div className="flex items-center gap-2">
           <Select
-            w={240}
+            className="w-[240px]"
             placeholder="Select a project"
-            data={(projects ?? []).map((p) => ({
+            options={(projects ?? []).map((p) => ({
               value: p.id,
               label: `${p.data.key} — ${p.data.name}`,
             }))}
-            value={projectId}
-            onChange={setProjectId}
+            value={projectId ?? undefined}
+            onValueChange={setProjectId}
             disabled={projectsLoading}
           />
           <Select
-            w={240}
+            className="w-[240px]"
             placeholder="Select a sprint"
-            data={(sprints ?? []).map((s) => ({ value: s.id, label: s.data.name }))}
-            value={sprintId}
-            onChange={setSprintId}
+            options={(sprints ?? []).map((s) => ({ value: s.id, label: s.data.name }))}
+            value={sprintId ?? undefined}
+            onValueChange={setSprintId}
             disabled={!projectId}
           />
-        </Group>
-      </Group>
+        </div>
+      </div>
 
-      {!sprintId ? <Text c="dimmed">No sprint selected.</Text> : null}
+      {!sprintId ? <p className="text-muted-foreground">No sprint selected.</p> : null}
 
       {sprintId && issues && report === null ? (
-        <Text c="dimmed">This sprint has no start/end date set — can't compute a burndown.</Text>
+        <p className="text-muted-foreground">
+          This sprint has no start/end date set — can't compute a burndown.
+        </p>
       ) : null}
 
       {sprintId && report ? (
         <>
-          <Card withBorder mb="md" padding="md">
-            <Stack gap={4}>
-              <Text size="sm">
+          <Card className="mb-4">
+            <CardContent className="flex flex-col gap-1 pt-4">
+              <p className="text-sm text-foreground">
                 {sprint?.data.startDate} → {sprint?.data.endDate}
-              </Text>
-              <Text size="sm">
+              </p>
+              <p className="text-sm text-foreground">
                 Total story points: <strong>{report.totalPoints}</strong>
-              </Text>
-              <Text size="sm">
+              </p>
+              <p className="text-sm text-foreground">
                 Done: <strong>{report.donePoints}</strong> (
                 {report.totalPoints > 0
                   ? Math.round((report.donePoints / report.totalPoints) * 100)
                   : 0}
                 %)
-              </Text>
+              </p>
               <Progress
                 value={report.totalPoints > 0 ? (report.donePoints / report.totalPoints) * 100 : 0}
-                mt={4}
+                className="mt-1"
               />
-            </Stack>
+            </CardContent>
           </Card>
 
-          <Card withBorder padding="md">
-            <Title order={4} mb="sm">
-              Burndown
-            </Title>
-            {!eventsLoaded ? (
-              <Text size="sm" c="dimmed">
-                Loading transition history…
-              </Text>
-            ) : (
-              <>
-                <BurndownChart
-                  days={report.days}
-                  idealSeries={report.idealSeries}
-                  actualSeries={report.actualSeries}
-                  totalPoints={report.totalPoints}
-                />
-                <Group gap="lg" mt="xs">
-                  <Group gap={6}>
-                    <span
-                      style={{
-                        width: 14,
-                        height: 2.5,
-                        background: "var(--mantine-color-blue-6)",
-                        display: "inline-block",
-                      }}
-                    />
-                    <Text size="xs" c="dimmed">
-                      Actual remaining
-                    </Text>
-                  </Group>
-                  <Group gap={6}>
-                    <span
-                      style={{
-                        width: 14,
-                        height: 0,
-                        borderTop: "2px dashed var(--mantine-color-gray-5)",
-                        display: "inline-block",
-                      }}
-                    />
-                    <Text size="xs" c="dimmed">
-                      Ideal
-                    </Text>
-                  </Group>
-                </Group>
-              </>
-            )}
+          <Card>
+            <CardContent className="pt-4">
+              <h4 className="mb-2 font-semibold text-foreground">Burndown</h4>
+              {!eventsLoaded ? (
+                <p className="text-sm text-muted-foreground">Loading transition history…</p>
+              ) : (
+                <>
+                  <BurndownChart
+                    days={report.days}
+                    idealSeries={report.idealSeries}
+                    actualSeries={report.actualSeries}
+                    totalPoints={report.totalPoints}
+                  />
+                  <div className="mt-1 flex items-center gap-4">
+                    <div className="flex items-center gap-1.5">
+                      <span className="inline-block h-[2.5px] w-3.5 bg-primary" />
+                      <span className="text-xs text-muted-foreground">Actual remaining</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="inline-block h-0 w-3.5 border-t-2 border-dashed border-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Ideal</span>
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
           </Card>
         </>
       ) : null}
-    </Container>
+    </div>
   );
 }

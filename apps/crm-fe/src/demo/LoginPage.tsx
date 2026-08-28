@@ -1,4 +1,4 @@
-import { LoginForm } from "@metap/platform-react";
+import { LoginForm } from "@metap/platform-ui";
 
 export function LoginPage() {
   return <LoginForm />;

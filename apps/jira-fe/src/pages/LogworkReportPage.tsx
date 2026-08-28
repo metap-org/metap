@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Card, Container, Group, Stack, Table, Text, TextInput, Title } from "@mantine/core";
-import { ApiErrorMessage, useApiQuery } from "@metap/platform-react";
+import { Card, CardContent, Input, Table, TableBody, TableCell, TableRow } from "@metap/ui";
+import { ApiErrorMessage, useApiQuery } from "@metap/platform-ui";
 import type { ListResponse } from "../api/types";
 import { formatMinutes } from "./IssuePanels";
 
@@ -69,70 +69,76 @@ export function LogworkReportPage() {
   const grandTotal = (worklogs ?? []).reduce((sum, w) => sum + w.data.timeSpentMinutes, 0);
 
   return (
-    <Container size="lg" py="xl">
-      <Group justify="space-between" mb="md">
-        <Title order={2}>Logwork Report</Title>
-        <Group>
-          <TextInput
+    <div className="mx-auto max-w-4xl py-8">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-xl font-semibold text-foreground">Logwork Report</h2>
+        <div className="flex items-center gap-2">
+          <Input
             label="From"
             type="date"
             value={from}
             onChange={(e) => setFrom(e.currentTarget.value)}
           />
-          <TextInput
-            label="To"
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.currentTarget.value)}
-          />
-        </Group>
-      </Group>
+          <Input label="To" type="date" value={to} onChange={(e) => setTo(e.currentTarget.value)} />
+        </div>
+      </div>
 
       {error ? (
-        <Card withBorder mb="md" padding="md">
-          <ApiErrorMessage error={error} />
+        <Card className="mb-4">
+          <CardContent className="pt-4">
+            <ApiErrorMessage error={error} />
+          </CardContent>
         </Card>
       ) : null}
 
       {worklogs ? (
         <>
-          <Text mb="md">
+          <p className="mb-4 text-foreground">
             Total logged: <strong>{formatMinutes(grandTotal)}</strong> across {worklogs.length} entr
             {worklogs.length === 1 ? "y" : "ies"}
             {isFetching ? " (refreshing…)" : ""}
-          </Text>
+          </p>
 
-          <Stack gap="md">
+          <div className="flex flex-col gap-4">
             {byAuthor.map(({ author, entries, total }) => (
-              <Card key={author} withBorder padding="md">
-                <Group justify="space-between" mb="xs">
-                  <Text fw={600}>{author}</Text>
-                  <Text fw={600}>{formatMinutes(total)}</Text>
-                </Group>
-                <Table>
-                  <Table.Tbody>
-                    {entries.map((w) => (
-                      <Table.Tr key={w.id}>
-                        <Table.Td w={120}>{w.data.workDate}</Table.Td>
-                        <Table.Td>
-                          <Text component={Link} to={`/issues/${w.data.issue}`} size="sm">
-                            {w.relatedDisplay?.issue ?? w.data.issue}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td w={100}>{formatMinutes(w.data.timeSpentMinutes)}</Table.Td>
-                        <Table.Td c="dimmed">{w.data.description}</Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
+              <Card key={author}>
+                <CardContent className="pt-4">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="font-semibold text-foreground">{author}</p>
+                    <p className="font-semibold text-foreground">{formatMinutes(total)}</p>
+                  </div>
+                  <Table>
+                    <TableBody>
+                      {entries.map((w) => (
+                        <TableRow key={w.id}>
+                          <TableCell className="w-[120px]">{w.data.workDate}</TableCell>
+                          <TableCell>
+                            <Link
+                              to={`/issues/${w.data.issue}`}
+                              className="text-sm text-foreground"
+                            >
+                              {w.relatedDisplay?.issue ?? w.data.issue}
+                            </Link>
+                          </TableCell>
+                          <TableCell className="w-[100px]">
+                            {formatMinutes(w.data.timeSpentMinutes)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {w.data.description}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
               </Card>
             ))}
             {byAuthor.length === 0 ? (
-              <Text c="dimmed">No work logged in this date range.</Text>
+              <p className="text-muted-foreground">No work logged in this date range.</p>
             ) : null}
-          </Stack>
+          </div>
         </>
       ) : null}
-    </Container>
+    </div>
   );
 }

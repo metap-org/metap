@@ -15,8 +15,8 @@ import {
   CronJobsAdminPage,
   LowCodeEntitiesAdminPage,
   OidcCallbackPage,
-} from "@metap/platform-react";
-import type { ShellNavItem } from "@metap/platform-react";
+} from "@metap/platform-ui";
+import type { ShellNavItem } from "@metap/platform-ui";
 import { LoginPage } from "./demo/LoginPage";
 import { EntitiesPage } from "./demo/EntitiesPage";
 

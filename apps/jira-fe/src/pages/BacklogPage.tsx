@@ -1,27 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DragEvent } from "react";
-import {
-  Badge,
-  Card,
-  Container,
-  Group,
-  Select,
-  SimpleGrid,
-  Stack,
-  Text,
-  Title,
-} from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { Badge, Card, CardContent, Select, toast } from "@metap/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { apiFetch, ApiErrorMessage, useApiQuery, useAuth } from "@metap/platform-react";
+import { apiFetch, ApiErrorMessage, useApiQuery, useAuth } from "@metap/platform-ui";
 import type { IssueRecord, ListResponse, ProjectRecord, SprintRecord } from "../api/types";
 
-const PRIORITY_COLOR: Record<string, string> = {
-  urgent: "red",
-  high: "orange",
-  medium: "yellow",
-  low: "gray",
+const PRIORITY_BADGE: Record<string, "destructive" | "warning" | "default" | "secondary"> = {
+  urgent: "destructive",
+  high: "warning",
+  medium: "default",
+  low: "secondary",
 };
 
 /** `null` id = the "Backlog" column (no sprint assigned yet) — everything else is a real sprint. */
@@ -37,13 +26,17 @@ function IssueCard({
   onDragStart: (e: DragEvent) => void;
 }) {
   return (
-    <Card withBorder padding="sm" draggable onDragStart={onDragStart} style={{ cursor: "grab" }}>
-      <Text size="sm" fw={600} component={Link} to={`/issues/${issue.id}`}>
-        {issue.data.title}
-      </Text>
-      <Badge size="sm" color={PRIORITY_COLOR[issue.data.priority]} variant="light" mt="xs">
-        {issue.data.priority}
-      </Badge>
+    <Card draggable onDragStart={onDragStart} style={{ cursor: "grab" }}>
+      <CardContent className="pt-3">
+        <Link to={`/issues/${issue.id}`} className="text-sm font-semibold text-foreground">
+          {issue.data.title}
+        </Link>
+        <div className="mt-1">
+          <Badge variant={PRIORITY_BADGE[issue.data.priority] ?? "default"}>
+            {issue.data.priority}
+          </Badge>
+        </div>
+      </CardContent>
     </Card>
   );
 }
@@ -129,11 +122,12 @@ export function BacklogPage() {
       });
       await queryClient.invalidateQueries({ queryKey: issuesQueryKey });
     } catch {
-      notifications.show({
-        color: "red",
-        title: "Move failed",
-        message: "The issue may have changed since the board last loaded — reload and try again.",
-      });
+      toast(
+        "Move failed — the issue may have changed since the board last loaded, reload and try again.",
+        {
+          variant: "destructive",
+        },
+      );
       await queryClient.invalidateQueries({ queryKey: issuesQueryKey });
     }
   }
@@ -141,49 +135,54 @@ export function BacklogPage() {
   if (projectsLoading) return <div>Loading…</div>;
 
   return (
-    <Container size="xl" py="xl">
-      <Group justify="space-between" mb="md">
-        <Title order={2}>Backlog</Title>
+    <div className="mx-auto max-w-6xl py-8">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-xl font-semibold text-foreground">Backlog</h2>
         <Select
-          w={280}
+          className="w-[280px]"
           placeholder="Select a project"
-          data={(projects ?? []).map((p) => ({
+          options={(projects ?? []).map((p) => ({
             value: p.id,
             label: `${p.data.key} — ${p.data.name}`,
           }))}
-          value={projectId}
-          onChange={setProjectId}
+          value={projectId ?? undefined}
+          onValueChange={setProjectId}
         />
-      </Group>
+      </div>
 
       {issuesError ? <ApiErrorMessage error={issuesError} /> : null}
       {issuesLoading ? <div>Loading issues…</div> : null}
 
       {!issuesLoading && projectId ? (
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: Math.min(columns.length, 4) }}>
-          {columns.map((column) => (
-            <Stack
-              key={column.id ?? "backlog"}
-              gap="xs"
-              p="xs"
-              style={{ background: "var(--mantine-color-gray-0)", borderRadius: 8, minHeight: 200 }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => void handleDrop(e, column.id)}
-            >
-              <Text fw={700} size="sm">
-                {column.label} ({grouped.get(column.id)?.length ?? 0})
-              </Text>
-              {(grouped.get(column.id) ?? []).map((issue) => (
-                <IssueCard
-                  key={issue.id}
-                  issue={issue}
-                  onDragStart={(e) => handleDragStart(e, issue)}
-                />
-              ))}
-            </Stack>
-          ))}
-        </SimpleGrid>
+        <div className="overflow-x-auto">
+          <div
+            className="grid gap-4"
+            style={{
+              gridTemplateColumns: `repeat(${Math.max(Math.min(columns.length, 4), 1)}, minmax(220px, 1fr))`,
+            }}
+          >
+            {columns.map((column) => (
+              <div
+                key={column.id ?? "backlog"}
+                className="flex min-h-[200px] flex-col gap-2 rounded-lg bg-muted p-2"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => void handleDrop(e, column.id)}
+              >
+                <p className="text-sm font-bold text-foreground">
+                  {column.label} ({grouped.get(column.id)?.length ?? 0})
+                </p>
+                {(grouped.get(column.id) ?? []).map((issue) => (
+                  <IssueCard
+                    key={issue.id}
+                    issue={issue}
+                    onDragStart={(e) => handleDragStart(e, issue)}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
       ) : null}
-    </Container>
+    </div>
   );
 }

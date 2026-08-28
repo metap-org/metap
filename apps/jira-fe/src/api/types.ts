@@ -1,7 +1,7 @@
 // Local, hand-written types for this demo app's own pages (Dashboard/Board) — deliberately not
-// the generated `EntitySummary`/`EntityField` types from `@metap/platform-react` (those describe
+// the generated `EntitySummary`/`EntityField` types from `@metap/platform-ui` (those describe
 // *metadata*, not a *record*'s wire shape). `RecordDto`'s wire shape isn't exported from
-// `@metap/platform-react` either (`WorkflowActionBar` defines its own minimal local copy) — same
+// `@metap/platform-ui` either (`WorkflowActionBar` defines its own minimal local copy) — same
 // approach here, just wider (this app's pages read more fields off an issue than the action bar
 // does).
 

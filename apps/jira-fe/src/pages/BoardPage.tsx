@@ -1,20 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DragEvent } from "react";
-import {
-  Badge,
-  Card,
-  Container,
-  Group,
-  Select,
-  SimpleGrid,
-  Stack,
-  Text,
-  Title,
-} from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { Badge, Card, CardContent, Select, toast } from "@metap/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { apiFetch, ApiErrorMessage, useApiQuery, useAuth, useEntity } from "@metap/platform-react";
+import { apiFetch, ApiErrorMessage, useApiQuery, useAuth, useEntity } from "@metap/platform-ui";
 import type { IssueRecord, ListResponse, ProjectRecord } from "../api/types";
 
 const FALLBACK_STATUS_ORDER = ["todo", "in_progress", "in_review", "done"];
@@ -26,11 +15,11 @@ const STATUS_LABEL: Record<string, string> = {
   done: "Done",
 };
 
-const PRIORITY_COLOR: Record<string, string> = {
-  urgent: "red",
-  high: "orange",
-  medium: "yellow",
-  low: "gray",
+const PRIORITY_BADGE: Record<string, "destructive" | "warning" | "default" | "secondary"> = {
+  urgent: "destructive",
+  high: "warning",
+  medium: "default",
+  low: "secondary",
 };
 
 /** The dataTransfer payload for one dragged card — just enough to find a matching transition
@@ -45,25 +34,21 @@ function IssueCard({
   onDragStart: (e: DragEvent) => void;
 }) {
   return (
-    <Card withBorder padding="sm" draggable onDragStart={onDragStart} style={{ cursor: "grab" }}>
-      <Text size="sm" fw={600} component={Link} to={`/issues/${issue.id}`}>
-        {issue.data.title}
-      </Text>
-      <Group gap="xs" mt="xs">
-        <Badge size="sm" color={PRIORITY_COLOR[issue.data.priority]} variant="light">
-          {issue.data.priority}
-        </Badge>
-        {issue.data.dueDate ? (
-          <Badge size="sm" color="gray" variant="outline">
-            {issue.data.dueDate}
+    <Card draggable onDragStart={onDragStart} style={{ cursor: "grab" }}>
+      <CardContent className="pt-3">
+        <Link to={`/issues/${issue.id}`} className="text-sm font-semibold text-foreground">
+          {issue.data.title}
+        </Link>
+        <div className="mt-1 flex items-center gap-1">
+          <Badge variant={PRIORITY_BADGE[issue.data.priority] ?? "default"}>
+            {issue.data.priority}
           </Badge>
+          {issue.data.dueDate ? <Badge variant="outline">{issue.data.dueDate}</Badge> : null}
+        </div>
+        {issue.data.assigneeEmail ? (
+          <p className="mt-1 text-xs text-muted-foreground">{issue.data.assigneeEmail}</p>
         ) : null}
-      </Group>
-      {issue.data.assigneeEmail ? (
-        <Text size="xs" c="dimmed" mt={4}>
-          {issue.data.assigneeEmail}
-        </Text>
-      ) : null}
+      </CardContent>
     </Card>
   );
 }
@@ -131,11 +116,10 @@ export function BoardPage() {
       (t) => t.from === payload.status && t.to === targetStatus,
     );
     if (!transition) {
-      notifications.show({
-        color: "red",
-        title: "No such transition",
-        message: `An issue can't move directly from "${STATUS_LABEL[payload.status] ?? payload.status}" to "${STATUS_LABEL[targetStatus] ?? targetStatus}".`,
-      });
+      toast(
+        `No such transition: an issue can't move directly from "${STATUS_LABEL[payload.status] ?? payload.status}" to "${STATUS_LABEL[targetStatus] ?? targetStatus}".`,
+        { variant: "destructive" },
+      );
       return;
     }
 
@@ -148,11 +132,12 @@ export function BoardPage() {
       });
       await queryClient.invalidateQueries({ queryKey: issuesQueryKey });
     } catch {
-      notifications.show({
-        color: "red",
-        title: "Transition failed",
-        message: "The issue may have changed since the board last loaded — reload and try again.",
-      });
+      toast(
+        "Transition failed — the issue may have changed since the board last loaded, reload and try again.",
+        {
+          variant: "destructive",
+        },
+      );
       await queryClient.invalidateQueries({ queryKey: issuesQueryKey });
     }
   }
@@ -160,49 +145,54 @@ export function BoardPage() {
   if (projectsLoading) return <div>Loading…</div>;
 
   return (
-    <Container size="xl" py="xl">
-      <Group justify="space-between" mb="md">
-        <Title order={2}>Board</Title>
+    <div className="mx-auto max-w-6xl py-8">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-xl font-semibold text-foreground">Board</h2>
         <Select
-          w={280}
+          className="w-[280px]"
           placeholder="Select a project"
-          data={(projects ?? []).map((p) => ({
+          options={(projects ?? []).map((p) => ({
             value: p.id,
             label: `${p.data.key} — ${p.data.name}`,
           }))}
-          value={projectId}
-          onChange={setProjectId}
+          value={projectId ?? undefined}
+          onValueChange={setProjectId}
         />
-      </Group>
+      </div>
 
       {issuesError ? <ApiErrorMessage error={issuesError} /> : null}
       {issuesLoading ? <div>Loading issues…</div> : null}
 
       {!issuesLoading && projectId ? (
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: statusColumns.length }}>
-          {statusColumns.map((status) => (
-            <Stack
-              key={status}
-              gap="xs"
-              p="xs"
-              style={{ background: "var(--mantine-color-gray-0)", borderRadius: 8, minHeight: 200 }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => void handleDrop(e, status)}
-            >
-              <Text fw={700} size="sm">
-                {STATUS_LABEL[status] ?? status} ({columns.get(status)?.length ?? 0})
-              </Text>
-              {(columns.get(status) ?? []).map((issue) => (
-                <IssueCard
-                  key={issue.id}
-                  issue={issue}
-                  onDragStart={(e) => handleDragStart(e, issue)}
-                />
-              ))}
-            </Stack>
-          ))}
-        </SimpleGrid>
+        <div className="overflow-x-auto">
+          <div
+            className="grid gap-4"
+            style={{
+              gridTemplateColumns: `repeat(${Math.max(statusColumns.length, 1)}, minmax(220px, 1fr))`,
+            }}
+          >
+            {statusColumns.map((status) => (
+              <div
+                key={status}
+                className="flex min-h-[200px] flex-col gap-2 rounded-lg bg-muted p-2"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => void handleDrop(e, status)}
+              >
+                <p className="text-sm font-bold text-foreground">
+                  {STATUS_LABEL[status] ?? status} ({columns.get(status)?.length ?? 0})
+                </p>
+                {(columns.get(status) ?? []).map((issue) => (
+                  <IssueCard
+                    key={issue.id}
+                    issue={issue}
+                    onDragStart={(e) => handleDragStart(e, issue)}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
       ) : null}
-    </Container>
+    </div>
   );
 }

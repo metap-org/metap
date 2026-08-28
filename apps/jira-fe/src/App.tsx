@@ -13,8 +13,8 @@ import {
   PoliciesAdminPage,
   CronJobsAdminPage,
   OidcCallbackPage,
-} from "@metap/platform-react";
-import type { ShellNavItem } from "@metap/platform-react";
+} from "@metap/platform-ui";
+import type { ShellNavItem } from "@metap/platform-ui";
 import { LoginPage } from "./demo/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { BoardPage } from "./pages/BoardPage";

@@ -1,4 +1,4 @@
-import { LoginForm } from "@metap/platform-react";
+import { LoginForm } from "@metap/platform-ui";
 
 /**
  * `LoginForm`'s `tenantId` prop (added when `metap-auth`'s tenant-auth phase shipped) routes
