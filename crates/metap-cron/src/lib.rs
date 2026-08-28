@@ -13,11 +13,12 @@ pub mod store;
 
 pub use model::{
     ClaimedDirectJob, CronJob, CronJobDuePayload, CronJobRun, DispatchMode, OnRecordEventTriggerConfig,
-    OnTransitionTriggerConfig, RunStatus, TargetType, TriggerType, ROUTING_KEY,
+    OnTransitionTriggerConfig, RunStatus, TargetType, TriggerType, WorkflowRun, WorkflowRunStatus, ROUTING_KEY,
 };
 pub use schedule::{next_run_at, validate as validate_schedule};
 pub use store::{
-    claim_due_jobs, claim_due_retries, create_job, delete_job, dispatch_on_record_event_matches,
-    dispatch_on_transition_matches, finish_run, finish_run_with_retry, get_job, list_job_runs, list_jobs, run_status,
-    start_run, update_job, ClaimResult, JobUpdate, NewCronJob,
+    advance_workflow_run, claim_due_jobs, claim_due_retries, create_job, delete_job, dispatch_on_record_event_matches,
+    dispatch_on_transition_matches, fail_workflow_run, finish_run, finish_run_with_retry, finish_workflow_run, get_job,
+    get_workflow_run_by_cron_job_run, list_job_runs, list_jobs, run_status, start_run, start_workflow_run, update_job,
+    ClaimResult, JobUpdate, NewCronJob,
 };

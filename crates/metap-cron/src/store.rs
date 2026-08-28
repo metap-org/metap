@@ -10,7 +10,8 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::model::{
-    ClaimedDirectJob, CronJob, CronJobDuePayload, CronJobRun, DispatchMode, RunStatus, TriggerType, ROUTING_KEY,
+    ClaimedDirectJob, CronJob, CronJobDuePayload, CronJobRun, DispatchMode, RunStatus, TriggerType, WorkflowRun,
+    WorkflowRunStatus, ROUTING_KEY,
 };
 use crate::schedule::next_run_at;
 
@@ -671,4 +672,114 @@ pub async fn finish_run_with_retry(
         "cron job failed, retry scheduled"
     );
     Ok(())
+}
+
+fn workflow_run_from_row(row: &sqlx::postgres::PgRow) -> anyhow::Result<WorkflowRun> {
+    Ok(WorkflowRun {
+        id: row.try_get("id")?,
+        tenant_id: row.try_get("tenant_id")?,
+        job_id: row.try_get("job_id")?,
+        cron_job_run_id: row.try_get("cron_job_run_id")?,
+        status: row.try_get("status")?,
+        current_step_index: row.try_get("current_step_index")?,
+        total_steps: row.try_get("total_steps")?,
+        context: row.try_get("context")?,
+        error: row.try_get("error")?,
+        started_at: row.try_get("started_at")?,
+        finished_at: row.try_get("finished_at")?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+/// Creates the `workflow_runs` row for a `TargetType::Steps` firing — called once at the start
+/// of `cron-scheduler::executor::run_steps`, before the first step executes. One row per
+/// `cron_job_runs` row (enforced by `workflow_runs_cron_job_run_idx`'s uniqueness) — a redelivered
+/// `cron.job.due` message re-entering `run_steps` for an already-completed `cron_job_run_id`
+/// never gets this far (`execute`'s existing `run_status` idempotency check short-circuits
+/// first), so this never needs an upsert.
+pub async fn start_workflow_run(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    job_id: Uuid,
+    cron_job_run_id: Uuid,
+    total_steps: i32,
+) -> anyhow::Result<Uuid> {
+    let row = sqlx::query(
+        "INSERT INTO workflow_runs (tenant_id, job_id, cron_job_run_id, status, total_steps) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(tenant_id)
+    .bind(job_id)
+    .bind(cron_job_run_id)
+    .bind(WorkflowRunStatus::Running.as_str())
+    .bind(total_steps)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.try_get("id")?)
+}
+
+/// Records step `step_index`'s successful result and advances `current_step_index` past it —
+/// called after each step in `run_steps` completes. `result` is merged into `context` under key
+/// `"step_<index>"` (audit trail only, per `TargetType::Steps`'s doc comment — no later step
+/// reads it back).
+pub async fn advance_workflow_run(
+    pool: &PgPool,
+    run_id: Uuid,
+    step_index: i32,
+    result: &serde_json::Value,
+) -> anyhow::Result<()> {
+    sqlx::query("UPDATE workflow_runs SET current_step_index = $1, context = jsonb_set(context, $2, $3) WHERE id = $4")
+        .bind(step_index + 1)
+        .bind(vec![format!("step_{step_index}")])
+        .bind(result)
+        .bind(run_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Marks the whole chain `Success` once every step has completed — called at the end of
+/// `run_steps`.
+pub async fn finish_workflow_run(pool: &PgPool, run_id: Uuid) -> anyhow::Result<()> {
+    sqlx::query("UPDATE workflow_runs SET status = $1, finished_at = now() WHERE id = $2")
+        .bind(WorkflowRunStatus::Success.as_str())
+        .bind(run_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Marks the chain `Failed` at `step_index` (the step that failed — `current_step_index` is left
+/// pointing at it rather than advanced past it, so it's visible which step stopped the chain).
+pub async fn fail_workflow_run(pool: &PgPool, run_id: Uuid, step_index: i32, error: &str) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE workflow_runs SET status = $1, current_step_index = $2, error = $3, finished_at = now() \
+         WHERE id = $4",
+    )
+    .bind(WorkflowRunStatus::Failed.as_str())
+    .bind(step_index)
+    .bind(error)
+    .bind(run_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Looks up the `workflow_runs` row for a given `cron_job_runs.id` — lets an operator inspect
+/// step-level progress for one firing via `GET /admin/cron-jobs/{jobId}/runs/{runId}/workflow-run`
+/// alongside the plain `CronJobRun` row `list_job_runs` already exposes. `Ok(None)` both when the
+/// run hasn't reached `run_steps` yet (shouldn't normally be observed — `start_workflow_run`
+/// happens synchronously before any step runs) and when the job isn't a `"steps"` job at all;
+/// callers can't distinguish those, which is fine — both mean "nothing to show here".
+pub async fn get_workflow_run_by_cron_job_run(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    cron_job_run_id: Uuid,
+) -> anyhow::Result<Option<WorkflowRun>> {
+    let row = sqlx::query("SELECT * FROM workflow_runs WHERE tenant_id = $1 AND cron_job_run_id = $2")
+        .bind(tenant_id)
+        .bind(cron_job_run_id)
+        .fetch_optional(pool)
+        .await?;
+    row.as_ref().map(workflow_run_from_row).transpose()
 }

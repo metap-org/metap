@@ -1,6 +1,6 @@
 # Metadata-driven Workflow Engine (State Machine + Workflow composition)
 
-- **Trạng thái:** Increment 1 done (2026-08-21); Increment 2/3 vẫn approved, chưa code
+- **Trạng thái:** Increment 1 done (2026-08-21); Increment 2 done (2026-08-28); Increment 3 vẫn approved, chưa code — chờ Increment 1+2 chạy thật lộ ra nhu cầu cụ thể (đúng kỷ luật trigger-based đã ghi ở Phạm vi bên dưới)
 - **Người đề xuất:** chủ dự án, 2026-08-21
 - **Track sở hữu:** Backend Core
 - **Phase roadmap liên quan:** Phase 17
@@ -114,6 +114,69 @@ Jira/Confluence cần ở tầng automation.
 consumer subscribe `#.workflow.transitioned` không có cách nào biết event thuộc tenant nào để
 scope lookup đúng. Cập nhật 1 call site (`CrudService::transition`) + 1 e2e test.
 
+## Tiêu chí chấp nhận (Increment 2) — Đã xong (2026-08-28)
+
+`TargetType::Steps` thứ 5 (cạnh `workflow_transition`/`bulk_query_action`/`webhook`/`email`) —
+`targetConfig: { steps: [{ targetType, targetConfig }, ...] }`, mỗi step là một trong 4
+`TargetType` còn lại (không cho lồng `"steps"` — chặn ngay lúc tạo job qua
+`metap-http::routes::cron::validate_target_config`, không đợi tới lúc chạy mới phát hiện).
+`cron-scheduler::executor::run_steps` chạy tuần tự từng step **trong cùng một lần dispatch** —
+đúng scope đã ghi ("chưa cần durable pause vì các bước chạy nối tiếp ngay"), không có nhánh
+rẽ/wait, không step nào đọc lại output của step trước (`targetConfig` mỗi step tĩnh, không có
+templating).
+
+- Bảng mới `workflow_runs` (`crates/migrations/0023_workflow_runs.sql`): `id`, `tenant_id`,
+  `job_id`, `cron_job_run_id` (FK 1-1 vào đúng `cron_job_runs` row của lần dispatch đó, unique
+  index), `status` (`running`/`success`/`failed`), `current_step_index`, `total_steps`, `context`
+  jsonb (kết quả từng step, key `step_<index>`, thuần audit — không step nào đọc lại), `error`.
+  4 hàm store mới (`start_workflow_run`/`advance_workflow_run`/`finish_workflow_run`/
+  `fail_workflow_run`) + 1 hàm đọc (`get_workflow_run_by_cron_job_run`).
+- Một step fail thì dừng cả chuỗi ngay tại đó — `workflow_runs` ghi `status: failed`,
+  `current_step_index` giữ nguyên ở step fail (không advance qua), `error` là lỗi của đúng step
+  đó. Cả lần dispatch (`cron_job_runs`) cũng `failed` — **retry-with-backoff của Increment 1 tái
+  dùng y nguyên, không sửa gì**: job có `maxAttempts > 1` sẽ tự retry lại từ step 0 (không phải
+  resume từ step fail — resume có state là việc của Increment 3's `wait_event`, không phải đây).
+- `run_webhook`/`run_email` (tái dùng y hệt cho cả job đơn lẻ lẫn từng step trong chuỗi) đổi chữ
+  ký nhận `job_id`/`run_id`/`trigger_entity`/`trigger_record_id` tường minh thay vì đọc từ
+  `CronJobDuePayload` — một step dùng đúng `job_id`/`run_id`/trigger context của **cả chuỗi**
+  (không phải giả một payload rỗng/nil, cách đó sẽ làm webhook body của step nói dối về
+  `jobId`/`runId`).
+- `GET /admin/cron-jobs/{jobId}/runs/{runId}/workflow-run` — route admin mới, đọc progress từng
+  step cho một lần dispatch cụ thể (song song `GET .../runs` đã có cho `CronJobRun` thô).
+- Migration: `crates/migrations/0023_workflow_runs.sql`.
+
+**Verify sống qua HTTP + RabbitMQ + Postgres thật** (đúng độ nghiêm ngặt Increment 1 đã đặt ra —
+không dừng ở e2e test giả lập, dù có 4 e2e test mới `crates/metap-cron/tests/
+workflow_runs_postgres.rs` phủ store layer): boot thật `crm-server` + `outbox-publisher` +
+`cron-scheduler` (Postgres 16 + RabbitMQ 3.12 cài native qua apt trong phiên này thay cho
+Docker — Docker Hub bị chặn bởi policy tổ chức lúc chạy phiên này, không phải lỗi cấu hình, xem
+ghi chú cuối mục này).
+
+- **Happy path**: job `on_transition` (khi `crm.customers` bị `block`) với `targetType: "steps"`,
+  2 step `workflow_transition` (activate record B rồi activate record C) — block record A (nguồn
+  trigger) → round trip đầy đủ `emit_transitioned` → outbox → `outbox-publisher` → RabbitMQ →
+  `cron-scheduler`'s trigger listener → `run_steps` → cả B lẫn C chuyển `draft` → `active` đúng
+  thứ tự. `GET .../workflow-run` trả về `status: success`, `currentStepIndex: 2`,
+  `context: {step_0: {...B...}, step_1: {...C...}}`.
+- **Failure path**: step 0 cố activate một record đã `active` sẵn (409 `invalid_transition`) →
+  chuỗi dừng ngay, step 1's target (record E, đang `draft`) **không** bị đụng tới (verify trực
+  tiếp qua `GET /api/crm.customers/{E}` — vẫn `draft`) → `workflow-run` trả `status: failed`,
+  `currentStepIndex: 0`, `error` đúng nội dung lỗi HTTP 409 của step 0, `context: {}` (step 0
+  chưa từng thành công nên không có gì để ghi).
+- **Validation**: `POST /admin/cron-jobs` với `targetType: "steps"` — thiếu `targetConfig.steps`,
+  `steps: []`, hoặc một step có `targetType: "steps"` (lồng chuỗi) đều `400 validation_failed`
+  đúng thông điệp, chặn trước khi ghi job xuống DB.
+
+**Ghi chú hạ tầng phiên này (không phải một phần thiết kế/code của Increment 2, chỉ là cách môi
+trường được dựng để verify)**: Docker daemon của phiên bị dừng giữa chừng và việc pull ảnh
+`postgres`/`rabbitmq` mới từ Docker Hub bị chặn bởi policy tổ chức (403 ở tầng proxy khi gọi
+`production.cloudfront.docker.com`, không phải lỗi cấu hình proxy — không thử lại theo đúng
+hướng dẫn `/root/.ccr/README.md`). Postgres 16 hoá ra đã có sẵn dưới dạng gói hệ thống (apt) với
+đúng database `metap`/user `metap` từ trước, chỉ cần `service postgresql start`; RabbitMQ được
+cài mới qua `apt-get install rabbitmq-server` (từ kho Ubuntu chính thức, không phải Docker Hub —
+không vướng policy) rồi tạo user `metap`/`metap` khớp `.env`. Không ảnh hưởng gì tới code hay kết
+quả verify — cùng phiên bản Postgres 16/protocol AMQP y hệt `docker-compose.yml` dùng.
+
 ## Ranh giới kiến trúc bị đụng tới
 
 - **Quyết định 2026-08-21: tiến hoá `metap-cron`/`cron-scheduler` tại chỗ**, không tách crate
@@ -125,8 +188,8 @@ scope lookup đúng. Cập nhật 1 call site (`CrudService::transition`) + 1 e2
   - Tiến hoá `metap-cron` được: tái dùng ngay ~70% hạ tầng đã proven, một hệ thống duy nhất cho
     "trigger → dispatch activity". Mất: tên `cron_jobs`/`metap-cron` không còn khớp nghĩa 100%
     (chấp nhận là nợ kỹ thuật, xem Increment 1 ở trên — không rename ngay nên không cần ADR).
-- Migration mới cho `workflow_runs` (Increment 2) — namespace riêng, không đụng `cron_jobs`/
-  `workflow_events` hiện có.
+- Migration mới cho `workflow_runs` (Increment 2, đã áp dụng) — namespace riêng, không đụng
+  `cron_jobs`/`workflow_events` hiện có; chỉ FK 1-1 vào `cron_job_runs.id`.
 - `EventBus::subscribe` đã tồn tại, dùng lại nguyên trạng — không cần đổi `metap-infra`.
 
 ## Rủi ro / phụ thuộc
