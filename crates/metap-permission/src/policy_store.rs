@@ -135,6 +135,30 @@ pub trait PolicyStore: Send + Sync {
     ) -> anyhow::Result<PolicyRow>;
 
     async fn delete_policy(&self, tenant_id: Uuid, id: Uuid) -> anyhow::Result<()>;
+
+    /// Replaces the entire "basic-shaped" policy set for `(tenant_id, entity)` in one atomic
+    /// operation — the write side of the frontend's RBAC permission matrix (`PermissionMatrix`,
+    /// `platform-ui/src/admin/policies/`). "Basic-shaped" means `condition IS NULL`, `field IS
+    /// NULL`, `subject = 'context'`, `effect = 'allow'` (exactly `isBasicShapedRow` on the
+    /// frontend) — this never touches a policy the matrix can't represent (an Advanced-tab row
+    /// with a condition, field scope, record subject, or deny effect), those are untouched.
+    ///
+    /// `grants` is the complete desired set of `(role, action)` pairs for this entity —
+    /// `role: None` means "Everyone" (an open, `roles IS NULL` row), matching the matrix's
+    /// pinned Everyone row. Implementations delete every existing basic-shaped row for this
+    /// entity first, then insert exactly one row per grant (never a shared multi-role row) — the
+    /// matrix's earlier "check a cell" flow used to fire one HTTP call per click (occasionally
+    /// two, to split a legacy shared-multi-role row); replacing the whole set in one server-side
+    /// transaction turns an editing session's worth of clicks into exactly one HTTP call, and
+    /// incidentally eliminates the shared-row-splitting case entirely — every basic-shaped row
+    /// this produces is already one-role-per-row by construction.
+    async fn sync_basic_policies(
+        &self,
+        tenant_id: Uuid,
+        entity: &str,
+        grants: Vec<(Option<String>, String)>,
+        created_by: Option<Uuid>,
+    ) -> anyhow::Result<Vec<PolicyRow>>;
 }
 
 // The Postgres/`Router`-backed impl of this trait, `PostgresPolicyStore`, lives in

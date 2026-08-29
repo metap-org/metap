@@ -90,7 +90,19 @@ pub enum EntityAction {
 }
 
 impl EntityAction {
-    pub fn as_str(&self) -> &'static str {
+    /// Every action a policy can grant — the single source of truth for `metap-http`'s
+    /// `KNOWN_ACTIONS`/`seed_default_policies` default and the `GET /metadata/actions` route, so
+    /// the two can't drift the way `metap-http`'s own hand-written `[&str; 5]` mirror already
+    /// had (used to silently duplicate this list rather than derive from it).
+    pub const ALL: [EntityAction; 5] = [
+        EntityAction::Read,
+        EntityAction::Create,
+        EntityAction::Update,
+        EntityAction::Delete,
+        EntityAction::Transition,
+    ];
+
+    pub const fn as_str(&self) -> &'static str {
         match self {
             EntityAction::Read => "read",
             EntityAction::Create => "create",

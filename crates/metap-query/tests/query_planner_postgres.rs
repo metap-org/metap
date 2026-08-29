@@ -56,6 +56,15 @@ impl PolicyStore for UnusedPolicyStore {
     async fn delete_policy(&self, _: Uuid, _: Uuid) -> anyhow::Result<()> {
         unreachable!("plan_list never calls this")
     }
+    async fn sync_basic_policies(
+        &self,
+        _: Uuid,
+        _: &str,
+        _: Vec<(Option<String>, String)>,
+        _: Option<Uuid>,
+    ) -> anyhow::Result<Vec<PolicyRow>> {
+        unreachable!("plan_list never calls this")
+    }
 }
 
 fn field(name: &str, kind: FieldKind, sortable: bool, searchable: bool) -> EntityField {

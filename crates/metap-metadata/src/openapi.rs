@@ -220,6 +220,30 @@ pub fn generate_openapi_document(entities: &[EntitySummary]) -> Value {
         }),
     );
 
+    paths.insert(
+        "/metadata/actions".to_string(),
+        json!({
+            "get": {
+                "summary": "List the fixed set of actions a policy can grant",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": { "type": "array", "items": { "type": "string" } },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }),
+    );
+
     for entity in entities {
         let schema = entity_schema(entity);
         let list_path = format!("/api/{}", entity.name);

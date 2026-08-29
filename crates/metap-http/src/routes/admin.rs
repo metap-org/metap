@@ -11,9 +11,9 @@ use std::collections::HashMap;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use metap_permission::{PolicyCondition, PolicyEffect, PolicyRow, PolicySubject};
+use metap_permission::{EntityAction, PolicyCondition, PolicyEffect, PolicyRow, PolicySubject};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -284,7 +284,16 @@ async fn create_policy(
     }
 }
 
-const KNOWN_ACTIONS: [&str; 5] = ["read", "create", "update", "delete", "transition"];
+/// Derived from `EntityAction::ALL` (single source of truth, `metap-permission`) rather than a
+/// second hand-typed list — also the same list `GET /metadata/actions` (`routes/metadata.rs`)
+/// exposes to the frontend, so the two can't drift.
+const KNOWN_ACTIONS: [&str; 5] = [
+    EntityAction::Read.as_str(),
+    EntityAction::Create.as_str(),
+    EntityAction::Update.as_str(),
+    EntityAction::Delete.as_str(),
+    EntityAction::Transition.as_str(),
+];
 
 #[derive(Deserialize)]
 struct SeedDefaultPoliciesBody {
@@ -375,6 +384,62 @@ async fn delete_policy(
 }
 
 #[derive(Deserialize)]
+struct MatrixGrant {
+    /// `None` = the matrix's pinned "Everyone" row (an open, `roles IS NULL` policy).
+    role: Option<String>,
+    action: String,
+}
+
+#[derive(Deserialize)]
+struct SyncMatrixBody {
+    entity: String,
+    /// The complete desired set of `(role, action)` grants for this entity — anything not
+    /// listed here is removed. See `PermissionService::sync_basic_policies`'s doc comment.
+    grants: Vec<MatrixGrant>,
+}
+
+/// The RBAC permission matrix's single save call — replaces every basic-shaped policy for
+/// `body.entity` with exactly `body.grants` in one atomic transaction
+/// (`PolicyStore::sync_basic_policies`), instead of the matrix firing one `POST`/`DELETE` per
+/// checkbox click. Never touches an Advanced-tab policy (condition/field/record-subject/deny) —
+/// see that trait method's doc comment for the exact boundary.
+async fn sync_matrix_policies(
+    State(state): State<AppState>,
+    AdminContext(context): AdminContext,
+    Json(body): Json<SyncMatrixBody>,
+) -> Response {
+    let tenant_id = match state.permissions.scoped_tenant(&context) {
+        Ok(id) => id,
+        Err(e) => return internal_error_response(e),
+    };
+    if let Some(unknown) = body.grants.iter().find(|g| !KNOWN_ACTIONS.contains(&g.action.as_str())) {
+        return service_error_response(
+            400,
+            "validation_failed",
+            Some(&format!(
+                "Unknown action \"{}\" — must be one of {KNOWN_ACTIONS:?}.",
+                unknown.action
+            )),
+            None,
+        );
+    }
+
+    let created_by = context.user_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
+    let grants: Vec<(Option<String>, String)> = body.grants.into_iter().map(|g| (g.role, g.action)).collect();
+    match state
+        .permissions
+        .sync_basic_policies(tenant_id, &body.entity, grants, created_by)
+        .await
+    {
+        Ok(rows) => {
+            let data: Vec<Value> = rows.iter().map(policy_to_json).collect();
+            Json(json!({ "data": data })).into_response()
+        }
+        Err(e) => internal_error_response(e),
+    }
+}
+
+#[derive(Deserialize)]
 struct ExplainBody {
     entity: String,
     action: String,
@@ -411,6 +476,7 @@ pub fn router() -> Router<AppState> {
         .route("/admin/users/{userId}/context/invalidate", post(invalidate_context))
         .route("/admin/policies", get(list_policies).post(create_policy))
         .route("/admin/policies/seed-defaults", post(seed_default_policies))
+        .route("/admin/policies/matrix", put(sync_matrix_policies))
         .route("/admin/policies/explain", post(explain_policy))
         .route("/admin/policies/{id}", axum::routing::delete(delete_policy))
 }

@@ -124,6 +124,43 @@ impl PolicyStore for TestPolicyStore {
             .await?;
         Ok(())
     }
+
+    async fn sync_basic_policies(
+        &self,
+        tenant_id: Uuid,
+        entity: &str,
+        grants: Vec<(Option<String>, String)>,
+        created_by: Option<Uuid>,
+    ) -> anyhow::Result<Vec<PolicyRow>> {
+        let mut tx = self.0.begin().await?;
+        sqlx::query(
+            "DELETE FROM policies WHERE tenant_id = $1 AND entity = $2 AND condition IS NULL \
+             AND field IS NULL AND subject = 'context' AND effect = 'allow'",
+        )
+        .bind(tenant_id)
+        .bind(entity)
+        .execute(&mut *tx)
+        .await?;
+
+        let mut rows = Vec::with_capacity(grants.len());
+        for (role, action) in &grants {
+            let roles_json = role.as_ref().map(|r| sqlx::types::Json(vec![r.clone()]));
+            let row = sqlx::query(
+                "INSERT INTO policies (tenant_id, entity, action, roles, condition, created_by, field, subject, effect) \
+                 VALUES ($1, $2, $3, $4, NULL, $5, NULL, 'context', 'allow') RETURNING *",
+            )
+            .bind(tenant_id)
+            .bind(entity)
+            .bind(action)
+            .bind(roles_json)
+            .bind(created_by)
+            .fetch_one(&mut *tx)
+            .await?;
+            rows.push(row_from_sql(&row)?);
+        }
+        tx.commit().await?;
+        Ok(rows)
+    }
 }
 
 /// Wraps `TestPolicyStore`, counting `load_all_policies` calls — the only way to prove
@@ -188,6 +225,18 @@ impl PolicyStore for CountingPolicyStore {
 
     async fn delete_policy(&self, tenant_id: Uuid, id: Uuid) -> anyhow::Result<()> {
         self.inner.delete_policy(tenant_id, id).await
+    }
+
+    async fn sync_basic_policies(
+        &self,
+        tenant_id: Uuid,
+        entity: &str,
+        grants: Vec<(Option<String>, String)>,
+        created_by: Option<Uuid>,
+    ) -> anyhow::Result<Vec<PolicyRow>> {
+        self.inner
+            .sync_basic_policies(tenant_id, entity, grants, created_by)
+            .await
     }
 }
 

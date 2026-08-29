@@ -193,6 +193,24 @@ impl PermissionService {
         Ok(row)
     }
 
+    /// Replaces the whole RBAC permission-matrix state for `(tenant_id, entity)` in one call —
+    /// see `PolicyStore::sync_basic_policies`'s doc comment for exactly what "basic-shaped"
+    /// means and why this can't touch an Advanced-tab policy.
+    pub async fn sync_basic_policies(
+        &self,
+        tenant_id: Uuid,
+        entity: &str,
+        grants: Vec<(Option<String>, String)>,
+        created_by: Option<Uuid>,
+    ) -> anyhow::Result<Vec<PolicyRow>> {
+        let rows = self
+            .store
+            .sync_basic_policies(tenant_id, entity, grants, created_by)
+            .await?;
+        self.invalidate_policies_cache(tenant_id, entity).await;
+        Ok(rows)
+    }
+
     /// Looks the policy up first (to learn which entity's cache entry to drop) only when a
     /// cache is actually configured — the extra `list_policies` round-trip is a no-op cost for
     /// the common uncached deployment, and a rare-admin-action cost otherwise (never on any

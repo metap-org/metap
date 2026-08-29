@@ -60,6 +60,15 @@ impl PolicyStore for UnusedPolicyStore {
     async fn delete_policy(&self, _: Uuid, _: Uuid) -> anyhow::Result<()> {
         unimplemented!()
     }
+    async fn sync_basic_policies(
+        &self,
+        _: Uuid,
+        _: &str,
+        _: Vec<(Option<String>, String)>,
+        _: Option<Uuid>,
+    ) -> anyhow::Result<Vec<PolicyRow>> {
+        unimplemented!()
+    }
 }
 
 fn field(name: &str, kind: FieldKind, indexed: bool, sortable: bool, searchable: bool) -> EntityField {

@@ -9,6 +9,8 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::{json, Value};
 
+use metap_permission::EntityAction;
+
 use crate::auth::AuthContext;
 use crate::error::service_error_response;
 use crate::state::AppState;
@@ -43,6 +45,16 @@ async fn get_entity(
     }
 }
 
+/// The fixed action set a policy can grant (`EntityAction::ALL`) — static, non-sensitive shape
+/// information (same category as entity/field names), not admin-only. Exists so the frontend's
+/// permission-matrix UI has a single source of truth for its action columns instead of a second
+/// hand-typed mirror of this list (the exact drift `metap-http::routes::admin::KNOWN_ACTIONS`
+/// already had before it was pointed at `EntityAction::ALL` too).
+async fn list_actions(AuthContext(_context): AuthContext) -> Response {
+    let actions: Vec<&'static str> = EntityAction::ALL.iter().map(EntityAction::as_str).collect();
+    Json(json!({ "data": actions })).into_response()
+}
+
 /// Public — no auth required, matches `registerOpenApiRoute`.
 pub fn public_router() -> Router<AppState> {
     Router::new().route("/metadata/openapi.json", get(openapi_json))
@@ -53,4 +65,5 @@ pub fn protected_router() -> Router<AppState> {
     Router::new()
         .route("/metadata/entities", get(list_entities))
         .route("/metadata/entities/{entity}", get(get_entity))
+        .route("/metadata/actions", get(list_actions))
 }

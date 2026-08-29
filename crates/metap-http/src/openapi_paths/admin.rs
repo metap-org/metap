@@ -117,6 +117,27 @@ pub(crate) fn admin_paths(paths: &mut Map<String, Value>) {
     );
     insert(
         paths,
+        "/admin/policies/matrix",
+        json!({
+            "put": {
+                "summary": "Replace the entire RBAC permission-matrix state for one entity in a single atomic call",
+                "requestBody": { "content": { "application/json": { "schema": {
+                    "type": "object",
+                    "properties": {
+                        "entity": { "type": "string" },
+                        "grants": { "type": "array", "items": { "type": "object", "properties": {
+                            "role": { "type": "string", "nullable": true },
+                            "action": { "type": "string" },
+                        }, "required": ["action"] } },
+                    },
+                    "required": ["entity", "grants"],
+                } } } },
+                "responses": { "200": { "description": "OK" } },
+            },
+        }),
+    );
+    insert(
+        paths,
         "/admin/policies/explain",
         json!({
             "post": {
