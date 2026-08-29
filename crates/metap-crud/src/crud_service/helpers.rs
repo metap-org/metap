@@ -254,6 +254,50 @@ pub(crate) async fn fetch_existing<'e, E: PgExecutor<'e>>(
     .transpose()
 }
 
+/// Batched counterpart to `fetch_existing`, for `CrudService::get_many` — one query for every id
+/// instead of one `fetch_existing` call per id. Unlike `fetch_related_records_batch` (which only
+/// ever needs the raw `data` blob for cross-record permission evaluation), this returns full
+/// `RecordDto`s since `get_many`'s caller-facing contract mirrors `get`'s, not an internal
+/// enrichment hop's. Order is whatever `= ANY($1)` returns (not necessarily `ids`' order) —
+/// `get_many` reorders to match the caller's `ids`.
+pub(crate) async fn fetch_existing_batch<'e, E: PgExecutor<'e>>(
+    executor: E,
+    ids: &[Uuid],
+    tenant_id: Uuid,
+    entity: &EntityDefinition,
+) -> anyhow::Result<Vec<RecordDto>> {
+    let dedicated = is_dedicated(entity);
+    let table = &entity.table_name;
+    let rows = if dedicated {
+        sqlx::query(&format!(
+            "SELECT {RECORD_COLUMNS_DEDICATED} FROM {table} WHERE id = ANY($1) AND tenant_id = $2 AND deleted = false"
+        ))
+        .bind(ids)
+        .bind(tenant_id)
+        .fetch_all(executor)
+        .await?
+    } else {
+        sqlx::query(&format!(
+            "SELECT {RECORD_COLUMNS} FROM {table} \
+             WHERE id = ANY($1) AND tenant_id = $2 AND entity = $3 AND deleted = false"
+        ))
+        .bind(ids)
+        .bind(tenant_id)
+        .bind(&entity.name)
+        .fetch_all(executor)
+        .await?
+    };
+    rows.into_iter()
+        .map(|r| {
+            if dedicated {
+                row_to_dto_dedicated(r, &entity.name)
+            } else {
+                row_to_dto(r)
+            }
+        })
+        .collect()
+}
+
 /// Raw `data` fetch for one hop of cross-record permission enrichment (see
 /// `CrudService::enrich_record_for_actions`) — deliberately not `fetch_existing` (no need for
 /// the full `RecordDto`/`RECORD_COLUMNS` shape, just the JSONB blob to merge into a subject)

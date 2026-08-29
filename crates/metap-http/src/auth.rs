@@ -16,26 +16,13 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
-use jsonwebtoken::{decode, Algorithm, Validation};
 use metap_auth::{AuthProviderKind, LocalPasswordProvider};
-use metap_peripherals::{fetch_context_attributes, get_roles_for_user, JWT_AUDIENCE, JWT_ISSUER};
+use metap_control::resolve_request_context;
+use metap_peripherals::{decode_access_token, get_roles_for_user};
 use metap_permission::RequestContext;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::state::AppState;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,
-    #[serde(rename = "tenantId")]
-    tenant_id: String,
-    #[serde(rename = "functionId")]
-    function_id: Option<String>,
-    exp: usize,
-    iss: String,
-    aud: String,
-}
 
 #[derive(Debug)]
 pub struct AuthError {
@@ -108,74 +95,30 @@ where
             .strip_prefix("Bearer ")
             .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
 
-        let mut validation = Validation::new(Algorithm::RS256);
-        validation.set_audience(&[JWT_AUDIENCE]);
-        validation.set_issuer(&[JWT_ISSUER]);
-        // Default is 60s (`docs/roadmap.md`'s Phase 20 security checklist flagged this as wider
-        // than needed — no revocation list exists, so exp+leeway is the only bound on how long a
-        // leaked token stays usable past its stated expiry). Tightened to 20s per project owner
-        // decision 2026-08-24 — still enough to forgive minor clock drift between processes.
-        validation.leeway = 20;
-        let token_data = decode::<Claims>(token, &app_state.jwt_decoding_key, &validation)
+        // Default leeway is 60s (`docs/roadmap.md`'s Phase 20 security checklist flagged this as
+        // wider than needed — no revocation list exists, so exp+leeway is the only bound on how
+        // long a leaked token stays usable past its stated expiry). Tightened to 20s per project
+        // owner decision 2026-08-24 — still enough to forgive minor clock drift between processes.
+        let claims = decode_access_token(token, &app_state.jwt_decoding_key, 20)
             .map_err(|_| AuthError::unauthorized("Invalid or expired token."))?;
-        let claims = token_data.claims;
 
         let tenant_id = Uuid::parse_str(&claims.tenant_id)
             .map_err(|_| AuthError::unauthorized("Token is missing required claims."))?;
         let user_id =
             Uuid::parse_str(&claims.sub).map_err(|_| AuthError::unauthorized("Token is missing required claims."))?;
 
-        // Routed through `Router` (`docs/roadmap.md` Phase 16 gap, closed 2026-08-20), not
-        // `app_state.pool` directly — a `DedicatedDb`-strategy tenant's `user_roles` table
-        // lives only in that tenant's own database. `PLATFORM_TENANT_ID` (the sentinel
-        // `PlatformAdminContext` checks for) is never a real `control.tenants` row by design,
-        // so `Router::begin` takes its documented unregistered-tenant fallback
-        // (`{Active, Schema("public")}`) for it — exactly where `users`/`user_roles` for that
-        // sentinel actually live, so no special-casing is needed here.
-        let mut tx = app_state
-            .router
-            .begin(tenant_id.into())
-            .await
-            .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
-        let roles = get_roles_for_user(&mut *tx, tenant_id, user_id)
-            .await
-            .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
-        tx.commit()
-            .await
-            .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
+        let context = resolve_request_context(
+            &app_state.router,
+            tenant_id,
+            user_id,
+            claims.function_id,
+            app_state.auth_context_entity.as_deref(),
+            &app_state.context_attributes_cache,
+        )
+        .await
+        .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
 
-        // `AUTH_CONTEXT_ENTITY` opt-in (`docs/features/03-organization-identity.md`) — cached
-        // (`context_attributes_cache`, unlike `roles` above, which is always fresh). Best-effort:
-        // a lookup/cache error here must never block login, since this is supplementary ABAC
-        // context, not an identity/role check.
-        let context_attributes = match &app_state.auth_context_entity {
-            Some(entity_name) => {
-                let entity_name = entity_name.clone();
-                let router = app_state.router.clone();
-                app_state
-                    .context_attributes_cache
-                    .get_with(tenant_id, user_id, move || async move {
-                        let mut tx = router.begin(tenant_id.into()).await?;
-                        let result = fetch_context_attributes(&mut *tx, tenant_id, &entity_name, user_id).await?;
-                        tx.commit().await?;
-                        Ok(result)
-                    })
-                    .await
-                    .unwrap_or_else(|err| {
-                        tracing::warn!(%tenant_id, %user_id, error = %err, "failed to resolve context attributes");
-                        None
-                    })
-            }
-            None => None,
-        };
-
-        Ok(AuthContext(RequestContext {
-            tenant_id: claims.tenant_id,
-            user_id: Some(claims.sub),
-            roles: Some(roles),
-            function_id: claims.function_id,
-            context_attributes,
-        }))
+        Ok(AuthContext(context))
     }
 }
 

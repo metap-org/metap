@@ -8,6 +8,7 @@
 //! rather than a stricter `default-src 'none'` that would break it.
 
 use axum::extract::Request;
+use axum::http::header::CONTENT_SECURITY_POLICY;
 use axum::http::HeaderValue;
 use axum::middleware::Next;
 use axum::response::Response;
@@ -20,7 +21,15 @@ const CSP: &str = "default-src 'self'; base-uri 'self'; font-src 'self' https: d
 pub async fn security_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    headers.insert("content-security-policy", HeaderValue::from_static(CSP));
+    // `.entry(...).or_insert_with(...)`, not a blanket `.insert()` — a handler that needs a
+    // genuinely different policy for its own response (e.g. `metap-graphql-http`'s
+    // `playground_router`, which serves a third-party-script-loading GraphiQL page and can't
+    // run under this API-shaped default) sets its own `content-security-policy` header before
+    // this middleware runs; every other route (the overwhelming majority) never sets one, so
+    // this default still applies to them exactly as before.
+    headers
+        .entry(CONTENT_SECURITY_POLICY)
+        .or_insert_with(|| HeaderValue::from_static(CSP));
     headers.insert("cross-origin-opener-policy", HeaderValue::from_static("same-origin"));
     headers.insert("cross-origin-resource-policy", HeaderValue::from_static("same-origin"));
     headers.insert("origin-agent-cluster", HeaderValue::from_static("?1"));

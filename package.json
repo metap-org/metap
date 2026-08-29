@@ -17,6 +17,7 @@
     "worker:notification:rs": "cd apps/crm-server && cargo watch -w ../../crates -x 'run -p metap-notification-worker'",
     "worker:cron:rs": "cd apps/crm-server && cargo watch -w ../../crates -x 'run -p metap-cron-scheduler'",
     "worker:reconciler:rs": "cd apps/crm-server && cargo watch -w ../../crates -x 'run -p metap-reconciler-orchestrator'",
+    "gateway:rs": "cd crates/graphql-gateway && cargo watch -w ../../crates -x 'run -p metap-graphql-gateway'",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "test:rs": "cargo test --workspace",

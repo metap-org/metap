@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package metap.crud.v1;
+
+import "google/protobuf/struct.proto";
+
+// A generic, metadata-driven CRUD surface — one message shape for every entity a
+// `MetadataRegistry` knows about, mirroring how `/api/:entity*` (REST) and
+// `/metadata/openapi.json` are already generic over entity rather than generated per-entity.
+// `google.protobuf.Struct` (a JSON-shaped map) carries record data instead of a per-entity
+// message, since entities are runtime metadata here, not compile-time Rust/proto types —
+// `CrudService::create`/`update` already validate/coerce a payload against `EntityField`/
+// `FieldKind` after this layer hands it off, same as REST's JSON body does.
+// Named `RecordService`, not `CrudService`, specifically to avoid colliding with
+// `metap_crud::CrudService` (the actual business-logic struct every RPC here calls into) once
+// both are in scope in the same Rust module — `tonic-build` generates a
+// `record_service_server::RecordService` trait from this name.
+service RecordService {
+  rpc List(ListRequest) returns (ListResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Create(CreateRequest) returns (RecordResponse);
+  rpc Update(UpdateRequest) returns (RecordResponse);
+  rpc Transition(TransitionRequest) returns (RecordResponse);
+  rpc Delete(DeleteRequest) returns (RecordResponse);
+}
+
+message ListRequest {
+  string entity_name = 1;
+  // Mirrors the REST list querystring's shape (filter/sort/page) as a `Struct` rather than a
+  // fixed message, so `metap-query`'s filter grammar doesn't need a second protobuf-specific
+  // encoding kept in sync by hand. Keys: "filter" (object), "sort" (string), "cursor" (string),
+  // "limit" (number), "listView" (string) — all optional.
+  google.protobuf.Struct query = 2;
+}
+
+message ListResponse {
+  repeated google.protobuf.Struct records = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message GetRequest {
+  string entity_name = 1;
+  string id = 2;
+}
+
+message GetResponse {
+  google.protobuf.Struct record = 1;
+  google.protobuf.Struct capabilities = 2;
+}
+
+message CreateRequest {
+  string entity_name = 1;
+  google.protobuf.Struct data = 2;
+}
+
+message UpdateRequest {
+  string entity_name = 1;
+  string id = 2;
+  int32 expected_version = 3;
+  google.protobuf.Struct data = 4;
+}
+
+message TransitionRequest {
+  string entity_name = 1;
+  string id = 2;
+  string action = 3;
+  int32 expected_version = 4;
+  google.protobuf.Struct data = 5;
+}
+
+message DeleteRequest {
+  string entity_name = 1;
+  string id = 2;
+  int32 expected_version = 3;
+}
+
+message RecordResponse {
+  google.protobuf.Struct record = 1;
+}

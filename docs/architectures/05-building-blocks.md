@@ -537,8 +537,11 @@ Bảng dưới liệt kê **mọi** thành viên Cargo/pnpm workspace hiện có
 | `metap-query` | `QueryPlanner` (`plan_list`), keyset cursor encode/decode, record-level policy → SQL |
 | `metap-workflow` | State machine: initial-status resolution, transition lookup, guard evaluation, `workflow_events` audit, outbox emit |
 | `metap-reconciler` | Table-per-entity reconciler (`reconcile() = introspect → diff → plan → execute` DDL) + primitive orchestrator đa-tenant (`claim_due`/wave-rollout/`topo_sort_waves`) — thư viện, không tự chạy như service |
-| `metap-crud` | `CrudService` — orchestrate permission → validate → plan → write → workflow → outbox cho mọi record operation |
+| `metap-crud` | `CrudService` — orchestrate permission → validate → plan → write → workflow → outbox cho mọi record operation; `RecordBackend` trait (local-vs-remote dispatch seam, `CrudService` impl in-process) |
 | `metap-http` | axum router chính: `/api/:entity*`, `/metadata/*`, `/health`, JWT `AuthContext`/`AdminContext`/`PlatformAdminContext` extractor |
+| `metap-jwks` / `metap-jwks-http` | JWKS Ed25519 đa-service (rotation 3 bước) — trust root thay thế static-keypair-per-app; opt-in, chưa binary nào trong repo bật |
+| `metap-grpc` | `RecordService` generic CRUD-over-gRPC (server, `GrpcRecordService`) + `GrpcBackend` (client, implement `RecordBackend` bằng gọi mạng thật) |
+| `metap-graphql` / `metap-graphql-http` | Schema GraphQL sinh runtime từ `MetadataRegistry` (`async-graphql::dynamic`), DataLoader/complexity-limit/field-mask; `CompositeBackend` route theo entity name xuyên nhiều `RecordBackend` |
 | `metap-peripherals` | Index reconciler, metadata drift check, role assignment, `create_user`/`mint_jwt`/`verify_credentials` |
 | `metap-lowcode` | Draft/publish/rollback storage cho entity DB-authored (low-code), audit log, import/export |
 | `metap-lowcode-http` | Route `/admin/lowcode/entities/*` — crate HTTP riêng, opt-in qua `extra_routes` |
@@ -560,19 +563,20 @@ Bảng dưới liệt kê **mọi** thành viên Cargo/pnpm workspace hiện có
 | `reconciler-orchestrator` | Ticker chạy `metap-reconciler::orchestrator` như service thật — claim → topo-sort → reconcile, fan-out cả pool chung lẫn từng tenant `DedicatedDb` |
 | `db-migrate` | Áp `crates/migrations/*.sql` qua `sqlx::migrate!` lên database mới |
 | `dev-tools` | CLI: `gen-keys`/`mint-token`/`seed-admin`/`create-user`/`provision-tenant`/`bootstrap-platform-admin`/`enqueue-reconcile`/`{vault,aws-secrets,gcp-secrets}-put-dsn` |
+| `graphql-gateway` | BFF thật — aggregate GraphQL xuyên nhiều microservice (`jira-server`+`crm-server`), route theo entity qua `CompositeBackend`+`GrpcBackend`, không Postgres/`CrudService` riêng |
 
 **Sample apps (`apps/*`, Cargo + pnpm)**
 
 | App | Chức năng chính |
 |---|---|
-| `apps/crm-server` | Backend thật đầu tiên — entity `crm.customers`/`sales.orders`/`inventory.movements`/`accounting.journal`, gộp mọi crate `metap-*` + `metap-lowcode-http`/`metap-control-http` |
-| `apps/jira-server` | Backend demo thứ hai — table-per-entity end-to-end (`jira.projects`/`sprints`/`issues`/...), tenant `dedicated_db` riêng, port 3100 |
+| `apps/crm-server` | Backend thật đầu tiên — entity `crm.customers`/`sales.orders`/`inventory.movements`/`accounting.journal`, gộp mọi crate `metap-*` + `metap-lowcode-http`/`metap-control-http`; opt-in gRPC (`GRPC_ENABLED`) |
+| `apps/jira-server` | Backend demo thứ hai — table-per-entity end-to-end (`jira.projects`/`sprints`/`issues`/...), tenant `dedicated_db` riêng, port 3100; mount GraphQL (`metap-graphql-http`) + opt-in gRPC cho chính entity của nó |
 
 **Frontend (pnpm workspace)**
 
 | Package | Chức năng chính |
 |---|---|
-| `packages/platform-react` | Component dùng chung: api-client, generated list/form, field renderer, `WorkflowActionBar`, `RecordDetail` |
+| `@metap/platform-ui` (repo riêng `../platform-ui`, Phase 47) | Component dùng chung: api-client, generated list/form, field renderer, `WorkflowActionBar`, `RecordDetail` — không còn trong pnpm workspace này, tiêu thụ qua `link:` |
 | `apps/crm-fe` | Dev harness cho `crm-server` (routing, login, trang entity) |
 | `apps/jira-fe` | Dev harness cho `jira-server` — thêm `DashboardPage`/`BoardPage` (kanban) |
 
@@ -598,6 +602,9 @@ graph TD
     auth["metap-auth<br/>pluggable tenant auth: Local/Basic/OIDC (Phase 25)"]
     attachments["metap-attachments<br/>file attachment trên record, dùng metap-storage"]
     dashboards["metap-dashboards<br/>dashboard_configs: layout/widget catalog per-user + per-tenant default (Phase 33)"]
+    jwks["metap-jwks / metap-jwks-http<br/>JWKS Ed25519 đa-service, rotation 3 bước (Phase 49) — opt-in, chưa binary nào bật"]
+    grpc["metap-grpc<br/>RecordService: server (GrpcRecordService, gọi CrudService) + client (GrpcBackend, impl RecordBackend qua mạng) (Phase 49-50)"]
+    graphql["metap-graphql / metap-graphql-http<br/>schema runtime từ MetadataRegistry, DataLoader/complexity-limit/field-mask,<br/>build_schema nhận Arc&lt;dyn RecordBackend&gt; — CompositeBackend route theo entity (Phase 49-50)"]
   end
 
   subgraph opsbin["ops binaries (Cargo workspace members, built trên metap-*)"]
@@ -607,6 +614,7 @@ graph TD
     dbmigrate["db-migrate<br/>sqlx::migrate! over crates/migrations"]
     devtools["dev-tools<br/>gen-keys / mint-token / seed-admin / create-user /<br/>provision-tenant / bootstrap-platform-admin / enqueue-reconcile / *-put-dsn"]
     reconcilerorc["reconciler-orchestrator<br/>ticker chạy metap-reconciler::orchestrator như service (Phase 44):<br/>claim → topo-sort → reconcile, fan-out pool chung + từng tenant DedicatedDb"]
+    gateway["graphql-gateway<br/>(package metap-graphql-gateway, Phase 50) BFF thật — aggregate GraphQL xuyên nhiều microservice,<br/>không Postgres/CrudService riêng, tự axum app riêng"]
   end
 
   subgraph appscrmserver["apps/crm-server (Cargo + pnpm member) — module nghiệp vụ đầu tiên"]
@@ -671,6 +679,16 @@ graph TD
   controlhttp -.->|"POST /platform/reconciler/wave-rollout bọc advance_wave"| reconciler
   demoapp -->|"workspace:*"| platform
   demoapp -.->|"chỉ qua HTTP, không bao giờ import Rust code"| http
+  grpc --> crud
+  graphql --> crud
+  graphql -.->|"generic hoá playground_router&lt;S&gt;, router() nhận AppState"| http
+  jiramainrs -.->|"mount metap-graphql-http::router() cho chính entity của jira"| graphql
+  jiramainrs -.->|"opt-in GRPC_ENABLED, tokio::spawn(metap_grpc::serve), port riêng"| grpc
+  mainrs -.->|"opt-in GRPC_ENABLED (Phase 50, mirror jira-server) — không mount GraphQL riêng"| grpc
+  gateway -->|"CompositeBackend build_schema"| graphql
+  gateway -->|"1 GrpcBackend mỗi upstream"| grpc
+  gateway -.->|"GET /metadata/entities thật, bearer service JWT"| jiramainrs
+  gateway -.->|"GET /metadata/entities thật, bearer service JWT"| mainrs
 ```
 
 `apps/crm-server` phụ thuộc vào `crates/metap-*`; không có crate `metap-*` nào có đường phụ thuộc quay ngược lại `apps/crm-server` hay bất kỳ package `apps/*` nào khác — chính hướng phụ thuộc này giữ cho `metap-*` thực sự entity-agnostic, chứ không chỉ mang tính quy ước. `apps/crm-fe` là phần tương đương bên frontend: nó chỉ có thể tiếp cận backend qua HTTP (đường nét đứt), không bao giờ bằng cách import backend code, và nó dùng `packages/platform-react` theo cùng cách `apps/crm-server` dùng `crates/metap-*`. `metap-control` (control plane multi-tenancy) phụ thuộc `metap-peripherals` để có `Router::begin` khớp với cùng hạ tầng user/role — chiều phụ thuộc `metap-permission -> metap-control` sẽ khép vòng lặp, đó là lý do `PostgresPolicyStore` sống ở `metap-control` dù trait `PolicyStore` nó implement thì ở `metap-permission`. `apps/jira-server` là module nghiệp vụ thứ hai (Phase 21+), cùng hình dạng phụ thuộc như `apps/crm-server` (chỉ phụ thuộc `crates/metap-*`, không có crate nào phụ thuộc ngược lại nó) — điểm khác biệt duy nhất là nó gọi thẳng `metap-reconciler::reconcile()` lúc boot để đưa entity của mình lên bảng riêng (table-per-entity) thay vì dùng bảng `records` chung.

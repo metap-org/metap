@@ -1,0 +1,37 @@
+[package]
+name = "metap-graphql-gateway"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "graphql-gateway"
+path = "src/main.rs"
+
+[dependencies]
+metap-crud = { path = "../metap-crud" }
+metap-graphql = { path = "../metap-graphql" }
+metap-graphql-http = { path = "../metap-graphql-http" }
+metap-grpc = { path = "../metap-grpc" }
+metap-http = { path = "../metap-http" }
+metap-infra = { path = "../metap-infra" }
+metap-metadata = { path = "../metap-metadata" }
+metap-peripherals = { path = "../metap-peripherals" }
+metap-permission = { path = "../metap-permission" }
+anyhow = "1"
+async-graphql = "7"
+async-graphql-axum = "7"
+axum = "0.8"
+jsonwebtoken = "9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1"
+
+[dev-dependencies]
+arc-swap = "1"
+metap-control = { path = "../metap-control" }
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+uuid = { version = "1", features = ["v4"] }

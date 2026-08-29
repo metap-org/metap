@@ -573,6 +573,135 @@ async fn full_lifecycle_create_get_update_transition_delete() {
     cleanup(&pool, tenant_id).await;
 }
 
+/// `get_many` exists specifically for `metap-graphql`'s `DataLoader` batching — this exercises
+/// its three real-permission-engine guarantees against a real Postgres/policy setup rather than
+/// in isolation: (1) it fetches every requested id in one round trip, not `get` called N times,
+/// (2) a record-level ABAC deny simply omits that one record from the result rather than
+/// erroring the whole batch (matching a dangling/unresolvable `Reference` field's existing
+/// "resolves to null" semantics), and (3) the returned order matches the caller's `ids` — not
+/// whatever order `SELECT ... WHERE id = ANY($1)` happens to return.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn get_many_batches_reads_masks_denied_records_out_and_preserves_caller_order() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(test_entity()).unwrap();
+    let store = PostgresPolicyStore::new(test_router(pool.clone()));
+
+    // Entity-level "read" allow for "viewer" — otherwise the default-deny-when-unconfigured
+    // entity check would reject the whole batch before the record-level condition below ever
+    // gets evaluated (same reasoning as `non_admin_field_write_policy_is_enforced_through_create`).
+    store
+        .create_policy(
+            tenant_id,
+            "test.orders",
+            "read",
+            Some(vec!["viewer".to_string()]),
+            None,
+            None,
+            None,
+            Some(PolicySubject::Context),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+    // Record-level policies, "viewer" role: once any record-level policy exists for an action,
+    // `can_perform_record_condition` requires an explicit match on *every* record (a record
+    // matching none of them is `NoMatch`, treated as forbidden, not implicitly allowed) — so a
+    // broad Allow (every record has `amount >= 0`) plus a narrower Deny (amount exactly 20,
+    // which wins over the Allow per `evaluate_policies`'s deny-overrides-allow precedence) is
+    // needed to express "everything except this one record".
+    store
+        .create_policy(
+            tenant_id,
+            "test.orders",
+            "read",
+            Some(vec!["viewer".to_string()]),
+            Some(PolicyCondition::Attribute {
+                attribute: "amount".to_string(),
+                op: ConditionOp::Gte,
+                value: PolicyValue::Literal { literal: json!(0) },
+            }),
+            None,
+            None,
+            Some(PolicySubject::Record),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+    store
+        .create_policy(
+            tenant_id,
+            "test.orders",
+            "read",
+            Some(vec!["viewer".to_string()]),
+            Some(PolicyCondition::Attribute {
+                attribute: "amount".to_string(),
+                op: ConditionOp::Eq,
+                value: PolicyValue::Literal { literal: json!(20) },
+            }),
+            None,
+            None,
+            Some(PolicySubject::Record),
+            PolicyEffect::Deny,
+        )
+        .await
+        .unwrap();
+
+    let permissions = std::sync::Arc::new(PermissionService::new(Box::new(store)));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        permissions,
+    );
+
+    let admin_ctx = admin_context(tenant_id);
+    let mut ids = Vec::new();
+    for amount in [10, 20, 30] {
+        let mut payload = JsonObject::new();
+        payload.insert("name".to_string(), json!(format!("order-{amount}")));
+        payload.insert("amount".to_string(), json!(amount));
+        let created = match crud.create("test.orders", &payload, &admin_ctx).await.unwrap() {
+            ServiceResult::Ok { data, .. } => data,
+            other => panic!("expected create to succeed, got {other:?}"),
+        };
+        ids.push(created.id);
+    }
+    let [id_10, id_20, id_30]: [Uuid; 3] = ids.clone().try_into().unwrap();
+
+    let viewer_ctx = RequestContext {
+        tenant_id: tenant_id.to_string(),
+        user_id: Some(Uuid::new_v4().to_string()),
+        roles: Some(vec!["viewer".to_string()]),
+        function_id: None,
+        context_attributes: None,
+    };
+
+    // Deliberately scrambled + includes a non-existent id, to prove both "output order follows
+    // the requested order, not DB order" and "a missing id is simply absent, not an error".
+    let missing_id = Uuid::new_v4();
+    let requested = vec![id_30, missing_id, id_10, id_20];
+    let results = match crud.get_many("test.orders", &requested, &viewer_ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected get_many to succeed, got {other:?}"),
+    };
+
+    let got_ids: Vec<Uuid> = results.iter().map(|(id, ..)| *id).collect();
+    assert_eq!(
+        got_ids,
+        vec![id_30, id_10],
+        "amount=20 must be omitted (record-level deny), missing_id must be omitted (doesn't exist), \
+         and the surviving two must stay in the caller's requested order"
+    );
+    for (_, record, _) in &results {
+        assert_ne!(record.data["amount"], json!(20));
+    }
+
+    cleanup(&pool, tenant_id).await;
+}
+
 /// Exercises the 3-part transition upgrade end to end: a caller-submitted payload merged
 /// into the transition write, a `validator` that runs against that merged data (rejecting a
 /// payload that omits a required field, something `guard` alone can't do since it only ever

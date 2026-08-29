@@ -18,6 +18,22 @@ màn hình FE nào cần aggregate ≥2 service, và việc split repo/package v
 chứ chưa có lệnh gọi service-to-service thật nào tồn tại. Không có gì để "làm nốt" ở phase này
 — cố tình build trước trigger sẽ đi ngược triết lý trigger-based của chính phase này.
 
+**Trigger GraphQL BFF/gRPC thực sự xảy ra 2026-08-29** — chủ dự án sắp xây "WAAP", sản phẩm thật
+với nhiều microservice, không phải demo. Theo đúng tinh thần phase này (build khi trigger là thật,
+không sớm hơn), đã xây nền tảng — `docs/roadmap.md` Phase 49 (`docs/roadmap/
+49-graphql-grpc-jwks-foundation.md`): `metap-graphql`/`metap-graphql-http` (schema động, DataLoader,
+complexity limit, field-mask) cho trigger GraphQL BFF; `metap-grpc` (`RecordService` generic
+CRUD-over-gRPC) cho trigger service-to-service.
+
+**Cả 2 transition mô tả ở trên giờ đã thực sự xảy ra, không chỉ còn là hạ tầng sẵn sàng-để-dùng —
+Phase 50 cùng ngày (`docs/roadmap/50-graphql-gateway-real-bff.md`)**: `crates/graphql-gateway` là
+1 binary GraphQL gateway BFF thật, đứng trước `apps/jira-server` + `apps/crm-server` (2 process
+tách biệt thật, mỗi cái tự gRPC riêng), aggregate 1 schema xuyên cả 2 — verify sống bằng 1 test
+e2e dựng 2 service độc lập thật, 1 query GraphQL duy nhất lấy dữ liệu từ cả 2. Vẫn còn đúng: chưa
+có portal/entity WAAP thật (đây vẫn là gateway demo trên `jira-server`/`crm-server`, không phải
+binary/repo WAAP) — nhưng cơ chế BFF gọi remote qua gRPC theo entity, đúng thứ trigger này mô tả,
+không còn là suy đoán kiến trúc nữa.
+
 
 ## Tiêu chí thành công
 

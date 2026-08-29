@@ -9,8 +9,13 @@ metap-cache = { path = "../metap-cache" }
 metap-control = { path = "../metap-control" }
 metap-control-http = { path = "../metap-control-http" }
 metap-crud = { path = "../metap-crud" }
+metap-graphql = { path = "../metap-graphql" }
+metap-graphql-http = { path = "../metap-graphql-http" }
+metap-grpc = { path = "../metap-grpc" }
 metap-http = { path = "../metap-http" }
 metap-infra = { path = "../metap-infra" }
+metap-jwks = { path = "../metap-jwks" }
+metap-jwks-http = { path = "../metap-jwks-http" }
 metap-lowcode = { path = "../metap-lowcode" }
 metap-lowcode-http = { path = "../metap-lowcode-http" }
 metap-metadata = { path = "../metap-metadata" }

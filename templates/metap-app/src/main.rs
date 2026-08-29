@@ -71,6 +71,17 @@ async fn main() -> anyhow::Result<()> {
     // entity control plane by default; a single code-authored `example_entity` is the
     // starting point. Add `metap-lowcode-http` as a dependency and pass
     // `metap::lowcode_http::router()` here instead if you want that surface.
+    //
+    // Same opt-in shape for two more optional transports on top of REST, neither wired by
+    // default here:
+    // - GraphQL: add `metap-graphql-http` as a dependency and merge
+    //   `metap::graphql_http::router(&state, metap::graphql::SchemaLimits::default())?` into
+    //   the `extra_routes` argument below (same as `lowcode_http::router()` above) — mounts
+    //   `POST /graphql`, a schema generated from this binary's own `MetadataRegistry`.
+    // - gRPC: add `metap-grpc` as a dependency and spawn `metap::grpc::serve(grpc_addr,
+    //   metap::grpc::GrpcRecordService::new(state.crud.clone(), auth_config), tls_config)` in
+    //   its own `tokio::spawn` alongside the `axum::serve` call below — a second port, not
+    //   merged into this router (see that crate's `serve` doc comment for why).
     let router = build_router(state, &config.cors_origins, Router::new());
 
     let addr = format!("{}:{}", config.host, config.port);
