@@ -83,3 +83,45 @@ khi có caller thứ 2), `src/i18n/resources.ts`, `README.md`.
 hệ thống, không phải gap của phase này); chưa có UI audit "mọi Deny/condition rule trong tenant"
 kiểu bảng tổng hợp (search hiện tại đã đủ dùng, cross-entity nhưng không có view liệt kê riêng);
 chưa có endpoint enumerate "toàn bộ role đang tồn tại trong tenant" (FE tự gom từ users+policies).
+
+**Bước 8 — bổ sung (2026-08-29): grant user + search permission trong ma trận, sửa lại đúng
+boundary component/design-system.** Sau khi demo Bước 7 xong, phát hiện thêm 2 việc:
+
+1. Thêm nút "N users" bấm vào từng hàng role trong ma trận để xổ ra danh sách user đang giữ role
+   đó (Badge + nút xoá) cùng ô nhập User ID + nút Assign ngay tại chỗ — dùng thẳng
+   `assignRole`/`revokeRole` có sẵn (`useAdminRoleActions`), không cần API mới.
+2. Tab Advanced's field roles (form tạo policy) trước đó chỉ là `Input` free-text gõ tay chuỗi
+   phân cách dấu phẩy, không hề gợi ý từ role đã tồn tại — khác biệt với ma trận Basic (chủ dự án
+   phát hiện, hỏi thẳng "roles k lấy từ list role dc ra hả").
+
+Khi sửa việc 2, chủ dự án nhắc lại rõ ràng nguyên tắc kiến trúc giữa 2 repo: **`platform-ui`
+không được viết component/styling mới, phải đưa vào `design-system` (`@metap/ui`) rồi import lại
+— `platform-ui` chỉ kết hợp (compose) các component có sẵn của `design-system` thành màn hình
+nghiệp vụ, single responsibility giữa 2 repo.** Điều này ngược lại tiền lệ đã ghi trong
+`platform-ui/README.md` trước đó ("tự dựng component nhỏ trên `@metap/ui` khi thư viện chưa có" —
+`TagsField`/`MultiFieldSelect`/`AttributePicker`'s Input+Chip viết tay) — tiền lệ đó bị huỷ.
+
+Đã dọn lại đúng 3 chỗ vi phạm phát hiện được trong lúc sửa việc 2, chuyển hẳn sang `design-system`
+repo (không chỉ việc vừa thêm):
+- **`TagsInput`** (mới, `design-system/src/components/tags-input/`) — thay `platform-ui`'s
+  `shared/TagsField.tsx` (đã xoá). Multi-value tag editor + thêm `suggestions?: string[]` (chip
+  gợi ý bấm-để-thêm, phục vụ đúng ca role-suggestion ở việc 2 phía trên).
+- **`SuggestInput`** (mới, `design-system/src/components/suggest-input/`) — thay
+  `admin/policies/AttributePicker.tsx`'s `Input`+`Chip` viết tay cho context-attribute quick-fill.
+  Input 1 giá trị (không phải mảng), bấm chip là *thay* giá trị chứ không *thêm*.
+- **`MultiSelect`** (mới, `design-system/src/components/multi-select/`) — thay
+  `admin/LowCodeEntitiesAdminPage.tsx`'s hàm nội bộ `MultiFieldSelect` (đã xoá). Đúng tên đã có
+  sẵn trong danh mục chuẩn của `design-system/readme.md` nhóm 6 nhưng trước đó bị bỏ sót khi build
+  đợt đầu — lần này lấp đúng ô trống đó chứ không phải "mở rộng" ngoài danh mục như 2 cái trên.
+
+Cả 3 đều có test (`vitest`) + Storybook story theo đúng convention của `design-system`, cập nhật
+`design-system/docs/component-status.md`. `platform-ui` sau khi dọn: `pnpm typecheck`/`lint`/
+`format` sạch, `vite build` thật của `apps/crm-fe`/`apps/jira-fe` (qua `link:`) pass.
+
+**File chính đã thêm/sửa thêm ở Bước 8** — `metap`/`platform-ui`: `src/admin/policies/
+PermissionMatrix.tsx` (grant-user UI — đã có sẵn từ Bước 7, không đổi), `src/admin/policies/
+AdvancedPoliciesPanel.tsx` (roles field → `TagsInput` + `suggestions`), `src/admin/policies/
+AttributePicker.tsx` (→ `SuggestInput`), `src/admin/LowCodeEntitiesAdminPage.tsx` (`MultiFieldSelect`
+xoá, dùng `MultiSelect`), `src/i18n/resources.ts` (2 key mới `rolesPlaceholder`/`rolesDescription`
+ở `admin.policies`), `README.md`. `design-system`: `src/components/{tags-input,suggest-input,
+multi-select}/*` (mới), `src/index.ts`, `docs/component-status.md`.
