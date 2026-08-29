@@ -5,6 +5,7 @@
 //! fallback this stage relies on. No HTTP, no business-entity knowledge — a plain library, same
 //! shape as `metap-permission`.
 
+mod auth_context;
 mod aws_secrets_manager_store;
 mod cache;
 mod gcp_secret_manager_store;
@@ -17,6 +18,7 @@ mod secret_store_factory;
 mod tenant;
 mod vault_store;
 
+pub use auth_context::{resolve_request_context, ContextAttributesCache};
 pub use aws_secrets_manager_store::{AwsSecretsManagerStore, AwsSecretsManagerStoreConfig};
 pub use cache::RegistryCache;
 pub use gcp_secret_manager_store::GcpSecretManagerStore;

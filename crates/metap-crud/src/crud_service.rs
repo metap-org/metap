@@ -28,6 +28,7 @@ use crate::dto::{JsonObject, RecordDto};
 mod create;
 mod delete;
 mod get;
+mod get_many;
 mod helpers;
 mod list;
 mod transition;

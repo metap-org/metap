@@ -207,6 +207,41 @@ async fn main() -> anyhow::Result<()> {
             .collect(),
     );
 
+    // gRPC — genuinely can't share the REST port (needs HTTP/2-only serving; see
+    // `metap_grpc::serve`'s doc comment for why this crate deliberately runs its own listener
+    // instead), so it's opt-in via env var + its own port, mirroring
+    // `apps/jira-server/src/main.rs`'s identical block. This is what gives
+    // `crates/graphql-gateway` a second real upstream to aggregate alongside jira-server — before
+    // this, `crm-server` had no gRPC surface at all. Auth uses this app's own static per-app
+    // RS256 keypair (`TokenVerifier::Static`) — the JWKS multi-service trust root (`metap-jwks`)
+    // is for a deployment with several separately signing services, not needed for this demo
+    // app's own gRPC surface. Read from `state` before it's moved into `build_router` below.
+    let grpc_handle = if env_flag_enabled("GRPC_ENABLED") {
+        let grpc_port: u16 = std::env::var("GRPC_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3001);
+        let grpc_addr: std::net::SocketAddr = format!("{}:{grpc_port}", config.host).parse()?;
+        let auth = metap::grpc::AuthConfig {
+            verifier: metap::grpc::TokenVerifier::Static {
+                decoding_key: (*state.jwt_decoding_key).clone(),
+                leeway: 20,
+            },
+            router: state.router.clone(),
+            auth_context_entity: state.auth_context_entity.as_deref().map(str::to_string),
+            context_attributes_cache: state.context_attributes_cache.clone(),
+        };
+        let service = metap::grpc::GrpcRecordService::new(state.crud.clone(), auth);
+        tracing::info!(%grpc_addr, "gRPC listening");
+        Some(tokio::spawn(async move {
+            if let Err(err) = metap::grpc::serve(grpc_addr, service, None).await {
+                tracing::error!(error = %err, "gRPC server exited with error");
+            }
+        }))
+    } else {
+        None
+    };
+
     // `metap::lowcode_http::router()` is the low-code control plane's admin API
     // (`docs/roadmap.md` Phase 11 / Phase A) and `metap::control_http::router()` is the
     // platform-tenant provisioning API (Phase 16 Giai đoạn 3) — both optional platform
@@ -279,6 +314,11 @@ async fn main() -> anyhow::Result<()> {
     if let Some(handle) = notification_worker_handle {
         handle.await.ok();
     }
+
+    // `grpc_handle` deliberately isn't joined here — see `apps/jira-server/src/main.rs`'s
+    // identical `drop(grpc_handle)` for why: no in-flight-publish state to drain, and
+    // `metap_grpc::serve` has no shutdown-signal parameter to wire one in with.
+    drop(grpc_handle);
 
     Ok(())
 }

@@ -15,8 +15,8 @@ use std::sync::OnceLock;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use serde::Serialize;
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use serde::{Deserialize, Serialize};
 use sqlx::{PgExecutor, Row};
 use uuid::Uuid;
 
@@ -161,4 +161,38 @@ pub fn mint_jwt(private_key_pem: &str, tenant_id: Uuid, user_id: Uuid, ttl_secon
         aud: JWT_AUDIENCE.to_string(),
     };
     Ok(encode(&Header::new(Algorithm::RS256), &claims, &key)?)
+}
+
+/// The decode-side counterpart to `mint_jwt`'s claim shape. Deliberately omits `exp`/`iss`/`aud`
+/// — `jsonwebtoken::decode` validates those against the raw token payload internally (see
+/// `jsonwebtoken::validation::validate`), independent of which fields the target `Deserialize`
+/// struct declares, so there is no need to carry them through to callers that never read them
+/// again after a successful decode.
+#[derive(Debug, Deserialize)]
+pub struct AccessClaims {
+    pub sub: String,
+    #[serde(rename = "tenantId")]
+    pub tenant_id: String,
+    #[serde(rename = "functionId")]
+    pub function_id: Option<String>,
+}
+
+/// Verifies a Bearer access token minted by `mint_jwt`: RS256, audience/issuer pinned to
+/// `JWT_AUDIENCE`/`JWT_ISSUER`, `leeway` seconds of clock-skew tolerance. Pure — no DB, no role
+/// lookup, no `RequestContext` construction (that needs a tenant-scoped `Router`, which this
+/// crate deliberately doesn't depend on to avoid a cycle with `metap-control`; see
+/// `metap_control::resolve_request_context` for the rest of the pipeline). The single place JWT
+/// verification logic lives, so every transport that accepts this platform's bearer tokens
+/// (`crates/metap-http/src/auth.rs`'s `AuthContext` today, a future gRPC auth interceptor) calls
+/// this instead of re-implementing `Validation`/`Algorithm` setup.
+pub fn decode_access_token(
+    token: &str,
+    decoding_key: &DecodingKey,
+    leeway: u64,
+) -> Result<AccessClaims, jsonwebtoken::errors::Error> {
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_audience(&[JWT_AUDIENCE]);
+    validation.set_issuer(&[JWT_ISSUER]);
+    validation.leeway = leeway;
+    decode::<AccessClaims>(token, decoding_key, &validation).map(|data| data.claims)
 }

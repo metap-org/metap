@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
-#[derive(Debug, Clone, Serialize)]
+/// `Deserialize` (alongside `Serialize`) exists specifically so `metap-grpc`'s `GrpcBackend` can
+/// reconstruct a `RecordDto` from the JSON a remote `RecordService` RPC returns over the wire —
+/// every in-process caller only ever constructs one directly and only needs `Serialize`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordDto {
     pub id: Uuid,
@@ -30,7 +33,7 @@ pub struct RecordDto {
     pub related_display: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransitionAvailability {
     pub action: String,
     pub available: bool,
@@ -38,7 +41,7 @@ pub struct TransitionAvailability {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordCapabilities {
     pub writable_fields: Vec<String>,

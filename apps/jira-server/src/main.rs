@@ -190,7 +190,57 @@ async fn main() -> anyhow::Result<()> {
     // platform-tenant provisioning surface. Attachment routes are generic now
     // (`metap-http::routes::attachments`, always registered in `build_router` itself) — no
     // jira-specific route module needed here anymore.
-    let router = build_router(state, &config.cors_origins, axum::Router::new());
+    //
+    // GraphQL *is* wired in, unlike lowcode/control_http — merged into the same port as REST
+    // (`extra_routes`, same mechanism `metap-lowcode-http`/`metap-control-http` would use)
+    // since `metap-graphql-http` mounts a plain `axum::Router<AppState>` route, no separate
+    // listener needed. Schema is generated from this app's own `MetadataRegistry` (jira's 8
+    // entities), always on — no env flag, since merging one more route onto an already-running
+    // port carries none of gRPC's below "needs its own listener/port" concern.
+    //
+    // `GET /graphql/playground` (GraphiQL — this platform's closest equivalent to Swagger UI for
+    // REST, see `metap_graphql_http::playground_router`'s doc comment) is gated to non-production
+    // here, not by the crate itself — it's unauthenticated static HTML, fine for a dev/demo app
+    // like this one but not something to serve unconditionally from every deployment.
+    let mut graphql_routes = metap::graphql_http::router(&state, metap::graphql::SchemaLimits::default())?;
+    if config.node_env != metap::infra::NodeEnv::Production {
+        graphql_routes = graphql_routes.merge(metap::graphql_http::playground_router("/graphql"));
+    }
+
+    // gRPC — genuinely can't share the REST/GraphQL port (needs HTTP/2-only serving; see
+    // `metap_grpc::serve`'s doc comment for why this crate deliberately runs its own listener
+    // instead), so it's opt-in via env var + its own port, same "own `tokio::spawn`, presence-
+    // of-the-knob opts a feature in" convention `OUTBOX_WORKER_INLINE`/`S3_BUCKET` above use.
+    // Auth uses this app's own static per-app RS256 keypair (`TokenVerifier::Static`) — the
+    // JWKS multi-service trust root (`metap-jwks`) is for a deployment with several separately
+    // signing services, not relevant to this single-tenant demo app.
+    let grpc_handle = if env_flag_enabled("GRPC_ENABLED") {
+        let grpc_port: u16 = std::env::var("GRPC_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3101);
+        let grpc_addr: std::net::SocketAddr = format!("{}:{grpc_port}", config.host).parse()?;
+        let auth = metap::grpc::AuthConfig {
+            verifier: metap::grpc::TokenVerifier::Static {
+                decoding_key: (*state.jwt_decoding_key).clone(),
+                leeway: 20,
+            },
+            router: state.router.clone(),
+            auth_context_entity: None,
+            context_attributes_cache: state.context_attributes_cache.clone(),
+        };
+        let service = metap::grpc::GrpcRecordService::new(state.crud.clone(), auth);
+        tracing::info!(%grpc_addr, "gRPC listening");
+        Some(tokio::spawn(async move {
+            if let Err(err) = metap::grpc::serve(grpc_addr, service, None).await {
+                tracing::error!(error = %err, "gRPC server exited with error");
+            }
+        }))
+    } else {
+        None
+    };
+
+    let router = build_router(state, &config.cors_origins, graphql_routes);
 
     // Off by default — see this file's top doc comment for why this tenant's outbox needs
     // *something* draining it, and why inline (against `tenant_pool`, not `pool`) is the
@@ -241,6 +291,13 @@ async fn main() -> anyhow::Result<()> {
     if let Some(handle) = outbox_worker_handle {
         handle.await.ok();
     }
+
+    // `grpc_handle` deliberately isn't joined here — unlike the outbox worker, a gRPC server
+    // has no in-flight-publish state that needs draining before exit; `metap_grpc::serve` also
+    // has no shutdown-signal parameter to wire one in with (see that fn's doc comment). Dropping
+    // the still-running task here is fine: the process is exiting anyway, and the tokio runtime
+    // cancels any task still running when `main` returns.
+    drop(grpc_handle);
 
     Ok(())
 }

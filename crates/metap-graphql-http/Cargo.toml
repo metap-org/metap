@@ -1,0 +1,27 @@
+[package]
+name = "metap-graphql-http"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+metap-crud = { path = "../metap-crud" }
+metap-graphql = { path = "../metap-graphql" }
+metap-http = { path = "../metap-http" }
+metap-metadata = { path = "../metap-metadata" }
+anyhow = "1"
+async-graphql = "7"
+async-graphql-axum = "7"
+axum = "0.8"
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+arc-swap = "1"
+metap-control = { path = "../metap-control" }
+metap-peripherals = { path = "../metap-peripherals" }
+metap-permission = { path = "../metap-permission" }
+jsonwebtoken = "9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+uuid = { version = "1", features = ["v4", "serde"] }
