@@ -37,11 +37,11 @@ tuần tự hoá lệnh `docker`, không còn tính percentile hay bắn request
   (bắn N request qua M VU vào `<entity><querystring>` bất kỳ, hỗ trợ keyset-cursor 2 bước). Chạy
   qua:
   ```bash
-  pnpm loadtest:customers   # scenario set cũ (list/filter+sort/cursor) cho crm.customers
+  ./testing/performance/k6/run.sh   # scenario set cũ (list/filter+sort/cursor) cho crm.customers
   ENTITY=inventory.movements SEED_TEMPLATE='{"sku":"SKU-{i}",...}' ./testing/performance/k6/run.sh
   ```
-  `run.sh` chỉ làm 2 việc không phải "stress logic": mint token qua `pnpm seed:admin`/
-  `pnpm mint-token` (đúng logic `dev-tools` đã có), và tuần tự hoá `docker compose run --rm k6`
+  `run.sh` chỉ làm 2 việc không phải "stress logic": mint token qua `dev-tools seed-admin`/
+  `mint-token` (đúng logic `dev-tools` đã có), và tuần tự hoá `docker compose run --rm k6`
   cho seed + từng scenario, `sleep 65` giữa các lần (**Rate limiter không tắt được** cho path này
   — mỗi scenario phải chờ bucket đầy lại). Toàn bộ việc bắn request thật, đếm percentile, format
   báo cáo cuối là k6 tự làm.
@@ -110,7 +110,7 @@ MODE=baseline ./testing/security/zap/run.sh                          # crm-serve
 APP=jira TENANT_ID=<uuid> USER_ID=<uuid> ./testing/security/zap/run.sh   # jira-server
 ```
 
-Script chỉ orchestration mỏng (mint token qua `pnpm mint-token`/`mint:jira-token` có sẵn, tự inject
+Script chỉ orchestration mỏng (mint token qua `dev-tools mint-token` có sẵn, tự inject
 `Authorization: Bearer` vào mọi request ZAP bắn qua ZAP replacer rule, `docker run
 zaproxy/zap-stable`) — không có logic scan nào tự viết. Report HTML ra
 `testing/security/zap/reports/` (gitignored). Công cụ tay, **không** wire CI — chạy trước khi push

@@ -14,23 +14,17 @@ Không phải việc nhỏ nào cũng cần một file ở đây — xem Definit
 cho tính năng đủ lớn để cần thống nhất phạm vi *trước khi* code, để tránh việc code xong rồi mới
 tranh cãi nó có nên làm vậy không.
 
-## Hai thư mục, hai loại thay đổi khác nhau
+## Chỉ còn 1 thư mục — brief của demo app đã chuyển ra repo riêng
 
-**`docs/features/*.md` (ở đây, cấp gốc)** — feature/change-log cho **core metap**: thay đổi
-trong `crates/metap-*` (execution engine) hoặc `packages/platform-react` (reusable frontend
-library) — thứ một downstream project thật sự import và phụ thuộc vào.
+`docs/features/*.md` (ở đây) — feature/change-log cho **core metap**: thay đổi trong
+`crates/metap-*` (execution engine) hoặc `@metap/platform-ui` (reusable frontend library, repo
+riêng) — thứ một downstream project thật sự import và phụ thuộc vào.
 
-**`docs/features/demo/*.md`** — feature brief cho **demo app** (`apps/crm-server`,
-`apps/crm-fe`). `apps/` là demo/test app cho toàn bộ dự án, không phải sản phẩm (xem CLAUDE.md's
-"Sample apps") — chứng minh bề mặt thư viện hoạt động thật, không phải thứ downstream project
-import trực tiếp. Entity demo (`apps/crm-server/src/entities/` — `crm.customers`,
-`sales.orders`, `inventory.movements`, `accounting.journal`) là fixture chứng minh pattern,
-không phải module nghiệp vụ thật của một sản phẩm CRM/ERP cụ thể — brief của chúng nằm riêng ở
-`demo/` để không lẫn với thay đổi core.
-
-Khi viết brief, tự hỏi: thay đổi này có ảnh hưởng gì tới một downstream project import
-`crates/metap`/`packages/platform-react` không? Có → cấp gốc. Không, chỉ là ví dụ/fixture trong
-`apps/crm-*` → `demo/`.
+**`docs/features/demo/` không còn nữa (2026-08-31)** — 3 brief của nó (`crm.customers`'s entity
+đồng hành: `sales.orders`/`inventory.movements`/`accounting.journal`) đã chuyển sang
+`../metap-demo-crm/docs/features/demo/` cùng lúc `apps/crm-server`/`apps/crm-fe` tách ra repo
+riêng (xem `docs/roadmap/51-example-apps-repo-split.md`). Demo app giờ không còn nằm trong `metap`
+nữa — brief của nó thuộc về repo của chính nó.
 
 ## Quy trình
 
@@ -48,7 +42,7 @@ Khi viết brief, tự hỏi: thay đổi này có ảnh hưởng gì tới mộ
 
 ## Danh sách
 
-**Core metap** (`crates/metap-*`, `packages/platform-react`):
+**Core metap** (`crates/metap-*`, `@metap/platform-ui` — repo riêng):
 
 | Tính năng | Trạng thái | Track | Phase liên quan |
 |---|---|---|---|
@@ -59,10 +53,5 @@ Khi viết brief, tự hỏi: thay đổi này có ảnh hưởng gì tới mộ
 | [Cross-entity relations trong list view (3 mode)](05-cross-entity-relations.md) | Mode 2 done | Backend Core | không thuộc phase nào |
 | [Pattern xác minh bất đồng bộ + gap logic tùy biến cho low-code](06-async-verification-pattern-and-lowcode-custom-logic.md) | proposed (ghi chú thảo luận, chỉ Option B là đề xuất code) | Backend Core | không thuộc phase nào |
 
-**Demo app** (`apps/crm-server`, `apps/crm-fe` — xem `demo/`):
-
-| Tính năng | Trạng thái | Track | Phase liên quan |
-|---|---|---|---|
-| [Sales Order — module thứ hai](demo/01-sales-order-entity.md) | done | App/Entity | Phase 7 |
-| [Inventory Movement — module thứ ba](demo/02-inventory-movement-entity.md) | done | App/Entity | Phase 7 |
-| [Journal Entry — module thứ tư](demo/03-journal-entry-entity.md) | done | App/Entity | Phase 7 |
+Brief của demo app (Sales Order/Inventory Movement/Journal Entry, từng nằm ở `demo/`) — xem
+`../metap-demo-crm/docs/features/demo/`.

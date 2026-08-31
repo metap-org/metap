@@ -2,13 +2,19 @@ name: CI
 
 # Phase 8 Hardening ("CI checks", docs/roadmap.md) — the first workflow in the repo. Three
 # independent jobs, none needing external services: Rust unit tests (see metap-query/tests'
-# doc comment convention: unit tests never touch a DB), a dependency/secrets/SAST scan, and the
-# frontend workspace (entirely separate tooling, pnpm). The `#[ignore]`d Rust e2e suite (real
-# Postgres/RabbitMQ/Redis/Vault) used to run here too as a 4th job (`rust-e2e`) on every push/PR
-# — moved to its own manual-only workflow (2026-08-28, `e2e-manual.yml` — see that file's doc
-# comment for why: speed + CI-specific flakiness unrelated to most diffs). Treated the same as
-# `testing/`'s security checklist and performance/benchmark suites now: real coverage, run
-# deliberately, not an automatic gate on every commit.
+# doc comment convention: unit tests never touch a DB) and a dependency/secrets/SAST scan. The
+# `#[ignore]`d Rust e2e suite (real Postgres/RabbitMQ/Redis/Vault) used to run here too as a 4th
+# job (`rust-e2e`) on every push/PR — moved to its own manual-only workflow (2026-08-28,
+# `e2e-manual.yml` — see that file's doc comment for why: speed + CI-specific flakiness
+# unrelated to most diffs). Treated the same as `testing/`'s security checklist and
+# performance/benchmark suites now: real coverage, run deliberately, not an automatic gate on
+# every commit.
+#
+# A 4th job used to run here too — `frontend` (typecheck/lint/format/test via pnpm) — removed
+# 2026-08-31 when `apps/crm-fe`/`apps/jira-fe` (this repo's only pnpm workspace members) moved
+# out to their own sibling repos (`../metap-demo-crm`, `../metap-demo-jira`) alongside their
+# backend counterparts; this repo has had no frontend workspace content since. Each sibling
+# repo owns its own CI for its own frontend.
 
 on:
   push:
@@ -69,19 +75,3 @@ jobs:
       # permanently red.
       - run: pip install semgrep
       - run: semgrep scan --config p/rust --config p/secrets --config .semgrep.yml --error
-
-  frontend:
-    name: Frontend — typecheck, lint, format, test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24.15.0"
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm format:check
-      - run: pnpm test

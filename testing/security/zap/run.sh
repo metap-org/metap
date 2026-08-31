@@ -33,18 +33,24 @@ MODE="${MODE:-api}"
 OUT_DIR="$REPO_ROOT/testing/security/zap/reports"
 mkdir -p "$OUT_DIR"
 
+# `crm-server`/`jira-server` each moved to their own repo (2026-08-31, `../metap-demo-crm`/
+# `../metap-demo-jira`) — `dev-tools mint-token` below always signs with *this* repo's own dev
+# keypair by default (`REPO_ROOT`/`cd` above always puts CWD at this repo's root, which has no
+# `.env`/`keys/` of its own to load a different one from). Export
+# `AUTH_JWT_PRIVATE_KEY_PATH`/`AUTH_JWT_PUBLIC_KEY_PATH` pointing at the target app's own
+# `keys/` before running this script so the minted token actually verifies against it.
 if [ "$APP" = "jira" ]; then
   BASE_URL="${BASE_URL:-http://host.docker.internal:3100}"
   # jira-server's tenant is a real provisioned DedicatedDb tenant, not a fixed dev id — no safe
-  # default to fall back to (see apps/jira-server/.env's JIRA_TENANT_ID).
-  : "${TENANT_ID:?jira mode needs TENANT_ID (the provisioned jira tenant, see apps/jira-server/.env)}"
-  : "${USER_ID:?jira mode needs USER_ID (see apps/jira-server/.env)}"
-  TOKEN="${TOKEN:-$(pnpm --silent mint:jira-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)}"
+  # default to fall back to (see ../metap-demo-jira/.env's JIRA_TENANT_ID).
+  : "${TENANT_ID:?jira mode needs TENANT_ID (the provisioned jira tenant, see ../metap-demo-jira/.env)}"
+  : "${USER_ID:?jira mode needs USER_ID (see ../metap-demo-jira/.env)}"
+  TOKEN="${TOKEN:-$(cargo run --manifest-path crates/dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)}"
 elif [ "$APP" = "crm" ]; then
   BASE_URL="${BASE_URL:-http://host.docker.internal:3000}"
   TENANT_ID="${TENANT_ID:-00000000-0000-0000-0000-000000000001}"
   USER_ID="${USER_ID:-00000000-0000-0000-0000-000000000002}"
-  TOKEN="${TOKEN:-$(pnpm --silent mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)}"
+  TOKEN="${TOKEN:-$(cargo run --manifest-path crates/dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)}"
 else
   echo "unknown APP=$APP (expected crm|jira)" >&2
   exit 1

@@ -1,11 +1,12 @@
 # graphql-gateway
 
 The real BFF (Backend-for-Frontend): one GraphQL schema aggregated across several
-**separately-deployed** microservices — in this repo's demo setup, `apps/jira-server` and
-`apps/crm-server`. This is distinct from the per-service GraphQL each of those binaries already
-exposes on their own port (`metap-graphql-http`, Phase 49): a query against `jira-server`'s own
-`/graphql` can only ever touch `jira.*` entities. A query against this gateway's `/graphql` can
-touch entities from *any* configured upstream in one request.
+**separately-deployed** microservices — in the demo setup, `../metap-demo-jira` and
+`../metap-demo-crm` (sibling repos, moved out of this one 2026-08-31 — see the root `CLAUDE.md`'s
+"No example apps in this repo" note). This is distinct from the per-service GraphQL each of those
+binaries already exposes on their own port (`metap-graphql-http`, Phase 49): a query against
+`metap-demo-jira`'s own `/graphql` can only ever touch `jira.*` entities. A query against this
+gateway's `/graphql` can touch entities from *any* configured upstream in one request.
 
 ## Why a separate binary
 
@@ -46,17 +47,17 @@ trust root every upstream verifies against (`metap-jwks` exists as a library, bu
 `GrpcRecordService` in this repo is wired to `TokenVerifier::Jwks` today) — deliberately out of
 scope for this first version.
 
-## Running it locally against this repo's demo apps
+## Running it locally against the sibling demo repos
 
 ```bash
-# 1. Start jira-server and crm-server with gRPC enabled (see each app's .env.example):
+# 1. Start metap-demo-jira and metap-demo-crm with gRPC enabled (see each repo's .env.example):
 #    GRPC_ENABLED=true, plus each app's own gRPC port.
-cd apps/jira-server && GRPC_ENABLED=true pnpm dev:rs   # REST :3100, gRPC :3101
-cd apps/crm-server && GRPC_ENABLED=true pnpm dev:rs    # REST :3000, gRPC :3001
+cd ../metap-demo-jira && GRPC_ENABLED=true cargo run   # REST :3100, gRPC :3101
+cd ../metap-demo-crm && GRPC_ENABLED=true cargo run    # REST :3000, gRPC :3001
 
 # 2. Mint one service JWT per upstream, signed by that upstream's own keypair.
-cd apps/jira-server && pnpm mint:jira-token <tenantId> <userId>
-cd apps/crm-server && pnpm mint-token <tenantId> <userId>
+cd ../metap-demo-jira && cargo run --manifest-path ../metap/crates/dev-tools/Cargo.toml -- mint-token <tenantId> <userId>
+cd ../metap-demo-crm && cargo run --manifest-path ../metap/crates/dev-tools/Cargo.toml -- mint-token <tenantId> <userId>
 
 # 3. Generate this gateway's own keypair and fill in crates/graphql-gateway/.env
 #    (UPSTREAM_1_*/UPSTREAM_2_* with the two tokens above).

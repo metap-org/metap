@@ -14,7 +14,7 @@ CI (`.github/workflows/ci.yml`) — 4 job tự động trên mọi push/PR:
 2026-08-28: quá chậm so với 4 job kia cộng lại, cộng vài test nhạy với timing/data-volume của môi
 trường CI song song mà một lần chạy dev bình thường không gặp — xem file đó's doc comment). Cùng
 nhóm với security checklist/performance benchmark ở dưới: coverage thật, chạy chủ động, không
-phải gate tự động trên từng commit. Chạy tay: `pnpm test:rs:e2e` (dev, cần
+phải gate tự động trên từng commit. Chạy tay: `cargo test --workspace -- --ignored` (dev, cần
 `docker compose up -d postgres rabbitmq`) hoặc trigger `e2e-manual.yml` thủ công trên GitHub
 Actions (`gh workflow run e2e-manual.yml`).
 

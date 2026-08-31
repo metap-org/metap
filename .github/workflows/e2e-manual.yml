@@ -16,9 +16,9 @@ name: E2E (manual)
 # `rust` job still runs every unit test on every push/PR — this only removes the `#[ignore]`d
 # Postgres/RabbitMQ/Redis/Vault-backed suite from that automatic gate.
 #
-# Run locally: `pnpm test:rs:e2e` (needs `docker compose up -d postgres rabbitmq` first, per
-# CLAUDE.md's Commands section). Run in CI: trigger this workflow manually (Actions tab → "E2E
-# (manual)" → "Run workflow", or `gh workflow run e2e-manual.yml`).
+# Run locally: `cargo test --workspace -- --ignored` (needs `docker compose up -d postgres
+# rabbitmq` first, per CLAUDE.md's Commands section). Run in CI: trigger this workflow manually
+# (Actions tab → "E2E (manual)" → "Run workflow", or `gh workflow run e2e-manual.yml`).
 
 on:
   workflow_dispatch: {}
@@ -100,11 +100,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Mirrors `pnpm db:migrate` (apps/crm-server/package.json script): a fresh DB, no
-      # prior Drizzle-applied schema to reconcile with (see crates/db-migrate's doc
-      # comment) — the service container above starts empty every run.
+      # A fresh DB, no prior Drizzle-applied schema to reconcile with (see crates/db-migrate's
+      # doc comment) — the service container above starts empty every run. `DATABASE_URL` comes
+      # from the job-level `env:` above, not a `.env` file, so no particular working directory
+      # is needed (unlike a local downstream app's own `cargo run --manifest-path
+      # crates/db-migrate/Cargo.toml`, which still resolves `crates/migrations/*.sql` relative
+      # to `db-migrate`'s own manifest dir regardless of CWD).
       - name: Apply migrations
-        working-directory: apps/crm-server
         run: cargo run --release -p db-migrate --locked
       # Provisions exactly the AppRole setup `crates/metap-control/tests/vault_store.rs`'s doc
       # comment documents as a one-time manual `vault` CLI operator step for local dev — done here

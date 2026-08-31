@@ -2,11 +2,19 @@
 # Thin orchestrator around k6 (`testing/README.md`'s Performance section) — sequences
 # seed -> rate-limit-bucket wait -> each scenario via `docker compose run --rm k6`. No load
 # generation or percentile math lives here — that's k6's job (`scenario.js`/`seed.js`); this is
-# only credential setup (`pnpm seed:admin`/`pnpm mint-token`, already-correct dev-tools logic,
-# not reimplemented here) plus docker/sleep sequencing.
+# only credential setup (`dev-tools seed-admin`/`mint-token`, already-correct logic, not
+# reimplemented here) plus docker/sleep sequencing.
+#
+# Default `ENTITY=crm.customers` targets the entity that lives in `../metap-demo-crm` (its own
+# repo since 2026-08-31 — see `docs/roadmap/51-example-apps-repo-split.md`), not this repo — the
+# server being load-tested (`BASE_URL`) is that app's. `dev-tools mint-token` below always signs
+# with *this* repo's own dev keypair (no `.env`/`keys/` here to load a different one from — see
+# `REPO_ROOT`/`cd` below, always this repo's root regardless of caller's `PWD`); export
+# `AUTH_JWT_PRIVATE_KEY_PATH`/`AUTH_JWT_PUBLIC_KEY_PATH` pointing at `../metap-demo-crm/keys/`
+# before running this script if the token needs to verify against that app's server instead.
 #
 # Usage: ENTITY=... SEED_TEMPLATE='...' ./testing/performance/k6/run.sh
-#   (defaults below reproduce the original crm.customers scenario set — `pnpm loadtest:customers`)
+#   (defaults below reproduce the original crm.customers scenario set)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -28,8 +36,8 @@ TENANT_ID="${TENANT_ID:-00000000-0000-0000-0000-000000000001}"
 USER_ID="${USER_ID:-00000000-0000-0000-0000-000000000002}"
 
 echo "=== seed admin + mint dev token ==="
-pnpm seed:admin "$TENANT_ID" "$USER_ID" >/dev/null
-TOKEN=$(pnpm mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)
+cargo run --manifest-path crates/dev-tools/Cargo.toml --quiet -- seed-admin "$TENANT_ID" "$USER_ID" >/dev/null
+TOKEN=$(cargo run --manifest-path crates/dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)
 echo "✓ token minted"
 
 COMMON_ENV=(

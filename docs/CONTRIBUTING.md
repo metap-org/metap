@@ -18,7 +18,10 @@ phase còn lại được chia thành các luồng làm song song ra sao.
    Nếu là một tính năng đủ lớn cần thống nhất phạm vi trước khi code, viết brief trong
    `docs/features/` trước (xem Definition of Ready trong `docs/agile-process.md`).
 4. Setup môi trường theo mục Commands trong `CLAUDE.md` (Postgres/RabbitMQ qua `docker compose`,
-   `pnpm install`, `pnpm db:migrate`, dev keys, v.v.) — không nhắc lại ở đây.
+   `cargo build`/`cargo test`, v.v. — repo này không còn Node/pnpm nào cả) — không nhắc lại ở đây.
+   Nếu việc bạn làm cần chạy thử qua HTTP thật (mint token, migrate DB, serve...), việc đó giờ
+   thuộc về 1 trong các repo sibling downstream (`../metap-demo-crm`/`../metap-demo-jira`) — xem
+   README của repo đó.
 
 ## Branch và PR
 
@@ -38,36 +41,26 @@ phase còn lại được chia thành các luồng làm song song ra sao.
 Chạy phần nào liên quan tới chỗ bạn sửa:
 
 ```bash
-pnpm typecheck      # frontend
-pnpm lint            # frontend
-pnpm test            # frontend, vitest
-cargo test --workspace              # backend unit test, không cần DB
-cargo test --workspace -- --ignored # backend e2e — cần DATABASE_URL + Postgres/RabbitMQ đang chạy
+cargo test --workspace              # unit test, không cần DB
+cargo test --workspace -- --ignored # e2e — cần DATABASE_URL + Postgres/RabbitMQ đang chạy
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-`.github/workflows/ci.yml` chạy tương đương phần unit test (job `rust`, `frontend`) tự động trên
-mọi push/PR — hiện chưa phải merge gate bắt buộc (chưa cấu hình branch protection, xem Phase 8
-trong `docs/roadmap.md`), nên trước khi việc đó thay đổi, coi CI là tham khảo và tự chạy check ở
-trên trước khi xin review. Riêng backend e2e (`cargo test --workspace -- --ignored`) không còn
-chạy tự động trong CI (2026-08-28, `.github/workflows/e2e-manual.yml`, chạy tay hoặc trigger thủ
-công) — cần tự chạy dòng cuối ở trên trước khi mở PR nếu thay đổi chạm tới phần có e2e coverage.
+`.github/workflows/ci.yml` chạy tương đương phần unit test (job `rust`) tự động trên mọi push/PR
+— hiện chưa phải merge gate bắt buộc (chưa cấu hình branch protection, xem Phase 8 trong
+`docs/roadmap.md`), nên trước khi việc đó thay đổi, coi CI là tham khảo và tự chạy check ở trên
+trước khi xin review. Riêng e2e (`cargo test --workspace -- --ignored`) không còn chạy tự động
+trong CI (2026-08-28, `.github/workflows/e2e-manual.yml`, chạy tay hoặc trigger thủ công) — cần
+tự chạy dòng đó ở trên trước khi mở PR nếu thay đổi chạm tới phần có e2e coverage.
 
-Với bất kỳ thay đổi nào đụng tới `apps/crm-fe` hoặc UI của `packages/platform-react`, phải test tay
-qua dev stack thật (`pnpm dev:rs` + `pnpm dev:web`) — typecheck/lint/unit test không bắt được bug
-kiểu thiếu proxy entry trong Vite hay crash chỉ lộ ra khi click qua một luồng thao tác thật. Dự án
-này đã từng gặp cả hai loại lỗi trên; xem ghi chú các phase gần đây trong `docs/roadmap.md`.
-
-Với thay đổi ở tầng backend chạm tới một trong 4 entity demo (`apps/crm-server/src/entities/`),
-`apps/crm-server/scripts/smoke.sh` chạy curl thủ công qua toàn bộ CRUD + workflow (kể cả nhánh
-guard-fail) của cả 4 entity trên một dev stack thật — không phải test suite được commit, chỉ là
-script lặp lại được để poke server bằng tay (`./apps/crm-server/scripts/smoke.sh` sau khi
-`pnpm dev:rs` đã chạy).
-
-Với thay đổi ở `crates/metap-permission`/`metap-http`'s admin routes,
-`apps/crm-server/scripts/permission-smoke.sh` chạy tương tự nhưng cho model RBAC/ABAC: admin
-route gating (401/403), context-level role restriction, field-level read/write gating,
-record-level row filtering, và `PolicyExplainer` — tự dọn mọi policy/role nó tạo nên chạy lại
-nhiều lần không tích tụ state.
+**Thay đổi đụng frontend (`@metap/platform-ui`/`@metap/ui`) hoặc app demo (`../metap-demo-crm`/
+`../metap-demo-jira`) không còn thuộc phạm vi repo này nữa (2026-08-31)** — cả frontend lẫn app
+demo đã chuyển hết sang repo riêng, mỗi repo có `CONTRIBUTING`/quy trình test tay của chính nó.
+Với thay đổi ở tầng backend `metap` mà một trong các repo downstream đó phụ thuộc (thay đổi
+`EntityField` shape, route shape, v.v.), verify tay qua 1 trong các repo đó (build nó với code
+`metap` mới, chạy `scripts/smoke.sh`/`scripts/permission-smoke.sh` của riêng nó) trước khi coi là
+xong — typecheck/lint/unit test ở đây không bắt được lỗi tích hợp thật kiểu vậy.
 
 ## Ranh giới reviewer phải kiểm soát
 
@@ -81,8 +74,8 @@ do ngoại lệ:
 - Input query từ client/frontend không được map trực tiếp sang toán tử SQL — phải đi qua
   `QueryPlanner`, bị ràng buộc bởi entity metadata.
 - Side effect của workflow phải phát qua outbox, không publish thẳng lên RabbitMQ.
-- Không crate thư viện `metap-*` nào được biết business-entity cụ thể — đó là việc của
-  `apps/crm-server` (hoặc một binary thứ hai trong tương lai).
+- Không crate thư viện `metap-*` nào được biết business-entity cụ thể — đó là việc của một binary
+  downstream (`../metap-demo-crm`, `../metap-demo-jira`, hoặc một cái mới).
 - Mọi business route đều giả định có tenant scope và tra `user_roles` thật cho mỗi request — role
   không bao giờ được cache trên JWT.
 
@@ -100,4 +93,4 @@ do ngoại lệ:
 Route yêu cầu review theo module — xem bảng ownership trong `docs/team-charter.md` để biết track
 nào (Backend Core, HTTP/API, Frontend Platform, App/Entity, Ops/Infra) sở hữu phần bạn vừa sửa.
 Thay đổi đụng nhiều track cùng lúc (vd: đổi shape `EntityField` đụng cả `metap-metadata` lẫn
-generated types của `packages/platform-react`) cần sign-off từ cả hai track.
+generated types của `@metap/platform-ui`, repo riêng) cần sign-off từ cả hai track.
