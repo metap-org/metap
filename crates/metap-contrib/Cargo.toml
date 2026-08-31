@@ -1,0 +1,11 @@
+[package]
+name = "metap-contrib"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

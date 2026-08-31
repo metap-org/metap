@@ -9,13 +9,11 @@ members = [
   "crates/metap-attachments",
   "crates/metap-auth",
   "crates/metap-cache",
+  "crates/metap-contrib",
   "crates/metap-control",
-  "crates/metap-control-http",
   "crates/metap-cron",
   "crates/metap-crud",
   "crates/metap-dashboards",
-  "crates/metap-lowcode",
-  "crates/metap-lowcode-http",
   "crates/metap-http",
   "crates/metap-graphql",
   "crates/metap-graphql-http",
@@ -32,7 +30,6 @@ members = [
   "crates/metap-workflow",
   "crates/notification-worker",
   "crates/outbox-publisher",
-  "crates/reconciler-orchestrator",
 ]
 
 [workspace.package]
