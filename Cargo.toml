@@ -6,10 +6,10 @@ members = [
   "crates/dev-tools",
   "crates/graphql-gateway",
   "crates/metap",
+  "crates/metap-app",
   "crates/metap-attachments",
   "crates/metap-auth",
   "crates/metap-cache",
-  "crates/metap-contrib",
   "crates/metap-control",
   "crates/metap-cron",
   "crates/metap-crud",
@@ -26,6 +26,7 @@ members = [
   "crates/metap-permission",
   "crates/metap-query",
   "crates/metap-reconciler",
+  "crates/metap-runtime",
   "crates/metap-storage",
   "crates/metap-workflow",
   "crates/notification-worker",
@@ -34,6 +35,43 @@ members = [
 
 [workspace.package]
 edition = "2021"
+
+# Dependencies genuinely shared by >= 2 crates (verified 2026-08-31 by grepping every
+# `crates/*/Cargo.toml`, not guessed) — centralizes version policy so an upgrade is one edit
+# instead of N, and catches version drift before it happens (none found in this pass: every
+# shared dep already used the same major.minor everywhere, one exception fixed below).
+# Two shapes, matching how each dep's feature usage actually varies across crates:
+#   - Uniform feature set (or none) everywhere -> full spec here, member does `dep.workspace = true`.
+#   - Feature set genuinely differs per crate (tokio, sqlx, axum, tower-http, async-graphql) ->
+#     version/default-features only here, member does `dep = { workspace = true, features = [...] }`
+#     with its own list (inherited features are additive-only, never a subset — a shared baseline
+#     with everyone's features unioned in would force lighter crates like `graphql-gateway` to
+#     compile sqlx's `uuid`/`chrono`/`json` features they never use).
+# A dep used by exactly 1 crate (`tracing-subscriber`, `lapin`, `argon2`, `ring`, ...) stays local
+# to that crate's own `Cargo.toml` — this table is not a dependency dump for every crate in the
+# workspace, only for what's actually shared.
+[workspace.dependencies]
+anyhow = "1"
+arc-swap = "1"
+async-graphql = "7"
+async-trait = "0.1"
+axum = "0.8"
+base64 = "0.22"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+jsonwebtoken = "9"
+moka = { version = "0.12", features = ["future"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+secrecy = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false }
+tokio = "1"
+tower-http = "0.6"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
 
 # Baseline lint policy for the workspace (`docs/roadmap.md` Phase 8). The actual gate is
 # `.github/workflows/ci.yml`'s `cargo clippy -- -D warnings` — this table just codifies the same

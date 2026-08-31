@@ -12,10 +12,11 @@ name = "outbox-publisher"
 path = "src/main.rs"
 
 [dependencies]
+metap-runtime = { path = "../metap-runtime" }
 metap-infra = { path = "../metap-infra" }
-anyhow = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
-sqlx = { version = "0.8", default-features = false, features = [
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal"] }
+sqlx = { workspace = true, features = [
   "runtime-tokio",
   "tls-rustls",
   "postgres",
@@ -23,6 +24,6 @@ sqlx = { version = "0.8", default-features = false, features = [
   "chrono",
   "json",
 ] }
-serde_json = "1"
-uuid = { version = "1", features = ["v4", "serde"] }
-tracing = "0.1"
+serde_json.workspace = true
+uuid.workspace = true
+tracing.workspace = true

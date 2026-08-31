@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 metap-attachments = { path = "../metap-attachments" }
 metap-auth = { path = "../metap-auth" }
+metap-runtime = { path = "../metap-runtime" }
 metap-control = { path = "../metap-control" }
 metap-cron = { path = "../metap-cron" }
 metap-dashboards = { path = "../metap-dashboards" }
@@ -17,31 +18,28 @@ metap-permission = { path = "../metap-permission" }
 metap-query = { path = "../metap-query" }
 metap-storage = { path = "../metap-storage" }
 metap-workflow = { path = "../metap-workflow" }
-anyhow = "1"
-arc-swap = "1"
-axum = { version = "0.8", features = ["multipart"] }
-base64 = "0.22"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
-tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
-tower = "0.5"
-tracing = "0.1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sqlx = { version = "0.8", default-features = false, features = [
+anyhow.workspace = true
+arc-swap.workspace = true
+axum = { workspace = true, features = ["multipart"] }
+base64.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, features = [
   "runtime-tokio",
   "tls-rustls",
   "postgres",
   "uuid",
 ] }
-uuid = { version = "1", features = ["v4", "serde"] }
-jsonwebtoken = "9"
-chrono = "0.4"
-moka = { version = "0.12", features = ["future"] }
+uuid.workspace = true
+jsonwebtoken.workspace = true
+chrono.workspace = true
+moka.workspace = true
 axum-prometheus = "0.10.1"
 metrics-process = "2.4.3"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-chrono = "0.4"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+reqwest.workspace = true
+chrono.workspace = true

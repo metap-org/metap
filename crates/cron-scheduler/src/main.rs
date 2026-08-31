@@ -9,17 +9,9 @@ async fn main() -> anyhow::Result<()> {
     metap_infra::init_tracing();
     let config = load_config()?;
 
-    let tick_ms: u64 = env::var("CRON_TICK_MS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5000);
-    let batch_size: i64 = env::var("CRON_BATCH_SIZE")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(50);
-    let target_base_url = env::var("CRON_TARGET_BASE_URL")
-        .ok()
-        .filter(|s| !s.is_empty())
+    let tick_ms: u64 = metap_runtime::env::env_or("CRON_TICK_MS", 5000);
+    let batch_size: i64 = metap_runtime::env::env_or("CRON_BATCH_SIZE", 50);
+    let target_base_url = metap_runtime::env::optional("CRON_TARGET_BASE_URL")
         .unwrap_or_else(|| format!("http://localhost:{}", config.port));
     let service_jwt = env::var("CRON_SERVICE_JWT").unwrap_or_default();
     if service_jwt.is_empty() {
@@ -34,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = connect_db(config.outbox_database_url()).await?;
 
     let rabbitmq_url = config.rabbitmq_url.clone();
-    let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+    let http = metap_runtime::http_client::default_client();
     let executor_config = ExecutorConfig {
         target_base_url,
         service_jwt,
@@ -73,35 +65,31 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let ticker = run_ticker(&pool, &http, &executor_config, ticker_config, shutdown_signal());
-    let executor = run_executor(executor_connect, &pool, &http, &executor_config, shutdown_signal());
-    let trigger = run_trigger_listener(trigger_connect, &pool, &http, &executor_config, shutdown_signal());
+    let ticker = run_ticker(
+        &pool,
+        &http,
+        &executor_config,
+        ticker_config,
+        metap_runtime::shutdown::signal(),
+    );
+    let executor = run_executor(
+        executor_connect,
+        &pool,
+        &http,
+        &executor_config,
+        metap_runtime::shutdown::signal(),
+    );
+    let trigger = run_trigger_listener(
+        trigger_connect,
+        &pool,
+        &http,
+        &executor_config,
+        metap_runtime::shutdown::signal(),
+    );
     let result = tokio::try_join!(ticker, executor, trigger);
 
     pool.close().await;
 
     result?;
     Ok(())
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c().await.ok();
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {}
-        _ = terminate => {}
-    }
 }

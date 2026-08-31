@@ -1,5 +1,3 @@
-use std::env;
-
 use metap_infra::{connect_db, load_config, RabbitEventBus};
 
 #[tokio::main]
@@ -7,14 +5,8 @@ async fn main() -> anyhow::Result<()> {
     metap_infra::init_tracing();
     let config = load_config()?;
 
-    let poll_ms: u64 = env::var("OUTBOX_POLL_MS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1000);
-    let batch_size: i64 = env::var("OUTBOX_BATCH_SIZE")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(100);
+    let poll_ms: u64 = metap_runtime::env::env_or("OUTBOX_POLL_MS", 1000);
+    let batch_size: i64 = metap_runtime::env::env_or("OUTBOX_BATCH_SIZE", 100);
 
     tracing::info!("connecting to postgres...");
     let pool = connect_db(config.outbox_database_url()).await?;
@@ -26,31 +18,9 @@ async fn main() -> anyhow::Result<()> {
         let url = rabbitmq_url.clone();
         async move { RabbitEventBus::connect(&url).await }
     };
-    outbox_publisher::run(&pool, connect, poll_ms, batch_size, shutdown_signal()).await?;
+    outbox_publisher::run(&pool, connect, poll_ms, batch_size, metap_runtime::shutdown::signal()).await?;
 
     pool.close().await;
 
     Ok(())
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c().await.ok();
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {}
-        _ = terminate => {}
-    }
 }

@@ -140,7 +140,7 @@ async fn seed_admin(args: &[String]) -> anyhow::Result<()> {
         std::process::exit(1);
     };
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let database_url = metap_runtime::env::require_env("DATABASE_URL")?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
 
     let tenant_id: Uuid = tenant_id.parse()?;
@@ -167,7 +167,7 @@ async fn create_user(args: &[String]) -> anyhow::Result<()> {
         std::process::exit(1);
     };
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let database_url = metap_runtime::env::require_env("DATABASE_URL")?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
 
     let tenant_id: Uuid = tenant_id.parse()?;
@@ -201,7 +201,7 @@ async fn create_user(args: &[String]) -> anyhow::Result<()> {
 /// the primary one.
 async fn provision_tenant(args: &[String]) -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let database_url = metap_runtime::env::require_env("DATABASE_URL")?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
     let registry = metap_control::PostgresTenantRegistry::new(pool.clone());
 
@@ -276,7 +276,7 @@ async fn bootstrap_platform_admin(args: &[String]) -> anyhow::Result<()> {
         std::process::exit(1);
     };
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let database_url = metap_runtime::env::require_env("DATABASE_URL")?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
 
     let tenant_id = metap_control::PLATFORM_TENANT_ID;
@@ -299,8 +299,8 @@ async fn vault_put_dsn(args: &[String]) -> anyhow::Result<()> {
         std::process::exit(1);
     };
     dotenvy::dotenv().ok();
-    let vault_addr = std::env::var("VAULT_ADDR").map_err(|_| anyhow::anyhow!("VAULT_ADDR is required"))?;
-    let vault_token = std::env::var("VAULT_TOKEN").map_err(|_| anyhow::anyhow!("VAULT_TOKEN is required"))?;
+    let vault_addr = metap_runtime::env::require_env("VAULT_ADDR")?;
+    let vault_token = metap_runtime::env::require_env("VAULT_TOKEN")?;
 
     let store = metap_control::VaultStore::new(&vault_addr, &vault_token)?;
     store.put_dsn(dsn_secret_ref, dsn).await?;
@@ -317,12 +317,10 @@ async fn aws_secrets_put_dsn(args: &[String]) -> anyhow::Result<()> {
         std::process::exit(1);
     };
     dotenvy::dotenv().ok();
-    let region = std::env::var("AWS_SECRETS_REGION").map_err(|_| anyhow::anyhow!("AWS_SECRETS_REGION is required"))?;
-    let access_key =
-        std::env::var("AWS_SECRETS_ACCESS_KEY").map_err(|_| anyhow::anyhow!("AWS_SECRETS_ACCESS_KEY is required"))?;
-    let secret_key =
-        std::env::var("AWS_SECRETS_SECRET_KEY").map_err(|_| anyhow::anyhow!("AWS_SECRETS_SECRET_KEY is required"))?;
-    let endpoint_url = std::env::var("AWS_SECRETS_ENDPOINT_URL").ok().filter(|s| !s.is_empty());
+    let region = metap_runtime::env::require_env("AWS_SECRETS_REGION")?;
+    let access_key = metap_runtime::env::require_env("AWS_SECRETS_ACCESS_KEY")?;
+    let secret_key = metap_runtime::env::require_env("AWS_SECRETS_SECRET_KEY")?;
+    let endpoint_url = metap_runtime::env::optional("AWS_SECRETS_ENDPOINT_URL");
 
     let store = metap_control::AwsSecretsManagerStore::new(metap_control::AwsSecretsManagerStoreConfig {
         region: region.clone(),
@@ -344,8 +342,7 @@ async fn gcp_secrets_put_dsn(args: &[String]) -> anyhow::Result<()> {
         std::process::exit(1);
     };
     dotenvy::dotenv().ok();
-    let project_id =
-        std::env::var("GCP_SECRETS_PROJECT_ID").map_err(|_| anyhow::anyhow!("GCP_SECRETS_PROJECT_ID is required"))?;
+    let project_id = metap_runtime::env::require_env("GCP_SECRETS_PROJECT_ID")?;
 
     let store = metap_control::GcpSecretManagerStore::new(project_id.clone()).await?;
     store.put_dsn(dsn_secret_ref, dsn).await?;
@@ -377,7 +374,7 @@ async fn enqueue_reconcile(args: &[String]) -> anyhow::Result<()> {
         std::process::exit(1);
     };
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let database_url = metap_runtime::env::require_env("DATABASE_URL")?;
     let shared_pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
 
     let tenant_id: Uuid = tenant_id.parse()?;

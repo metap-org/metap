@@ -46,7 +46,7 @@ pub struct BuiltSchema {
 }
 
 pub async fn build(upstreams: &[UpstreamConfig]) -> anyhow::Result<BuiltSchema> {
-    let http = reqwest::Client::new();
+    let http = metap_runtime::http_client::default_client();
     let mut registry = MetadataRegistry::new();
     let mut by_entity: HashMap<String, Arc<dyn RecordBackend>> = HashMap::new();
 

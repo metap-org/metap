@@ -1,14 +1,7 @@
-//! Mirrors `packages/core/src/server/plugins/request-id.ts` (deleted, see git history):
-//! echo/generate `x-request-id`/`x-trace-id` response headers on every request. Fastify's
-//! version also attached both ids to a per-request child logger so every log line carried
-//! them; the Rust equivalent is `request_id::generate_request_ids` (outermost layer, see
-//! `lib.rs`) stashing the same ids in request extensions for `TraceLayer` to fold into its
-//! span, so every `tracing` event logged anywhere during the request carries them without
-//! this module's help. What's left here is `error-handler.ts`'s `errorBody()` behavior (both
-//! ids in every JSON error body) — done centrally in this middleware, buffering and
+//! Echo/generate `x-request-id`/`x-trace-id` response headers on every request, and fold both
+//! ids into every JSON error body — done centrally in this middleware, buffering and
 //! re-serializing only 4xx/5xx bodies, rather than threading a requestId/traceId parameter
-//! through the ~30 `service_error_response`/`internal_error_response` call sites across
-//! `routes/*.rs`.
+//! through every `service_error_response`/`internal_error_response` call site.
 
 use axum::body::{to_bytes, Body};
 use axum::extract::Request;
@@ -23,8 +16,8 @@ use crate::request_id::RequestIds;
 const MAX_ERROR_BODY_BYTES: usize = 1024 * 1024;
 
 pub async fn request_context(request: Request, next: Next) -> Response {
-    // Always present — `generate_request_ids` runs outside this layer in `build_router`, so
-    // by construction every request reaching here already has one.
+    // Always present — `request_id::generate_request_ids` runs outside this layer, so by
+    // construction every request reaching here already has one.
     let RequestIds { request_id, trace_id } =
         request
             .extensions()

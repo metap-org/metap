@@ -26,14 +26,12 @@ pub struct GatewayConfig {
     pub is_production: bool,
 }
 
-fn require_env(name: &str) -> anyhow::Result<String> {
-    std::env::var(name).map_err(|_| anyhow::anyhow!("{name} is required"))
-}
+use metap_runtime::env::{env_or, require_env};
 
 impl GatewayConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-        let port: u16 = std::env::var("PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(4000);
+        let host = env_or("HOST", "0.0.0.0".to_string());
+        let port: u16 = env_or("PORT", 4000);
         let is_production = std::env::var("NODE_ENV").is_ok_and(|v| v == "production");
         let cors_origins = std::env::var("CORS_ORIGINS")
             .map(|v| {

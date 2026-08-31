@@ -18,6 +18,7 @@
 //! on this side. A consumer that wants the low-code layer (currently only
 //! `../metap-demo-crm`) depends on those 3 crates directly, not through this facade.
 
+pub use metap_app as app;
 pub use metap_auth as tenant_auth;
 pub use metap_cache as cache;
 pub use metap_control as control;
@@ -33,6 +34,7 @@ pub use metap_metadata as metadata;
 pub use metap_peripherals as peripherals;
 pub use metap_permission as permission;
 pub use metap_query as query;
+pub use metap_runtime as runtime;
 pub use metap_workflow as workflow;
 
 pub mod prelude {
@@ -44,6 +46,7 @@ pub mod prelude {
     //! them as separate items and refuses to glob-import both under one name) — only one
     //! wins the unqualified name here; reach the others through their namespaced module
     //! (`metap::permission::JsonObject`, `metap::workflow::JsonObject`).
+    pub use metap_app::{bootstrap_platform, PlatformParts};
     pub use metap_control::PostgresPolicyStore;
     pub use metap_crud::{CrudService, JsonObject, RecordCapabilities, RecordDto};
     pub use metap_http::{build_router, AdminContext, AppState, AuthContext, PlatformAdminContext};

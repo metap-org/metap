@@ -13,15 +13,24 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use axum::Router;
-use jsonwebtoken::DecodingKey;
 use metap::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = load_config()?;
 
-    eprintln!("[{{project-name}}] connecting to postgres...");
-    let pool = connect_db(&config.database_url).await?;
+    // `bootstrap_platform` (`metap-app`) connects to Postgres, builds the tenant `Router` (with
+    // whichever `SecretStore` backend is configured), `PermissionService`, and the JWT keypair —
+    // see that crate's own doc comment for the full recipe, and for how to write a custom
+    // route/handler beyond entity declaration (tenant-scoped DB access, permission-aware
+    // handlers, publish/subscribe events).
+    let PlatformParts {
+        pool,
+        router,
+        permissions,
+        decoding_key,
+        private_key_pem,
+    } = bootstrap_platform(&config).await?;
 
     let mut registry = MetadataRegistry::new();
     registry.register(example_entity::example_entity())?;
@@ -34,35 +43,11 @@ async fn main() -> anyhow::Result<()> {
 
     let metadata = Arc::new(ArcSwap::new(metadata_base.clone()));
 
-    // `Router` (`metap::control`) is the multi-tenant seam every tenant-scoped query goes
-    // through — built once here and shared with `PostgresPolicyStore` below so both use the
-    // same `RegistryCache`. `EnvStore` here, not `VaultStore` — this starter template doesn't
-    // wire in Vault by default; add `metap::control::VaultStore` yourself if you need a
-    // `DedicatedDb`-strategy tenant's DSN to come from Vault instead of an env var.
-    let tenant_registry = Arc::new(metap::control::PostgresTenantRegistry::new(pool.clone()));
-    let router = metap::control::Router::new(
-        pool.clone(),
-        metap::control::RegistryCache::new(tenant_registry),
-        Arc::new(metap::control::EnvStore),
-    );
-
-    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(router.clone())));
-
-    let public_key_pem = std::fs::read(&config.auth_jwt_public_key_path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_public_key_path))?;
-    let decoding_key = DecodingKey::from_rsa_pem(&public_key_pem)?;
-
-    // Needed only for POST /auth/login (metap_peripherals::mint_jwt) — this binary issues
-    // tokens, not just verifies them, so both halves of the keypair are load-bearing.
-    let private_key_pem = std::fs::read_to_string(&config.auth_jwt_private_key_path).map_err(|e| {
-        anyhow::anyhow!("failed to read {}: {e}", config.auth_jwt_private_key_path)
-    })?;
-
     let state = AppState::new(
         pool,
         metadata_base,
         metadata,
-        Arc::new(permissions),
+        permissions,
         decoding_key,
         private_key_pem,
         router,
@@ -80,28 +65,22 @@ async fn main() -> anyhow::Result<()> {
     //   `POST /graphql`, a schema generated from this binary's own `MetadataRegistry`.
     // - gRPC: add `metap-grpc` as a dependency and spawn `metap::grpc::serve(grpc_addr,
     //   metap::grpc::GrpcRecordService::new(state.crud.clone(), auth_config), tls_config)` in
-    //   its own `tokio::spawn` alongside the `axum::serve` call below — a second port, not
-    //   merged into this router (see that crate's `serve` doc comment for why).
+    //   its own `tokio::spawn` alongside the `metap::runtime::serve::run` call below — a second
+    //   port, not merged into this router (see that crate's `serve` doc comment for why).
     let router = build_router(state, &config.cors_origins, Router::new());
 
     let addr = format!("{}:{}", config.host, config.port);
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
     eprintln!("[{{project-name}}] listening on http://{addr}");
 
-    // `build_router`'s rate-limit layer keys on peer IP via `ConnectInfo<SocketAddr>` —
-    // plain `into_make_service()` wouldn't populate that extension and every request would
-    // fail rate-limit key extraction.
-    axum::serve(
-        listener,
+    // `metap::runtime::serve::run` binds the listener, serves, and waits for Ctrl+C/SIGTERM —
+    // `build_router`'s rate-limit layer keys on peer IP via `ConnectInfo<SocketAddr>`, so plain
+    // `into_make_service()` wouldn't populate that extension and every request would fail
+    // rate-limit key extraction.
+    metap::runtime::serve::run(
+        &addr,
         router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
     .await?;
 
     Ok(())
-}
-
-async fn shutdown_signal() {
-    tokio::signal::ctrl_c().await.ok();
-    eprintln!("[{{project-name}}] shutdown signal received, exiting");
 }

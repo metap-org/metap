@@ -17,31 +17,9 @@ async fn main() -> anyhow::Result<()> {
             let url = url.clone();
             async move { RabbitEventBus::connect(&url).await }
         },
-        shutdown_signal(),
+        metap_runtime::shutdown::signal(),
     )
     .await?;
 
     Ok(())
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c().await.ok();
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {}
-        _ = terminate => {}
-    }
 }

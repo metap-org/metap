@@ -54,13 +54,36 @@ impl GrpcBackend {
         })
     }
 
+    /// The one choke point every outbound RPC goes through — attaching the current request's
+    /// W3C `traceparent` here (via `attach_traceparent`), rather than at each of the 7 call
+    /// sites below, means any caller running inside an incoming request (a GraphQL resolver, a
+    /// REST route) automatically propagates its trace context to whichever upstream
+    /// microservice this backend calls — no per-call-site change needed for mesh (Istio/Envoy,
+    /// Linkerd) interop.
     fn signed_request<T>(&self, message: T) -> anyhow::Result<Request<T>> {
         let mut request = Request::new(message);
         let value = MetadataValue::try_from(format!("Bearer {}", self.service_jwt))
             .context("service JWT is not valid gRPC metadata")?;
         request.metadata_mut().insert("authorization", value);
+        attach_traceparent(&mut request)?;
         Ok(request)
     }
+}
+
+/// Attaches `metap_runtime::trace_context::current()`'s W3C `traceparent` to `request`'s gRPC
+/// metadata, if this call is running inside one (`trace_context::scope`) — a no-op otherwise
+/// (e.g. a boot-time or background call with no incoming request to propagate from), not an
+/// error. A free function, not a `GrpcBackend` method, so it's testable without a real
+/// connection (`GrpcBackend::connect` needs one).
+fn attach_traceparent<T>(request: &mut Request<T>) -> anyhow::Result<()> {
+    let Some(ctx) = metap_runtime::trace_context::current() else {
+        return Ok(());
+    };
+    let header = ctx.to_traceparent_header();
+    let value = MetadataValue::try_from(header.to_str().unwrap_or_default())
+        .context("traceparent is not valid gRPC metadata")?;
+    request.metadata_mut().insert("traceparent", value);
+    Ok(())
 }
 
 /// The reverse of `crate::status::error_to_status` — necessarily lossy (a `tonic::Status` only
@@ -292,5 +315,30 @@ impl RecordBackend for GrpcBackend {
             }
             Err(status) => Ok(status_to_service_err(status)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attach_traceparent_is_a_no_op_outside_a_scope() {
+        let mut request = Request::new(());
+        attach_traceparent(&mut request).unwrap();
+        assert!(request.metadata().get("traceparent").is_none());
+    }
+
+    #[tokio::test]
+    async fn attach_traceparent_sets_metadata_inside_a_scope() {
+        let ctx = metap_runtime::trace_context::from_headers(&Default::default());
+        let trace_id = ctx.trace_id.clone();
+        metap_runtime::trace_context::scope(ctx, async {
+            let mut request = Request::new(());
+            attach_traceparent(&mut request).unwrap();
+            let value = request.metadata().get("traceparent").unwrap().to_str().unwrap();
+            assert!(value.contains(&trace_id));
+        })
+        .await;
     }
 }

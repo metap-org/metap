@@ -63,7 +63,7 @@ fn bearer_token(metadata: &MetadataMap) -> Result<&str, Status> {
         .ok_or_else(|| Status::unauthenticated("missing authorization metadata"))?
         .to_str()
         .map_err(|_| Status::unauthenticated("authorization metadata is not valid UTF-8"))?;
-    raw.strip_prefix("Bearer ")
+    metap_runtime::bearer::parse_bearer(raw)
         .ok_or_else(|| Status::unauthenticated("authorization metadata must be a Bearer token"))
 }
 

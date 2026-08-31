@@ -12,8 +12,9 @@ name = "notification-worker"
 path = "src/main.rs"
 
 [dependencies]
+metap-runtime = { path = "../metap-runtime" }
 metap-infra = { path = "../metap-infra" }
-anyhow = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
-tracing = "0.1"
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+futures-util.workspace = true
+tracing.workspace = true

@@ -1853,6 +1853,7 @@ dependencies = [
  "metap-control",
  "metap-peripherals",
  "metap-reconciler",
+ "metap-runtime",
  "secrecy",
  "sqlx",
  "tokio",
@@ -3524,6 +3525,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 name = "metap"
 version = "0.1.0"
 dependencies = [
+ "metap-app",
  "metap-auth",
  "metap-cache",
  "metap-control",
@@ -3539,7 +3541,22 @@ dependencies = [
  "metap-peripherals",
  "metap-permission",
  "metap-query",
+ "metap-runtime",
  "metap-workflow",
+]
+
+[[package]]
+name = "metap-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "jsonwebtoken",
+ "metap-cache",
+ "metap-control",
+ "metap-infra",
+ "metap-permission",
+ "sqlx",
+ "tracing",
 ]
 
 [[package]]
@@ -3583,15 +3600,6 @@ dependencies = [
  "redis",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "metap-contrib"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "reqwest 0.12.28",
- "tokio",
 ]
 
 [[package]]
@@ -3644,6 +3652,7 @@ dependencies = [
  "lettre",
  "metap-cron",
  "metap-infra",
+ "metap-runtime",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -3726,12 +3735,12 @@ dependencies = [
  "metap-metadata",
  "metap-peripherals",
  "metap-permission",
+ "metap-runtime",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sqlx",
  "tokio",
- "tower-http 0.6.11",
  "tracing",
  "uuid",
 ]
@@ -3775,6 +3784,7 @@ dependencies = [
  "metap-peripherals",
  "metap-permission",
  "metap-query",
+ "metap-runtime",
  "prost",
  "prost-types",
  "protoc-bin-vendored",
@@ -3810,6 +3820,7 @@ dependencies = [
  "metap-peripherals",
  "metap-permission",
  "metap-query",
+ "metap-runtime",
  "metap-storage",
  "metap-workflow",
  "metrics-process",
@@ -3819,9 +3830,6 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
- "tower",
- "tower-http 0.6.11",
- "tower_governor",
  "tracing",
  "uuid",
 ]
@@ -3835,6 +3843,7 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "lapin",
+ "metap-runtime",
  "serde_json",
  "sqlx",
  "tokio",
@@ -3851,6 +3860,7 @@ dependencies = [
  "base64 0.22.1",
  "jsonwebtoken",
  "metap-peripherals",
+ "metap-runtime",
  "moka",
  "reqwest 0.12.28",
  "ring",
@@ -3891,6 +3901,7 @@ dependencies = [
  "anyhow",
  "futures-util",
  "metap-infra",
+ "metap-runtime",
  "tokio",
  "tracing",
 ]
@@ -3901,6 +3912,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "metap-infra",
+ "metap-runtime",
  "serde_json",
  "sqlx",
  "tokio",
@@ -3973,6 +3985,23 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "metap-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "governor",
+ "reqwest 0.12.28",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-http 0.6.11",
+ "tower_governor",
  "tracing",
  "uuid",
 ]

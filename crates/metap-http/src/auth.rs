@@ -91,8 +91,7 @@ where
             return basic_auth(&app_state, parts, credentials_b64).await;
         }
 
-        let token = header
-            .strip_prefix("Bearer ")
+        let token = metap_runtime::bearer::parse_bearer(header)
             .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
 
         // Default leeway is 60s (`docs/roadmap.md`'s Phase 20 security checklist flagged this as

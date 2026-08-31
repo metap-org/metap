@@ -27,7 +27,7 @@ pub struct JwksClient {
 impl JwksClient {
     pub fn new(jwks_url: impl Into<String>, ttl: Duration) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: metap_runtime::http_client::default_client(),
             jwks_url: jwks_url.into(),
             cache: Cache::builder().time_to_live(ttl).build(),
         }

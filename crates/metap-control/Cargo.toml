@@ -4,15 +4,15 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-anyhow = "1"
-async-trait = "0.1"
-chrono = { version = "0.4", features = ["serde"] }
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
 metap-infra = { path = "../metap-infra" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-permission = { path = "../metap-permission" }
-moka = { version = "0.12", features = ["future"] }
-secrecy = "0.10"
-sqlx = { version = "0.8", default-features = false, features = [
+moka.workspace = true
+secrecy.workspace = true
+sqlx = { workspace = true, features = [
   "runtime-tokio",
   "tls-rustls",
   "postgres",
@@ -22,14 +22,14 @@ sqlx = { version = "0.8", default-features = false, features = [
   "migrate",
   "macros",
 ] }
-tokio = { version = "1", features = ["sync"] }
-tracing = "0.1"
-uuid = { version = "1", features = ["v4", "serde"] }
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+uuid.workspace = true
 vaultrs = "0.7"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde.workspace = true
+serde_json.workspace = true
 aws-sdk-secretsmanager = { version = "1.114.0", default-features = false, features = ["default-https-client", "rt-tokio"] }
 google-cloud-secretmanager-v1 = "1.13.0"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt"] }

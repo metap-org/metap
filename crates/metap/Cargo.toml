@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+metap-app = { path = "../metap-app" }
 metap-auth = { path = "../metap-auth" }
 metap-cache = { path = "../metap-cache" }
 metap-control = { path = "../metap-control" }
@@ -19,4 +20,5 @@ metap-metadata = { path = "../metap-metadata" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-permission = { path = "../metap-permission" }
 metap-query = { path = "../metap-query" }
+metap-runtime = { path = "../metap-runtime" }
 metap-workflow = { path = "../metap-workflow" }

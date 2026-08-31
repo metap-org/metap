@@ -23,27 +23,25 @@ pub mod cache;
 pub mod error;
 pub mod metrics;
 pub mod openapi_paths;
-pub mod request_context;
-pub mod request_id;
 pub mod routes;
 pub mod security_headers;
 pub mod state;
 
-use axum::extract::Request;
-use axum::http::{header, HeaderValue, Method};
+use axum::http::{header, Method};
 use axum::middleware;
 use axum::Router;
-use tower_governor::governor::GovernorConfigBuilder;
-use tower_governor::{GovernorError, GovernorLayer};
-use tower_http::classify::ServerErrorsFailureClass;
-use tower_http::cors::CorsLayer;
-use tower_http::trace::TraceLayer;
-use tracing::Span;
-
-use request_id::RequestIds;
 
 pub use auth::{AdminContext, AuthContext, PlatformAdminContext};
 pub use state::AppState;
+
+// `request_id`/`request_context` middleware and the rate-limit/tracing-span layer builders
+// used in `build_router` below all moved to `metap-runtime` (2026-08-31,
+// `docs/features/08-metap-runtime-common-crate.md`) — pure `axum`/`tower` plumbing with zero
+// dependency on this crate's own `AppState`/business logic, so any router built on
+// `metap-runtime` (not just this crate) can get the same production-grade defaults. Referenced
+// via `metap_runtime::request_context`/`metap_runtime::request_id` below, not re-exported —
+// no external caller referenced `metap_http::request_id`/`metap_http::request_context` before
+// this move (verified by grep).
 
 /// `extra_routes` is the extension point for optional platform capabilities that are not
 /// core — `metap-lowcode-http`'s admin API is the first (only) one today, merged in by
@@ -54,84 +52,27 @@ pub use state::AppState;
 /// exact same CORS/rate-limit/tracing/security-header treatment as every core route — a
 /// caller merging it in *after* `build_router` returns would bypass all of that.
 pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Router<AppState>) -> Router {
-    let cors = if cors_origins.is_empty() {
-        CorsLayer::new()
-    } else {
-        let origins: Vec<HeaderValue> = cors_origins.iter().filter_map(|o| o.parse().ok()).collect();
-        // `allow_credentials(true)` cannot be combined with a wildcard `Any` for
-        // origin/headers — the CORS spec forbids it, and tower-http enforces this at
-        // runtime (a hard panic, not a type error), so both origins and headers must be an
-        // explicit list. Caught by actually running the server, not by any unit/e2e test —
-        // the e2e test in `metap-http/tests/` always passed an empty `cors_origins`, which
-        // takes the `CorsLayer::new()` branch below and never exercised this combination.
-        CorsLayer::new()
-            .allow_origin(origins)
-            .allow_credentials(true)
-            .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
-            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT])
-    };
+    // `metap_runtime::cors::build`'s doc comment has the `allow_credentials(true)` + wildcard
+    // `Any` panic-risk this guards against — same code path `graphql-gateway` uses, only the
+    // allowed methods/headers below are specific to this crate's full REST surface (PATCH/DELETE
+    // included, unlike `graphql-gateway`'s GraphQL-only GET/POST).
+    let cors = metap_runtime::cors::build(
+        cors_origins,
+        &[Method::GET, Method::POST, Method::PATCH, Method::DELETE],
+        &[header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT],
+    );
 
-    // Approximates the old `@fastify/rate-limit` default (`max: 300, timeWindow: "1
-    // minute"`, see git history on the now-deleted `packages/core/src/server/app.ts`) with
-    // governor's token-bucket model instead of a fixed window: a burst capacity of 300,
-    // replenishing 5 tokens/sec (= 300/min sustained). Keyed by peer IP
-    // (`PeerIpKeyExtractor`, the default) rather than `SmartIpKeyExtractor`'s
-    // `X-Forwarded-For`/`X-Real-IP` — those headers are attacker-spoofable unless a trusted
-    // reverse proxy strips/overwrites them first, and no production deployment topology is
-    // documented yet (`docs/architectures/11-risks.md`) to say one does. Revisit once one
-    // exists.
-    let governor_conf = GovernorConfigBuilder::default()
-        .per_millisecond(200)
-        .burst_size(300)
-        .finish()
-        .expect("static rate-limit config is always valid");
-    let rate_limit = GovernorLayer::new(governor_conf).error_handler(|err| match err {
-        GovernorError::TooManyRequests { wait_time, .. } => {
-            let mut response = error::service_error_response(
-                429,
-                "too_many_requests",
-                Some(&format!("Too many requests. Retry after {wait_time}s.")),
-                None,
-            );
-            if let Ok(value) = HeaderValue::from_str(&wait_time.to_string()) {
-                response.headers_mut().insert(header::RETRY_AFTER, value);
-            }
-            response
-        }
-        _ => error::internal_error_response(anyhow::anyhow!("rate limiter: {err}")),
-    });
+    // `metap_runtime::rate_limit::build`'s doc comment has the full reasoning (token-bucket
+    // model, peer-IP keying, why this crate's `into_make_service_with_connect_info` requirement
+    // exists) — 200ms/300 burst approximates the old `@fastify/rate-limit` default (`max: 300,
+    // timeWindow: "1 minute"`, see git history on the now-deleted
+    // `packages/core/src/server/app.ts`).
+    let rate_limit = metap_runtime::rate_limit::build(200, 300);
 
-    // One span per request, carrying the same request_id/trace_id `request_context` puts in
-    // the response — so a `tracing` event logged anywhere downstream (a permission denial in
-    // `metap-permission`, a validation failure in `metap-crud`, ...) is automatically
-    // correlated with both the client-visible ids and this access-log line, with no id
-    // threaded through any of those crates' function signatures.
-    let trace = TraceLayer::new_for_http()
-        .make_span_with(|request: &Request| {
-            let ids = request.extensions().get::<RequestIds>();
-            tracing::info_span!(
-                "http_request",
-                method = %request.method(),
-                path = %request.uri().path(),
-                request_id = ids.map(|i| i.request_id.as_str()).unwrap_or("unknown"),
-                trace_id = ids.map(|i| i.trace_id.as_str()).unwrap_or("unknown"),
-                status = tracing::field::Empty,
-                latency_ms = tracing::field::Empty,
-            )
-        })
-        .on_response(
-            |response: &axum::response::Response, latency: std::time::Duration, span: &Span| {
-                span.record("status", response.status().as_u16());
-                span.record("latency_ms", latency.as_millis() as u64);
-                tracing::event!(parent: span, tracing::Level::INFO, "request completed");
-            },
-        )
-        .on_failure(
-            |error: ServerErrorsFailureClass, latency: std::time::Duration, span: &Span| {
-                span.record("latency_ms", latency.as_millis() as u64);
-                tracing::event!(parent: span, tracing::Level::ERROR, %error, "request failed");
-            },
-        );
+    // `metap_runtime::trace::build`'s doc comment has the full reasoning — one span per
+    // request, correlated with the same request_id/trace_id `request_context` puts in the
+    // response.
+    let trace = metap_runtime::trace::build();
 
     Router::new()
         .merge(routes::health::router())
@@ -150,7 +91,7 @@ pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Rout
         .merge(extra_routes)
         .layer(cors)
         .layer(rate_limit)
-        .layer(middleware::from_fn(request_context::request_context))
+        .layer(middleware::from_fn(metap_runtime::request_context::request_context))
         .layer(middleware::from_fn(security_headers::security_headers))
         .layer(trace)
         // Records per-route request count/duration/in-flight (`docs/local-benchmarking.md`) —
@@ -159,6 +100,6 @@ pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Rout
         .layer(metrics::metric_layer())
         // Outermost: every layer/handler below runs with `RequestIds` already in the request
         // extensions, and — via `trace` above — inside the span built from them.
-        .layer(middleware::from_fn(request_id::generate_request_ids))
+        .layer(middleware::from_fn(metap_runtime::request_id::generate_request_ids))
         .with_state(state)
 }

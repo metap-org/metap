@@ -4,8 +4,8 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-anyhow = "1"
-async-trait = "0.1"
+anyhow.workspace = true
+async-trait.workspace = true
 # Default features on `aws-sdk-s3` pull in *both* the modern rustls/hyper-1.x HTTP client
 # (`default-https-client`) and a legacy hyper-0.14/h2-0.3/rustls-0.21 one (`rustls` — kept for
 # callers still on the old `HttpConnector` API) at once, so both stacks land in Cargo.lock even
@@ -19,10 +19,10 @@ aws-sdk-s3 = { version = "1", default-features = false, features = [
   "default-https-client",
   "rt-tokio",
 ] }
-bytes = "1"
-secrecy = "0.10"
-uuid = "1"
+bytes.workspace = true
+secrecy.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-uuid = { version = "1", features = ["v4"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+uuid.workspace = true

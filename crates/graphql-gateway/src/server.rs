@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::extract::State;
-use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
+use axum::http::{header, HeaderMap, Method};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -26,7 +26,6 @@ use metap_crud::RecordBackend;
 use metap_graphql::{with_request_data, Schema};
 use metap_peripherals::decode_access_token;
 use metap_permission::RequestContext;
-use tower_http::cors::CorsLayer;
 
 use crate::config::GatewayConfig;
 use crate::schema_builder::BuiltSchema;
@@ -38,8 +37,21 @@ struct GatewayState {
     decoding_key: Arc<DecodingKey>,
 }
 
+/// Same `{"error":{"code":...,"message":...}}` shape every other axum surface in this project
+/// uses (`metap_runtime::http_error::service_error_response`) — this gateway used to hand-roll a
+/// plain-text 401 body instead, the one real inconsistency found reviewing `metap-http/src/error.rs`
+/// for reuse (2026-08-31). Uses `metap-runtime` directly rather than `metap_http::error`'s
+/// re-export of the same function — this crate happens to depend on `metap-http` too today, but
+/// the point of moving these 2 functions to `metap-runtime` was so a binary that *doesn't* (a
+/// from-scratch custom router, e.g. a future `../metap-demo-waf` admin API) gets the same shape
+/// without the heavier dependency.
 fn unauthorized(message: &str) -> Box<Response> {
-    Box::new((StatusCode::UNAUTHORIZED, message.to_string()).into_response())
+    Box::new(metap_runtime::http_error::service_error_response(
+        401,
+        "unauthorized",
+        Some(message),
+        None,
+    ))
 }
 
 /// Decodes the caller's Bearer token against this gateway's own keypair — no role/permission
@@ -51,8 +63,7 @@ fn authenticate(headers: &HeaderMap, decoding_key: &DecodingKey) -> Result<Reque
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| unauthorized("missing authorization header"))?;
-    let token = raw
-        .strip_prefix("Bearer ")
+    let token = metap_runtime::bearer::parse_bearer(raw)
         .ok_or_else(|| unauthorized("authorization header must be a Bearer token"))?;
     let claims = decode_access_token(token, decoding_key, 20).map_err(|_| unauthorized("invalid or expired token"))?;
     Ok(RequestContext {
@@ -85,16 +96,11 @@ pub async fn serve(config: GatewayConfig, built: BuiltSchema) -> anyhow::Result<
         decoding_key: Arc::new(decoding_key),
     };
 
-    let cors = if config.cors_origins.is_empty() {
-        CorsLayer::new()
-    } else {
-        let origins: Vec<HeaderValue> = config.cors_origins.iter().filter_map(|o| o.parse().ok()).collect();
-        CorsLayer::new()
-            .allow_origin(origins)
-            .allow_credentials(true)
-            .allow_methods([Method::GET, Method::POST])
-            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT])
-    };
+    let cors = metap_runtime::cors::build(
+        &config.cors_origins,
+        &[Method::GET, Method::POST],
+        &[header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT],
+    );
 
     let mut app: Router<GatewayState> = Router::new()
         .route("/health", get(health))
@@ -106,24 +112,35 @@ pub async fn serve(config: GatewayConfig, built: BuiltSchema) -> anyhow::Result<
         app = app.merge(metap_graphql_http::playground_router::<GatewayState>("/graphql"));
     }
 
+    // Rate-limit/tracing-span/request-id — this gateway had none of these at all before
+    // (2026-08-31, `docs/features/08-metap-runtime-common-crate.md`'s 4th pass), unlike
+    // `metap-http::build_router`'s own copy of the same defaults. Same layer order
+    // `metap-http` uses: `request_id` outermost, then `trace`, then `security_headers`, then
+    // `request_context`, then `rate_limit`, then `cors` innermost.
+    let rate_limit = metap_runtime::rate_limit::build(200, 300);
+    let trace = metap_runtime::trace::build();
+
     let app = app
         .layer(cors)
+        .layer(rate_limit)
+        .layer(axum::middleware::from_fn(
+            metap_runtime::request_context::request_context,
+        ))
         .layer(axum::middleware::from_fn(
             metap_http::security_headers::security_headers,
+        ))
+        .layer(trace)
+        .layer(axum::middleware::from_fn(
+            metap_runtime::request_id::generate_request_ids,
         ))
         .with_state(state);
 
     let addr = format!("{}:{}", config.host, config.port);
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!(%addr, "listening");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // `rate_limit`'s `PeerIpKeyExtractor` reads the connection's peer address from the
+    // `ConnectInfo<SocketAddr>` extension — see `metap_runtime::rate_limit::build`'s doc
+    // comment — so this must serve via `into_make_service_with_connect_info`, not plain
+    // `into_make_service()`.
+    metap_runtime::serve::run(&addr, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await?;
     Ok(())
-}
-
-async fn shutdown_signal() {
-    tokio::signal::ctrl_c().await.ok();
-    tracing::info!("shutdown signal received, exiting");
 }

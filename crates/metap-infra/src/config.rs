@@ -4,6 +4,8 @@
 
 use std::env;
 
+use metap_runtime::env::{env_or, optional, require_env};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeEnv {
     Development,
@@ -134,7 +136,7 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         _ => NodeEnv::Development,
     };
 
-    let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let host = env_or("HOST", "0.0.0.0".to_string());
 
     let port: u16 = env::var("PORT")
         .ok()
@@ -142,7 +144,7 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         .filter(|&p: &u16| p > 0)
         .unwrap_or(3000);
 
-    let database_url = env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    let database_url = require_env("DATABASE_URL")?;
     if !is_url_like(&database_url) {
         anyhow::bail!("DATABASE_URL must be a valid URL");
     }
@@ -157,7 +159,7 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         _ => None,
     };
 
-    let rabbitmq_url = env::var("RABBITMQ_URL").map_err(|_| anyhow::anyhow!("RABBITMQ_URL is required"))?;
+    let rabbitmq_url = require_env("RABBITMQ_URL")?;
     if !is_url_like(&rabbitmq_url) {
         anyhow::bail!("RABBITMQ_URL must be a valid URL");
     }
@@ -177,37 +179,31 @@ pub fn load_config() -> anyhow::Result<AppConfig> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow::anyhow!("AUTH_JWT_PRIVATE_KEY_PATH is required"))?;
 
-    let static_dir = env::var("STATIC_DIR").ok().filter(|s| !s.is_empty());
+    let static_dir = optional("STATIC_DIR");
 
-    let vault_addr = env::var("VAULT_ADDR").ok().filter(|s| !s.is_empty());
-    let vault_token = env::var("VAULT_TOKEN").ok().filter(|s| !s.is_empty());
-    let vault_role_id = env::var("VAULT_ROLE_ID").ok().filter(|s| !s.is_empty());
-    let vault_secret_id = env::var("VAULT_SECRET_ID").ok().filter(|s| !s.is_empty());
-    let vault_approle_mount = env::var("VAULT_APPROLE_MOUNT").ok().filter(|s| !s.is_empty());
+    let vault_addr = optional("VAULT_ADDR");
+    let vault_token = optional("VAULT_TOKEN");
+    let vault_role_id = optional("VAULT_ROLE_ID");
+    let vault_secret_id = optional("VAULT_SECRET_ID");
+    let vault_approle_mount = optional("VAULT_APPROLE_MOUNT");
 
-    let aws_secrets_region = env::var("AWS_SECRETS_REGION").ok().filter(|s| !s.is_empty());
-    let aws_secrets_access_key = env::var("AWS_SECRETS_ACCESS_KEY").ok().filter(|s| !s.is_empty());
-    let aws_secrets_secret_key = env::var("AWS_SECRETS_SECRET_KEY").ok().filter(|s| !s.is_empty());
-    let aws_secrets_endpoint_url = env::var("AWS_SECRETS_ENDPOINT_URL").ok().filter(|s| !s.is_empty());
-    let gcp_secrets_project_id = env::var("GCP_SECRETS_PROJECT_ID").ok().filter(|s| !s.is_empty());
+    let aws_secrets_region = optional("AWS_SECRETS_REGION");
+    let aws_secrets_access_key = optional("AWS_SECRETS_ACCESS_KEY");
+    let aws_secrets_secret_key = optional("AWS_SECRETS_SECRET_KEY");
+    let aws_secrets_endpoint_url = optional("AWS_SECRETS_ENDPOINT_URL");
+    let gcp_secrets_project_id = optional("GCP_SECRETS_PROJECT_ID");
 
-    let auth_context_entity = env::var("AUTH_CONTEXT_ENTITY").ok().filter(|s| !s.is_empty());
-    let auth_context_cache_ttl_seconds: u64 = env::var("AUTH_CONTEXT_CACHE_TTL_SECONDS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(30);
+    let auth_context_entity = optional("AUTH_CONTEXT_ENTITY");
+    let auth_context_cache_ttl_seconds: u64 = env_or("AUTH_CONTEXT_CACHE_TTL_SECONDS", 30);
 
-    let policy_cache_redis_url = env::var("POLICY_CACHE_REDIS_URL").ok().filter(|s| !s.is_empty());
-    let policy_cache_ttl_seconds: u64 = env::var("POLICY_CACHE_TTL_SECONDS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(30);
+    let policy_cache_redis_url = optional("POLICY_CACHE_REDIS_URL");
+    let policy_cache_ttl_seconds: u64 = env_or("POLICY_CACHE_TTL_SECONDS", 30);
 
-    let smtp_host = env::var("SMTP_HOST").ok().filter(|s| !s.is_empty());
-    let smtp_port: u16 = env::var("SMTP_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(1025); // Mailhog's default SMTP port
-    let smtp_user = env::var("SMTP_USER").ok().filter(|s| !s.is_empty());
-    let smtp_password = env::var("SMTP_PASSWORD").ok().filter(|s| !s.is_empty());
-    let smtp_from = env::var("SMTP_FROM").ok().filter(|s| !s.is_empty());
+    let smtp_host = optional("SMTP_HOST");
+    let smtp_port: u16 = env_or("SMTP_PORT", 1025); // Mailhog's default SMTP port
+    let smtp_user = optional("SMTP_USER");
+    let smtp_password = optional("SMTP_PASSWORD");
+    let smtp_from = optional("SMTP_FROM");
 
     Ok(AppConfig {
         node_env,

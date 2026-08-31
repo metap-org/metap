@@ -15,6 +15,15 @@ pub fn require_env(name: &str) -> anyhow::Result<String> {
     env::var(name).map_err(|_| anyhow::anyhow!("{name} is required"))
 }
 
+/// The `env::var(X).ok().filter(|s| !s.is_empty())` idiom — an optional string, where a set but
+/// empty value counts as unset. Found repeated 23 times across `metap-infra`/`cron-scheduler`/
+/// `graphql-gateway`/`dev-tools` during migration to this crate (2026-08-31) — a distinct idiom
+/// from `env_or` (that one always has a default of the *target* type; this one stays a plain
+/// optional string, since most callers layer their own fallback/validation on top).
+pub fn optional(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|s| !s.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -42,5 +51,24 @@ mod tests {
     #[test]
     fn require_env_errors_when_missing() {
         assert!(require_env("METAP_CONTRIB_TEST_REQUIRED_UNSET").is_err());
+    }
+
+    #[test]
+    fn optional_none_when_unset() {
+        assert_eq!(optional("METAP_CONTRIB_TEST_OPTIONAL_UNSET"), None);
+    }
+
+    #[test]
+    fn optional_none_when_empty() {
+        unsafe { env::set_var("METAP_CONTRIB_TEST_OPTIONAL_EMPTY", "") };
+        assert_eq!(optional("METAP_CONTRIB_TEST_OPTIONAL_EMPTY"), None);
+        unsafe { env::remove_var("METAP_CONTRIB_TEST_OPTIONAL_EMPTY") };
+    }
+
+    #[test]
+    fn optional_some_when_set() {
+        unsafe { env::set_var("METAP_CONTRIB_TEST_OPTIONAL_SET", "value") };
+        assert_eq!(optional("METAP_CONTRIB_TEST_OPTIONAL_SET"), Some("value".to_string()));
+        unsafe { env::remove_var("METAP_CONTRIB_TEST_OPTIONAL_SET") };
     }
 }

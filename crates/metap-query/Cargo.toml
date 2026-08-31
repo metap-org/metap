@@ -6,11 +6,11 @@ edition.workspace = true
 [dependencies]
 metap-metadata = { path = "../metap-metadata" }
 metap-permission = { path = "../metap-permission" }
-anyhow = "1"
-base64 = "0.22"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sqlx = { version = "0.8", default-features = false, features = [
+anyhow.workspace = true
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, features = [
   "runtime-tokio",
   "tls-rustls",
   "postgres",
@@ -18,13 +18,13 @@ sqlx = { version = "0.8", default-features = false, features = [
   "chrono",
   "json",
 ] }
-uuid = { version = "1", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-tracing = "0.1"
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
-async-trait = "0.1"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+async-trait.workspace = true
 criterion = "0.5"
 
 [[bench]]

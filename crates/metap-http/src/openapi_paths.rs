@@ -29,9 +29,7 @@ use auth::auth_paths;
 use core::core_paths;
 use cron_dashboards::cron_dashboard_paths;
 
-pub(crate) fn insert(paths: &mut Map<String, Value>, path: &str, item: Value) {
-    paths.insert(path.to_string(), item);
-}
+pub(crate) use metap_runtime::openapi::insert;
 
 pub fn static_paths() -> Map<String, Value> {
     let mut paths = Map::new();

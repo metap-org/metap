@@ -54,6 +54,22 @@ docker run -p 3000:3000 \
 
 No secrets are baked into the image — see the `Dockerfile`'s own comments.
 
+## Writing a custom route/handler beyond entity declaration
+
+Not every feature fits the metadata-driven entity model. `src/main.rs`'s `PlatformParts` (from
+`metap::app::bootstrap_platform`, re-exported at `metap::prelude`) gives you a tenant-aware
+`Router` and `PermissionService` you can build a real hand-written handler on:
+- Mount a custom `axum::Router<AppState>` via `build_router`'s `extra_routes` argument.
+- Resolve the caller's tenant-scoped `PgPool` with `state.router.pool_for(tenant_id)` — never a
+  bare pool.
+- Extract `metap::http::{AuthContext, AdminContext}` in the handler signature for a
+  permission-aware route — no separate middleware needed.
+- Publish an event with `metap::infra::outbox::enqueue(executor, &event)` in the same
+  transaction as your write; `metap::infra::EventBus::subscribe` reads them back.
+
+See `metap-lowcode-http` in the `metap` repo's sibling `metap-lowcode` repo for a full working
+example of this exact pattern, not just a hypothetical.
+
 ## What's not included here
 
 This template covers the backend only. For a frontend, see
