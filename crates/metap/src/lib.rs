@@ -52,7 +52,8 @@ pub mod prelude {
     pub use metap_http::{build_router, AdminContext, AppState, AuthContext, PlatformAdminContext};
     pub use metap_infra::{connect_db, load_config, AppConfig};
     pub use metap_metadata::{
-        EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, MetadataRegistry, WorkflowTransition,
+        submit_entity, EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, MetadataRegistry,
+        WorkflowTransition,
     };
     pub use metap_peripherals::{check_metadata_drift, reconcile_indexes};
     pub use metap_permission::{PermissionService, PolicyCondition};

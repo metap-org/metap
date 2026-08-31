@@ -44,6 +44,39 @@ impl From<MetadataValidationError> for RegistryError {
     }
 }
 
+/// One entity factory submitted via `submit_entity!` (usually through the `metap` facade,
+/// `metap::submit_entity!` — see that macro's own doc comment below), collected at link time
+/// via `inventory` so a downstream binary can register every entity its own crate defines with
+/// one `MetadataRegistry::register_all_submitted()` call instead of one
+/// `registry.register(x_entity())?` line per entity — keeping the entity list in exactly one
+/// place (wherever `submit_entity!` is invoked, normally right next to each entity's own
+/// definition function) instead of two (a hand-written `mod` list plus a matching, easy-to-
+/// forget `register` call in `main.rs`).
+pub struct EntityFactory(pub fn() -> EntityDefinition);
+
+inventory::collect!(EntityFactory);
+
+#[doc(hidden)]
+pub mod __private {
+    pub use inventory;
+}
+
+/// Registers `$factory` (a `fn() -> EntityDefinition`, e.g. an entity module's own
+/// `zone_entity` function) for pickup by `MetadataRegistry::register_all_submitted()`. Call
+/// once per entity, anywhere compiled into the final binary — an entity module that is never
+/// referenced by `main.rs` still gets picked up as long as its parent `mod` is declared
+/// somewhere reachable, since `mod` declarations compile a module whether or not anything
+/// calls into it. `inventory`'s submission runs via a pre-`main` constructor, so no explicit
+/// init call is needed beyond declaring the module.
+#[macro_export]
+macro_rules! submit_entity {
+    ($factory:path) => {
+        $crate::registry::__private::inventory::submit! {
+            $crate::registry::EntityFactory($factory)
+        }
+    };
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct MetadataRegistry {
     entities: HashMap<String, EntityDefinition>,
@@ -60,6 +93,18 @@ impl MetadataRegistry {
         }
         compiler::validate(&entity)?;
         self.entities.insert(entity.name.clone(), entity);
+        Ok(())
+    }
+
+    /// Registers every entity submitted via `submit_entity!` anywhere in this binary's
+    /// dependency graph — the auto-discovery alternative to calling `register` once per entity
+    /// by hand. Iteration order is link order, not declaration order; two entities submitted
+    /// under the same name still fail the same way `register`'s own duplicate check does, just
+    /// surfaced here instead of at a hand-written call site.
+    pub fn register_all_submitted(&mut self) -> Result<(), RegistryError> {
+        for factory in inventory::iter::<EntityFactory> {
+            self.register((factory.0)())?;
+        }
         Ok(())
     }
 
@@ -259,6 +304,23 @@ mod tests {
 
         let err = base.merge_with(vec![entity("crm.customers", vec![])]).unwrap_err();
         assert!(matches!(err, RegistryError::AlreadyRegistered(_)));
+    }
+
+    fn submitted_entity_a() -> EntityDefinition {
+        entity("test.submitted_a", vec![field("name", FieldKind::String)])
+    }
+    fn submitted_entity_b() -> EntityDefinition {
+        entity("test.submitted_b", vec![field("name", FieldKind::String)])
+    }
+    crate::submit_entity!(submitted_entity_a);
+    crate::submit_entity!(submitted_entity_b);
+
+    #[test]
+    fn register_all_submitted_picks_up_every_submit_entity_call() {
+        let mut registry = MetadataRegistry::new();
+        registry.register_all_submitted().unwrap();
+        assert!(registry.get_entity("test.submitted_a").is_some());
+        assert!(registry.get_entity("test.submitted_b").is_some());
     }
 
     #[test]

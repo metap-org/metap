@@ -32,8 +32,11 @@ async fn main() -> anyhow::Result<()> {
         private_key_pem,
     } = bootstrap_platform(&config).await?;
 
+    // Auto-discovered via `submit_entity!` — `example_entity.rs` registers itself with its own
+    // `submit_entity!(example_entity)` call; a new entity module does the same instead of
+    // getting listed here by hand.
     let mut registry = MetadataRegistry::new();
-    registry.register(example_entity::example_entity())?;
+    registry.register_all_submitted()?;
     registry.validate_references()?;
     let metadata_base = Arc::new(registry);
 

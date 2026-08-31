@@ -4,7 +4,7 @@
 
 use metap::permission::{ConditionOp, PolicyValue};
 use metap::prelude::{
-    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, PolicyCondition,
+    submit_entity, EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, PolicyCondition,
     WorkflowTransition,
 };
 
@@ -77,3 +77,5 @@ pub fn example_entity() -> EntityDefinition {
         }),
     }
 }
+
+submit_entity!(example_entity);
