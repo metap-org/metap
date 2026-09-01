@@ -24,6 +24,15 @@ pub fn optional(name: &str) -> Option<String> {
     env::var(name).ok().filter(|s| !s.is_empty())
 }
 
+/// The `env::var(X).is_ok_and(|v| v == "true" || v == "1")` idiom — a boolean feature flag where
+/// "set to something truthy" opts in, not merely "present" (a var set to `"false"` or `""` still
+/// counts as off). Found duplicated as a private, byte-identical `env_flag_enabled` helper in
+/// both `../metap-demo-crm` and `../metap-demo-jira`'s `main.rs` (`GRPC_ENABLED`/
+/// `NOTIFICATION_WORKER_INLINE`/`OUTBOX_WORKER_INLINE`).
+pub fn flag_enabled(name: &str) -> bool {
+    env::var(name).is_ok_and(|v| v == "true" || v == "1")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,5 +79,32 @@ mod tests {
         unsafe { env::set_var("METAP_CONTRIB_TEST_OPTIONAL_SET", "value") };
         assert_eq!(optional("METAP_CONTRIB_TEST_OPTIONAL_SET"), Some("value".to_string()));
         unsafe { env::remove_var("METAP_CONTRIB_TEST_OPTIONAL_SET") };
+    }
+
+    #[test]
+    fn flag_enabled_false_when_unset() {
+        assert!(!flag_enabled("METAP_CONTRIB_TEST_FLAG_UNSET"));
+    }
+
+    #[test]
+    fn flag_enabled_true_for_true_or_1() {
+        unsafe { env::set_var("METAP_CONTRIB_TEST_FLAG_TRUE", "true") };
+        assert!(flag_enabled("METAP_CONTRIB_TEST_FLAG_TRUE"));
+        unsafe { env::remove_var("METAP_CONTRIB_TEST_FLAG_TRUE") };
+
+        unsafe { env::set_var("METAP_CONTRIB_TEST_FLAG_ONE", "1") };
+        assert!(flag_enabled("METAP_CONTRIB_TEST_FLAG_ONE"));
+        unsafe { env::remove_var("METAP_CONTRIB_TEST_FLAG_ONE") };
+    }
+
+    #[test]
+    fn flag_enabled_false_for_other_values() {
+        unsafe { env::set_var("METAP_CONTRIB_TEST_FLAG_FALSE", "false") };
+        assert!(!flag_enabled("METAP_CONTRIB_TEST_FLAG_FALSE"));
+        unsafe { env::remove_var("METAP_CONTRIB_TEST_FLAG_FALSE") };
+
+        unsafe { env::set_var("METAP_CONTRIB_TEST_FLAG_EMPTY", "") };
+        assert!(!flag_enabled("METAP_CONTRIB_TEST_FLAG_EMPTY"));
+        unsafe { env::remove_var("METAP_CONTRIB_TEST_FLAG_EMPTY") };
     }
 }

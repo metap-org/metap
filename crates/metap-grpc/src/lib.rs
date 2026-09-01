@@ -27,5 +27,5 @@ mod status;
 
 pub use auth::{AuthConfig, TokenVerifier};
 pub use client::GrpcBackend;
-pub use serve::serve;
+pub use serve::{optional_serve, serve, OptionalServeConfig};
 pub use service::GrpcRecordService;
