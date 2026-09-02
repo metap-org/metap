@@ -9,7 +9,8 @@ use crate::validation::validate_payload;
 
 use super::helpers::{
     fetch_existing, forbidden, forbidden_with_field, is_dedicated, mask_record_for_read, parse_user_id,
-    router_unavailable, row_to_dto, row_to_dto_dedicated, unique_violation, RECORD_COLUMNS, RECORD_COLUMNS_DEDICATED,
+    recompute_fields, router_unavailable, row_to_dto, row_to_dto_dedicated, unique_violation, RECORD_COLUMNS,
+    RECORD_COLUMNS_DEDICATED,
 };
 use super::CrudService;
 
@@ -75,7 +76,7 @@ impl CrudService {
             }
         }
 
-        let data = match validate_payload(&entity, &merged) {
+        let mut data = match validate_payload(&entity, &merged) {
             Ok(d) => d,
             Err(field_errors) => {
                 tracing::warn!(
@@ -91,6 +92,7 @@ impl CrudService {
                 ));
             }
         };
+        recompute_fields(&entity, &mut data);
 
         let code = data.get("code").and_then(Value::as_str).map(String::from);
         let user_id = parse_user_id(context)?;

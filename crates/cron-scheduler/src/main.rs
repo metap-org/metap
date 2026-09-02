@@ -30,13 +30,15 @@ async fn main() -> anyhow::Result<()> {
     let service_email = metap_runtime::env::optional("CRON_SERVICE_EMAIL");
     let service_password = metap_runtime::env::optional("CRON_SERVICE_PASSWORD");
     let service_token = match (service_email, service_password) {
-        (Some(email), Some(password)) => match ServiceTokenSource::start(http.clone(), login_url, email, password).await {
-            Ok(source) => source,
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to log in with CRON_SERVICE_EMAIL/CRON_SERVICE_PASSWORD — workflow_transition/bulk_query_action jobs will fail until this is fixed; webhook jobs are unaffected");
-                ServiceTokenSource::from_static("")
+        (Some(email), Some(password)) => {
+            match ServiceTokenSource::start(http.clone(), login_url, email, password).await {
+                Ok(source) => source,
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to log in with CRON_SERVICE_EMAIL/CRON_SERVICE_PASSWORD — workflow_transition/bulk_query_action jobs will fail until this is fixed; webhook jobs are unaffected");
+                    ServiceTokenSource::from_static("")
+                }
             }
-        },
+        }
         _ => {
             tracing::warn!(
                 "CRON_SERVICE_EMAIL/CRON_SERVICE_PASSWORD are unset — workflow_transition/bulk_query_action jobs will \

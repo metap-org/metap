@@ -52,7 +52,12 @@ pub struct ServiceTokenSource {
 impl ServiceTokenSource {
     /// Logs in once, synchronously — a failure here fails the caller's boot sequence, same as a
     /// missing/invalid static JWT used to — then spawns the background refresh loop.
-    pub async fn start(http: reqwest::Client, login_url: String, email: String, password: String) -> anyhow::Result<Self> {
+    pub async fn start(
+        http: reqwest::Client,
+        login_url: String,
+        email: String,
+        password: String,
+    ) -> anyhow::Result<Self> {
         let token = login_once(&http, &login_url, &email, &password)
             .await
             .with_context(|| format!("logging into {login_url} as {email}"))?;
@@ -74,7 +79,10 @@ impl ServiceTokenSource {
                     Ok(token) => {
                         background_current.store(Arc::new(token));
                         next_delay = REFRESH_INTERVAL;
-                        tracing::info!(login_url, "refreshed service account token; next refresh in {REFRESH_INTERVAL:?}");
+                        tracing::info!(
+                            login_url,
+                            "refreshed service account token; next refresh in {REFRESH_INTERVAL:?}"
+                        );
                     }
                     Err(e) => {
                         next_delay = RETRY_BACKOFF;

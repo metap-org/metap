@@ -7,8 +7,8 @@ use crate::result::ServiceResult;
 use crate::validation::validate_payload;
 
 use super::helpers::{
-    forbidden, forbidden_with_field, is_dedicated, mask_record_for_read, parse_user_id, router_unavailable, row_to_dto,
-    row_to_dto_dedicated, unique_violation, RECORD_COLUMNS, RECORD_COLUMNS_DEDICATED,
+    forbidden, forbidden_with_field, is_dedicated, mask_record_for_read, parse_user_id, recompute_fields,
+    router_unavailable, row_to_dto, row_to_dto_dedicated, unique_violation, RECORD_COLUMNS, RECORD_COLUMNS_DEDICATED,
 };
 use super::CrudService;
 
@@ -53,6 +53,8 @@ impl CrudService {
                 ));
             }
         };
+
+        recompute_fields(&entity, &mut data);
 
         let status = get_initial_status(&entity, &data);
         // TS's per-entity Zod schema commonly defaults the state field (e.g.

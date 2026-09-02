@@ -31,7 +31,10 @@ impl CrudService {
         context: &RequestContext,
     ) -> anyhow::Result<ServiceResult<()>> {
         let Some(entity) = self.get_entity(entity_name) else {
-            tracing::debug!(entity = entity_name, "check_record_permission rejected: entity not found");
+            tracing::debug!(
+                entity = entity_name,
+                "check_record_permission rejected: entity not found"
+            );
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
 

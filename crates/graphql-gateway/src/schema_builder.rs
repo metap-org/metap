@@ -63,7 +63,13 @@ pub async fn build(upstreams: &[UpstreamConfig]) -> anyhow::Result<BuiltSchema> 
             upstream.service_password.clone(),
         )
         .await
-        .map_err(|e| anyhow::anyhow!("logging into upstream '{}' at {}: {e}", upstream.name, upstream.login_url))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "logging into upstream '{}' at {}: {e}",
+                upstream.name,
+                upstream.login_url
+            )
+        })?;
 
         tracing::info!(upstream = upstream.name, url = upstream.metadata_url, "fetching schema");
         let response: MetadataEntitiesResponse = http
@@ -92,14 +98,17 @@ pub async fn build(upstreams: &[UpstreamConfig]) -> anyhow::Result<BuiltSchema> 
 
         // One `GrpcBackend` (one gRPC channel) per upstream, shared by every entity it owns —
         // not one per entity, since a `Channel` is a multiplexed connection, not a per-call one.
-        let grpc_backend: Arc<dyn RecordBackend> =
-            Arc::new(GrpcBackend::connect(upstream.grpc_addr.clone(), service_token).await.map_err(|e| {
-                anyhow::anyhow!(
-                    "connecting to upstream '{}' gRPC at {}: {e}",
-                    upstream.name,
-                    upstream.grpc_addr
-                )
-            })?);
+        let grpc_backend: Arc<dyn RecordBackend> = Arc::new(
+            GrpcBackend::connect(upstream.grpc_addr.clone(), service_token)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "connecting to upstream '{}' gRPC at {}: {e}",
+                        upstream.name,
+                        upstream.grpc_addr
+                    )
+                })?,
+        );
 
         for entity in response.data {
             let entity_name = entity.name.clone();

@@ -132,6 +132,7 @@ fn indexed_field(name: &str) -> EntityField {
         max: None,
         min_length: None,
         max_length: None,
+        computed: None,
     }
 }
 
@@ -154,6 +155,7 @@ fn fts_field(name: &str) -> EntityField {
         max: None,
         min_length: None,
         max_length: None,
+        computed: None,
     }
 }
 
@@ -176,6 +178,7 @@ fn substring_field(name: &str) -> EntityField {
         max: None,
         min_length: None,
         max_length: None,
+        computed: None,
     }
 }
 

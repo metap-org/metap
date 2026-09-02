@@ -103,6 +103,7 @@ fn test_entity() -> EntityDefinition {
                 max: None,
                 min_length: None,
                 max_length: None,
+                computed: None,
             },
             EntityField {
                 name: "status".to_string(),
@@ -122,6 +123,7 @@ fn test_entity() -> EntityDefinition {
                 max: None,
                 min_length: None,
                 max_length: None,
+                computed: None,
             },
         ],
         list_views: vec![EntityListView {
@@ -231,9 +233,12 @@ async fn grpc_backend_full_lifecycle_matches_direct_crud_service_behavior() {
     tokio::spawn(metap_grpc::serve(addr, service, None));
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let backend = GrpcBackend::connect(format!("http://{addr}"), ServiceTokenSource::from_static(service_jwt.clone()))
-        .await
-        .unwrap();
+    let backend = GrpcBackend::connect(
+        format!("http://{addr}"),
+        ServiceTokenSource::from_static(service_jwt.clone()),
+    )
+    .await
+    .unwrap();
     let ctx = admin_context(tenant_id); // ignored by GrpcBackend itself — identity comes from service_jwt
 
     // create

@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 use sha2::{Digest, Sha256};
 
+use crate::computed::expression_tokens;
 use crate::entity::{EntityDefinition, EntityField, EntityListView, EntityWorkflow};
 
 /// Always present on every entity's underlying `records` row regardless of declared
@@ -142,6 +143,72 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
             if min_length > max_length {
                 issues.push(format!(
                     "field \"{}\" has minLength ({min_length}) greater than maxLength ({max_length})",
+                    field.name
+                ));
+            }
+        }
+    }
+
+    // Second pass for `computed` — needs `field_names` (which computed fields' `dependsOn`
+    // reference) fully populated by the loop above first, and needs to know which OTHER fields
+    // are themselves computed (no chaining in v1, see `EntityField.computed`'s doc comment), so
+    // it can't be folded into the first loop.
+    let computed_field_names: std::collections::HashSet<&str> = entity
+        .fields
+        .iter()
+        .filter(|f| f.computed.is_some())
+        .map(|f| f.name.as_str())
+        .collect();
+    for field in &entity.fields {
+        let Some(computed) = &field.computed else { continue };
+
+        if !matches!(field.kind, crate::entity::FieldKind::String) {
+            issues.push(format!(
+                "field \"{}\" declares computed but is kind \"{:?}\", not string (v1 only supports \
+                 string template expressions)",
+                field.name, field.kind
+            ));
+        }
+        if field.required == Some(true) {
+            issues.push(format!(
+                "field \"{}\" declares computed and required — the server always overwrites a \
+                 computed field's value, required makes no sense here",
+                field.name
+            ));
+        }
+        if field.searchable == Some(true) || field.sortable == Some(true) {
+            issues.push(format!(
+                "field \"{}\" declares computed and searchable/sortable — not supported in v1, \
+                 there is no materialize step yet (see docs/features/13-computed-derived-field.md)",
+                field.name
+            ));
+        }
+
+        for dep in &computed.depends_on {
+            if dep == &field.name {
+                issues.push(format!(
+                    "field \"{}\" has computed.dependsOn referencing itself",
+                    field.name
+                ));
+            } else if computed_field_names.contains(dep.as_str()) {
+                issues.push(format!(
+                    "field \"{}\" has computed.dependsOn referencing another computed field \"{dep}\" — \
+                     chaining computed fields is not supported in v1",
+                    field.name
+                ));
+            } else if !field_names.contains(dep.as_str()) {
+                issues.push(format!(
+                    "field \"{}\" has computed.dependsOn referencing unknown field \"{dep}\"",
+                    field.name
+                ));
+            }
+        }
+
+        for token in expression_tokens(&computed.expression) {
+            if !computed.depends_on.iter().any(|d| d == token) {
+                issues.push(format!(
+                    "field \"{}\" has computed.expression referencing \"{{{token}}}\" which is not \
+                     listed in dependsOn",
                     field.name
                 ));
             }

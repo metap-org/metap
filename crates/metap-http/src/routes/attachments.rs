@@ -45,7 +45,11 @@ async fn ensure_record_permission(
     action: EntityAction,
     context: &metap_permission::RequestContext,
 ) -> Result<(), Box<Response>> {
-    match state.crud.check_record_permission(entity, record_id, action, context).await {
+    match state
+        .crud
+        .check_record_permission(entity, record_id, action, context)
+        .await
+    {
         Ok(ServiceResult::Ok { .. }) => Ok(()),
         Ok(ServiceResult::Err {
             status,

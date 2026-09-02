@@ -89,6 +89,7 @@ fn string_field(name: &str) -> EntityField {
         max: None,
         min_length: None,
         max_length: None,
+        computed: None,
     }
 }
 
@@ -133,6 +134,7 @@ fn child_entity() -> EntityDefinition {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }],
         list_views: vec![EntityListView {
             name: "default".to_string(),
@@ -171,6 +173,7 @@ fn workflow_entity() -> EntityDefinition {
                 max: None,
                 min_length: None,
                 max_length: None,
+                computed: None,
             },
         ],
         list_views: vec![EntityListView {

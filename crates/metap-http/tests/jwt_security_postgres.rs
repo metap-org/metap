@@ -78,6 +78,7 @@ fn test_entity() -> EntityDefinition {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }],
         list_views: vec![EntityListView {
             name: "default".to_string(),

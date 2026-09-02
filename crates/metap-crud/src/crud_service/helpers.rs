@@ -27,6 +27,38 @@ pub(crate) fn is_dedicated(entity: &EntityDefinition) -> bool {
     entity.table_name != "records"
 }
 
+/// Fills in every `computed` field's value from the rest of `data` — see
+/// `docs/features/13-computed-derived-field.md`. Called from `create`/`update` after
+/// `validate_payload` has already accepted the payload (so `data` only contains known,
+/// correctly-typed fields) and before the write lands, so REST/webhook/cron paths (which all go
+/// through `CrudService`) can never disagree on a computed field's value. Always overwrites
+/// whatever the client sent for a computed field, if anything — the server is the only source of
+/// truth for it, matching `compiler::validate`'s rejection of `required: true` on a computed
+/// field (nothing needs to be enforced about client input here, only the correct value written).
+pub(crate) fn recompute_fields(entity: &EntityDefinition, data: &mut JsonObject) {
+    for field in &entity.fields {
+        let Some(computed) = &field.computed else { continue };
+        let rendered = metap_metadata::render_expression(&computed.expression, |name| {
+            data.get(name).map(computed_token_to_string)
+        });
+        data.insert(field.name.clone(), Value::String(rendered));
+    }
+}
+
+/// How a dependency field's current value renders inside a computed-field template — `String`
+/// values pass through as-is, `Null`/absent renders empty (handled by `render_expression`'s
+/// `unwrap_or_default` when this returns `None`... this function only runs when the key IS
+/// present, so it only needs to special-case `Value::Null` itself), everything else uses
+/// `serde_json`'s own `Display` (numbers/bools print their literal, arrays/objects print as
+/// compact JSON — acceptable for v1's "string template", not attempting pretty-printing).
+fn computed_token_to_string(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
 pub(crate) fn parse_user_id(context: &RequestContext) -> anyhow::Result<Option<Uuid>> {
     Ok(context.user_id.as_deref().map(Uuid::parse_str).transpose()?)
 }

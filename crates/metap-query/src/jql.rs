@@ -66,6 +66,7 @@ mod tests {
                     max: None,
                     min_length: None,
                     max_length: None,
+                    computed: None,
                 },
                 EntityField {
                     name: "storyPoints".to_string(),
@@ -85,6 +86,7 @@ mod tests {
                     max: None,
                     min_length: None,
                     max_length: None,
+                    computed: None,
                 },
                 EntityField {
                     name: "title".to_string(),
@@ -104,6 +106,7 @@ mod tests {
                     max: None,
                     min_length: None,
                     max_length: None,
+                    computed: None,
                 },
             ],
             list_views: vec![],

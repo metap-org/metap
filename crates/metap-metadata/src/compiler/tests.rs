@@ -1,5 +1,5 @@
 use super::*;
-use crate::entity::{EntityField, FieldKind};
+use crate::entity::{ComputedSpec, EntityField, FieldKind};
 
 fn field(name: &str, kind: FieldKind) -> EntityField {
     EntityField {
@@ -20,6 +20,7 @@ fn field(name: &str, kind: FieldKind) -> EntityField {
         max: None,
         min_length: None,
         max_length: None,
+        computed: None,
     }
 }
 
@@ -283,4 +284,97 @@ fn hash_changes_when_only_a_transition_guard_changes() {
         },
     }));
     assert_ne!(hash(&no_guard).unwrap(), hash(&guarded).unwrap());
+}
+
+fn computed_field(name: &str, expression: &str, depends_on: &[&str]) -> EntityField {
+    let mut f = field(name, FieldKind::String);
+    f.computed = Some(ComputedSpec {
+        expression: expression.to_string(),
+        depends_on: depends_on.iter().map(|s| s.to_string()).collect(),
+    });
+    f
+}
+
+#[test]
+fn valid_computed_field_passes() {
+    let mut entity = minimal_entity();
+    entity
+        .fields
+        .push(computed_field("greeting", "hello {name}", &["name"]));
+    assert!(validate(&entity).is_ok());
+}
+
+#[test]
+fn computed_field_must_be_string_kind() {
+    let mut entity = minimal_entity();
+    let mut f = field("total", FieldKind::Number);
+    f.computed = Some(ComputedSpec {
+        expression: "{name}".to_string(),
+        depends_on: vec!["name".to_string()],
+    });
+    entity.fields.push(f);
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("not string")));
+}
+
+#[test]
+fn computed_field_cannot_be_required() {
+    let mut entity = minimal_entity();
+    let mut f = computed_field("greeting", "hello {name}", &["name"]);
+    f.required = Some(true);
+    entity.fields.push(f);
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("computed and required")));
+}
+
+#[test]
+fn computed_field_cannot_be_searchable_or_sortable() {
+    let mut entity = minimal_entity();
+    let mut f = computed_field("greeting", "hello {name}", &["name"]);
+    f.searchable = Some(true);
+    entity.fields.push(f);
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("searchable/sortable")));
+}
+
+#[test]
+fn computed_field_depends_on_unknown_field_is_rejected() {
+    let mut entity = minimal_entity();
+    entity
+        .fields
+        .push(computed_field("greeting", "hello {ghost}", &["ghost"]));
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("unknown field")));
+}
+
+#[test]
+fn computed_field_depends_on_itself_is_rejected() {
+    let mut entity = minimal_entity();
+    entity
+        .fields
+        .push(computed_field("greeting", "{greeting}", &["greeting"]));
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("referencing itself")));
+}
+
+#[test]
+fn computed_field_depends_on_another_computed_field_is_rejected() {
+    let mut entity = minimal_entity();
+    entity
+        .fields
+        .push(computed_field("greeting", "hello {name}", &["name"]));
+    entity
+        .fields
+        .push(computed_field("banner", "{greeting}!", &["greeting"]));
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("chaining computed fields")));
+}
+
+#[test]
+fn computed_field_expression_token_missing_from_depends_on_is_rejected() {
+    let mut entity = minimal_entity();
+    // `expression` references `{name}` but `dependsOn` doesn't list it.
+    entity.fields.push(computed_field("greeting", "hello {name}", &[]));
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("not listed in dependsOn")));
 }

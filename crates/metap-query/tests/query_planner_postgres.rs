@@ -86,6 +86,7 @@ fn field(name: &str, kind: FieldKind, sortable: bool, searchable: bool) -> Entit
         max: None,
         min_length: None,
         max_length: None,
+        computed: None,
     }
 }
 

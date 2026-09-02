@@ -36,6 +36,7 @@ fn plain_field(name: &str, kind: FieldKind) -> EntityField {
         max: None,
         min_length: None,
         max_length: None,
+        computed: None,
     }
 }
 

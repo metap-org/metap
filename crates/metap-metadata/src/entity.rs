@@ -82,6 +82,30 @@ pub struct EntityField {
     pub min_length: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_length: Option<u32>,
+    /// A field computed from other fields on the *same* record — see
+    /// `docs/features/13-computed-derived-field.md`. `None` (default, including old low-code
+    /// definitions written before this field existed) means an ordinary, client-written field.
+    /// `compiler::validate` restricts this to `kind: String`, not `required`/`searchable`/
+    /// `sortable` (v1 has no materialize step, so nothing can filter/sort on it), and
+    /// `depends_on` entries that are known non-computed fields on this same entity (no chaining
+    /// through another computed field, no cross-record dependency — see that brief for why).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computed: Option<ComputedSpec>,
+}
+
+/// See `EntityField.computed`'s doc comment. `expression` is a minimal string template, not a
+/// general expression language — `"{firstName} {lastName}"` — each `{fieldName}` token is
+/// replaced with that field's value from the record being written (empty string if absent/null),
+/// evaluated by `metap_crud`'s `recompute_fields` after payload validation, before the write
+/// lands. `depends_on` is redundant with the tokens `expression` actually references (kept
+/// separate, not parsed out of `expression`, so `compiler::validate` can check it without writing
+/// a template parser in the metadata crate) — `compiler::validate` requires every token in
+/// `expression` to also be listed here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComputedSpec {
+    pub expression: String,
+    pub depends_on: Vec<String>,
 }
 
 /// The storage tier a field is promoted to under table-per-entity
@@ -339,6 +363,7 @@ mod storage_tier_tests {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }
     }
 

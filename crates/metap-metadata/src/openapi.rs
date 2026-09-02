@@ -99,8 +99,22 @@ pub fn entity_field_json_schema() -> Value {
             "max": { "type": "number" },
             "minLength": { "type": "number" },
             "maxLength": { "type": "number" },
+            "computed": computed_spec_json_schema(),
         },
         "required": ["name", "label", "kind"],
+    })
+}
+
+/// See `EntityField.computed`/`ComputedSpec`'s doc comments (`entity.rs`) —
+/// `docs/features/13-computed-derived-field.md`.
+fn computed_spec_json_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "expression": { "type": "string" },
+            "dependsOn": { "type": "array", "items": { "type": "string" } },
+        },
+        "required": ["expression", "dependsOn"],
     })
 }
 
@@ -405,6 +419,7 @@ mod tests {
                 max: None,
                 min_length: None,
                 max_length: None,
+                computed: None,
             }],
             list_views: vec![],
             workflow: None,

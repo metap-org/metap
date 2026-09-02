@@ -44,6 +44,7 @@ fn test_entity() -> EntityDefinition {
                 max: None,
                 min_length: None,
                 max_length: None,
+                computed: None,
             },
             EntityField {
                 name: "amount".to_string(),
@@ -63,6 +64,7 @@ fn test_entity() -> EntityDefinition {
                 max: None,
                 min_length: None,
                 max_length: None,
+                computed: None,
             },
             EntityField {
                 name: "status".to_string(),
@@ -82,6 +84,7 @@ fn test_entity() -> EntityDefinition {
                 max: None,
                 min_length: None,
                 max_length: None,
+                computed: None,
             },
             EntityField {
                 name: "resolution".to_string(),
@@ -101,6 +104,7 @@ fn test_entity() -> EntityDefinition {
                 max: None,
                 min_length: None,
                 max_length: None,
+                computed: None,
             },
             EntityField {
                 name: "closedBy".to_string(),
@@ -120,6 +124,7 @@ fn test_entity() -> EntityDefinition {
                 max: None,
                 min_length: None,
                 max_length: None,
+                computed: None,
             },
         ],
         list_views: vec![metap_metadata::EntityListView {
@@ -204,6 +209,7 @@ fn unique_field_entity() -> EntityDefinition {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -236,6 +242,7 @@ fn parent_entity() -> EntityDefinition {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -267,6 +274,7 @@ fn child_entity() -> EntityDefinition {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -300,6 +308,7 @@ fn grandchild_entity() -> EntityDefinition {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }],
         list_views: vec![],
         workflow: None,
@@ -332,7 +341,85 @@ fn self_ref_entity() -> EntityDefinition {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }],
+        list_views: vec![],
+        workflow: None,
+    }
+}
+
+/// For `computed_field_is_recalculated_on_create_and_update` — `displayName` is computed from
+/// `firstName`/`lastName`, `docs/features/13-computed-derived-field.md`.
+fn computed_field_entity() -> EntityDefinition {
+    EntityDefinition {
+        name: "test.people".to_string(),
+        label: "Person".to_string(),
+        table_name: "records".to_string(),
+        fields: vec![
+            EntityField {
+                name: "firstName".to_string(),
+                label: "First Name".to_string(),
+                kind: FieldKind::String,
+                required: None,
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
+                computed: None,
+            },
+            EntityField {
+                name: "lastName".to_string(),
+                label: "Last Name".to_string(),
+                kind: FieldKind::String,
+                required: None,
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
+                computed: None,
+            },
+            EntityField {
+                name: "displayName".to_string(),
+                label: "Display Name".to_string(),
+                kind: FieldKind::String,
+                required: None,
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
+                computed: Some(metap_metadata::ComputedSpec {
+                    expression: "{firstName} {lastName}".to_string(),
+                    depends_on: vec!["firstName".to_string(), "lastName".to_string()],
+                }),
+            },
+        ],
         list_views: vec![],
         workflow: None,
     }
@@ -1334,6 +1421,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }
     }
     fn plain_field(name: &str, kind: FieldKind) -> EntityField {
@@ -1355,6 +1443,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }
     }
 
@@ -1556,6 +1645,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }
     }
     fn plain_field(name: &str, kind: FieldKind) -> EntityField {
@@ -1577,6 +1667,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
             max: None,
             min_length: None,
             max_length: None,
+            computed: None,
         }
     }
 
@@ -1887,6 +1978,49 @@ async fn sustained_concurrent_create_update_transition_delete_cycle() {
 
     report.print_summary();
     report.assert_no_errors();
+
+    cleanup(&pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn computed_field_is_recalculated_on_create_and_update() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(computed_field_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
+
+    let mut payload = JsonObject::new();
+    payload.insert("firstName".to_string(), json!("Ada"));
+    payload.insert("lastName".to_string(), json!("Lovelace"));
+    // A client-sent value for the computed field itself must be ignored — the server always
+    // overwrites it, never trusts client input for it (see `recompute_fields`'s doc comment).
+    payload.insert("displayName".to_string(), json!("ignore me"));
+    let created = match crud.create("test.people", &payload, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+    assert_eq!(created.data.get("displayName"), Some(&json!("Ada Lovelace")));
+
+    let mut update_payload = JsonObject::new();
+    update_payload.insert("firstName".to_string(), json!("Grace"));
+    let updated = match crud
+        .update("test.people", created.id, created.version, &update_payload, &ctx)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected update to succeed, got {other:?}"),
+    };
+    assert_eq!(updated.data.get("displayName"), Some(&json!("Grace Lovelace")));
 
     cleanup(&pool, tenant_id).await;
 }
