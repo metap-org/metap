@@ -26,7 +26,7 @@
 //!
 //! No business-entity knowledge, no HTTP — a plain library, same shape as `metap-permission`.
 //! Not wired into any route/feature yet — added ahead of a concrete consumer (e.g. entity file
-//! attachments), the same order `metap-reconciler` was built in before `apps/jira-server` became
+//! attachments), the same order `metap-reconciler` was built in before `../metap-demo-jira` became
 //! its first real caller. Whoever wires in the first consumer: `content_type` is caller-supplied
 //! and stored verbatim — if objects are ever served back to a browser, don't trust it as safe to
 //! render inline (serve with `Content-Disposition: attachment` or from a sandboxed origin,

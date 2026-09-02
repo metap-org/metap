@@ -1,7 +1,7 @@
 //! Live verification of `HandlerRegistry` (Phase 40) against a real RabbitMQ — dispatch to every
 //! matching handler on one shared subscription, ack only once all of them succeed, and retry
 //! (via `RetryPolicy`) when one fails. Needs a running `docker compose up -d rabbitmq`
-//! (`RABBITMQ_URL`, same default as `apps/crm-server/.env`). Run via
+//! (`RABBITMQ_URL`, same default as `../metap-demo-crm/.env`). Run via
 //! `cargo test -p metap-infra -- --ignored`.
 
 use std::sync::atomic::{AtomicUsize, Ordering};

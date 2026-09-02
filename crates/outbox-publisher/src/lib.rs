@@ -6,7 +6,7 @@
 //! Binary+lib, same shape as `metap-notification-worker`: this crate's own standalone binary
 //! (`src/main.rs`) is the normal deployment shape (`pnpm worker:outbox:rs`), but a host process
 //! can also run this loop inline against its own already-resolved pool instead of spawning a
-//! separate process — see `apps/jira-server`'s `OUTBOX_WORKER_INLINE` flag. Both call this same
+//! separate process — see `../metap-demo-jira`'s `OUTBOX_WORKER_INLINE` flag. Both call this same
 //! `run()`, so the two deployment shapes can't drift apart.
 
 use std::time::Duration;
@@ -37,9 +37,9 @@ struct OutboxRow {
 /// business write that created them landed (`Router::begin`), not necessarily a fixed
 /// `DATABASE_URL`. For a `Schema`-strategy tenant that's the shared platform database (the
 /// common case, what the standalone binary's `config.outbox_database_url()` already points at);
-/// for a `DedicatedDb` tenant (e.g. `apps/jira-server`'s tenant) it's that tenant's own
+/// for a `DedicatedDb` tenant (e.g. `../metap-demo-jira`'s tenant) it's that tenant's own
 /// dedicated pool — pointing this at the platform's pool instead would silently drain nothing,
-/// forever, for that tenant's events (found live: `apps/jira-server`'s workflow-transition
+/// forever, for that tenant's events (found live: `../metap-demo-jira`'s workflow-transition
 /// outbox rows sat unpublished with no worker draining them at all before this existed).
 pub async fn run<B, F, Fut>(
     pool: &PgPool,

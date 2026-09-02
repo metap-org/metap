@@ -5,7 +5,9 @@
 use std::collections::HashMap;
 
 use crate::compiler::{self, MetadataValidationError};
-use crate::entity::{EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind};
+use crate::entity::{
+    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldDisplayHint, FieldKind, RelatedView,
+};
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +18,10 @@ pub struct EntitySummary {
     pub list_views: Vec<EntityListView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<EntityWorkflow>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_views: Vec<RelatedView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub field_display_hints: Vec<FieldDisplayHint>,
     pub version: String,
 }
 
@@ -77,9 +83,59 @@ macro_rules! submit_entity {
     };
 }
 
+/// One entity's `RelatedView`s submitted via `submit_related_views!` — same `inventory`-backed
+/// auto-discovery `EntityFactory`/`submit_entity!` uses, kept as a separate submission type (not
+/// folded into `EntityFactory`/`EntityDefinition`) so declaring related views for 1 entity never
+/// requires touching every other `EntityDefinition` construction site in the codebase — see
+/// `RelatedView`'s doc comment (`entity.rs`) for why that would otherwise be the case.
+pub struct RelatedViewsFactory {
+    pub entity: &'static str,
+    pub factory: fn() -> Vec<RelatedView>,
+}
+
+inventory::collect!(RelatedViewsFactory);
+
+/// Registers `$factory` (a `fn() -> Vec<RelatedView>`) as the related-views section list for
+/// `$entity` (a `&'static str` entity name, e.g. `"waf.zones"` — not the factory function itself,
+/// since there's no `EntityDefinition` to derive a name from here). Picked up by
+/// `MetadataRegistry::register_all_submitted()` alongside `submit_entity!`'s entities. Call next
+/// to the entity's own `submit_entity!` line, same file, for the same "declared once, in one
+/// place" reason `submit_entity!`'s own doc comment gives.
+#[macro_export]
+macro_rules! submit_related_views {
+    ($entity:expr, $factory:path) => {
+        $crate::registry::__private::inventory::submit! {
+            $crate::registry::RelatedViewsFactory { entity: $entity, factory: $factory }
+        }
+    };
+}
+
+/// One entity's `FieldDisplayHint`s submitted via `submit_field_display_hints!` — same shape and
+/// rationale as `RelatedViewsFactory` above, kept as its own submission type for the same reason.
+pub struct FieldDisplayHintsFactory {
+    pub entity: &'static str,
+    pub factory: fn() -> Vec<FieldDisplayHint>,
+}
+
+inventory::collect!(FieldDisplayHintsFactory);
+
+/// Registers `$factory` (a `fn() -> Vec<FieldDisplayHint>`) as the field-display-hints list for
+/// `$entity`. Picked up by `MetadataRegistry::register_all_submitted()` alongside
+/// `submit_entity!`/`submit_related_views!`. Call next to the entity's own `submit_entity!` line.
+#[macro_export]
+macro_rules! submit_field_display_hints {
+    ($entity:expr, $factory:path) => {
+        $crate::registry::__private::inventory::submit! {
+            $crate::registry::FieldDisplayHintsFactory { entity: $entity, factory: $factory }
+        }
+    };
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct MetadataRegistry {
     entities: HashMap<String, EntityDefinition>,
+    related_views: HashMap<String, Vec<RelatedView>>,
+    field_display_hints: HashMap<String, Vec<FieldDisplayHint>>,
 }
 
 impl MetadataRegistry {
@@ -100,16 +156,44 @@ impl MetadataRegistry {
     /// dependency graph — the auto-discovery alternative to calling `register` once per entity
     /// by hand. Iteration order is link order, not declaration order; two entities submitted
     /// under the same name still fail the same way `register`'s own duplicate check does, just
-    /// surfaced here instead of at a hand-written call site.
+    /// surfaced here instead of at a hand-written call site. Also picks up every
+    /// `submit_related_views!` submission (see that macro's doc comment) — one call registers
+    /// both, matching `submit_entity!`'s own "declared once, discovered automatically" promise.
     pub fn register_all_submitted(&mut self) -> Result<(), RegistryError> {
         for factory in inventory::iter::<EntityFactory> {
             self.register((factory.0)())?;
+        }
+        for submission in inventory::iter::<RelatedViewsFactory> {
+            self.related_views
+                .entry(submission.entity.to_string())
+                .or_default()
+                .extend((submission.factory)());
+        }
+        for submission in inventory::iter::<FieldDisplayHintsFactory> {
+            self.field_display_hints
+                .entry(submission.entity.to_string())
+                .or_default()
+                .extend((submission.factory)());
         }
         Ok(())
     }
 
     pub fn get_entity(&self, name: &str) -> Option<&EntityDefinition> {
         self.entities.get(name)
+    }
+
+    /// `RelatedView`s registered for `name`, if any — empty for every entity that doesn't have
+    /// any (the common case). See `RelatedView`'s doc comment for why this is a separate map
+    /// rather than a field on `EntityDefinition`.
+    pub fn get_related_views(&self, name: &str) -> &[RelatedView] {
+        self.related_views.get(name).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// `FieldDisplayHint`s registered for `name`, if any — empty for every entity that doesn't
+    /// have any (the common case). See `FieldDisplayHint`'s doc comment for why this is a
+    /// separate map rather than a field on `EntityField`.
+    pub fn get_field_display_hints(&self, name: &str) -> &[FieldDisplayHint] {
+        self.field_display_hints.get(name).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// Clones this registry and registers `extra` on top of it — used to merge a
@@ -120,6 +204,8 @@ impl MetadataRegistry {
     pub fn merge_with(&self, extra: Vec<EntityDefinition>) -> Result<MetadataRegistry, RegistryError> {
         let mut merged = MetadataRegistry {
             entities: self.entities.clone(),
+            related_views: self.related_views.clone(),
+            field_display_hints: self.field_display_hints.clone(),
         };
         for entity in extra {
             merged.register(entity)?;
@@ -180,6 +266,8 @@ impl MetadataRegistry {
             fields: entity.fields.clone(),
             list_views: entity.list_views.clone(),
             workflow: entity.workflow.clone(),
+            related_views: self.get_related_views(&entity.name).to_vec(),
+            field_display_hints: self.get_field_display_hints(&entity.name).to_vec(),
             // Hashing a plain struct of String/bool/Vec fields cannot fail in practice
             // (unlike JS's NaN/undefined edge cases) — panic rather than silently emit a
             // wrong/empty version if that assumption is ever violated.
@@ -321,6 +409,89 @@ mod tests {
         registry.register_all_submitted().unwrap();
         assert!(registry.get_entity("test.submitted_a").is_some());
         assert!(registry.get_entity("test.submitted_b").is_some());
+    }
+
+    fn submitted_related_views_a() -> Vec<RelatedView> {
+        vec![RelatedView {
+            name: "widgets".to_string(),
+            label: "Widgets".to_string(),
+            entity: "test.widgets".to_string(),
+            filter_field: "ownerId".to_string(),
+            fields: vec!["title".to_string()],
+            limit: None,
+        }]
+    }
+    crate::submit_related_views!("test.submitted_a", submitted_related_views_a);
+
+    #[test]
+    fn register_all_submitted_picks_up_related_views_alongside_entities() {
+        let mut registry = MetadataRegistry::new();
+        registry.register_all_submitted().unwrap();
+        let views = registry.get_related_views("test.submitted_a");
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].name, "widgets");
+        assert_eq!(views[0].entity, "test.widgets");
+    }
+
+    #[test]
+    fn get_related_views_is_empty_for_an_entity_with_none_registered() {
+        let mut registry = MetadataRegistry::new();
+        registry.register_all_submitted().unwrap();
+        assert!(registry.get_related_views("test.submitted_b").is_empty());
+    }
+
+    #[test]
+    fn related_views_do_not_require_the_target_entity_to_be_registered() {
+        // The whole point (see `RelatedView`'s doc comment): `test.widgets`, the target entity
+        // referenced above, is never registered anywhere in this test module — declaring a
+        // related view pointing at it must not fail `register_all_submitted()`.
+        let mut registry = MetadataRegistry::new();
+        registry.register_all_submitted().unwrap();
+        assert!(registry.get_entity("test.widgets").is_none());
+        assert_eq!(registry.get_related_views("test.submitted_a").len(), 1);
+    }
+
+    #[test]
+    fn list_entities_carries_related_views_into_entity_summary() {
+        let mut registry = MetadataRegistry::new();
+        registry.register_all_submitted().unwrap();
+        let summary = registry.get_entity_metadata("test.submitted_a").unwrap();
+        assert_eq!(summary.related_views.len(), 1);
+        assert_eq!(summary.related_views[0].filter_field, "ownerId");
+    }
+
+    fn submitted_field_display_hints_a() -> Vec<FieldDisplayHint> {
+        vec![FieldDisplayHint {
+            field: "assignedTo".to_string(),
+            resolve_via: "users".to_string(),
+        }]
+    }
+    crate::submit_field_display_hints!("test.submitted_a", submitted_field_display_hints_a);
+
+    #[test]
+    fn register_all_submitted_picks_up_field_display_hints_alongside_entities() {
+        let mut registry = MetadataRegistry::new();
+        registry.register_all_submitted().unwrap();
+        let hints = registry.get_field_display_hints("test.submitted_a");
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0].field, "assignedTo");
+        assert_eq!(hints[0].resolve_via, "users");
+    }
+
+    #[test]
+    fn get_field_display_hints_is_empty_for_an_entity_with_none_registered() {
+        let mut registry = MetadataRegistry::new();
+        registry.register_all_submitted().unwrap();
+        assert!(registry.get_field_display_hints("test.submitted_b").is_empty());
+    }
+
+    #[test]
+    fn list_entities_carries_field_display_hints_into_entity_summary() {
+        let mut registry = MetadataRegistry::new();
+        registry.register_all_submitted().unwrap();
+        let summary = registry.get_entity_metadata("test.submitted_a").unwrap();
+        assert_eq!(summary.field_display_hints.len(), 1);
+        assert_eq!(summary.field_display_hints[0].resolve_via, "users");
     }
 
     #[test]

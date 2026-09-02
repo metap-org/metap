@@ -1,7 +1,8 @@
 //! Env-var-numbered upstream configuration — `UPSTREAM_1_NAME`, `UPSTREAM_1_GRPC_ADDR`,
-//! `UPSTREAM_1_METADATA_URL`, `UPSTREAM_1_SERVICE_JWT`, `UPSTREAM_2_...`, stopping at the first
-//! missing `_NAME` — no config-parsing dependency added, matching this platform's other
-//! env-var-heavy ops binaries (`cron-scheduler`, `outbox-publisher`).
+//! `UPSTREAM_1_METADATA_URL`, `UPSTREAM_1_LOGIN_URL`, `UPSTREAM_1_SERVICE_EMAIL`,
+//! `UPSTREAM_1_SERVICE_PASSWORD`, `UPSTREAM_2_...`, stopping at the first missing `_NAME` — no
+//! config-parsing dependency added, matching this platform's other env-var-heavy ops binaries
+//! (`cron-scheduler`, `outbox-publisher`).
 
 pub struct UpstreamConfig {
     pub name: String,
@@ -10,9 +11,13 @@ pub struct UpstreamConfig {
     /// Full URL to that upstream's `GET /metadata/entities` (e.g.
     /// `http://localhost:3100/metadata/entities`).
     pub metadata_url: String,
-    /// This gateway's single, static, pre-minted identity for calling this one upstream — see
-    /// `metap_grpc::GrpcBackend`'s doc comment for why this isn't per-caller.
-    pub service_jwt: String,
+    /// Full URL to that upstream's `POST /auth/login` (e.g. `http://localhost:3100/auth/login`) —
+    /// this gateway's own identity for calling this one upstream logs in here rather than reusing
+    /// a hand-minted-once JWT; see `metap_grpc::ServiceTokenSource`'s doc comment for why this
+    /// isn't per-caller and how it's kept fresh.
+    pub login_url: String,
+    pub service_email: String,
+    pub service_password: String,
 }
 
 pub struct GatewayConfig {
@@ -20,7 +25,7 @@ pub struct GatewayConfig {
     pub port: u16,
     pub upstreams: Vec<UpstreamConfig>,
     /// This gateway's own keypair, decode-only — gates access to `/graphql`, unrelated to any
-    /// `service_jwt` above (see `crate::server`'s doc comment).
+    /// per-upstream service credentials above (see `crate::server`'s doc comment).
     pub auth_public_key_pem: Vec<u8>,
     pub cors_origins: Vec<String>,
     pub is_production: bool,
@@ -56,19 +61,24 @@ impl GatewayConfig {
             };
             let grpc_addr = require_env(&format!("UPSTREAM_{i}_GRPC_ADDR"))?;
             let metadata_url = require_env(&format!("UPSTREAM_{i}_METADATA_URL"))?;
-            let service_jwt = require_env(&format!("UPSTREAM_{i}_SERVICE_JWT"))?;
+            let login_url = require_env(&format!("UPSTREAM_{i}_LOGIN_URL"))?;
+            let service_email = require_env(&format!("UPSTREAM_{i}_SERVICE_EMAIL"))?;
+            let service_password = require_env(&format!("UPSTREAM_{i}_SERVICE_PASSWORD"))?;
             upstreams.push(UpstreamConfig {
                 name,
                 grpc_addr,
                 metadata_url,
-                service_jwt,
+                login_url,
+                service_email,
+                service_password,
             });
             i += 1;
         }
         if upstreams.is_empty() {
             anyhow::bail!(
                 "no upstreams configured — set UPSTREAM_1_NAME/UPSTREAM_1_GRPC_ADDR/\
-                 UPSTREAM_1_METADATA_URL/UPSTREAM_1_SERVICE_JWT (see .env.example)"
+                 UPSTREAM_1_METADATA_URL/UPSTREAM_1_LOGIN_URL/UPSTREAM_1_SERVICE_EMAIL/\
+                 UPSTREAM_1_SERVICE_PASSWORD (see .env.example)"
             );
         }
 

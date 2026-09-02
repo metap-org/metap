@@ -188,7 +188,7 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
         } else {
             // `Date`/`Datetime` deliberately stay an uncast text expression here, not
             // `((data ->> 'field')::date)` like every other kind gets — found live
-            // (`apps/jira-server`'s `dueDate` field, first `indexed`/`sortable` Date-kind field
+            // (`../metap-demo-jira`'s `dueDate` field, first `indexed`/`sortable` Date-kind field
             // anywhere in this codebase): Postgres's implicit `text -> date`/`text ->
             // timestamptz` cast (`date_in`/`timestamptz_in`) is `STABLE`, not `IMMUTABLE` — it
             // depends on the session's `DateStyle`/`TimeZone` GUCs — and `CREATE INDEX` on an
@@ -307,7 +307,7 @@ mod tests {
     /// A cast `text -> date`/`text -> timestamptz` is `STABLE` in Postgres (depends on
     /// `DateStyle`/`TimeZone`), not `IMMUTABLE` — `CREATE INDEX` on an expression requires
     /// `IMMUTABLE`, so the generic cast-expression form every other kind gets would fail at
-    /// reconcile time for `Date`/`Datetime`. Found live via `apps/jira-server`'s `dueDate` field.
+    /// reconcile time for `Date`/`Datetime`. Found live via `../metap-demo-jira`'s `dueDate` field.
     #[test]
     fn indexed_date_field_gets_an_uncast_text_expression_index_not_a_stable_cast() {
         let mut f = plain_field("dueDate", FieldKind::Date);

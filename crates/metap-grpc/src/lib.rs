@@ -7,8 +7,8 @@
 //! so permission enforcement/validation/optimistic-locking/workflow behavior can't drift between
 //! the two transports.
 //!
-//! Entirely opt-in, like `metap-jwks`/`metap-jwks-http`: `crates/metap-http`, `apps/crm-server`,
-//! and `apps/jira-server` have zero dependency on this crate. A binary that wants gRPC runs
+//! Entirely opt-in, like `metap-jwks`/`metap-jwks-http`: `crates/metap-http`, `../metap-demo-crm`,
+//! and `../metap-demo-jira` have zero dependency on this crate. A binary that wants gRPC runs
 //! [`serve`] in its own `tokio::spawn`'d task on a second port, alongside its main HTTP listener
 //! — see `serve`'s doc comment for why a second port rather than unifying onto axum's own
 //! server.
@@ -26,6 +26,6 @@ mod service;
 mod status;
 
 pub use auth::{AuthConfig, TokenVerifier};
-pub use client::GrpcBackend;
+pub use client::{GrpcBackend, ServiceTokenSource};
 pub use serve::{optional_serve, serve, OptionalServeConfig};
 pub use service::GrpcRecordService;

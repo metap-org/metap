@@ -7,13 +7,14 @@
 //! (`PermissionService`) — both existed only as tested functions until this route module was
 //! added (see `docs/architectures/11-risks.md`).
 //!
-//! Phase 8 Hardening (`docs/roadmap.md`): `security_headers` (helmet-equivalent),
-//! `request_context` (requestId/traceId), and per-peer-IP rate limiting are all applied
+//! Phase 8 Hardening (`docs/roadmap.md`): `security_headers` (helmet-equivalent, moved to
+//! `metap-runtime` 2026-09-02, re-exported here unchanged — see that module's doc comment for
+//! why), `request_context` (requestId/traceId), and per-peer-IP rate limiting are all applied
 //! here, globally, rather than per-route — same "can't be forgotten on a future route"
 //! reasoning as `AdminContext`. Rate limiting needs the caller's `axum::serve` to know the
 //! peer address: **any binary using `build_router` must serve via
 //! `into_make_service_with_connect_info::<SocketAddr>()`**, not plain `into_make_service()`
-//! — see `apps/crm-server/src/main.rs` and `metap-http/tests/http_server.rs` for the two
+//! — see `../metap-demo-crm/src/main.rs` and `metap-http/tests/http_server.rs` for the two
 //! call sites this repo has. Still deferred: a secret manager, CSP/sanitizer/file-scanning
 //! (none apply — this is a JSON API with no HTML rendering or file upload yet), non-root
 //! Docker image, CI checks, load tests, backup/restore drill.
@@ -24,8 +25,9 @@ pub mod error;
 pub mod metrics;
 pub mod openapi_paths;
 pub mod routes;
-pub mod security_headers;
 pub mod state;
+
+pub use metap_runtime::security_headers;
 
 use axum::http::{header, Method};
 use axum::middleware;
@@ -45,7 +47,7 @@ pub use state::AppState;
 
 /// `extra_routes` is the extension point for optional platform capabilities that are not
 /// core — `metap-lowcode-http`'s admin API is the first (only) one today, merged in by
-/// `apps/crm-server/src/main.rs` as `metap_lowcode_http::router()`, never by this crate
+/// `../metap-demo-crm/src/main.rs` as `metap_lowcode_http::router()`, never by this crate
 /// itself: `metap-http` has zero dependency on `metap-lowcode`/`metap-lowcode-http`, so a
 /// binary that doesn't want the low-code control plane can pass `Router::new()` here and
 /// never compile that crate in. Merged *before* the layers below so `extra_routes` gets the

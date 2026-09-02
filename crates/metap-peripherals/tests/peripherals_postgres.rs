@@ -77,6 +77,8 @@ fn summary(name: &str, version: &str) -> EntitySummary {
         fields: vec![],
         list_views: vec![],
         workflow: None,
+        related_views: vec![],
+        field_display_hints: vec![],
         version: version.to_string(),
     }
 }
@@ -200,6 +202,8 @@ async fn reconcile_creates_an_index_postgres_actually_selects_for_the_exact_quer
             max_limit: 50,
         }],
         workflow: None,
+        related_views: vec![],
+        field_display_hints: vec![],
         version: "v1".to_string(),
     };
 
@@ -271,6 +275,8 @@ async fn reconcile_creates_an_index_postgres_actually_selects_for_the_exact_quer
         fields: vec![fts_field("description")],
         list_views: vec![],
         workflow: None,
+        related_views: vec![],
+        field_display_hints: vec![],
         version: "v1".to_string(),
     };
     {
@@ -309,6 +315,8 @@ async fn reconcile_creates_a_trigram_index_postgres_actually_selects_for_ilike()
         fields: vec![substring_field("title")],
         list_views: vec![],
         workflow: None,
+        related_views: vec![],
+        field_display_hints: vec![],
         version: "v1".to_string(),
     };
 
@@ -427,6 +435,8 @@ async fn reconcile_continues_past_one_entitys_index_failure() {
         fields: vec![indexed_field("sku")],
         list_views: vec![],
         workflow: None,
+        related_views: vec![],
+        field_display_hints: vec![],
         version: "v1".to_string(),
     };
     let entity_b = EntitySummary {
@@ -435,6 +445,8 @@ async fn reconcile_continues_past_one_entitys_index_failure() {
         fields: vec![indexed_field("sku")],
         list_views: vec![],
         workflow: None,
+        related_views: vec![],
+        field_display_hints: vec![],
         version: "v1".to_string(),
     };
 

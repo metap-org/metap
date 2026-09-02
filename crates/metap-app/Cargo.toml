@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-metap-cache = { path = "../metap-cache" }
+metap-cache = { path = "../metap-cache", features = ["redis-backend"] }
 metap-control = { path = "../metap-control" }
 metap-infra = { path = "../metap-infra" }
 metap-permission = { path = "../metap-permission" }

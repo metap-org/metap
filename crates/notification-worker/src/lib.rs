@@ -23,7 +23,7 @@ pub const ROUTING_KEY: &str = "#.workflow.transitioned";
 ///
 /// Reusable both by this crate's own standalone binary (`src/main.rs`, a separate deployable
 /// process) and by a host process that wants to run the worker in the same process instead (see
-/// `apps/crm-server`'s `NOTIFICATION_WORKER_INLINE` flag) — same function either way, so the two
+/// `../metap-demo-crm`'s `NOTIFICATION_WORKER_INLINE` flag) — same function either way, so the two
 /// deployment shapes can't drift apart.
 pub async fn run<B, F, Fut>(connect: F, shutdown: impl Future<Output = ()>) -> anyhow::Result<()>
 where

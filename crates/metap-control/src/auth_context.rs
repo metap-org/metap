@@ -127,5 +127,10 @@ pub async fn resolve_request_context(
         roles: Some(roles),
         function_id,
         context_attributes,
+        // Not a forwarding source — this is the shared server-side "decode a token, look up
+        // roles" path every `TokenVerifier::Static` server runs (all 3 WAF services included),
+        // not `graphql-gateway`'s own inbound-request auth. A future 2nd-hop forward from one
+        // of these servers could thread the raw token in here too, but nothing needs that today.
+        forwarded_bearer_token: None,
     })
 }

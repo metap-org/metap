@@ -51,10 +51,24 @@ pub async fn build(upstreams: &[UpstreamConfig]) -> anyhow::Result<BuiltSchema> 
     let mut by_entity: HashMap<String, Arc<dyn RecordBackend>> = HashMap::new();
 
     for upstream in upstreams {
+        tracing::info!(upstream = upstream.name, url = upstream.login_url, "logging in");
+        // One `ServiceTokenSource` per upstream, shared by the metadata fetch below and the
+        // `GrpcBackend` this loop builds right after — one background refresh loop per upstream,
+        // not two. Login failure fails the gateway's own boot, same as a missing/invalid static
+        // JWT used to.
+        let service_token = metap_grpc::ServiceTokenSource::start(
+            http.clone(),
+            upstream.login_url.clone(),
+            upstream.service_email.clone(),
+            upstream.service_password.clone(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("logging into upstream '{}' at {}: {e}", upstream.name, upstream.login_url))?;
+
         tracing::info!(upstream = upstream.name, url = upstream.metadata_url, "fetching schema");
         let response: MetadataEntitiesResponse = http
             .get(&upstream.metadata_url)
-            .bearer_auth(&upstream.service_jwt)
+            .bearer_auth(&*service_token.current())
             .send()
             .await
             .map_err(|e| {
@@ -78,17 +92,14 @@ pub async fn build(upstreams: &[UpstreamConfig]) -> anyhow::Result<BuiltSchema> 
 
         // One `GrpcBackend` (one gRPC channel) per upstream, shared by every entity it owns —
         // not one per entity, since a `Channel` is a multiplexed connection, not a per-call one.
-        let grpc_backend: Arc<dyn RecordBackend> = Arc::new(
-            GrpcBackend::connect(upstream.grpc_addr.clone(), upstream.service_jwt.clone())
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "connecting to upstream '{}' gRPC at {}: {e}",
-                        upstream.name,
-                        upstream.grpc_addr
-                    )
-                })?,
-        );
+        let grpc_backend: Arc<dyn RecordBackend> =
+            Arc::new(GrpcBackend::connect(upstream.grpc_addr.clone(), service_token).await.map_err(|e| {
+                anyhow::anyhow!(
+                    "connecting to upstream '{}' gRPC at {}: {e}",
+                    upstream.name,
+                    upstream.grpc_addr
+                )
+            })?);
 
         for entity in response.data {
             let entity_name = entity.name.clone();

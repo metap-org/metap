@@ -7,7 +7,7 @@
 //! `JwksClient` — no shared private key file ever needs to be copied between processes, and no
 //! per-request network round-trip to the issuer is needed once a key is cached.
 //!
-//! Entirely opt-in: `crates/metap-http`, `apps/crm-server`, and `apps/jira-server` have zero
+//! Entirely opt-in: `crates/metap-http`, `../metap-demo-crm`, and `../metap-demo-jira` have zero
 //! dependency on this crate and are unaffected by its existence — see this crate's own tests and
 //! `docs/roadmap.md` for the phase that introduced it.
 

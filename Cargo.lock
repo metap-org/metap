@@ -3535,10 +3535,13 @@ name = "metap"
 version = "0.1.0"
 dependencies = [
  "metap-app",
+ "metap-attachments",
  "metap-auth",
  "metap-cache",
  "metap-control",
+ "metap-cron",
  "metap-crud",
+ "metap-dashboards",
  "metap-graphql",
  "metap-graphql-http",
  "metap-grpc",
@@ -3550,7 +3553,9 @@ dependencies = [
  "metap-peripherals",
  "metap-permission",
  "metap-query",
+ "metap-reconciler",
  "metap-runtime",
+ "metap-storage",
  "metap-workflow",
 ]
 
@@ -4004,9 +4009,11 @@ name = "metap-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "axum",
  "governor",
  "reqwest 0.12.28",
+ "serde",
  "serde_json",
  "tokio",
  "tower",

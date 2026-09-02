@@ -1,6 +1,6 @@
 //! Mirrors the shape (not the full richness — no `requestId`/`traceId` here, a deliberate
 //! simplification; both are injected centrally into every error response, see
-//! `crates/metap-http/src/request_id.rs`) of
+//! `crates/metap-runtime/src/request_id.rs`, moved there from this crate 2026-08-31) of
 //! `packages/core/src/server/error-handler.ts`'s error body and
 //! `SERVICE_ERROR_MESSAGES` default-message table.
 //!

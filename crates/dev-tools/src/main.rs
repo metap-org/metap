@@ -16,7 +16,7 @@ use uuid::Uuid;
 /// resolved the tenant through `Router` the way every other write path in this repo does. This
 /// builds the same kind of `Router` `apps/*-server/src/main.rs` does, so these two CLI paths
 /// can't diverge from what a real request would resolve to. `EnvStore` only (not the AppRole/
-/// Vault branching `apps/crm-server/src/main.rs` has) — a `Vault`-backed dedicated tenant's DSN
+/// Vault branching `../metap-demo-crm/src/main.rs` has) — a `Vault`-backed dedicated tenant's DSN
 /// can still be seeded by hand via `vault-put-dsn` first, same as it always could.
 async fn router_for(shared_pool: sqlx::PgPool) -> metap_control::Router {
     let tenant_registry = Arc::new(metap_control::PostgresTenantRegistry::new(shared_pool.clone()));
@@ -99,7 +99,7 @@ fn gen_keys(dir: String) -> anyhow::Result<()> {
 ///
 /// The default tenant/user ids are **not** a registered `control.tenants` row — found live
 /// (2026-08-24): calling this with no args against an app whose only real tenant is a
-/// `dedicated_db` one (e.g. `apps/jira-server`) mints a token for a tenant `Router` has never
+/// `dedicated_db` one (e.g. `../metap-demo-jira`) mints a token for a tenant `Router` has never
 /// heard of, which falls back to the shared platform schema — every request then 500s with a
 /// confusing "relation does not exist" instead of an auth error, since the token itself decodes
 /// fine. No file I/O here to check registration against (this only touches the JWT keypair,

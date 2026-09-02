@@ -377,6 +377,7 @@ fn admin_context(tenant_id: Uuid) -> RequestContext {
         roles: Some(vec!["admin".to_string()]),
         function_id: None,
         context_attributes: None,
+        forwarded_bearer_token: None,
     }
 }
 
@@ -677,6 +678,7 @@ async fn get_many_batches_reads_masks_denied_records_out_and_preserves_caller_or
         roles: Some(vec!["viewer".to_string()]),
         function_id: None,
         context_attributes: None,
+        forwarded_bearer_token: None,
     };
 
     // Deliberately scrambled + includes a non-existent id, to prove both "output order follows
@@ -877,6 +879,7 @@ async fn non_admin_field_write_policy_is_enforced_through_create() {
         roles: Some(vec!["support".to_string()]), // not "sales" — must be denied on "amount"
         function_id: None,
         context_attributes: None,
+        forwarded_bearer_token: None,
     };
 
     let mut payload = JsonObject::new();
@@ -1275,7 +1278,7 @@ async fn delete_is_rejected_when_referenced_by_any_of_multiple_referencing_entit
 /// `#[ignore]`d like every other e2e test, but not meant to run in a normal `--ignored` pass —
 /// it needs the specific out-of-band seed above and runs for `DURATION_SECS`. Prints results to
 /// stderr (`--nocapture`) rather than asserting thresholds, same "read the numbers yourself"
-/// spirit as `apps/crm-server/scripts/bench-queries.sh`.
+/// spirit as `../metap-demo-crm/scripts/bench-queries.sh`.
 #[tokio::test]
 #[ignore = "manual benchmark: requires the out-of-band hr/helpdesk seed, not part of a normal e2e run"]
 async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
@@ -1460,6 +1463,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
                     roles: Some(vec!["employee".to_string()]),
                     function_id: None,
                     context_attributes: Some(ctx_attrs),
+                    forwarded_bearer_token: None,
                 };
                 let input = ListInput {
                     limit: 50,
@@ -1683,6 +1687,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
                     roles: Some(vec!["employee".to_string()]),
                     function_id: None,
                     context_attributes: Some(ctx_attrs),
+                    forwarded_bearer_token: None,
                 };
                 let input = ListInput {
                     limit: 50,

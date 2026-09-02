@@ -10,7 +10,9 @@
 //!   backend actually run in `docker-compose.yml`'s dev stack). Lets a horizontally scaled
 //!   multi-instance deployment share one cache instead of each instance warming its own — closes
 //!   the gap `docs/architectures/11-risks.md`/`07-deployment.md` both flag (load balancer,
-//!   multiple instances, "not addressed yet").
+//!   multiple instances, "not addressed yet"). Behind the `redis-backend` feature (off by
+//!   default, 2026-09-02) — `Cache`/`MokaCache` have no Redis dependency at all, and most crates
+//!   in the workspace only ever need the trait (via `metap-permission`), not this impl.
 //!
 //! A caller picks whichever `Arc<dyn Cache>` fits its deployment; nothing above this trait needs
 //! to know or care which one is behind it.
@@ -32,9 +34,11 @@
 //! an unbounded/permanent cache.
 
 mod moka_cache;
+#[cfg(feature = "redis-backend")]
 mod redis_cache;
 
 pub use moka_cache::MokaCache;
+#[cfg(feature = "redis-backend")]
 pub use redis_cache::RedisCache;
 
 use async_trait::async_trait;

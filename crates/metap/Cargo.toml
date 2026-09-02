@@ -5,10 +5,13 @@ edition.workspace = true
 
 [dependencies]
 metap-app = { path = "../metap-app" }
+metap-attachments = { path = "../metap-attachments" }
 metap-auth = { path = "../metap-auth" }
 metap-cache = { path = "../metap-cache" }
 metap-control = { path = "../metap-control" }
+metap-cron = { path = "../metap-cron" }
 metap-crud = { path = "../metap-crud" }
+metap-dashboards = { path = "../metap-dashboards" }
 metap-graphql = { path = "../metap-graphql" }
 metap-graphql-http = { path = "../metap-graphql-http" }
 metap-grpc = { path = "../metap-grpc" }
@@ -20,5 +23,7 @@ metap-metadata = { path = "../metap-metadata" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-permission = { path = "../metap-permission" }
 metap-query = { path = "../metap-query" }
+metap-reconciler = { path = "../metap-reconciler" }
 metap-runtime = { path = "../metap-runtime" }
+metap-storage = { path = "../metap-storage" }
 metap-workflow = { path = "../metap-workflow" }

@@ -298,6 +298,7 @@ mod tests {
             roles: None,
             function_id: None,
             context_attributes: None,
+            forwarded_bearer_token: None,
         }
     }
 

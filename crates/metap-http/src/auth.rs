@@ -199,6 +199,8 @@ async fn basic_auth(app_state: &AppState, parts: &Parts, credentials_b64: &str) 
         roles: Some(roles),
         function_id: None,
         context_attributes: None,
+        // Basic auth has no bearer token to forward — nothing to carry here.
+        forwarded_bearer_token: None,
     }))
 }
 

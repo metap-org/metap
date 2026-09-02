@@ -19,10 +19,13 @@
 //! `../metap-demo-crm`) depends on those 3 crates directly, not through this facade.
 
 pub use metap_app as app;
+pub use metap_attachments as attachments;
 pub use metap_auth as tenant_auth;
 pub use metap_cache as cache;
 pub use metap_control as control;
+pub use metap_cron as cron;
 pub use metap_crud as crud;
+pub use metap_dashboards as dashboards;
 pub use metap_graphql as graphql;
 pub use metap_graphql_http as graphql_http;
 pub use metap_grpc as grpc;
@@ -34,7 +37,9 @@ pub use metap_metadata as metadata;
 pub use metap_peripherals as peripherals;
 pub use metap_permission as permission;
 pub use metap_query as query;
+pub use metap_reconciler as reconciler;
 pub use metap_runtime as runtime;
+pub use metap_storage as storage;
 pub use metap_workflow as workflow;
 
 pub mod prelude {
@@ -52,7 +57,8 @@ pub mod prelude {
     pub use metap_http::{build_router, AdminContext, AppState, AuthContext, PlatformAdminContext};
     pub use metap_infra::{connect_db, load_config, AppConfig};
     pub use metap_metadata::{
-        submit_entity, EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, MetadataRegistry,
+        submit_entity, submit_field_display_hints, submit_related_views, EntityDefinition, EntityField,
+        EntityListView, EntityWorkflow, FieldDisplayHint, FieldKind, MetadataRegistry, RelatedView,
         WorkflowTransition,
     };
     pub use metap_peripherals::{check_metadata_drift, reconcile_indexes};

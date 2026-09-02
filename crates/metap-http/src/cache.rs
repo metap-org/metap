@@ -3,7 +3,7 @@
 //! into a `RequestContext`, needed by any future non-HTTP transport too — can use it without
 //! this crate creating a dependency cycle back onto `metap-http`. Re-exported here under its
 //! original name/path (`metap_http::cache::ContextAttributesCache`) purely for source
-//! compatibility with existing call sites (`apps/crm-server/src/main.rs`, this crate's own
+//! compatibility with existing call sites (`../metap-demo-crm/src/main.rs`, this crate's own
 //! tests) — nothing about its shape or behavior changed.
 pub use metap_control::ContextAttributesCache;
 

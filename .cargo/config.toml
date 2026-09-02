@@ -1,0 +1,10 @@
+# Shared across every Rust repo in metap-org (`metap`, `metap-lowcode`, `metap-demo-crm`,
+# `metap-demo-jira`, `metap-demo-waf/data-plane`) — all path-depend on `../metap/crates/*` (or
+# `../../metap/crates/*`), so they compile a large overlapping set of the same third-party crates
+# (tokio, sqlx, axum, ...) independently. 1 target dir lets cargo reuse those builds across repos
+# instead of recompiling them once per repo — was ~49GB combined across 4 repos' own `target/`
+# before this (2026-09-02). Relative path — Cargo resolves it against the directory containing
+# this `.cargo/` folder (i.e. this repo's own root, `metap/`), not the process's CWD — so this
+# keeps working regardless of where `metap-org` itself is checked out on a given machine.
+[build]
+target-dir = "../.shared-target"

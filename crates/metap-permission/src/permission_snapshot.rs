@@ -70,6 +70,14 @@ impl PermissionSnapshot {
         crate::policy_condition::required_relation_fields(self.get_record_policies(action))
     }
 
+    /// **Allow-by-default**, unlike entity-level permission (`PermissionService::can_read_entity`
+    /// etc., which is deny-by-default — `NoMatch` → forbidden). A field with no read policy at
+    /// all is included for anyone who can already read the entity; only a field that has a read
+    /// policy which evaluates to not-allowed gets masked out. Deliberate (mirrors the original
+    /// TS behavior), but easy for a new downstream project to get wrong: a newly added field is
+    /// world-readable to anyone who can read the entity until someone writes a field policy for
+    /// it, not private-until-granted. Found undocumented in an architecture audit
+    /// (`../metap-docs/docs/audits/03-metap-core-architecture-audit.md` finding #11, 2026-09-02).
     pub fn filter_readable_fields(&self, context: &RequestContext, record: &JsonObject) -> JsonObject {
         if context.is_admin() {
             return record.clone();
@@ -101,6 +109,8 @@ impl PermissionSnapshot {
         result
     }
 
+    /// **Allow-by-default**, same asymmetry as `filter_readable_fields` above — a field with no
+    /// write policy is writable to anyone who can already update the entity.
     pub fn writable_fields(
         &self,
         context: &RequestContext,
@@ -156,6 +166,12 @@ impl PermissionSnapshot {
         }
     }
 
+    /// **Allow-by-default when NO record-level policy exists for `action`** (`record_policies.is_empty()`
+    /// below) — same asymmetry as `filter_readable_fields`/`writable_fields` above, entity-level
+    /// permission already gated this call and stays the deny-by-default layer. Once at least one
+    /// record-level policy for `action` DOES exist, this flips to deny-by-default within that
+    /// set: `NoMatch` (no policy's condition matched this specific record) is forbidden, not
+    /// allowed — unlike the field-level case, which allows a field with no matching policy.
     pub fn can_perform_record_condition(
         &self,
         context: &RequestContext,

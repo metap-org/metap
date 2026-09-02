@@ -13,7 +13,6 @@ metap-crud = { path = "../metap-crud" }
 metap-graphql = { path = "../metap-graphql" }
 metap-graphql-http = { path = "../metap-graphql-http" }
 metap-grpc = { path = "../metap-grpc" }
-metap-http = { path = "../metap-http" }
 metap-infra = { path = "../metap-infra" }
 metap-metadata = { path = "../metap-metadata" }
 metap-peripherals = { path = "../metap-peripherals" }
@@ -32,6 +31,10 @@ tracing.workspace = true
 [dev-dependencies]
 arc-swap.workspace = true
 metap-control = { path = "../metap-control" }
+# Only `tests/gateway_e2e_postgres.rs`'s upstream harness needs this (spins up a real
+# `metap_http::build_router` REST listener to stand in for a real upstream service) — the binary
+# itself never depends on `metap-http` (see `src/server.rs`'s doc comment for why).
+metap-http = { path = "../metap-http" }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
 uuid.workspace = true

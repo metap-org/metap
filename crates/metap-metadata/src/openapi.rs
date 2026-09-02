@@ -139,6 +139,34 @@ fn workflow_transition_json_schema() -> Value {
 }
 
 /// `pub` — see [`entity_field_json_schema`]'s doc comment.
+pub fn related_view_json_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string" },
+            "label": { "type": "string" },
+            "entity": { "type": "string" },
+            "filterField": { "type": "string" },
+            "fields": { "type": "array", "items": { "type": "string" } },
+            "limit": { "type": "number" },
+        },
+        "required": ["name", "label", "entity", "filterField", "fields"],
+    })
+}
+
+/// `pub` — see [`entity_field_json_schema`]'s doc comment.
+pub fn field_display_hint_json_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "field": { "type": "string" },
+            "resolveVia": { "type": "string" },
+        },
+        "required": ["field", "resolveVia"],
+    })
+}
+
+/// `pub` — see [`entity_field_json_schema`]'s doc comment.
 pub fn entity_workflow_json_schema() -> Value {
     json!({
         "type": "object",
@@ -161,6 +189,8 @@ fn entity_summary_json_schema() -> Value {
             "fields": { "type": "array", "items": entity_field_json_schema() },
             "listViews": { "type": "array", "items": entity_list_view_json_schema() },
             "workflow": entity_workflow_json_schema(),
+            "relatedViews": { "type": "array", "items": related_view_json_schema() },
+            "fieldDisplayHints": { "type": "array", "items": field_display_hint_json_schema() },
             "version": { "type": "string" },
         },
         "required": ["name", "label", "fields", "listViews", "version"],
@@ -385,6 +415,8 @@ mod tests {
             fields: entity.fields.clone(),
             list_views: entity.list_views.clone(),
             workflow: entity.workflow.clone(),
+            related_views: Vec::new(),
+            field_display_hints: Vec::new(),
             version: compiler::hash(&entity).unwrap(),
         };
         let doc = generate_openapi_document(&[summary]);

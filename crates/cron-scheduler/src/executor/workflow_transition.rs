@@ -46,7 +46,7 @@ pub(crate) async fn run_bulk_query_action(
 
     let list: Value = http
         .get(format!("{base}/api/{}", cfg.entity))
-        .bearer_auth(&config.service_jwt)
+        .bearer_auth(config.service_token.current())
         .query(&[("limit", "200")])
         .query(&cfg.filter)
         .send()
@@ -89,7 +89,7 @@ async fn transition_one(
 
     let record: Value = http
         .get(format!("{base}/api/{entity}/{record_id}"))
-        .bearer_auth(&config.service_jwt)
+        .bearer_auth(config.service_token.current())
         .send()
         .await?
         .error_for_status()?
@@ -103,7 +103,7 @@ async fn transition_one(
 
     let response = http
         .post(format!("{base}/api/{entity}/{record_id}/transitions/{action}"))
-        .bearer_auth(&config.service_jwt)
+        .bearer_auth(config.service_token.current())
         .json(&json!({ "version": version }))
         .send()
         .await?

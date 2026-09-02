@@ -8,8 +8,19 @@ anyhow.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 moka.workspace = true
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"], optional = true }
 uuid.workspace = true
+
+# Off by default — `Cache`/`MokaCache` (the trait, and the in-process impl every crate that
+# merely *consumes* `Cache` needs) have no Redis dependency at all. Found in an architecture
+# audit (`../metap-docs/docs/audits/03-metap-core-architecture-audit.md` finding #7, 2026-09-02):
+# `metap-permission` depends on this crate unconditionally, and `metap-metadata` depends on
+# `metap-permission` — so every crate in the workspace, including ones that never cache anything
+# (`metap-reconciler`, `dev-tools`, ...), was compiling a Redis client. Only `metap-app`
+# (`bootstrap_platform`'s opt-in `RedisCache` wiring) and this crate's own test suite need this
+# feature now.
+[features]
+redis-backend = ["dep:redis"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

@@ -57,8 +57,11 @@ async fn main() -> anyhow::Result<()> {
     );
     // `Router::new()` — this template doesn't wire in `metap-lowcode-http`'s DB-authored
     // entity control plane by default; a single code-authored `example_entity` is the
-    // starting point. Add `metap-lowcode-http` as a dependency and pass
-    // `metap::lowcode_http::router()` here instead if you want that surface.
+    // starting point. `metap-lowcode-http` lives in the separate `../metap-lowcode` repo, not
+    // behind the `metap` facade (see that facade's own doc comment for why) — add it as its own
+    // `path = "../metap-lowcode/crates/metap-lowcode-http"` dependency (same convention
+    // `../metap-demo-crm/Cargo.toml` uses) and pass `metap_lowcode_http::router()` here instead
+    // if you want that surface.
     //
     // Same opt-in shape for two more optional transports on top of REST, neither wired by
     // default here:

@@ -2,7 +2,7 @@
 //! real RabbitMQ — the TTL+DLX "delay queue" chain only RabbitMQ itself can actually exercise
 //! (queue declarations, `x-message-ttl`, `x-death`-based `retry_count`), so this can't be a pure
 //! unit test. Needs a running `docker compose up -d rabbitmq` (`RABBITMQ_URL`, same default as
-//! `apps/crm-server/.env`). Run via `cargo test -p metap-infra -- --ignored`.
+//! `../metap-demo-crm/.env`). Run via `cargo test -p metap-infra -- --ignored`.
 
 use std::time::Duration;
 

@@ -34,6 +34,7 @@ fn admin_context(tenant_id: Uuid) -> RequestContext {
         roles: Some(vec!["admin".to_string()]),
         function_id: None,
         context_attributes: None,
+        forwarded_bearer_token: None,
     }
 }
 
@@ -295,6 +296,7 @@ async fn full_graphql_lifecycle_reference_expansion_and_field_masking() {
         roles: Some(vec!["viewer".to_string()]),
         function_id: None,
         context_attributes: None,
+        forwarded_bearer_token: None,
     };
     let query = r#"
         {

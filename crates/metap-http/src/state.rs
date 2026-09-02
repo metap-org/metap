@@ -26,7 +26,7 @@ pub struct AppState {
     /// tracked ("role lookup và `PostgresPolicyStore` vẫn dùng `AppState.pool` trực tiếp,
     /// không qua Router").
     pub router: Router,
-    /// Code-authored entities only (`apps/crm-server/src/entities/*.rs`), fixed after boot —
+    /// Code-authored entities only (`../metap-demo-crm/src/entities/*.rs`), fixed after boot —
     /// never touched by a DB-authored publish/rollback. Used to reject a DB-authored draft
     /// whose name collides with a code-authored entity (`docs/roadmap.md` Phase 11 / Phase A
     /// sub-project 3) before it's ever merged into `metadata`.
@@ -44,7 +44,7 @@ pub struct AppState {
     /// rarely enough that re-parsing per request is not worth holding a second key type in
     /// state for. See `metap_peripherals::mint_jwt`, the only thing that reads this.
     pub jwt_encoding_key_pem: Arc<str>,
-    /// `None` unless the host binary opts in (e.g. `apps/jira-server`, `.env`'s `S3_BUCKET`) —
+    /// `None` unless the host binary opts in (e.g. `../metap-demo-jira`, `.env`'s `S3_BUCKET`) —
     /// backs `crate::routes::attachments`' generic `/api/{entity}/{id}/attachments*` routes,
     /// always registered in `build_router` regardless of whether a given host actually
     /// configures storage (a request against an app that never set this just gets a 503, the
@@ -59,7 +59,7 @@ pub struct AppState {
     pub attachment_tables: Arc<HashMap<String, String>>,
     /// Opt-in caller-attributes entity name (`AUTH_CONTEXT_ENTITY`,
     /// `docs/features/03-organization-identity.md`) — `None` by default (set by `new`), the
-    /// composition root (`apps/crm-server/src/main.rs`) assigns this directly after
+    /// composition root (`../metap-demo-crm/src/main.rs`) assigns this directly after
     /// construction (every `AppState` field is `pub`) rather than threading two more
     /// constructor parameters through every call site, most of which don't use this feature.
     pub auth_context_entity: Option<Arc<str>>,
@@ -91,7 +91,7 @@ pub struct AppState {
     /// OpenAPI path fragments contributed by optional platform capabilities this crate has zero
     /// dependency on (`metap-lowcode-http`, `metap-control-http` — same "extra_routes" boundary
     /// this file's doc comment already draws for the axum routes themselves). Empty by default;
-    /// the composition root (`apps/crm-server/src/main.rs`) assigns it after construction, same
+    /// the composition root (`../metap-demo-crm/src/main.rs`) assigns it after construction, same
     /// pattern as `object_store`/`attachment_tables`/`auth_context_entity` above. Merged into
     /// `GET /metadata/openapi.json`'s `paths` alongside this crate's own static routes
     /// (`crate::openapi_paths::static_paths`) and the per-entity dynamic ones
@@ -100,7 +100,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// `router` is built by the caller (`apps/crm-server/src/main.rs`), not here — unlike
+    /// `router` is built by the caller (`../metap-demo-crm/src/main.rs`), not here — unlike
     /// before Phase 16's role-lookup/`PostgresPolicyStore` fix (2026-08-20), the composition
     /// root now needs the same `Router` instance for two things built *before* `AppState::new`
     /// runs (`PostgresPolicyStore::new(router.clone())`, wrapped into the `permissions` param

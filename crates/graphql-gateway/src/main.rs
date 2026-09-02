@@ -1,5 +1,5 @@
 //! `graphql-gateway` — the real BFF: a GraphQL schema aggregated across every separately-deployed
-//! microservice named in its own config (`apps/jira-server` + `apps/crm-server`, in this repo's
+//! microservice named in its own config (`../metap-demo-jira` + `../metap-demo-crm`, in this repo's
 //! demo setup), not one binary's own entities. That's the distinction from plain
 //! `metap-graphql-http::router()` mounted directly into `jira-server`/`crm-server` (Phase 49) —
 //! those each serve GraphQL for *their own* entities only; a query against either of them can
@@ -9,11 +9,13 @@
 //! (`metap_graphql::CompositeBackend` routes by entity name — see `schema_builder.rs`).
 //!
 //! Boot sequence:
-//! 1. Read `UPSTREAM_<N>_{NAME,GRPC_ADDR,METADATA_URL,SERVICE_JWT}` env vars (`config.rs`),
-//!    N = 1, 2, ... until `_NAME` is missing.
-//! 2. For each upstream: `GET {METADATA_URL}` (that service's own `GET /metadata/entities`,
-//!    bearer `SERVICE_JWT`) to discover its entities, and connect one `GrpcBackend` to
-//!    `GRPC_ADDR` (`schema_builder.rs`).
+//! 1. Read `UPSTREAM_<N>_{NAME,GRPC_ADDR,METADATA_URL,LOGIN_URL,SERVICE_EMAIL,SERVICE_PASSWORD}`
+//!    env vars (`config.rs`), N = 1, 2, ... until `_NAME` is missing.
+//! 2. For each upstream: log into `LOGIN_URL` (that service's own `POST /auth/login`) as
+//!    `SERVICE_EMAIL`/`SERVICE_PASSWORD`, then `GET {METADATA_URL}` (bearer the token just
+//!    obtained) to discover its entities, and connect one `GrpcBackend` to `GRPC_ADDR`
+//!    (`schema_builder.rs`) — see `metap_grpc::ServiceTokenSource` for how that login is kept
+//!    fresh for the life of this process, not just at boot.
 //! 3. Register every discovered entity into one shared `MetadataRegistry` (fails fast on a
 //!    duplicate name across upstreams — `MetadataRegistry::register`'s own check) and build a
 //!    `CompositeBackend` mapping each entity name back to the `GrpcBackend` of the upstream that

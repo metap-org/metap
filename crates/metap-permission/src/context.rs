@@ -25,6 +25,17 @@ pub struct RequestContext {
     /// `metap-http` already resolved.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub context_attributes: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The caller's own bearer token, verbatim — set only when this context was built from a
+    /// live inbound request whose token this process is itself allowed to hand onward to an
+    /// upstream it calls on the caller's behalf (currently: only `graphql-gateway`, whose
+    /// upstream and this process share one signing keypair — see
+    /// `graphql-gateway/src/server.rs::authenticate`'s doc comment). `None` everywhere else
+    /// (`metap-http::auth`, `metap-control::auth_context`, workers, tests) — those either have
+    /// no upstream to re-authenticate against, or don't forward. `#[serde(skip)]`, not
+    /// `skip_serializing_if` — this is a transport concern for `metap-grpc::GrpcBackend`, not
+    /// ABAC-visible data, so it must never leak into a policy condition's `context[...]` lookup.
+    #[serde(skip)]
+    pub forwarded_bearer_token: Option<String>,
 }
 
 impl RequestContext {
@@ -124,6 +135,7 @@ mod tests {
             roles: Some(vec!["employee".to_string()]),
             function_id: None,
             context_attributes,
+            forwarded_bearer_token: None,
         }
     }
 

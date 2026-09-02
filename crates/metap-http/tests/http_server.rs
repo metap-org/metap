@@ -190,7 +190,7 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        // Mirrors `apps/crm-server/src/main.rs` — the rate-limit layer needs
+        // Mirrors `../metap-demo-crm/src/main.rs` — the rate-limit layer needs
         // `ConnectInfo<SocketAddr>`, see `build_router`'s doc comment.
         axum::serve(
             listener,

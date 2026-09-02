@@ -29,12 +29,12 @@ pub struct AppConfig {
     /// it can issue tokens from a real login, so both keys are load-bearing at boot.
     pub auth_jwt_private_key_path: String,
     /// Path (resolved relative to the binary's cwd, same convention as
-    /// `auth_jwt_public_key_path`) to a built frontend (`apps/crm-fe`'s `vite build` output)
+    /// `auth_jwt_public_key_path`) to a built frontend (`../metap-demo-crm/web`'s `vite build` output)
     /// to serve as static files alongside the API, single-process/single-port. Unset in the
     /// normal split dev workflow (`pnpm dev:web` proxies to the API separately); set by the
     /// `pnpm start` monolith script.
     pub static_dir: Option<String>,
-    /// Opt-in — when set, `apps/crm-server/src/main.rs` builds a `metap_control::VaultStore`
+    /// Opt-in — when set, `../metap-demo-crm/src/main.rs` builds a `metap_control::VaultStore`
     /// instead of the default `EnvStore` for resolving `DedicatedDb` tenant DSNs
     /// (`docs/roadmap.md` Phase 16 Giai đoạn 4). Two auth methods, picked by which vars are
     /// present alongside this one: `vault_token` (plain token) or `vault_role_id` +

@@ -221,6 +221,89 @@ pub struct EntityWorkflow {
     pub transitions: Vec<WorkflowTransition>,
 }
 
+/// A declarative "show related records from another entity" section — the metadata-driven
+/// counterpart to a hand-written aggregate/overview page. `RecordDetail` (`platform-ui`) renders
+/// one panel per `RelatedView` automatically once an entity has any registered, via 1 combined
+/// GraphQL query built from this shape (`metap-graphql`'s existing `{camelEntity}List(filter,
+/// limit)` — no schema changes needed, this struct just makes the *query* discoverable, not new
+/// backend query surface).
+///
+/// **Not a field on `EntityDefinition`** — registered separately via `submit_related_views!`
+/// (`registry.rs`, same `inventory`-backed pattern as `submit_entity!`), picked up by
+/// `MetadataRegistry::register_all_submitted()` into its own map keyed by owning entity name.
+/// Deliberate: `EntityDefinition` is constructed as a bare struct literal at ~50 call sites across
+/// every repo in this org (every `*_entity.rs`, every test fixture) — adding a required field to
+/// it directly would force a mechanical edit at every one of them for a capability only a handful
+/// of entities will ever use. A separate, additive registration call avoids that blast radius
+/// entirely; an entity with no related views registered needs zero changes.
+///
+/// **Deliberately not validated against the target entity's own shape** (no `compiler.rs::validate`
+/// check on `entity`/`filterField`/`fields`, the same treatment `FirewallRule.matchCondition`
+/// already gets for an analogous reason) — checking them would require the target
+/// `EntityDefinition` to be registered in the SAME `MetadataRegistry` as this one, which is
+/// exactly the problem `metap-demo-waf`'s pillar split ran into: a service that doesn't own the
+/// target entity can't safely register it just to validate a reference to it without also
+/// exposing that entity's CRUD routes on its own `/api/:entity*` (see
+/// `../metap-demo-waf/data-plane/README.md`'s "Rào cản kỹ thuật" note). A `RelatedView` pointing
+/// at a nonexistent entity/field surfaces as a normal GraphQL error at query time, not a boot-time
+/// validation failure.
+///
+/// `fields` must be listed explicitly, never "all fields" — the declaring entity has no metadata
+/// for the target entity to enumerate from (same reason validation is skipped above), so there's
+/// no `EntityField` list to default to. This is a real, unavoidable consequence of staying
+/// cross-service-safe, not a shortcut: an entity author still has to name which fields they want,
+/// same as they already do for `EntityListView.fields`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelatedView {
+    /// Section key — becomes the GraphQL query alias `RelatedRecordsPanel` sends, and the key in
+    /// its rendered output. Unique among this entity's own `related_views`, not globally.
+    pub name: String,
+    pub label: String,
+    /// Target entity name, e.g. `"waf.scan_jobs"` — not required to be registered in this
+    /// entity's own `MetadataRegistry` (see struct doc comment).
+    pub entity: String,
+    /// Field on the target entity to filter by, compared against this record's own `id` — e.g.
+    /// `"zoneId"` on `waf.scan_jobs` when declared on `waf.zones`.
+    pub filter_field: String,
+    /// Which target-entity fields to fetch/display — must be listed explicitly (see struct doc
+    /// comment for why "all fields" isn't an option here).
+    pub fields: Vec<String>,
+    /// Row cap for this section. `None` lets the consumer (`RelatedRecordsPanel`) pick its own
+    /// default rather than this struct hardcoding one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// Tells a generic list/detail renderer that a plain `String` field's value is an id from a
+/// platform-level collection this entity's own `MetadataRegistry` cannot see (today: only
+/// `"users"` — a `metap` user id, e.g. `Incident.assignedTo`), so it should be resolved to a
+/// display value client-side instead of shown as a raw id.
+///
+/// A separate registration (`submit_field_display_hints!`, mirroring `RelatedView`/
+/// `submit_related_views!` above), not a field on `EntityField` itself, for the same reason
+/// `RelatedView` isn't a field on `EntityDefinition`: `EntityField` is constructed via a bare
+/// struct literal at ~150 call sites across this whole codebase (23 separate hand-rolled local
+/// `field()` helpers, one per entity-definition module, no shared builder) — adding a field
+/// there would mean touching every one of those 23 helpers, not just the entity that actually
+/// needs a hint. This way, declaring a hint touches only the entity module that needs one.
+///
+/// `resolve_via` is a plain string, not an enum, for the same reason `RelatedView.entity` is —
+/// the set of resolvable platform-level collections may grow, and this struct shouldn't need a
+/// new variant/recompile of `metap-metadata` itself to add one; only `"users"` is actually
+/// implemented on the frontend today (`@metap/platform-ui`'s `UserFieldValue`, resolved against
+/// `GET /users`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldDisplayHint {
+    /// Name of the field this hint applies to, e.g. `"assignedTo"` — must match an
+    /// `EntityField.name` on the same entity, but this is NOT validated (same reason
+    /// `RelatedView`'s `entity`/`filter_field` aren't: keeping this a plain, unchecked
+    /// declaration is what lets it work without both sides being in the same registry).
+    pub field: String,
+    pub resolve_via: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityDefinition {

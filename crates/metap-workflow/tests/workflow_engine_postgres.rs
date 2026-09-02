@@ -42,6 +42,7 @@ async fn record_event_writes_an_append_only_audit_row() {
         roles: None,
         function_id: None,
         context_attributes: None,
+        forwarded_bearer_token: None,
     };
 
     record_event(&pool, &entity, record_id, "activate", "draft", "active", &ctx)

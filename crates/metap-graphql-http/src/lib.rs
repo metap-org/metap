@@ -1,7 +1,7 @@
 //! Mounts `metap-graphql`'s dynamic schema at `POST /graphql` — same "own crate, zero dependency
 //! from `metap-http`" shape as `metap-control-http`/`metap-lowcode-http`: `metap-http` has no
 //! idea this crate exists, a binary that wants a GraphQL endpoint merges [`router`]'s output into
-//! `metap_http::build_router`'s `extra_routes` argument itself (see `apps/crm-server/src/main.rs`
+//! `metap_http::build_router`'s `extra_routes` argument itself (see `../metap-demo-crm/src/main.rs`
 //! for the pattern this follows). Auth reuses `metap_http::auth::AuthContext` directly — the
 //! exact same JWT verification REST already runs — so GraphQL and REST can't drift on who's
 //! allowed to call what; the resulting `RequestContext` is attached to every GraphQL request via
@@ -117,7 +117,7 @@ const PLAYGROUND_CSP: &str = "default-src 'self'; script-src 'self' https://unpk
 /// where a caller pastes their own bearer token into GraphiQL's own header editor panel), so
 /// callers should gate mounting this behind their own non-production check rather than this
 /// crate hardcoding one (e.g. `AppConfig.node_env != NodeEnv::Production`) — see
-/// `apps/jira-server/src/main.rs` for the pattern. GraphiQL's own "Docs" panel (reads the
+/// `../metap-demo-jira/src/main.rs` for the pattern. GraphiQL's own "Docs" panel (reads the
 /// schema via GraphQL introspection, which this crate's schema doesn't disable) is this
 /// platform's closest equivalent to Swagger UI for REST: live, always in sync with the actual
 /// schema, no separate spec file to keep updated by hand.

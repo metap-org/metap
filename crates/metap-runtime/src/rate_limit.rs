@@ -11,6 +11,16 @@
 //! using this layer must serve via `into_make_service_with_connect_info::<SocketAddr>()`, not
 //! plain `into_make_service()` — `PeerIpKeyExtractor` reads the connection's peer address from
 //! that extension, which only that serving method populates.
+//!
+//! **Known tradeoff once a load balancer sits in front of this** (`../metap-docs/docs/
+//! architectures/07-deployment.md`'s acknowledged, not-yet-built topology): every real client's
+//! peer IP becomes the LB's own address once traffic passes through it, collapsing every caller
+//! into ONE shared bucket — a global cap (`burst_size` total, not per-client), not per-client
+//! rate limiting anymore, and trivial to self-inflict by any single caller. The fix at that point
+//! is `SmartIpKeyExtractor` reading `X-Forwarded-For`/`X-Real-IP`, safe only once the LB is known
+//! to strip/overwrite those headers before forwarding (untrusted client-supplied headers
+//! otherwise) — deliberately not built ahead of that real topology existing (architecture audit
+//! `../metap-docs/docs/audits/03-metap-core-architecture-audit.md` finding #14, 2026-09-02).
 
 use axum::body::Body;
 use axum::http::{header, HeaderValue};

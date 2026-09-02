@@ -1,6 +1,6 @@
 //! Starting point — replace this with your own entity. For a fuller real-world example
 //! (more field kinds, a guarded transition, list-view filters), see
-//! `apps/crm-server/src/entities/customer_entity.rs` in the metap repo.
+//! `../metap-demo-crm/src/entities/customer_entity.rs` in the metap repo.
 
 use metap::permission::{ConditionOp, PolicyValue};
 use metap::prelude::{

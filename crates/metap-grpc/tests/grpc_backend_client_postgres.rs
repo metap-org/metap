@@ -1,5 +1,5 @@
 //! E2E test for `GrpcBackend` specifically — a real tonic server (`GrpcRecordService`, exactly
-//! as `apps/jira-server`/`apps/crm-server` would run it) hit through the `RecordBackend` trait
+//! as `../metap-demo-jira`/`../metap-demo-crm` would run it) hit through the `RecordBackend` trait
 //! object via `GrpcBackend`, not through raw `RecordServiceClient` calls
 //! (`grpc_crud_postgres.rs` already covers the server side end to end). This is the piece the
 //! BFF gateway (`crates/graphql-gateway`) actually depends on: a `GrpcBackend` behind
@@ -15,7 +15,7 @@ use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
 use metap_control::PostgresPolicyStore;
 use metap_crud::{CrudService, RecordBackend, ServiceResult};
-use metap_grpc::{AuthConfig, GrpcBackend, GrpcRecordService, TokenVerifier};
+use metap_grpc::{AuthConfig, GrpcBackend, GrpcRecordService, ServiceTokenSource, TokenVerifier};
 use metap_metadata::{
     EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, MetadataRegistry, WorkflowTransition,
 };
@@ -156,6 +156,7 @@ fn admin_context(tenant_id: Uuid) -> RequestContext {
         roles: Some(vec!["admin".to_string()]),
         function_id: None,
         context_attributes: None,
+        forwarded_bearer_token: None,
     }
 }
 
@@ -195,8 +196,9 @@ async fn grpc_backend_full_lifecycle_matches_direct_crud_service_behavior() {
 
     let keydir = tempdir();
     let (private_pem, public_pem) = openssl_genrsa(keydir.path());
-    // The gateway's own static, pre-minted per-upstream service JWT — matches this suite's
-    // `CRON_SERVICE_JWT` precedent, not a token tied to any particular end-user request.
+    // This test exercises `GrpcBackend`'s dispatch, not `ServiceTokenSource`'s login flow — there
+    // is no real `/auth/login` server here, so mint a JWT directly against this test's own
+    // throwaway keypair and wrap it in `ServiceTokenSource::from_static`.
     let service_jwt = metap_peripherals::mint_jwt(&private_pem, tenant_id, user_id, 3600).unwrap();
     let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
 
@@ -229,7 +231,7 @@ async fn grpc_backend_full_lifecycle_matches_direct_crud_service_behavior() {
     tokio::spawn(metap_grpc::serve(addr, service, None));
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let backend = GrpcBackend::connect(format!("http://{addr}"), service_jwt.clone())
+    let backend = GrpcBackend::connect(format!("http://{addr}"), ServiceTokenSource::from_static(service_jwt.clone()))
         .await
         .unwrap();
     let ctx = admin_context(tenant_id); // ignored by GrpcBackend itself — identity comes from service_jwt

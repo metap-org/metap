@@ -30,6 +30,12 @@ async fn openapi_json(State(state): State<AppState>) -> Response {
     Json(doc).into_response()
 }
 
+/// Requires *a* valid session (`AuthContext`) but not `can_read_entity` per entity — every
+/// registered entity's full field/list-view/workflow shape is visible to any authenticated user,
+/// regardless of which entities they can actually read. Only schema shape, never tenant data —
+/// but in a multi-entity app this discloses the existence and field names of entities the caller
+/// has no access to (architecture audit
+/// `../metap-docs/docs/audits/03-metap-core-architecture-audit.md` finding #14, 2026-09-02).
 async fn list_entities(State(state): State<AppState>, AuthContext(_context): AuthContext) -> Response {
     Json(json!({ "data": state.metadata.load().list_entities() })).into_response()
 }

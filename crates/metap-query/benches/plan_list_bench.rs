@@ -131,6 +131,7 @@ fn bench_context() -> RequestContext {
         roles: Some(vec!["admin".to_string()]),
         function_id: None,
         context_attributes: None,
+        forwarded_bearer_token: None,
     }
 }
 

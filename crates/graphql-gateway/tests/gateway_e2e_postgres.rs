@@ -1,8 +1,8 @@
 //! The critical e2e test for this whole crate: proves this is a *real* BFF, not two services
 //! glued together at the frontend. Spins up two independent, real service harnesses (each with
 //! its own tenant, own keypair, own real Postgres-backed `CrudService`, own real gRPC listener,
-//! own real REST `/metadata/entities` listener — exactly the shape `apps/jira-server`/
-//! `apps/crm-server` actually run), points `graphql_gateway::schema_builder::build` at both (the
+//! own real REST `/metadata/entities` listener — exactly the shape `../metap-demo-jira`/
+//! `../metap-demo-crm` actually run), points `graphql_gateway::schema_builder::build` at both (the
 //! same discovery path the real binary's boot sequence uses), then executes **one** GraphQL
 //! query that reads a field from each harness's entity and asserts both are present in the
 //! single response. `#[ignore]`d, same convention as this workspace's other e2e tests (needs a
@@ -112,6 +112,7 @@ fn admin_context(tenant_id: Uuid, user_id: Uuid) -> RequestContext {
         roles: Some(vec!["admin".to_string()]),
         function_id: None,
         context_attributes: None,
+        forwarded_bearer_token: None,
     }
 }
 
@@ -124,7 +125,7 @@ async fn connect_db() -> PgPool {
         .unwrap()
 }
 
-/// A real, independent "upstream microservice" — same shape `apps/jira-server`/`apps/crm-server`
+/// A real, independent "upstream microservice" — same shape `../metap-demo-jira`/`../metap-demo-crm`
 /// actually boot: its own tenant, own RS256 keypair, own real Postgres-backed `CrudService`
 /// behind a real gRPC listener, and its own real REST listener serving `GET /metadata/entities`
 /// (`metap_http::build_router`, exactly what the real binaries mount).
@@ -137,7 +138,16 @@ struct Harness {
 
 async fn spin_up_harness(pool: PgPool, name: &str, entity: EntityDefinition) -> Harness {
     let tenant_id = Uuid::new_v4();
-    let user_id = Uuid::new_v4();
+    // A real user (email+password) rather than a hand-minted JWT — this is what
+    // `ServiceTokenSource::start` (called from `schema_builder::build`, exactly like the real
+    // binary) will log in as through this harness's own `/auth/login`, proving the login-based
+    // service-account flow works end to end, not just `GrpcBackend`'s dispatch.
+    let service_email = format!("service-{tenant_id}@test.local");
+    let service_password = "test-password-not-a-real-secret";
+    let user = metap_peripherals::create_user(&pool, tenant_id, &service_email, service_password)
+        .await
+        .unwrap();
+    let user_id = user.id;
 
     sqlx::query("INSERT INTO user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')")
         .bind(tenant_id)
@@ -148,7 +158,6 @@ async fn spin_up_harness(pool: PgPool, name: &str, entity: EntityDefinition) -> 
 
     let keydir = TempDir::new();
     let (private_pem, public_pem) = openssl_genrsa(keydir.path());
-    let service_jwt = metap_peripherals::mint_jwt(&private_pem, tenant_id, user_id, 3600).unwrap();
     let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
 
     let mut registry = MetadataRegistry::new();
@@ -209,7 +218,9 @@ async fn spin_up_harness(pool: PgPool, name: &str, entity: EntityDefinition) -> 
             name: name.to_string(),
             grpc_addr: format!("http://{grpc_addr}"),
             metadata_url: format!("http://{rest_addr}/metadata/entities"),
-            service_jwt,
+            login_url: format!("http://{rest_addr}/auth/login"),
+            service_email,
+            service_password: service_password.to_string(),
         },
         crud,
         tenant_id,
@@ -276,15 +287,18 @@ async fn one_graphql_query_aggregates_real_data_from_two_independent_services() 
     let request = metap_graphql::with_request_data(
         async_graphql::Request::new(query),
         built.backend.clone(),
-        // Inert for a `CompositeBackend`/`GrpcBackend` pair — see `metap_grpc::GrpcBackend`'s
-        // doc comment for why caller identity never reaches either upstream from here; each
-        // upstream call authenticates as that upstream's own fixed `service_jwt` instead.
+        // No `forwarded_bearer_token` here (this test calls `schema.execute` directly, bypassing
+        // `server.rs::authenticate`, so there's no real inbound token to carry) — `GrpcBackend`
+        // falls back to its configured `service_jwt` in that case, same as before this test's own
+        // scope needs to verify (see `pick_token`'s unit tests, `metap-grpc/src/client.rs`, for
+        // the forwarded-token-present case instead).
         RequestContext {
             tenant_id: Uuid::new_v4().to_string(),
             user_id: None,
             roles: None,
             function_id: None,
             context_attributes: None,
+            forwarded_bearer_token: None,
         },
     );
     let response = built.schema.execute(request).await;

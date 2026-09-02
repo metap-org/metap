@@ -1,17 +1,27 @@
 //! The gateway's own minimal `axum` app — deliberately not `metap_http::build_router`/
 //! `AppState`, which are tightly coupled to a Postgres pool + `CrudService` this binary has
-//! neither of (see this crate's `main.rs` doc comment). Reuses only the standalone-safe pieces:
-//! `metap_http::security_headers::security_headers` (a plain middleware fn, no `AppState`
-//! dependency) and `metap_graphql_http::playground_router` (generalized to `Router<S>` for
-//! exactly this reason).
+//! neither of (see this crate's `main.rs` doc comment; `metap-http` is a dev-only dependency
+//! here, used just by `tests/gateway_e2e_postgres.rs`'s upstream harness, not by this binary
+//! itself). Reuses only the standalone-safe pieces: `metap_runtime::security_headers::security_headers`
+//! (a plain middleware fn, no `AppState` dependency — moved out of `metap-http` 2026-09-02
+//! specifically so this crate didn't have to pull in all of `metap-http` for just this one
+//! function) and `metap_graphql_http::playground_router` (generalized to `Router<S>` for exactly
+//! this reason).
 //!
-//! **Auth here is decode-only, not a source of downstream identity.** A request must carry a
-//! Bearer token that decodes against this gateway's own keypair to reach `/graphql` at all — but
-//! the `RequestContext` built from it is never checked for roles/permissions here, and is inert
-//! once it reaches a resolver: every `RecordBackend` call downstream (`GrpcBackend`) authenticates
-//! to its upstream as that upstream's own fixed `service_jwt`, regardless of who the caller was.
-//! Real permission enforcement happens where it already did before this gateway existed — inside
-//! each upstream's own `CrudService`/`PermissionService`, once the gRPC call lands there.
+//! **Auth here decodes the caller's token, then forwards it verbatim to whichever upstream a
+//! resolver ends up calling.** A request must carry a Bearer token that decodes against this
+//! gateway's own keypair to reach `/graphql` at all; `authenticate` keeps that raw token on
+//! `RequestContext::forwarded_bearer_token`, and `GrpcBackend::signed_request`
+//! (`metap-grpc/src/client.rs`) prefers it over its configured `ServiceTokenSource` when present. This
+//! is what lets a mutation through the gateway enforce the REAL caller's own permissions at the
+//! upstream, not a shared service account's — but it only works because the gateway and every
+//! upstream it talks to verify against the SAME signing keypair (true of every
+//! `metap-demo-waf` service today; see that repo's `graphql-gateway/.env.example`). A deployment
+//! where the gateway and its upstreams don't share a keypair would need a JWKS-based re-mint
+//! instead of this plain forward — out of scope here, `metap-jwks` exists for that case.
+//! No role/permission check happens in this gateway itself either way — real enforcement always
+//! happens where it already did before this gateway existed, inside each upstream's own
+//! `CrudService`/`PermissionService`, once the gRPC call lands there.
 
 use std::sync::Arc;
 
@@ -72,6 +82,7 @@ fn authenticate(headers: &HeaderMap, decoding_key: &DecodingKey) -> Result<Reque
         roles: None,
         function_id: claims.function_id,
         context_attributes: None,
+        forwarded_bearer_token: Some(token.to_string()),
     })
 }
 
@@ -107,7 +118,7 @@ pub async fn serve(config: GatewayConfig, built: BuiltSchema) -> anyhow::Result<
         .route("/graphql", post(graphql_handler));
 
     // Same "unauthenticated static HTML, gate by env instead of by the crate itself" convention
-    // `apps/jira-server/src/main.rs` already established for this exact router.
+    // `../metap-demo-jira/src/main.rs` already established for this exact router.
     if !config.is_production {
         app = app.merge(metap_graphql_http::playground_router::<GatewayState>("/graphql"));
     }
@@ -127,7 +138,7 @@ pub async fn serve(config: GatewayConfig, built: BuiltSchema) -> anyhow::Result<
             metap_runtime::request_context::request_context,
         ))
         .layer(axum::middleware::from_fn(
-            metap_http::security_headers::security_headers,
+            metap_runtime::security_headers::security_headers,
         ))
         .layer(trace)
         .layer(axum::middleware::from_fn(

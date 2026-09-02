@@ -191,7 +191,7 @@ impl Router {
     /// `metap_reconciler::reconcile()`'s `CREATE INDEX CONCURRENTLY`/`AddSyncTrigger` DDL,
     /// which — like all DDL in Postgres — can't run inside `begin()`'s transaction the way a
     /// normal tenant-scoped query does) against the right tenant's data, instead of always the
-    /// platform's own shared pool. First real consumer: `apps/jira-server`'s boot sequence.
+    /// platform's own shared pool. First real consumer: `../metap-demo-jira`'s boot sequence.
     ///
     /// `Schema` strategy returns the shared pool directly, no per-connection `SET` — real
     /// per-tenant schema isolation isn't built yet (`crates/metap-control/src/provisioning.rs`'s

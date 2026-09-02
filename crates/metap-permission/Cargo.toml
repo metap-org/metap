@@ -23,4 +23,9 @@ chrono.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# `redis-backend` enabled here, not in `[dependencies]` above — only
+# `tests/rbac_abac_integration_postgres.rs` needs `RedisCache`, and this crate's own compiled
+# library must not force every consumer (`metap-metadata`, and everything above it) to compile
+# Redis just to reach the `Cache` trait (see `metap-cache/Cargo.toml`'s doc comment).
+metap-cache = { path = "../metap-cache", features = ["redis-backend"] }
 tokio = { workspace = true, features = ["macros", "rt"] }

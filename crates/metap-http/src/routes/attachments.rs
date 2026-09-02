@@ -18,6 +18,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use metap_attachments::AttachmentRecord;
+use metap_crud::ServiceResult;
+use metap_permission::EntityAction;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -31,6 +33,33 @@ fn table_for<'a>(state: &'a AppState, entity: &str) -> &'a str {
         .get(entity)
         .map(String::as_str)
         .unwrap_or("attachments")
+}
+
+/// Entity-level **and** record-level (ABAC) permission for `action` against `record_id` — see
+/// `metap_crud::CrudService::check_record_permission`'s doc comment for why attachments need
+/// this rather than just an entity-level `can_x_entity` check.
+async fn ensure_record_permission(
+    state: &AppState,
+    entity: &str,
+    record_id: Uuid,
+    action: EntityAction,
+    context: &metap_permission::RequestContext,
+) -> Result<(), Box<Response>> {
+    match state.crud.check_record_permission(entity, record_id, action, context).await {
+        Ok(ServiceResult::Ok { .. }) => Ok(()),
+        Ok(ServiceResult::Err {
+            status,
+            error,
+            message,
+            field_errors,
+        }) => Err(Box::new(service_error_response(
+            status,
+            &error,
+            message.as_deref(),
+            field_errors,
+        ))),
+        Err(e) => Err(Box::new(internal_error_response(e))),
+    }
 }
 
 fn to_json(record: &AttachmentRecord) -> serde_json::Value {
@@ -60,12 +89,8 @@ async fn upload_attachment(
             None,
         );
     };
-    let decision = match state.permissions.can_update_entity(&context, &entity).await {
-        Ok(d) => d,
-        Err(e) => return internal_error_response(e),
-    };
-    if !decision.allowed {
-        return service_error_response(403, "forbidden", None, None);
+    if let Err(resp) = ensure_record_permission(&state, &entity, record_id, EntityAction::Update, &context).await {
+        return *resp;
     }
     let tenant_id = match state.permissions.scoped_tenant(&context) {
         Ok(id) => id,
@@ -133,12 +158,8 @@ async fn list_attachments(
     Path((entity, record_id)): Path<(String, Uuid)>,
     AuthContext(context): AuthContext,
 ) -> Response {
-    let decision = match state.permissions.can_read_entity(&context, &entity).await {
-        Ok(d) => d,
-        Err(e) => return internal_error_response(e),
-    };
-    if !decision.allowed {
-        return service_error_response(403, "forbidden", None, None);
+    if let Err(resp) = ensure_record_permission(&state, &entity, record_id, EntityAction::Read, &context).await {
+        return *resp;
     }
     let tenant_id = match state.permissions.scoped_tenant(&context) {
         Ok(id) => id,
@@ -199,12 +220,8 @@ async fn download_attachment(
             None,
         );
     };
-    let decision = match state.permissions.can_read_entity(&context, &entity).await {
-        Ok(d) => d,
-        Err(e) => return internal_error_response(e),
-    };
-    if !decision.allowed {
-        return service_error_response(403, "forbidden", None, None);
+    if let Err(resp) = ensure_record_permission(&state, &entity, record_id, EntityAction::Read, &context).await {
+        return *resp;
     }
     let tenant_id = match state.permissions.scoped_tenant(&context) {
         Ok(id) => id,
@@ -266,12 +283,8 @@ async fn delete_attachment(
             None,
         );
     };
-    let decision = match state.permissions.can_delete_entity(&context, &entity).await {
-        Ok(d) => d,
-        Err(e) => return internal_error_response(e),
-    };
-    if !decision.allowed {
-        return service_error_response(403, "forbidden", None, None);
+    if let Err(resp) = ensure_record_permission(&state, &entity, record_id, EntityAction::Delete, &context).await {
+        return *resp;
     }
     let tenant_id = match state.permissions.scoped_tenant(&context) {
         Ok(id) => id,

@@ -1,11 +1,19 @@
 //! Helmet-equivalent response headers — `packages/core/src/server/app.ts` (deleted, see
 //! git history) registered `@fastify/helmet` with its library defaults; this middleware
 //! reproduces that same default header set by hand, since no Rust crate ships an
-//! axum-native "helmet" (Phase 8 Hardening scope, see `docs/roadmap.md` and this crate's
-//! `lib.rs` doc comment). Applied globally in `build_router` so it also covers
-//! `apps/crm-server`'s static SPA fallback, not just `/api`/`/metadata` — which is why the
-//! CSP below mirrors helmet's actual `'self'`-based default (safe for a same-origin SPA)
-//! rather than a stricter `default-src 'none'` that would break it.
+//! axum-native "helmet" (Phase 8 Hardening scope). Applied globally in `metap_http::build_router`
+//! so it also covers a downstream binary's static SPA fallback, not just `/api`/`/metadata` —
+//! which is why the CSP below mirrors helmet's actual `'self'`-based default (safe for a
+//! same-origin SPA) rather than a stricter `default-src 'none'` that would break it.
+//!
+//! Moved here from `metap-http` 2026-09-02 once `graphql-gateway` needed it too — it has zero
+//! `AppState` dependency (a plain `fn(Request, Next) -> Response`), exactly the shape this
+//! crate's other middleware (`rate_limit`/`trace`/`cors`/`request_id`) already has, and pulling
+//! in all of `metap-http` (Postgres, 14 other `metap-*` crates) just for this one function was
+//! real, unnecessary weight on a binary that has no Postgres pool of its own — see an
+//! architecture audit, `../metap-docs/docs/audits/03-metap-core-architecture-audit.md` finding
+//! #6, for how this was found. `metap-http` re-exports this module unchanged for its own
+//! internal use and any existing external caller.
 
 use axum::extract::Request;
 use axum::http::header::CONTENT_SECURITY_POLICY;

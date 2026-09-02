@@ -8,8 +8,8 @@
 //! permission enforcement/validation/optimistic-locking/workflow behavior can't drift between
 //! transports.
 //!
-//! Entirely opt-in, like `metap-jwks`/`metap-grpc`: `crates/metap-http`, `apps/crm-server`, and
-//! `apps/jira-server` have zero dependency on this crate. See `schema.rs`'s doc comment for the
+//! Entirely opt-in, like `metap-jwks`/`metap-grpc`: `crates/metap-http`, `../metap-demo-crm`, and
+//! `../metap-demo-jira` have zero dependency on this crate. See `schema.rs`'s doc comment for the
 //! three mandatory pieces a GraphQL layer on this platform needs (DataLoader batching, query
 //! complexity/depth limits, field-level permission masking) and how each is satisfied.
 

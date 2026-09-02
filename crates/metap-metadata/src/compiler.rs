@@ -303,6 +303,25 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
         ));
     }
 
+    // `entity.name` had no charset check at all until this validation existed — same gap
+    // `field.name` had (see that check's doc comment above), just harder to hit accidentally
+    // since a code-authored entity's name is a Rust string literal, not admin-supplied metadata.
+    // A low-code-authored entity's name *is* admin-supplied, though, and it flows into identifier
+    // construction the same way `table_name` does: `metap_reconciler::table_name_for` (a bare
+    // `.replace('.', "_")`, no charset check of its own) and
+    // `metap_peripherals::index_reconciler::build_index_name`. Currently safe only because every
+    // identifier built from it is `quote_ident`-quoted before reaching SQL
+    // (`metap_reconciler::executor`) — this closes the gap at the actual trust boundary instead
+    // of relying on that downstream discipline holding forever. Same dotted-lowercase shape every
+    // real entity name in this codebase already uses (`crm.customers`, `jira.issues`, ...).
+    let entity_name_ok = entity.name.contains('.') && entity.name.split('.').all(is_safe_ident_segment);
+    if !entity_name_ok {
+        issues.push(format!(
+            "entity name \"{}\" must be a dotted ^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$ name",
+            entity.name
+        ));
+    }
+
     if issues.is_empty() {
         Ok(())
     } else {
