@@ -147,6 +147,15 @@ fn workflow_transition_json_schema() -> Value {
             // hand-modeling the recursion, since this generator's job is describing entity
             // `data` shape for CRUD forms, not re-deriving metap-permission's wire format.
             "guard": {},
+            // `validator` (a second PolicyCondition, checked against the post-merge payload) and
+            // `setFields` (declarative post-function) were on `entity.rs`'s WorkflowTransition but
+            // missing here, so `platform-ui`'s generated types never learned they exist — exactly
+            // the hand-maintained drift this file's own doc comment warns about, found 2026-09-03
+            // (`platform-ui/docs/audits/02-auth-permission-workflow-diagram-audit.md` finding C1).
+            // Both left untyped for the same reason `guard` is: PolicyCondition/PolicyValue are
+            // metap-permission's wire format, not this generator's to re-derive.
+            "validator": {},
+            "setFields": { "type": "object" },
         },
         "required": ["action", "from", "to", "label"],
     })

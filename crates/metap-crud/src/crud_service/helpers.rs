@@ -496,6 +496,13 @@ pub(crate) fn compute_capabilities(
     // a caller who can update fields but not transition (or vice versa) sees the right
     // capability hint instead of one standing in for the other.
     let transition_decision = snapshot.can_perform_record_condition(context, existing_data, EntityAction::Transition);
+    // Third distinct action for the same reason — see `RecordCapabilities::can_delete`. Note this
+    // is only the *record-level* (ABAC) half, exactly as `can_update` is: `CrudService::delete`
+    // additionally runs the entity-level `can_delete_entity` check and the reference-integrity
+    // guard, neither of which this can predict, so `can_delete: true` means "no policy condition
+    // stands in your way", not "this delete is guaranteed to succeed".
+    let delete_decision = snapshot.can_perform_record_condition(context, existing_data, EntityAction::Delete);
+    let can_delete = delete_decision.allowed;
 
     let mut transitions = Vec::new();
     let current_state = entity
@@ -531,6 +538,7 @@ pub(crate) fn compute_capabilities(
     RecordCapabilities {
         writable_fields,
         can_update,
+        can_delete,
         transitions,
     }
 }

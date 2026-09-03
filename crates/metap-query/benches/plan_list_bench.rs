@@ -90,6 +90,7 @@ fn field(name: &str, kind: FieldKind, indexed: bool, sortable: bool, searchable:
         max: None,
         min_length: None,
         max_length: None,
+        computed: None,
     }
 }
 

@@ -78,6 +78,32 @@ pub async fn create_user<'e>(
     })
 }
 
+/// One user by id, scoped to the tenant so an id from another tenant can never resolve. Backs
+/// `GET /auth/me`'s `email` field (2026-09-03): the JWT carries only `sub` (a user id), so the
+/// frontend used to recover its own email by pulling the *entire* tenant user list via
+/// `list_tenant_users` below and searching it client-side — fine for a handful of users, a real
+/// waste for a large tenant, and it ran on every page
+/// (`platform-ui/docs/audits/02-auth-permission-workflow-diagram-audit.md` finding B8).
+pub async fn find_user_by_id<'e>(
+    executor: impl PgExecutor<'e>,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> anyhow::Result<Option<AuthUser>> {
+    let row = sqlx::query("SELECT id, tenant_id, email FROM users WHERE id = $1 AND tenant_id = $2")
+        .bind(user_id)
+        .bind(tenant_id)
+        .fetch_optional(executor)
+        .await?;
+    row.map(|row| {
+        Ok(AuthUser {
+            id: row.try_get("id")?,
+            tenant_id: row.try_get("tenant_id")?,
+            email: row.try_get("email")?,
+        })
+    })
+    .transpose()
+}
+
 /// Every user in the tenant, id+email only — the "pick a user" primitive an app-level assignee/
 /// reporter picker needs (`GET /users`, `crates/metap-http/src/routes/users.rs`), distinct from
 /// `role_assignment::list_users` (which returns role assignments for `/admin/users`, an admin-
