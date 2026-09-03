@@ -74,15 +74,36 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Re
 /// admin" for UI gating, since roles are deliberately never encoded on the JWT itself (see
 /// `crate::auth`'s doc comment): they're looked up fresh here the same way every other
 /// `AuthContext` route does.
-async fn me(State(_state): State<AppState>, AuthContext(context): AuthContext) -> Response {
+///
+/// `email` is looked up here too (2026-09-03) rather than left for the caller to resolve. The JWT
+/// carries only `sub`, so a frontend wanting to show "who am I" previously had to fetch the whole
+/// tenant user list and search it — see `metap_peripherals::find_user_by_id`'s doc comment. It is
+/// deliberately **additive and best-effort**: any failure resolving it (router unavailable, no
+/// matching row, a token whose `sub` isn't a real user) yields `null` and the identity/roles
+/// payload is returned unchanged, because those are what every caller actually gates on.
+async fn me(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
+    let email = resolve_own_email(&state, &context).await;
     Json(json!({
         "data": {
             "userId": context.user_id,
             "tenantId": context.tenant_id,
+            "email": email,
             "roles": context.roles.unwrap_or_default(),
         }
     }))
     .into_response()
+}
+
+async fn resolve_own_email(state: &AppState, context: &metap_permission::RequestContext) -> Option<String> {
+    let user_id = Uuid::parse_str(context.user_id.as_deref()?).ok()?;
+    let tenant_id = state.permissions.scoped_tenant(context).ok()?;
+    let mut tx = state.router.begin(tenant_id.into()).await.ok()?;
+    let user = metap_peripherals::find_user_by_id(&mut *tx, tenant_id, user_id)
+        .await
+        .ok()
+        .flatten();
+    let _ = tx.commit().await;
+    user.map(|u| u.email)
 }
 
 #[derive(Deserialize)]

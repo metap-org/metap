@@ -46,5 +46,19 @@ pub struct TransitionAvailability {
 pub struct RecordCapabilities {
     pub writable_fields: Vec<String>,
     pub can_update: bool,
+    /// Separate from `can_update` for the same reason `transitions` is: `Delete` is its own
+    /// `EntityAction`, so a policy can grant editing without granting removal. Added 2026-09-03 —
+    /// before it, a caller had no way to know whether a delete would be refused, so a UI either
+    /// hid the button from people allowed to use it or offered it and let them hit a 403
+    /// (`platform-ui/docs/audits/02-auth-permission-workflow-diagram-audit.md` finding B2).
+    ///
+    /// `#[serde(default)]` is about the **deserializing** direction only — `compute_capabilities`
+    /// always sets this. `metap_grpc::client` parses a remote service's capabilities straight into
+    /// this struct (`deserialize_capabilities`), so without a default, a gateway pointed at an
+    /// upstream built before this field existed would fail the whole `get` on a missing key.
+    /// Defaulting to `false` degrades that to a delete button hidden against an old upstream,
+    /// which the server would have enforced regardless — much cheaper than losing the record.
+    #[serde(default)]
+    pub can_delete: bool,
     pub transitions: Vec<TransitionAvailability>,
 }

@@ -6,8 +6,8 @@ pub mod preferences;
 pub mod role_assignment;
 
 pub use auth::{
-    create_user, decode_access_token, list_tenant_users, mint_jwt, verify_credentials, AccessClaims, AuthUser,
-    JWT_AUDIENCE, JWT_ISSUER,
+    create_user, decode_access_token, find_user_by_id, list_tenant_users, mint_jwt, verify_credentials, AccessClaims,
+    AuthUser, JWT_AUDIENCE, JWT_ISSUER,
 };
 pub use context_attributes::fetch_context_attributes;
 pub use index_reconciler::reconcile as reconcile_indexes;

@@ -42,13 +42,21 @@ impl CrudService {
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
         // Enriched once for every record-level action `get` cares about (the Read check below,
-        // plus Update/Transition inside `compute_capabilities`) so a cross-record fetch never
-        // runs twice for the same relation within one call.
+        // plus Update/Transition/Delete inside `compute_capabilities`) so a cross-record fetch
+        // never runs twice for the same relation within one call. `Delete` must stay listed for
+        // as long as `compute_capabilities` evaluates it — a delete policy that conditions on a
+        // relation field would otherwise be judged against un-enriched data and report the wrong
+        // `canDelete`.
         let enriched = self
             .enrich_record_for_actions(
                 &entity,
                 &snapshot,
-                &[EntityAction::Read, EntityAction::Update, EntityAction::Transition],
+                &[
+                    EntityAction::Read,
+                    EntityAction::Update,
+                    EntityAction::Transition,
+                    EntityAction::Delete,
+                ],
                 tenant_id,
                 &existing.data,
             )

@@ -62,11 +62,19 @@ impl CrudService {
 
         let mut by_id: HashMap<Uuid, (RecordDto, RecordCapabilities)> = HashMap::with_capacity(existing.len());
         for record in existing {
+            // `Delete` listed for the same reason as in `get.rs` — `compute_capabilities` below
+            // evaluates a record-level delete condition, which needs the same relation fields
+            // resolved as the other three actions.
             let enriched = self
                 .enrich_record_for_actions(
                     &entity,
                     &snapshot,
-                    &[EntityAction::Read, EntityAction::Update, EntityAction::Transition],
+                    &[
+                        EntityAction::Read,
+                        EntityAction::Update,
+                        EntityAction::Transition,
+                        EntityAction::Delete,
+                    ],
                     tenant_id,
                     &record.data,
                 )
