@@ -151,7 +151,18 @@ async fn me(State(state): State<AppState>, AuthContext(context): AuthContext) ->
 /// Accepts `AuthContext` — works whether the caller's own request arrived via cookie or Bearer —
 /// and mints exactly the same kind of token `login`/`oidc_callback` do, so this can't diverge from
 /// what a real login produces or grant anything a real login wouldn't have.
-async fn issue_token(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
+///
+/// **Additionally CSRF-gated despite being a `GET`** (audit 04 finding A#4, 2026-09-03) — see
+/// `crate::cookies::credential_issuing_request_allowed` for why a token-minting endpoint doesn't
+/// get the safe-method exemption the rest of the API does. A Bearer caller is unaffected.
+async fn issue_token(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    AuthContext(context): AuthContext,
+) -> Response {
+    if !crate::cookies::credential_issuing_request_allowed(&headers) {
+        return service_error_response(401, "unauthorized", Some("Missing or invalid CSRF token."), None);
+    }
     let Some(tenant_id) = Uuid::parse_str(&context.tenant_id).ok() else {
         return internal_error_response(anyhow::anyhow!("session context has an invalid tenant id"));
     };

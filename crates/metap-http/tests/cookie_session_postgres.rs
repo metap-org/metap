@@ -357,3 +357,58 @@ async fn an_expired_token_in_a_cookie_is_rejected() {
     assert_eq!(res.status(), 401);
     cleanup(&server.pool, tenant_id).await;
 }
+
+/// `GET /auth/token` mints a Bearer JWT for the caller, so it is CSRF-gated despite being a `GET`
+/// (audit 04 A#4) — the safe-method exemption is about state change, and this endpoint hands out a
+/// credential instead. Without the header it must refuse; with it, it mints.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn issuing_a_gateway_token_by_cookie_requires_the_csrf_header() {
+    let tenant_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let server = boot_server(tenant_id, user_id).await;
+    let client = reqwest::Client::new();
+
+    let refused = client
+        .get(format!("{}/auth/token", server.base))
+        .header("cookie", session_cookie_header(&server.token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 401, "a GET that mints a credential is still gated");
+
+    let issued = client
+        .get(format!("{}/auth/token", server.base))
+        .header("cookie", session_cookie_header(&server.token))
+        .header(CSRF_HEADER_NAME, CSRF_VALUE)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(issued.status(), 200);
+    let body: serde_json::Value = issued.json().await.unwrap();
+    assert!(
+        body["data"]["token"].as_str().is_some_and(|t| t.contains('.')),
+        "a real JWT must come back: {body}"
+    );
+    cleanup(&server.pool, tenant_id).await;
+}
+
+/// The Bearer path into the same endpoint stays untouched — this is what a non-browser client
+/// (a CLI, another service) uses, and it never had a CSRF cookie to echo.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn issuing_a_gateway_token_with_a_bearer_token_needs_no_csrf_header() {
+    let tenant_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let server = boot_server(tenant_id, user_id).await;
+
+    let res = reqwest::Client::new()
+        .get(format!("{}/auth/token", server.base))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), 200);
+    cleanup(&server.pool, tenant_id).await;
+}

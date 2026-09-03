@@ -106,13 +106,25 @@ fn attach_traceparent<T>(request: &mut Request<T>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The reverse of `crate::status::error_to_status` — necessarily lossy (a `tonic::Status` only
-/// carries a `Code` + text, not `ServiceResult::Err`'s original numeric HTTP status/error
-/// code/field_errors map), so this reconstructs the closest HTTP status for the `Code` rather
-/// than recovering the original exactly. `Code::Internal`/`Unavailable`/anything else maps to
-/// 502 (Bad Gateway) rather than 500 — this failure genuinely originates upstream, not in the
-/// gateway itself.
+/// The reverse of `crate::status::error_to_status`. **Lossless when the upstream speaks this
+/// platform's error envelope** (audit 04 finding B#2, fixed 2026-09-03): the original numeric HTTP
+/// status, the stable `error` code, and the whole `field_errors` map ride in the `Status`'s details
+/// and are restored here exactly as `CrudService` produced them, so a validation failure arriving
+/// through `graphql-gateway` still says *which fields* failed instead of only how many.
+///
+/// The `Code`-based reconstruction below stays as the fallback for a status with no details — an
+/// older `metap` build, or an error raised by something that isn't a `metap` service at all (a mesh
+/// sidecar, a proxy). There, `Code::Internal`/`Unavailable`/anything else maps to 502 (Bad Gateway)
+/// rather than 500, since that failure genuinely originates upstream, not in the caller.
 fn status_to_service_err<T>(status: Status) -> ServiceResult<T> {
+    if let Some(details) = crate::status::error_details_from_status(&status) {
+        return ServiceResult::Err {
+            status: details.status,
+            error: details.error,
+            message: details.message,
+            field_errors: details.field_errors,
+        };
+    }
     let http_status = match status.code() {
         Code::InvalidArgument => 400,
         Code::Unauthenticated => 401,

@@ -53,12 +53,36 @@ impl Default for SchemaLimits {
     }
 }
 
+/// Turns a `ServiceResult::Err` into a GraphQL error that a client can actually branch on.
+///
+/// Audit 04 finding B#2 (fixed 2026-09-03): this used to flatten everything into one string,
+/// `format!("{status}: {message}")`, dropping the stable `error` code and the whole `field_errors`
+/// map — so a form submitted through GraphQL learned that validation failed but never which field.
+/// GraphQL's own answer to this is `extensions`, so the envelope goes there (`code`/`status`/
+/// `fieldErrors`, same camelCase keys as the REST error body and as `metap-grpc`'s `ErrorDetails`,
+/// so one client-side error handler covers all three transports). `message` stays the plain human
+/// text it always was — no longer prefixed with a number a client had to parse back out.
 fn service_result_to_gql<T>(result: ServiceResult<T>) -> Result<T, GqlError> {
     match result {
         ServiceResult::Ok { data, .. } => Ok(data),
         ServiceResult::Err {
-            status, error, message, ..
-        } => Err(GqlError::new(format!("{status}: {}", message.unwrap_or(error)))),
+            status,
+            error,
+            message,
+            field_errors,
+        } => {
+            let mut err = GqlError::new(message.unwrap_or_else(|| error.clone()));
+            let mut extensions = async_graphql::ErrorExtensionValues::default();
+            extensions.set("code", error);
+            extensions.set("status", status as i32);
+            if let Some(field_errors) = field_errors {
+                if let Ok(value) = async_graphql::Value::from_json(serde_json::json!(field_errors)) {
+                    extensions.set("fieldErrors", value);
+                }
+            }
+            err.extensions = Some(extensions);
+            Err(err)
+        }
     }
 }
 

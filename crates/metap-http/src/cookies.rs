@@ -92,6 +92,36 @@ pub fn csrf_matches(cookie_value: Option<&str>, header_value: Option<&str>) -> b
     }
 }
 
+/// Whether a **credential-issuing** request is allowed to proceed — `GET /auth/token`'s extra gate
+/// (audit 04 finding A#4, fixed 2026-09-03).
+///
+/// [`requires_csrf_check`] exempts `GET` because a safe method must not change state. `GET
+/// /auth/token` doesn't change state either — it *mints a fresh Bearer JWT carrying the caller's
+/// full identity*, which is a different kind of risk that the safe-method rule was never about.
+/// Before this, the only thing stopping a foreign page from reading that token was CORS: correct
+/// today (`metap_runtime::cors::build` is fail-closed with no configured origins, and only ever
+/// pairs `allow_credentials` with an explicit origin list), but it made the most sensitive endpoint
+/// in the app depend entirely on one env var being right and on every allowlisted origin staying
+/// free of XSS. This makes the endpoint stand on its own instead.
+///
+/// Mirrors `crate::auth::AuthContext`'s own precedence exactly: an `Authorization` header wins and
+/// is never CSRF-gated (a browser cannot attach one to a cross-site request), so only a request
+/// actually authenticating *by cookie* has to present the double-submit pair.
+pub fn credential_issuing_request_allowed(headers: &axum::http::HeaderMap) -> bool {
+    if headers.contains_key(axum::http::header::AUTHORIZATION) {
+        return true;
+    }
+    let jar = axum_extra::extract::cookie::CookieJar::from_headers(headers);
+    if jar.get(SESSION_COOKIE_NAME).is_none() {
+        // No cookie either — `AuthContext` will reject this on its own; nothing to gate here.
+        return true;
+    }
+    csrf_matches(
+        jar.get(CSRF_COOKIE_NAME).map(|c| c.value()),
+        headers.get(CSRF_HEADER_NAME).and_then(|v| v.to_str().ok()),
+    )
+}
+
 /// `POST /auth/logout`'s pair — `Max-Age(0)` (rather than omitting `Max-Age`, which would create
 /// a *session* cookie instead of deleting the existing persistent one) tells the browser to expire
 /// the cookie immediately. Attributes (`Path`/`SameSite`/`Secure`) must match the ones the cookie
@@ -135,6 +165,53 @@ mod tests {
     fn empty_values_never_match_each_other() {
         assert!(!csrf_matches(Some(""), Some("")));
         assert!(!csrf_matches(Some(""), None));
+    }
+
+    fn headers_from(pairs: &[(&str, &str)]) -> axum::http::HeaderMap {
+        let mut headers = axum::http::HeaderMap::new();
+        for (name, value) in pairs {
+            headers.insert(
+                axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                value.parse().unwrap(),
+            );
+        }
+        headers
+    }
+
+    /// Audit 04 A#4: `GET /auth/token` mints a Bearer JWT, so it is gated even though `GET` is
+    /// otherwise CSRF-exempt — but only for a caller authenticating by cookie.
+    #[test]
+    fn a_cookie_authenticated_credential_request_needs_the_csrf_header() {
+        let cookie = format!("{SESSION_COOKIE_NAME}=jwt; {CSRF_COOKIE_NAME}=abc");
+        assert!(!credential_issuing_request_allowed(&headers_from(&[(
+            "cookie", &cookie
+        )])));
+        assert!(!credential_issuing_request_allowed(&headers_from(&[
+            ("cookie", &cookie),
+            (CSRF_HEADER_NAME, "wrong"),
+        ])));
+        assert!(credential_issuing_request_allowed(&headers_from(&[
+            ("cookie", &cookie),
+            (CSRF_HEADER_NAME, "abc"),
+        ])));
+    }
+
+    /// Precedence must match `crate::auth::AuthContext`'s: a Bearer caller is never CSRF-gated,
+    /// even when a cookie happens to ride along on the same request.
+    #[test]
+    fn a_bearer_caller_is_never_gated_here() {
+        let cookie = format!("{SESSION_COOKIE_NAME}=jwt; {CSRF_COOKIE_NAME}=abc");
+        assert!(credential_issuing_request_allowed(&headers_from(&[
+            ("authorization", "Bearer token"),
+            ("cookie", &cookie),
+        ])));
+    }
+
+    /// No credential at all is `AuthContext`'s job to reject, not this gate's — returning `false`
+    /// here would turn a plain 401 "unauthorized" into a confusing "invalid CSRF token".
+    #[test]
+    fn a_request_with_no_credential_at_all_is_left_to_the_extractor() {
+        assert!(credential_issuing_request_allowed(&headers_from(&[])));
     }
 
     #[test]
