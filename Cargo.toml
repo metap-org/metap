@@ -88,3 +88,19 @@ lto = true
 strip = true
 codegen-units = 1
 panic = "abort"
+
+# Dev iteration speed (2026-09-03) — identical byte-for-byte across every Rust repo in metap-org
+# (metap, metap-lowcode, metap-demo-crm, metap-demo-jira, metap-demo-waf/data-plane). Must stay
+# identical: these 5 repos share 1 target-dir (`.cargo/config.toml`'s `target-dir`, see that
+# file's comment) keyed by cargo's profile fingerprint — a mismatched [profile.dev] in just one
+# repo means it rebuilds every shared dependency under its own fingerprint instead of reusing what
+# the other 4 already compiled, defeating the whole shared-target-dir setup.
+[profile.dev]
+# "line-tables-only" still gives panic/backtrace line numbers but skips the full variable/type
+# debuginfo LLVM would otherwise emit per crate — a real, measurable compile-time cut, at the cost
+# of not being able to inspect local variables in gdb/lldb.
+debug = "line-tables-only"
+# Linux's cargo default is "off" (debuginfo embedded directly in each object file); "unpacked"
+# writes it to separate files instead, so the final link step doesn't have to copy it into the
+# binary on every rebuild.
+split-debuginfo = "unpacked"

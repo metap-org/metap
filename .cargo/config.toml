@@ -8,3 +8,14 @@
 # keeps working regardless of where `metap-org` itself is checked out on a given machine.
 [build]
 target-dir = "../.shared-target"
+
+# mold linker (2026-09-03) — identical across every Rust repo in metap-org, same "must match"
+# reasoning as `target-dir` above (mismatched rustflags between repos also busts the shared
+# fingerprint). Cuts link time significantly vs. the default `ld`/`bfd` and uses less peak RAM,
+# which matters on a dev host this size (see root ../CLAUDE.md's dragonfly/cargo-build memory
+# note). Requires `sudo apt install mold` first — not vendored or auto-installed, since apt needs
+# a password this tool can't supply. If mold isn't installed, every `cargo build`/`run` in this
+# repo fails at the link step ("cannot find linker `mold`" or similar) — either install it or
+# comment this `[target...]` section out.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
