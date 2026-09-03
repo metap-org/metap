@@ -452,6 +452,12 @@ async fn a_platform_admin_cannot_set_a_tenant_credential_fleet_wide() {
 fn a_secret_string_never_prints_its_contents() {
     let secret = SecretString::from("Bearer sk_live_abc".to_string());
     let rendered = format!("{secret:?}");
-    assert!(!rendered.contains("sk_live_abc"), "{rendered}");
+    // The rendered form is deliberately not interpolated into the failure message: if this
+    // assertion ever fires, `rendered` is by definition the unredacted credential, and a panic
+    // message is a log line.
+    assert!(
+        !rendered.contains("sk_live_abc"),
+        "SecretString's Debug no longer redacts its contents"
+    );
     assert_eq!(secret.expose_secret(), "Bearer sk_live_abc");
 }

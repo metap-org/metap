@@ -452,16 +452,19 @@ async fn put_tenant_secret(args: &[String]) -> anyhow::Result<()> {
     let store = metap_control::build_secret_store(&config).await?;
     match store.put_secret(&secret_ref, value).await {
         Ok(()) => {
-            // The reference, never the value — this output lands in a terminal scrollback and
-            // often in a CI log.
-            println!("Stored the credential for tenant {tenant_id}, key \"{key}\" (ref {secret_ref}).");
+            // Tenant and key only. The reference is not printed on success because nothing acts on
+            // it — the credential is in the configured backend, and naming its lookup key would put
+            // that key into terminal scrollback and CI logs for no gain.
+            println!("Stored the credential for tenant {tenant_id}, key \"{key}\".");
             Ok(())
         }
         Err(e) => {
+            // `{e}` already carries the exact variable name on the read-only `EnvStore` backend
+            // (see its `put_secret`), so repeating the reference here would only duplicate it.
             eprintln!("Could not store the credential: {e}");
             eprintln!(
-                "On the default environment-variable backend, provision it by exporting {secret_ref} in the \
-                 environment of every process that runs webhooks (cron-scheduler)."
+                "On the default environment-variable backend, export that variable in the environment of \
+                 every process that runs webhooks (cron-scheduler)."
             );
             std::process::exit(1);
         }

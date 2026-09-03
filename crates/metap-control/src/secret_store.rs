@@ -172,7 +172,7 @@ mod tests {
             reference
                 .chars()
                 .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
-            "{reference} must be portable across all four backends"
+            "the derived reference must be portable across all four backends"
         );
     }
 

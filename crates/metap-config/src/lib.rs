@@ -545,9 +545,11 @@ impl ConfigStore {
         .execute(executor)
         .await?;
         self.tenants.invalidate(&tenant_id).await;
-        // `secret_ref` is logged, the credential is not — the reference is derivable from the
-        // tenant id anyway, so it reveals nothing a log reader could not already compute.
-        tracing::info!(%tenant_id, key, secret_ref, "tenant credential stored");
+        // Deliberately not logging `secret_ref`: it is a pure function of `tenant_id` and `key`,
+        // both already on this line, so it adds nothing a reader could not derive — while putting a
+        // secret-store lookup key into log storage. CodeQL flagged the earlier version of this line
+        // (cleartext-logging), and on inspection it was right that the field earned nothing.
+        tracing::info!(%tenant_id, key, "tenant credential stored");
         Ok(())
     }
 
