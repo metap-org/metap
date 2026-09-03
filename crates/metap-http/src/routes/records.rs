@@ -245,9 +245,93 @@ async fn transition_record(
     }
 }
 
+/// Request body for `POST /api/{entity}/aggregate`. A `POST` rather than query params on a `GET`
+/// because the metric/filter set is a structured object, not a flat string map — and because a
+/// dashboard sends several of these per screen, where a long, hand-encoded query string is the
+/// part most likely to be built wrong. It reads no state and writes none, so it is a `POST` that
+/// is semantically a read; `AuthContext` gates it exactly like `list_records`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AggregateBody {
+    /// `["count", "sum:bytesBlocked"]` — parsed by `AggregateMetric::parse`, so the wire spelling
+    /// is defined once for every transport rather than per surface.
+    #[serde(default)]
+    metrics: Vec<String>,
+    #[serde(default)]
+    group_by: Option<String>,
+    #[serde(default)]
+    bucket: Option<String>,
+    #[serde(default)]
+    time_field: Option<String>,
+    #[serde(default)]
+    filters: HashMap<String, String>,
+    #[serde(default)]
+    since: Option<String>,
+    #[serde(default)]
+    until: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+async fn aggregate_records(
+    State(state): State<AppState>,
+    Path(entity): Path<String>,
+    AuthContext(context): AuthContext,
+    Json(body): Json<AggregateBody>,
+) -> Response {
+    let metrics = if body.metrics.is_empty() {
+        vec![metap_query::AggregateMetric {
+            func: metap_query::AggregateFn::Count,
+            field: None,
+        }]
+    } else {
+        match body
+            .metrics
+            .iter()
+            .map(|raw| metap_query::AggregateMetric::parse(raw))
+            .collect::<anyhow::Result<Vec<_>>>()
+        {
+            Ok(m) => m,
+            Err(e) => return service_error_response(400, "invalid_aggregate", Some(&e.to_string()), None),
+        }
+    };
+
+    let bucket = match body.bucket.as_deref().map(metap_query::TimeBucket::parse).transpose() {
+        Ok(b) => b,
+        Err(e) => return service_error_response(400, "invalid_aggregate", Some(&e.to_string()), None),
+    };
+
+    let input = metap_query::AggregateInput {
+        metrics,
+        group_by: body.group_by,
+        bucket,
+        time_field: body.time_field,
+        filters: body.filters.into_iter().collect(),
+        since: body.since,
+        until: body.until,
+        limit: body.limit.unwrap_or(metap_query::DEFAULT_GROUPS),
+    };
+
+    match state.crud.aggregate(&entity, &input, &context).await {
+        Ok(ServiceResult::Ok { data, .. }) => Json(json!({ "data": data })).into_response(),
+        Ok(ServiceResult::Err {
+            status,
+            error,
+            message,
+            field_errors,
+        }) => service_error_response(status, &error, message.as_deref(), field_errors),
+        Err(e) => internal_error_response(e),
+    }
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/{entity}", get(list_records).post(create_record))
+        // Before `/api/{entity}/{id}` in source order for readability only — axum's router
+        // matches a literal segment ahead of a `{param}` one regardless of registration order,
+        // so `aggregate` can never be swallowed as an `{id}` (it would fail `Uuid` parsing
+        // anyway, which is what made this collision safe to add at all).
+        .route("/api/{entity}/aggregate", post(aggregate_records))
         .route(
             "/api/{entity}/{id}",
             get(get_record).patch(update_record).delete(delete_record),
