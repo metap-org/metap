@@ -169,6 +169,17 @@ impl EffectiveConfig {
             .collect()
     }
 
+    /// The stored reference for a secret key, or `None` when this tenant has no credential.
+    ///
+    /// There is no counterpart returning a value, and that is the point: the plaintext is not in
+    /// this crate's data at all, so no read path here could return it even by mistake.
+    pub fn secret_ref(&self, key: &str) -> Option<String> {
+        self.get(key)
+            .get("secretRef")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    }
+
     /// Only the keys declared `public` — what the unauthenticated hostname-resolved surface
     /// returns, and the *only* thing it may ever return.
     ///
@@ -435,6 +446,16 @@ impl ConfigStore {
         value: Value,
     ) -> Result<(), ConfigError> {
         let def = self.tenant_writable_key(key)?;
+        // A secret key's value never travels this path — the plaintext goes to `SecretStore` and
+        // only `{"secretRef": ...}` is stored, via `set_tenant_secret_marker`. Refusing here rather
+        // than trusting callers is what keeps "the config table never holds a credential" a
+        // property of this crate instead of a convention its users must remember.
+        if def.secret {
+            return Err(ConfigError::NotWritable {
+                key: key.to_string(),
+                reason: "holds a credential; write it through the secret path, not as a config value".to_string(),
+            });
+        }
         (def.validate)(&value).map_err(|reason| ConfigError::Invalid {
             key: key.to_string(),
             reason,
@@ -468,6 +489,65 @@ impl ConfigStore {
             .execute(executor)
             .await?;
         self.tenants.invalidate(&tenant_id).await;
+        Ok(())
+    }
+
+    /// Validates a proposed **plaintext** credential for a secret key and hands back its
+    /// declaration, without storing anything.
+    ///
+    /// Split out because the store cannot do the write itself: the value belongs in
+    /// `metap_control::SecretStore`, and this crate deliberately does not depend on `metap-control`
+    /// (see the tenant-tier note above). The HTTP layer, which has both, validates here, writes the
+    /// credential there, then records the marker with
+    /// [`set_tenant_secret_marker`](Self::set_tenant_secret_marker).
+    pub fn validate_tenant_secret(&self, key: &str, plaintext: &Value) -> Result<&'static ConfigKeyDef, ConfigError> {
+        let def = self.tenant_writable_key(key)?;
+        if !def.secret {
+            return Err(ConfigError::NotWritable {
+                key: key.to_string(),
+                reason: "is not a credential; write it as an ordinary config value".to_string(),
+            });
+        }
+        (def.validate)(plaintext).map_err(|reason| ConfigError::Invalid {
+            key: key.to_string(),
+            reason,
+        })?;
+        Ok(def)
+    }
+
+    /// Records that a tenant has a credential stored for `key`, as `{"secretRef": ...}`.
+    ///
+    /// `secret_ref` must be the server-derived `metap_control::tenant_secret_ref` value. Nothing
+    /// here can check that — which is exactly why the derivation takes no caller input at all, so
+    /// there is no untrusted string for this function to have to distrust.
+    pub async fn set_tenant_secret_marker<'e>(
+        &self,
+        executor: impl PgExecutor<'e>,
+        tenant_id: Uuid,
+        key: &str,
+        secret_ref: &str,
+    ) -> Result<(), ConfigError> {
+        let def = self.tenant_writable_key(key)?;
+        if !def.secret {
+            return Err(ConfigError::NotWritable {
+                key: key.to_string(),
+                reason: "is not a credential".to_string(),
+            });
+        }
+        let marker = serde_json::json!({ "secretRef": secret_ref });
+        sqlx::query(
+            "INSERT INTO tenant_configs (tenant_id, key, value) VALUES ($1, $2, $3)
+             ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        )
+        .bind(tenant_id)
+        .bind(key)
+        .bind(&marker)
+        .execute(executor)
+        .await?;
+        self.tenants.invalidate(&tenant_id).await;
+        // `secret_ref` is logged, the credential is not — the reference is derivable from the
+        // tenant id anyway, so it reveals nothing a log reader could not already compute.
+        tracing::info!(%tenant_id, key, secret_ref, "tenant credential stored");
         Ok(())
     }
 

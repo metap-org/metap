@@ -45,6 +45,7 @@ fn usage() -> ! {
     eprintln!("  dev-tools gcp-secrets-put-dsn <dsnSecretRef> <dsn>               (reads GCP_SECRETS_PROJECT_ID)");
     eprintln!("  dev-tools enqueue-reconcile <tenantId> <entityName> <desiredVersion>");
     eprintln!("  dev-tools set-tenant-hostname <tenantId> <hostname>");
+    eprintln!("  dev-tools put-tenant-secret <tenantId> <configKey> <value>");
     std::process::exit(1);
 }
 
@@ -65,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
         Some("gcp-secrets-put-dsn") => gcp_secrets_put_dsn(&args).await,
         Some("enqueue-reconcile") => enqueue_reconcile(&args).await,
         Some("set-tenant-hostname") => set_tenant_hostname(&args).await,
+        Some("put-tenant-secret") => put_tenant_secret(&args).await,
         _ => usage(),
     }
 }
@@ -422,6 +424,48 @@ async fn set_tenant_hostname(args: &[String]) -> anyhow::Result<()> {
         println!("(normalized from \"{hostname}\" — lowercased, port and trailing dot removed)");
     }
     Ok(())
+}
+
+/// Stores a tenant's credential for a `secret` config key, from the operator side.
+///
+/// Two reasons this exists alongside `PUT /admin/config/{key}`, which does the same thing for a
+/// tenant admin. First, the default `EnvStore` backend refuses runtime writes (see its doc comment),
+/// so on a deployment that has not configured Vault/AWS/GCP this command is what tells an operator
+/// the exact environment variable to set — it prints the derived reference on failure. Second, an
+/// operator provisioning a credential on a tenant's behalf should not have to hold that tenant's
+/// admin session.
+///
+/// The reference is derived here exactly as it is everywhere else
+/// (`metap_control::tenant_secret_ref`) — this command cannot write to an arbitrary reference any
+/// more than an HTTP caller can, which keeps one derivation rule for the whole platform.
+async fn put_tenant_secret(args: &[String]) -> anyhow::Result<()> {
+    let (Some(tenant_id), Some(key), Some(value)) = (args.get(2), args.get(3), args.get(4)) else {
+        eprintln!("Usage: dev-tools put-tenant-secret <tenantId> <configKey> <value>");
+        eprintln!("  e.g. dev-tools put-tenant-secret <uuid> cron.webhookAuthorization 'Bearer sk_live_...'");
+        std::process::exit(1);
+    };
+    dotenvy::dotenv().ok();
+    let tenant_id: Uuid = tenant_id.parse()?;
+    let secret_ref = metap_control::tenant_secret_ref(tenant_id, key);
+
+    let config = metap_infra::config::load_config()?;
+    let store = metap_control::build_secret_store(&config).await?;
+    match store.put_secret(&secret_ref, value).await {
+        Ok(()) => {
+            // The reference, never the value — this output lands in a terminal scrollback and
+            // often in a CI log.
+            println!("Stored the credential for tenant {tenant_id}, key \"{key}\" (ref {secret_ref}).");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Could not store the credential: {e}");
+            eprintln!(
+                "On the default environment-variable backend, provision it by exporting {secret_ref} in the \
+                 environment of every process that runs webhooks (cron-scheduler)."
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 fn print_deny_by_default_note() {

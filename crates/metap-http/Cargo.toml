@@ -46,3 +46,7 @@ time = "0.3.55"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 reqwest.workspace = true
 chrono.workspace = true
+# Both only for `tests/tenant_secret_postgres.rs`'s in-memory `SecretStore` double — the real trait
+# lives in `metap-control`, which this crate already depends on.
+async-trait.workspace = true
+secrecy.workspace = true

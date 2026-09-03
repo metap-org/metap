@@ -14,7 +14,7 @@ use google_cloud_secretmanager_v1::model::{replication, Replication, Secret, Sec
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
-use crate::secret_store::{DbCreds, SecretStore};
+use crate::secret_store::{DbCreds, SecretStore, ValueSecret};
 
 pub struct GcpSecretManagerStore {
     client: SecretManagerService,
@@ -105,5 +105,61 @@ impl SecretStore for GcpSecretManagerStore {
             dsn: SecretString::from(secret.dsn),
             expires_at: None,
         })
+    }
+
+    async fn get_secret(&self, secret_ref: &str) -> anyhow::Result<SecretString> {
+        let name = format!("{}/versions/latest", self.secret_resource_name(secret_ref));
+        let response = self
+            .client
+            .access_secret_version()
+            .set_name(name)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("GCP Secret Manager access_secret_version failed for {secret_ref}: {e}"))?;
+        let payload = response
+            .payload
+            .ok_or_else(|| anyhow::anyhow!("GCP Secret Manager secret {secret_ref} has no payload"))?;
+        let secret: ValueSecret = serde_json::from_slice(&payload.data).map_err(|e| {
+            anyhow::anyhow!(
+                "GCP Secret Manager secret {secret_ref} is not the expected {{\"value\": ...}} JSON shape: {e}"
+            )
+        })?;
+        Ok(SecretString::from(secret.value))
+    }
+
+    async fn put_secret(&self, secret_ref: &str, value: &str) -> anyhow::Result<()> {
+        let payload = serde_json::to_vec(&ValueSecret {
+            value: value.to_string(),
+        })?;
+        // Same best-effort create as `put_dsn`.
+        let _ = self
+            .client
+            .create_secret()
+            .set_parent(format!("projects/{}", self.project_id))
+            .set_secret_id(secret_ref)
+            .set_secret(Secret::new().set_replication(Replication::new().set_replication(Some(
+                replication::Replication::Automatic(replication::Automatic::default().into()),
+            ))))
+            .send()
+            .await;
+        self.client
+            .add_secret_version()
+            .set_parent(self.secret_resource_name(secret_ref))
+            .set_payload(SecretPayload::new().set_data(payload))
+            .send()
+            .await
+            // Built from the reference only — the value must never reach an error string.
+            .map_err(|e| anyhow::anyhow!("GCP Secret Manager add_secret_version failed for {secret_ref}: {e}"))?;
+        Ok(())
+    }
+
+    async fn delete_secret(&self, secret_ref: &str) -> anyhow::Result<()> {
+        self.client
+            .delete_secret()
+            .set_name(self.secret_resource_name(secret_ref))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("GCP Secret Manager delete_secret failed for {secret_ref}: {e}"))?;
+        Ok(())
     }
 }

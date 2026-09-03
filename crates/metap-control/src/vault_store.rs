@@ -68,6 +68,10 @@ use crate::secret_store::{DbCreds, SecretStore};
 
 const MOUNT: &str = "secret";
 const PATH_PREFIX: &str = "metap/dsn";
+/// General secrets live under their own prefix, never mixed in with the DSN tree — a policy an
+/// operator writes for one must not accidentally grant the other, and a misrouted read must miss
+/// rather than return the wrong kind of credential.
+const SECRET_PATH_PREFIX: &str = "metap/secret";
 const DEFAULT_APPROLE_MOUNT: &str = "approle";
 /// Re-login this long before the current token's remembered expiry, not exactly at it — leaves
 /// margin for the login round-trip itself plus any clock/measurement slop. For a short
@@ -250,5 +254,41 @@ impl SecretStore for VaultStore {
             dsn: SecretString::from(secret.dsn),
             expires_at: None,
         })
+    }
+
+    async fn get_secret(&self, secret_ref: &str) -> anyhow::Result<SecretString> {
+        let client = self.fresh_client().await?;
+        let path = format!("{SECRET_PATH_PREFIX}/{secret_ref}");
+        let secret: crate::secret_store::ValueSecret = vaultrs::kv2::read(&client, MOUNT, &path)
+            .await
+            .map_err(|e| anyhow::anyhow!("vault kv2 read failed for secret {secret_ref} at {MOUNT}/{path}: {e}"))?;
+        Ok(SecretString::from(secret.value))
+    }
+
+    async fn put_secret(&self, secret_ref: &str, value: &str) -> anyhow::Result<()> {
+        let client = self.fresh_client().await?;
+        let path = format!("{SECRET_PATH_PREFIX}/{secret_ref}");
+        vaultrs::kv2::set(
+            &client,
+            MOUNT,
+            &path,
+            &crate::secret_store::ValueSecret {
+                value: value.to_string(),
+            },
+        )
+        .await
+        // The error is deliberately built from the path only — `value` must never reach a message
+        // that ends up in a log or an HTTP response.
+        .map_err(|e| anyhow::anyhow!("vault kv2 write failed for secret {secret_ref} at {MOUNT}/{path}: {e}"))?;
+        Ok(())
+    }
+
+    async fn delete_secret(&self, secret_ref: &str) -> anyhow::Result<()> {
+        let client = self.fresh_client().await?;
+        let path = format!("{SECRET_PATH_PREFIX}/{secret_ref}");
+        vaultrs::kv2::delete_metadata(&client, MOUNT, &path)
+            .await
+            .map_err(|e| anyhow::anyhow!("vault kv2 delete failed for secret {secret_ref} at {MOUNT}/{path}: {e}"))?;
+        Ok(())
     }
 }
