@@ -3,6 +3,8 @@
 //! there (shared with `dev-tools mint-token`), not here.
 
 use axum::extract::{Path, Query, State};
+use axum::http::header::SET_COOKIE;
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -12,10 +14,31 @@ use uuid::Uuid;
 
 use crate::auth::AuthContext;
 use crate::cache::OidcFlowEntry;
+use crate::cookies::{clear_session_cookies, session_cookies};
 use crate::error::{internal_error_response, router_unavailable_response, service_error_response};
 use crate::state::AppState;
 
 const TOKEN_TTL_SECONDS: u64 = 3600;
+
+/// Appends both `Set-Cookie` headers from a `session_cookies`/`clear_session_cookies` pair onto
+/// an already-built response — `HeaderMap` allows repeated header names via `append` (unlike
+/// `insert`, which would silently drop the first), which is required here since both cookies
+/// share the name of no other header but do need to coexist as two separate `Set-Cookie` lines.
+fn attach_cookies(
+    mut response: Response,
+    cookies: (
+        axum_extra::extract::cookie::Cookie<'static>,
+        axum_extra::extract::cookie::Cookie<'static>,
+    ),
+) -> Response {
+    let (a, b) = cookies;
+    for cookie in [a, b] {
+        if let Ok(value) = HeaderValue::from_str(&cookie.to_string()) {
+            response.headers_mut().append(SET_COOKIE, value);
+        }
+    }
+    response
+}
 
 #[derive(Deserialize)]
 struct LoginBody {
@@ -65,9 +88,30 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Re
     };
 
     match metap_peripherals::mint_jwt(&state.jwt_encoding_key_pem, user.tenant_id, user.id, TOKEN_TTL_SECONDS) {
-        Ok(token) => Json(json!({ "data": { "token": token } })).into_response(),
+        // `token` still rides in the JSON body too — non-browser callers (`dev-tools mint-token`
+        // never calls this route, but a mobile client or a script hitting `POST /auth/login`
+        // directly would) have no cookie jar to read a `Set-Cookie` from and still need the JWT
+        // handed to them explicitly to use as a Bearer token. `@metap/platform-ui`'s own
+        // `LoginForm` stops reading this field (2026-09-03) now that the cookie does the job, but
+        // the field stays for everyone else who never adopted it.
+        Ok(token) => {
+            let csrf_value = Uuid::new_v4().to_string();
+            let cookies = session_cookies(&token, &csrf_value, TOKEN_TTL_SECONDS as i64, state.cookie_secure);
+            let response = Json(json!({ "data": { "token": token } })).into_response();
+            attach_cookies(response, cookies)
+        }
         Err(e) => internal_error_response(e),
     }
+}
+
+/// Clears both session cookies regardless of whether the caller is currently authenticated —
+/// logging out an already-logged-out browser (an expired cookie, a second tab that already
+/// logged out) is a no-op either way, so there is nothing gained by requiring `AuthContext` here
+/// and a real cost: a request whose cookie already expired would otherwise 401 on the one route
+/// whose entire job is "make sure there's no session left."
+async fn logout(State(state): State<AppState>) -> Response {
+    let response = StatusCode::NO_CONTENT.into_response();
+    attach_cookies(response, clear_session_cookies(state.cookie_secure))
 }
 
 /// Identity + roles for the caller's own token — the frontend's only way to know "am I an
@@ -92,6 +136,32 @@ async fn me(State(state): State<AppState>, AuthContext(context): AuthContext) ->
         }
     }))
     .into_response()
+}
+
+/// Mints a fresh, short-lived Bearer token for the caller's own identity — added 2026-09-03
+/// alongside cookie-based sessions, for exactly one kind of consumer: a browser caller that needs
+/// to authenticate to a service which only ever speaks Bearer and has no cookie of its own to
+/// send, e.g. `crates/graphql-gateway` (its own separate deployment/keypair, `Authorization:
+/// Bearer` only — see that crate's `authenticate` function). `@metap/platform-ui`'s
+/// `useGraphQLQuery` calls this immediately before every gateway request rather than holding a
+/// token in memory across requests, so the thing this whole cookie migration was for (a session
+/// that survives a page reload) isn't quietly reintroduced through this one path: nothing here is
+/// ever persisted client-side, it's fetched fresh, used once, and discarded.
+///
+/// Accepts `AuthContext` — works whether the caller's own request arrived via cookie or Bearer —
+/// and mints exactly the same kind of token `login`/`oidc_callback` do, so this can't diverge from
+/// what a real login produces or grant anything a real login wouldn't have.
+async fn issue_token(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
+    let Some(tenant_id) = Uuid::parse_str(&context.tenant_id).ok() else {
+        return internal_error_response(anyhow::anyhow!("session context has an invalid tenant id"));
+    };
+    let Some(user_id) = context.user_id.as_deref().and_then(|id| Uuid::parse_str(id).ok()) else {
+        return internal_error_response(anyhow::anyhow!("session context has no valid user id"));
+    };
+    match metap_peripherals::mint_jwt(&state.jwt_encoding_key_pem, tenant_id, user_id, TOKEN_TTL_SECONDS) {
+        Ok(token) => Json(json!({ "data": { "token": token } })).into_response(),
+        Err(e) => internal_error_response(e),
+    }
 }
 
 async fn resolve_own_email(state: &AppState, context: &metap_permission::RequestContext) -> Option<String> {
@@ -191,9 +261,15 @@ struct OidcCallbackQuery {
 /// Exchanges the IdP's callback code, JIT-provisions (or reuses) the local `users` row, mints
 /// the exact same kind of session JWT local login does (`metap_peripherals::mint_jwt` — from
 /// here on, an OIDC-authenticated session is indistinguishable from a local one to every other
-/// route), and redirects the browser back to the tenant's configured frontend with the token in
-/// a URL fragment (`#token=...`, never a query param — fragments never reach server access logs
-/// or `Referer` headers).
+/// route), and redirects the browser back to the tenant's configured frontend.
+///
+/// The session cookies are set directly on this redirect response (2026-09-03) — superseding the
+/// previous `#token=...` URL-fragment handoff (`@metap/platform-ui`'s `OidcCallbackPage`, before
+/// it switched to reacting to auth status instead of reading a fragment). That approach existed
+/// to keep the token out of server access logs and `Referer` headers, which a fragment achieves
+/// but a `Set-Cookie` header achieves *more completely*: the token now never touches the URL at
+/// all, not even transiently in the browser's address bar or history before client script could
+/// scrub it. See `crate::cookies`'s doc comment for the cookies themselves.
 async fn oidc_callback(
     State(state): State<AppState>,
     Path(tenant_id): Path<Uuid>,
@@ -264,13 +340,18 @@ async fn oidc_callback(
             Ok(token) => token,
             Err(e) => return internal_error_response(e),
         };
-    Redirect::to(&format!("{}#token={token}", config.post_login_redirect)).into_response()
+    let csrf_value = Uuid::new_v4().to_string();
+    let cookies = session_cookies(&token, &csrf_value, TOKEN_TTL_SECONDS as i64, state.cookie_secure);
+    let response = Redirect::to(&config.post_login_redirect).into_response();
+    attach_cookies(response, cookies)
 }
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/auth/login", post(login))
+        .route("/auth/logout", post(logout))
         .route("/auth/me", get(me))
+        .route("/auth/token", get(issue_token))
         .route("/auth/providers", get(list_providers))
         .route("/auth/oidc/{tenant_id}/login", get(oidc_login))
         .route("/auth/oidc/{tenant_id}/callback", get(oidc_callback))

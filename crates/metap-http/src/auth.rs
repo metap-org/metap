@@ -11,9 +11,10 @@
 
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use axum_extra::extract::cookie::CookieJar;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use metap_auth::{AuthProviderKind, LocalPasswordProvider};
@@ -22,6 +23,7 @@ use metap_peripherals::{decode_access_token, get_roles_for_user};
 use metap_permission::RequestContext;
 use uuid::Uuid;
 
+use crate::cookies::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 use crate::state::AppState;
 
 #[derive(Debug)]
@@ -81,18 +83,49 @@ where
         let header = parts
             .headers
             .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
+            .and_then(|v| v.to_str().ok());
 
-        // Stateless per-request path — no JWT involved at all, tried first since it's a cheap
-        // prefix check. See `basic_auth`'s doc comment for why it needs `X-Tenant-Id` and why
-        // it's off by default for every tenant.
-        if let Some(credentials_b64) = header.strip_prefix("Basic ") {
-            return basic_auth(&app_state, parts, credentials_b64).await;
-        }
+        // An explicit `Authorization` header always wins when present — unchanged from before
+        // cookie support existed, and this ordering is what keeps it safe: a header can't be
+        // attached by a browser to a cross-site request the way a cookie is, so nothing here
+        // needs (or runs) a CSRF check.
+        let token = match header {
+            Some(header) => {
+                // Stateless per-request path — no JWT involved at all, tried first since it's a
+                // cheap prefix check. See `basic_auth`'s doc comment for why it needs
+                // `X-Tenant-Id` and why it's off by default for every tenant.
+                if let Some(credentials_b64) = header.strip_prefix("Basic ") {
+                    return basic_auth(&app_state, parts, credentials_b64).await;
+                }
+                metap_runtime::bearer::parse_bearer(header)
+                    .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?
+                    .to_string()
+            }
+            // No header at all — the shape a browser request takes, since `fetch(..., {credentials:
+            // "include"})` attaches the session cookie automatically rather than through a header
+            // a page's own script would have to set. See `crate::cookies`'s doc comment for the
+            // two cookies this reads and why the CSRF check only applies here, never to the
+            // `Authorization` branch above.
+            None => {
+                let jar = CookieJar::from_headers(&parts.headers);
+                let session_token = jar
+                    .get(SESSION_COOKIE_NAME)
+                    .map(|c| c.value().to_string())
+                    .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
 
-        let token = metap_runtime::bearer::parse_bearer(header)
-            .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
+                if !matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS) {
+                    let csrf_cookie = jar.get(CSRF_COOKIE_NAME).map(|c| c.value());
+                    let csrf_header = parts.headers.get(CSRF_HEADER_NAME).and_then(|v| v.to_str().ok());
+                    let matches = matches!((csrf_cookie, csrf_header), (Some(a), Some(b)) if a == b);
+                    if !matches {
+                        return Err(AuthError::unauthorized("Missing or invalid CSRF token."));
+                    }
+                }
+
+                session_token
+            }
+        };
+        let token = token.as_str();
 
         // Default leeway is 60s (`docs/roadmap.md`'s Phase 20 security checklist flagged this as
         // wider than needed — no revocation list exists, so exp+leeway is the only bound on how
