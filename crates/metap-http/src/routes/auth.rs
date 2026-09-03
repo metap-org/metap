@@ -18,7 +18,18 @@ use crate::cookies::{clear_session_cookies, session_cookies};
 use crate::error::{internal_error_response, router_unavailable_response, service_error_response};
 use crate::state::AppState;
 
-const TOKEN_TTL_SECONDS: u64 = 3600;
+/// Session lifetime in seconds, from platform config (`docs/features/18-config-tiers-db-backed.md`)
+/// — the single source for both the JWT's own `exp` and the session cookie's `Max-Age`, so the two
+/// can never be derived from different values. Replaced a `TOKEN_TTL_SECONDS = 3600` constant, and
+/// 3600 is now that key's declared default, so behavior is unchanged until someone sets it. Read
+/// per login rather than cached at boot, so a change through `PUT /platform/config` applies to the
+/// next login without a restart.
+fn session_ttl_seconds(state: &AppState) -> u64 {
+    state
+        .config
+        .current()
+        .get_u64(metap_config::keys::AUTH_SESSION_TTL_SECONDS)
+}
 
 /// Appends both `Set-Cookie` headers from a `session_cookies`/`clear_session_cookies` pair onto
 /// an already-built response — `HeaderMap` allows repeated header names via `append` (unlike
@@ -87,7 +98,8 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Re
         Err(e) => return internal_error_response(e),
     };
 
-    match metap_peripherals::mint_jwt(&state.jwt_encoding_key_pem, user.tenant_id, user.id, TOKEN_TTL_SECONDS) {
+    let ttl = session_ttl_seconds(&state);
+    match metap_peripherals::mint_jwt(&state.jwt_encoding_key_pem, user.tenant_id, user.id, ttl) {
         // `token` still rides in the JSON body too — non-browser callers (`dev-tools mint-token`
         // never calls this route, but a mobile client or a script hitting `POST /auth/login`
         // directly would) have no cookie jar to read a `Set-Cookie` from and still need the JWT
@@ -96,7 +108,7 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Re
         // the field stays for everyone else who never adopted it.
         Ok(token) => {
             let csrf_value = Uuid::new_v4().to_string();
-            let cookies = session_cookies(&token, &csrf_value, TOKEN_TTL_SECONDS as i64, state.cookie_secure);
+            let cookies = session_cookies(&token, &csrf_value, ttl as i64, state.cookie_secure);
             let response = Json(json!({ "data": { "token": token } })).into_response();
             attach_cookies(response, cookies)
         }
@@ -169,7 +181,12 @@ async fn issue_token(
     let Some(user_id) = context.user_id.as_deref().and_then(|id| Uuid::parse_str(id).ok()) else {
         return internal_error_response(anyhow::anyhow!("session context has no valid user id"));
     };
-    match metap_peripherals::mint_jwt(&state.jwt_encoding_key_pem, tenant_id, user_id, TOKEN_TTL_SECONDS) {
+    match metap_peripherals::mint_jwt(
+        &state.jwt_encoding_key_pem,
+        tenant_id,
+        user_id,
+        session_ttl_seconds(&state),
+    ) {
         Ok(token) => Json(json!({ "data": { "token": token } })).into_response(),
         Err(e) => internal_error_response(e),
     }
@@ -346,13 +363,22 @@ async fn oidc_callback(
         return internal_error_response(e.into());
     }
 
-    let token =
-        match metap_peripherals::mint_jwt(&state.jwt_encoding_key_pem, user.tenant_id, user.id, TOKEN_TTL_SECONDS) {
-            Ok(token) => token,
-            Err(e) => return internal_error_response(e),
-        };
+    let token = match metap_peripherals::mint_jwt(
+        &state.jwt_encoding_key_pem,
+        user.tenant_id,
+        user.id,
+        session_ttl_seconds(&state),
+    ) {
+        Ok(token) => token,
+        Err(e) => return internal_error_response(e),
+    };
     let csrf_value = Uuid::new_v4().to_string();
-    let cookies = session_cookies(&token, &csrf_value, TOKEN_TTL_SECONDS as i64, state.cookie_secure);
+    let cookies = session_cookies(
+        &token,
+        &csrf_value,
+        session_ttl_seconds(&state) as i64,
+        state.cookie_secure,
+    );
     let response = Redirect::to(&config.post_login_redirect).into_response();
     attach_cookies(response, cookies)
 }

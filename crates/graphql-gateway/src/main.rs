@@ -36,7 +36,14 @@ async fn main() -> anyhow::Result<()> {
     let config = config::GatewayConfig::from_env()?;
 
     tracing::info!(upstreams = config.upstreams.len(), "discovering upstream schemas...");
-    let built = schema_builder::build(&config.upstreams).await?;
+    let built = schema_builder::build(
+        &config.upstreams,
+        metap_graphql::SchemaLimits {
+            depth: config.graphql_max_depth,
+            complexity: config.graphql_max_complexity,
+        },
+    )
+    .await?;
     tracing::info!(entities = built.entity_count, "schema built, starting server");
 
     server::serve(config, built).await

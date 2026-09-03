@@ -23,6 +23,17 @@ pub struct UpstreamConfig {
 pub struct GatewayConfig {
     pub host: String,
     pub port: u16,
+    /// GraphQL depth/complexity guardrails (audit 04 A#7 — these were `SchemaLimits::default()`
+    /// hard-coded at the call site, with no way to retune short of a rebuild).
+    ///
+    /// **Env vars here, not `metap_config`'s `platform_configs` table**, unlike every other
+    /// consumer of these two numbers. This binary owns no Postgres pool at all (it is a pure BFF:
+    /// no entity, no `CrudService`, no database), so it has nothing to read that table from. Env is
+    /// the mechanism actually available to it, and it is exactly what the finding asked for
+    /// ("không chỉnh qua env"). A service that *does* have a pool reads the same two values from
+    /// config instead — see `metap_config::keys`.
+    pub graphql_max_depth: usize,
+    pub graphql_max_complexity: usize,
     pub upstreams: Vec<UpstreamConfig>,
     /// This gateway's own keypair, decode-only — gates access to `/graphql`, unrelated to any
     /// per-upstream service credentials above (see `crate::server`'s doc comment).
@@ -37,6 +48,10 @@ impl GatewayConfig {
     pub fn from_env() -> anyhow::Result<Self> {
         let host = env_or("HOST", "0.0.0.0".to_string());
         let port: u16 = env_or("PORT", 4000);
+        // Defaults match `SchemaLimits::default()` exactly, so an existing deployment that sets
+        // neither var behaves as it did before this became configurable.
+        let graphql_max_depth: usize = env_or("GRAPHQL_MAX_DEPTH", 10);
+        let graphql_max_complexity: usize = env_or("GRAPHQL_MAX_COMPLEXITY", 1000);
         let is_production = std::env::var("NODE_ENV").is_ok_and(|v| v == "production");
         let cors_origins = std::env::var("CORS_ORIGINS")
             .map(|v| {
@@ -85,6 +100,8 @@ impl GatewayConfig {
         Ok(Self {
             host,
             port,
+            graphql_max_depth,
+            graphql_max_complexity,
             upstreams,
             auth_public_key_pem,
             cors_origins,

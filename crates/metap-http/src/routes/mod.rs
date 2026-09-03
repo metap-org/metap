@@ -6,6 +6,7 @@ pub mod dashboards;
 pub mod health;
 pub mod metadata;
 pub mod metrics;
+pub mod platform_config;
 pub mod preferences;
 pub mod records;
 pub mod users;
