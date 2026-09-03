@@ -32,7 +32,7 @@ diễn giải lại logic (đọc code là nguồn thật).
 
 - **Fuzz testing** — không nằm trong phạm vi bộ test này.
 - **Injection qua tên entity low-code** — đã có `MetadataCompiler` validate theo
-  `docs/architectures/09-adr.md`, không phải gap cần lấp thêm.
+  `docs/architectures/09-adr/00-index.md`, không phải gap cần lấp thêm.
 - **Rate-limiter bypass** — `security_headers.rs`/rate-limit layer đã có (Phase 8 Hardening), chưa
   có test riêng khai thác bypass (vd multiple IP giả mạo header).
 - **Resolve-đúng-transform-chain khi quarantine** (`crates/metap-reconciler/src/quarantine.rs`) —

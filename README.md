@@ -10,7 +10,7 @@ Chosen stack:
 - RabbitMQ for integration events.
 - Outbox Pattern for reliable event publishing.
 
-The backend moved from TypeScript to Rust on 2026-08-07 — see `docs/architectures/09-adr.md` for the decision record, and `docs/roadmap.md`'s Phase 12 for status (both moved to `../metap-docs`, see "Docs" below).
+The backend moved from TypeScript to Rust on 2026-08-07 — see `docs/architectures/09-adr/00-index.md` for the decision record, and `docs/roadmap.md`'s Phase 12 for status (both moved to `../metap-docs`, see "Docs" below).
 
 This repo is a pure Cargo workspace — `crates/` holds the `metap-*` library crates plus the
 `outbox-publisher`/`db-migrate`/`dev-tools`/`graphql-gateway`/... ops binaries built on them. No
@@ -44,6 +44,6 @@ repo now, e.g. `docs/roadmap.md` means `../metap-docs/docs/roadmap.md`.
 - Architecture: `docs/architectures/index.md`
 - Why This Stack: `docs/why.md`
 - Roadmap: `docs/roadmap.md`
-- Architecture Decisions: `docs/architectures/09-adr.md` — decision log, including why the backend moved to Rust
+- Architecture Decisions: `docs/architectures/09-adr/00-index.md` — decision log, including why the backend moved to Rust
 - Vision: `docs/vision.md` — where this is headed (low-code), and why
 - Low-code Platform V1 Direction: `docs/low-code-platform-v1.md` — a concrete phased path there
