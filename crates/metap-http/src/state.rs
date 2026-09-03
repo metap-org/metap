@@ -97,6 +97,15 @@ pub struct AppState {
     /// (`crate::openapi_paths::static_paths`) and the per-entity dynamic ones
     /// (`metap_metadata::generate_openapi_document`) — see `routes::metadata::openapi_json`.
     pub extra_openapi_paths: Arc<serde_json::Map<String, serde_json::Value>>,
+    /// The `Secure` attribute on both cookies `crate::cookies`/`routes::auth` issue — defaults to
+    /// `true` (the correct value for any real deployment, served over HTTPS) so no existing
+    /// caller of `AppState::new` picks up an insecure default just by rebuilding. A local dev
+    /// binary serving plain `http://localhost` needs to flip this to `false` explicitly
+    /// (`state.cookie_secure = false;` — every field here is `pub`, same pattern as
+    /// `object_store`/`auth_context_entity` above) since most browsers reject a `Secure` cookie
+    /// outside `localhost`/HTTPS outright, though Chrome/Firefox both special-case plain
+    /// `localhost` as a trustworthy origin already, so this is often not needed even then.
+    pub cookie_secure: bool,
 }
 
 impl AppState {
@@ -135,6 +144,7 @@ impl AppState {
             metrics_handle: prometheus_handle(),
             process_collector: process_collector(),
             extra_openapi_paths: Arc::new(serde_json::Map::new()),
+            cookie_secure: true,
         }
     }
 }

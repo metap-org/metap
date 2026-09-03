@@ -21,6 +21,7 @@
 
 pub mod auth;
 pub mod cache;
+pub mod cookies;
 pub mod error;
 pub mod metrics;
 pub mod openapi_paths;

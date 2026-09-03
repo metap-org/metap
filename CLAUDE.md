@@ -172,8 +172,24 @@ redirects to when there's no token. Provision a user with `dev-tools create-user
 <email> <password>` (dev-seeding, `cargo run --manifest-path crates/dev-tools/Cargo.toml --
 create-user ...` from a downstream repo) or `POST /admin/users` (admin-driven, optionally
 assigning roles in the same call); `dev-tools mint-token`/`seed-admin` still work unchanged for
-minting a token by hand without going through a real login. The token lives only in memory (React
-state) and is lost on refresh — that's deliberate, not a bug.
+minting a token by hand without going through a real login.
+
+**Session survives reload since 2026-09-03** (`docs/roadmap.md` Phase 64, reversing the previous
+"lives only in memory, lost on refresh — deliberate" note that used to be here): `POST /auth/login`
+and the OIDC callback now set the JWT as an `HttpOnly` cookie (`crates/metap-http/src/cookies.rs`)
+instead of only returning it in the JSON body, and `crates/metap-http/src/auth.rs`'s `AuthContext`
+extractor accepts that cookie as a fallback whenever no `Authorization` header is present — Bearer/
+Basic/`dev-tools mint-token` output are all completely unaffected, this is additive. A second,
+non-`HttpOnly` cookie plus a required `X-CSRF-Token` header on any cookie-authenticated mutating
+request is the double-submit CSRF defense a cookie-based session needs that a bearer header never
+did. `@metap/platform-ui` no longer holds a token in React state at all — `AuthContext`'s `status`
+(`"unknown"|"authenticated"|"anonymous"`) is derived from a `GET /auth/me` bootstrap check instead,
+and every `apiFetch` call sends `credentials: "include"` plus the CSRF header automatically.
+`crates/graphql-gateway` is the one exception (`Authorization: Bearer` only, decode-only, its own
+keypair — see that crate's `authenticate` function) — the frontend calls the new `GET /auth/token`
+route to mint a fresh short-lived Bearer token on demand right before each gateway call, rather
+than holding one long-lived, so the thing this migration was for isn't reintroduced through that
+one path.
 
 ### Metadata types stay generated, not hand-written
 
