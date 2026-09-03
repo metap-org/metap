@@ -74,7 +74,19 @@ where
 /// `finish_run`/`finish_run_with_retry` at the end of this function, so a status that's already
 /// `success`/`failed` means this exact firing already ran to completion — skip re-dispatching
 /// and let the caller ack the (now known-duplicate) delivery as normal.
+/// Wrapped in a fresh **root** trace context (audit 04 B#5): this process consumes from RabbitMQ,
+/// not from an HTTP request, so `metap_runtime::trace_context::current()` is `None` here unless
+/// something establishes one — and without it, `attach_trace_context` on the outbound callbacks
+/// below is silently a no-op, which is exactly the state the audit found. `from_headers` with no
+/// `traceparent` mints a new trace id, so every job run becomes its own trace root that the
+/// `workflow_transition`/`bulk_query_action`/`webhook` calls it makes then propagate onward — a
+/// record written by a cron job is traceable back to the run that caused it.
 pub async fn execute(pool: &PgPool, http: &reqwest::Client, config: &ExecutorConfig, payload: &CronJobDuePayload) {
+    let trace_ctx = metap_runtime::trace_context::from_headers(&Default::default());
+    metap_runtime::trace_context::scope(trace_ctx, execute_traced(pool, http, config, payload)).await
+}
+
+async fn execute_traced(pool: &PgPool, http: &reqwest::Client, config: &ExecutorConfig, payload: &CronJobDuePayload) {
     match metap_cron::run_status(pool, payload.run_id).await {
         Ok(Some(RunStatus::Success)) | Ok(Some(RunStatus::Failed)) | Ok(Some(RunStatus::Waiting)) => {
             tracing::warn!(
@@ -145,7 +157,7 @@ async fn dispatch(
         TargetType::BulkQueryAction => run_bulk_query_action(http, config, &payload.target_config)
             .await
             .map(DispatchOutcome::Completed),
-        TargetType::Webhook => run_webhook(http, payload.job_id, payload.run_id, &payload.target_config)
+        TargetType::Webhook => run_webhook(&config.webhook, payload.job_id, payload.run_id, &payload.target_config)
             .await
             .map(DispatchOutcome::Completed),
         TargetType::Email => run_email(

@@ -15,10 +15,12 @@
 mod config;
 mod dispatch;
 mod email;
+mod ssrf_guard;
 mod steps;
 mod webhook;
 mod workflow_transition;
 
 pub use config::{ExecutorConfig, SmtpConfig};
 pub use dispatch::{execute, run_executor, QUEUE};
+pub use ssrf_guard::WebhookPolicy;
 pub use steps::resume_steps;

@@ -11,6 +11,15 @@ use uuid::Uuid;
 
 use super::config::ExecutorConfig;
 
+/// Propagates this job run's W3C `traceparent` onto every callback into the owning app (audit 04
+/// B#5). Meaningful only because `super::dispatch::execute` now establishes a root trace context
+/// per job run — see its doc comment; before that, this was a no-op no matter where it was called,
+/// which is why `metap_runtime::http_client::attach_trace_context` had sat with zero callers since
+/// it was written.
+fn attach_trace(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    metap_runtime::http_client::attach_trace_context(builder)
+}
+
 #[derive(Deserialize)]
 struct WorkflowTransitionConfig {
     entity: String,
@@ -44,16 +53,17 @@ pub(crate) async fn run_bulk_query_action(
     let cfg: BulkQueryActionConfig = serde_json::from_value(target_config.clone())?;
     let base = config.target_base_url.trim_end_matches('/');
 
-    let list: Value = http
-        .get(format!("{base}/api/{}", cfg.entity))
-        .bearer_auth(config.service_token.current())
-        .query(&[("limit", "200")])
-        .query(&cfg.filter)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let list: Value = attach_trace(
+        http.get(format!("{base}/api/{}", cfg.entity))
+            .bearer_auth(config.service_token.current())
+            .query(&[("limit", "200")])
+            .query(&cfg.filter),
+    )
+    .send()
+    .await?
+    .error_for_status()?
+    .json()
+    .await?;
 
     let records = list.get("data").and_then(Value::as_array).cloned().unwrap_or_default();
     let mut succeeded = 0usize;
@@ -87,28 +97,30 @@ async fn transition_one(
 ) -> anyhow::Result<Value> {
     let base = config.target_base_url.trim_end_matches('/');
 
-    let record: Value = http
-        .get(format!("{base}/api/{entity}/{record_id}"))
-        .bearer_auth(config.service_token.current())
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let record: Value = attach_trace(
+        http.get(format!("{base}/api/{entity}/{record_id}"))
+            .bearer_auth(config.service_token.current()),
+    )
+    .send()
+    .await?
+    .error_for_status()?
+    .json()
+    .await?;
     let version = record
         .get("data")
         .and_then(|d| d.get("version"))
         .and_then(Value::as_i64)
         .ok_or_else(|| anyhow::anyhow!("record {record_id} response had no version field"))?;
 
-    let response = http
-        .post(format!("{base}/api/{entity}/{record_id}/transitions/{action}"))
-        .bearer_auth(config.service_token.current())
-        .json(&json!({ "version": version }))
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<Value>()
-        .await?;
+    let response = attach_trace(
+        http.post(format!("{base}/api/{entity}/{record_id}/transitions/{action}"))
+            .bearer_auth(config.service_token.current())
+            .json(&json!({ "version": version })),
+    )
+    .send()
+    .await?
+    .error_for_status()?
+    .json::<Value>()
+    .await?;
     Ok(response)
 }
