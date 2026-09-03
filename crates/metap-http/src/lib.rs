@@ -100,6 +100,7 @@ pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Rout
         .merge(routes::cron::router())
         .merge(routes::dashboards::router())
         .merge(routes::platform_config::router())
+        .merge(routes::tenant_config::router())
         .merge(routes::preferences::router())
         .merge(extra_routes)
         .layer(cors)

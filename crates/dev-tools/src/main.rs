@@ -44,6 +44,7 @@ fn usage() -> ! {
     );
     eprintln!("  dev-tools gcp-secrets-put-dsn <dsnSecretRef> <dsn>               (reads GCP_SECRETS_PROJECT_ID)");
     eprintln!("  dev-tools enqueue-reconcile <tenantId> <entityName> <desiredVersion>");
+    eprintln!("  dev-tools set-tenant-hostname <tenantId> <hostname>");
     std::process::exit(1);
 }
 
@@ -63,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
         Some("aws-secrets-put-dsn") => aws_secrets_put_dsn(&args).await,
         Some("gcp-secrets-put-dsn") => gcp_secrets_put_dsn(&args).await,
         Some("enqueue-reconcile") => enqueue_reconcile(&args).await,
+        Some("set-tenant-hostname") => set_tenant_hostname(&args).await,
         _ => usage(),
     }
 }
@@ -390,6 +392,35 @@ async fn enqueue_reconcile(args: &[String]) -> anyhow::Result<()> {
         "Enqueued entity \"{entity_name}\" for tenant {tenant_id} at desired_version={desired_version} \
          — a running reconciler-orchestrator will pick this up on its next poll."
     );
+    Ok(())
+}
+
+/// Maps a hostname onto a tenant, so `GET /public/config` can serve that tenant's branding on its
+/// login screen before anyone has logged in (`docs/features/18-config-tiers-db-backed.md` slice 2).
+///
+/// **Operator-only, and there is deliberately no HTTP equivalent.** A tenant able to claim an
+/// arbitrary hostname could claim another tenant's and serve its own branding there; the mapping is
+/// also the kind of thing that gets trusted by later features, so it answers to whoever holds the
+/// deployment rather than to any API caller. Same reasoning as `bootstrap-platform-admin`.
+///
+/// Writes to the shared `DATABASE_URL` pool, not a tenant-routed one: `control.tenant_hostnames`
+/// has to be readable *before* a tenant is known, which is the whole point of the lookup, so it
+/// lives beside `control.tenants` in the platform database.
+async fn set_tenant_hostname(args: &[String]) -> anyhow::Result<()> {
+    let (Some(tenant_id), Some(hostname)) = (args.get(2), args.get(3)) else {
+        eprintln!("Usage: dev-tools set-tenant-hostname <tenantId> <hostname>");
+        std::process::exit(1);
+    };
+    dotenvy::dotenv().ok();
+    let database_url = metap_runtime::env::require_env("DATABASE_URL")?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&database_url).await?;
+    let tenant_id: Uuid = tenant_id.parse()?;
+
+    let stored = metap_control::set_tenant_hostname(&pool, tenant_id, hostname).await?;
+    println!("Hostname \"{stored}\" now resolves to tenant {tenant_id} for GET /public/config.");
+    if stored != *hostname {
+        println!("(normalized from \"{hostname}\" — lowercased, port and trailing dot removed)");
+    }
     Ok(())
 }
 
