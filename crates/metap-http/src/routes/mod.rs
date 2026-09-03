@@ -9,5 +9,6 @@ pub mod metrics;
 pub mod platform_config;
 pub mod preferences;
 pub mod records;
+pub mod tenant_config;
 pub mod users;
 pub mod workflow_events;

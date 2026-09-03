@@ -93,6 +93,11 @@ pub struct AppState {
     /// limit is read. Forgetting that is safe rather than broken — the platform simply behaves as
     /// it did before this table existed.
     pub config: Arc<metap_config::ConfigStore>,
+    /// Backs the unauthenticated `GET /public/config` (`crate::routes::tenant_config`) — the one
+    /// request path that has to turn a `Host` header into a tenant before any token exists. Cached
+    /// because that endpoint is hit by every anonymous login-page load and is reachable by anyone
+    /// who can reach the deployment; see `TenantHostnameCache`'s doc comment.
+    pub tenant_hostname_cache: crate::cache::TenantHostnameCache,
     pub metrics_handle: axum_prometheus::metrics_exporter_prometheus::PrometheusHandle,
     /// Process-level resource metrics (CPU/RSS/open fds/threads) — `docs/local-benchmarking.md`.
     /// `.collect()` (called by the `/metrics` handler on every scrape, not on a background
@@ -137,6 +142,7 @@ impl AppState {
     ) -> Self {
         let crud = Arc::new(CrudService::new(router.clone(), metadata.clone(), permissions.clone()));
         let config = Arc::new(metap_config::ConfigStore::unloaded(pool.clone()));
+        let tenant_hostname_cache = crate::cache::TenantHostnameCache::new(Duration::from_secs(60));
         Self {
             pool,
             config,
@@ -153,10 +159,39 @@ impl AppState {
             context_attributes_cache: ContextAttributesCache::new(Duration::from_secs(30)),
             tenant_auth_cache: TenantAuthCache::new(Duration::from_secs(30)),
             oidc_flow_cache: OidcFlowCache::new(Duration::from_secs(600)),
+            tenant_hostname_cache,
             metrics_handle: prometheus_handle(),
             process_collector: process_collector(),
             extra_openapi_paths: Arc::new(serde_json::Map::new()),
             cookie_secure: true,
         }
+    }
+
+    /// One tenant's effective configuration — its own `tenant_configs` overrides layered over the
+    /// fleet snapshot (`metap_config::EffectiveConfig`).
+    ///
+    /// Cache-first, and the ordering is the point: a cached tenant costs no database work at all,
+    /// not even the `router.begin` round trip that reaching `tenant_configs` would otherwise
+    /// require. Only a miss opens a transaction.
+    ///
+    /// A lookup failure degrades to the fleet-wide values rather than propagating. Every caller is
+    /// asking for a tunable that has a working default, and failing a login (or a login *page*)
+    /// because a config row could not be read would turn an optional feature into a hard
+    /// dependency.
+    pub async fn effective_config(&self, tenant_id: uuid::Uuid) -> metap_config::EffectiveConfig {
+        if let Some(cached) = self.config.cached_tenant(tenant_id).await {
+            return self.config.effective(Some(cached));
+        }
+        let loaded = async {
+            let mut tx = self.router.begin(tenant_id.into()).await.ok()?;
+            let snapshot = self.config.load_tenant(&mut *tx, tenant_id).await.ok()?;
+            let _ = tx.commit().await;
+            Some(snapshot)
+        }
+        .await;
+        if loaded.is_none() {
+            tracing::warn!(%tenant_id, "tenant config lookup failed; using fleet-wide values");
+        }
+        self.config.effective(loaded)
     }
 }

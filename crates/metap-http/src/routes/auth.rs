@@ -18,16 +18,23 @@ use crate::cookies::{clear_session_cookies, session_cookies};
 use crate::error::{internal_error_response, router_unavailable_response, service_error_response};
 use crate::state::AppState;
 
-/// Session lifetime in seconds, from platform config (`docs/features/18-config-tiers-db-backed.md`)
-/// — the single source for both the JWT's own `exp` and the session cookie's `Max-Age`, so the two
-/// can never be derived from different values. Replaced a `TOKEN_TTL_SECONDS = 3600` constant, and
-/// 3600 is now that key's declared default, so behavior is unchanged until someone sets it. Read
-/// per login rather than cached at boot, so a change through `PUT /platform/config` applies to the
-/// next login without a restart.
-fn session_ttl_seconds(state: &AppState) -> u64 {
+/// Session lifetime in seconds for one tenant (`docs/features/18-config-tiers-db-backed.md`) — the
+/// single source for both the JWT's own `exp` and the session cookie's `Max-Age`, so the two can
+/// never be derived from different values. Replaced a `TOKEN_TTL_SECONDS = 3600` constant, and 3600
+/// is now that key's declared default, so behavior is unchanged until someone sets it.
+///
+/// Tenant-scoped since slice 2: how long its own users stay signed in is a policy call a tenant
+/// makes for itself, resolved as `declared default <- platform fleet default <- this tenant's
+/// override`. The bounds stay operator-controlled in `metap_config::keys`, so the worst a tenant
+/// admin can do here is pick a legal value.
+///
+/// Read per login rather than cached at boot, so a change applies to the next login without a
+/// restart — and off `AppState::effective_config`, which is cache-first, so it does not add a
+/// database round trip to a login that would otherwise not need one.
+async fn session_ttl_seconds(state: &AppState, tenant_id: Uuid) -> u64 {
     state
-        .config
-        .current()
+        .effective_config(tenant_id)
+        .await
         .get_u64(metap_config::keys::AUTH_SESSION_TTL_SECONDS)
 }
 
@@ -98,7 +105,7 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Re
         Err(e) => return internal_error_response(e),
     };
 
-    let ttl = session_ttl_seconds(&state);
+    let ttl = session_ttl_seconds(&state, user.tenant_id).await;
     match metap_peripherals::mint_jwt(&state.jwt_encoding_key_pem, user.tenant_id, user.id, ttl) {
         // `token` still rides in the JSON body too — non-browser callers (`dev-tools mint-token`
         // never calls this route, but a mobile client or a script hitting `POST /auth/login`
@@ -185,7 +192,7 @@ async fn issue_token(
         &state.jwt_encoding_key_pem,
         tenant_id,
         user_id,
-        session_ttl_seconds(&state),
+        session_ttl_seconds(&state, tenant_id).await,
     ) {
         Ok(token) => Json(json!({ "data": { "token": token } })).into_response(),
         Err(e) => internal_error_response(e),
@@ -367,7 +374,7 @@ async fn oidc_callback(
         &state.jwt_encoding_key_pem,
         user.tenant_id,
         user.id,
-        session_ttl_seconds(&state),
+        session_ttl_seconds(&state, user.tenant_id).await,
     ) {
         Ok(token) => token,
         Err(e) => return internal_error_response(e),
@@ -376,7 +383,7 @@ async fn oidc_callback(
     let cookies = session_cookies(
         &token,
         &csrf_value,
-        session_ttl_seconds(&state) as i64,
+        session_ttl_seconds(&state, user.tenant_id).await as i64,
         state.cookie_secure,
     );
     let response = Redirect::to(&config.post_login_redirect).into_response();

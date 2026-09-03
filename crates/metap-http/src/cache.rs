@@ -80,3 +80,39 @@ impl OidcFlowCache {
         entry
     }
 }
+
+/// Caches `control.tenant_hostnames` lookups for the unauthenticated `GET /public/config`.
+///
+/// Two reasons this one is cached rather than queried per request, and the second is the important
+/// one. It is hit by every anonymous load of a login page, so it is on the hottest cold path the
+/// platform has; and it is reachable **without any credential at all**, so an uncached version
+/// would let anyone turn a login page into one database query per request. A 60s TTL is generous
+/// here — a hostname's tenant changes when an operator runs a CLI command, not in the course of
+/// normal operation.
+///
+/// Negative results are cached too (`None`), deliberately: without that, requests for hostnames
+/// that map to nothing — which is exactly what a scan looks like — would be the only ones that
+/// always reached the database.
+#[derive(Clone)]
+pub struct TenantHostnameCache {
+    cache: Cache<String, Option<Uuid>>,
+}
+
+impl TenantHostnameCache {
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            cache: Cache::builder().time_to_live(ttl).build(),
+        }
+    }
+
+    pub async fn get_with<F, Fut>(&self, hostname: &str, fetch: F) -> anyhow::Result<Option<Uuid>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = anyhow::Result<Option<Uuid>>>,
+    {
+        self.cache
+            .try_get_with(hostname.to_string(), async move { fetch().await })
+            .await
+            .map_err(|e| anyhow::anyhow!("hostname lookup failed for {hostname:?}: {e}"))
+    }
+}

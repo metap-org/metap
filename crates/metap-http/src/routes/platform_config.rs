@@ -1,11 +1,16 @@
 //! `GET`/`PUT`/`DELETE /platform/config` — the platform-admin surface over `metap_config`'s
-//! `PlatformGlobal` tier (`docs/features/18-config-tiers-db-backed.md`, slice 1).
+//! platform-writable tiers (`docs/features/18-config-tiers-db-backed.md`, slices 1-2).
 //!
 //! Gated by `PlatformAdminContext`, not `AdminContext`: these keys are fleet-wide, so a tenant's
-//! own admin has no business reading or writing them. That is a *weaker* gate than the one
-//! protecting the `Operator` tier, which no route here can reach at all — see
-//! `metap_config::keys`'s doc comment for why the SSRF/CORS settings from audit 04 A#1/A#4 are
-//! deliberately unreachable from every API including this one.
+//! own admin has no business reading or writing them. Since slice 2 this surface also sets the
+//! **fleet default** for `Tenant`-tier keys — the middle link of
+//! `declared default <- platform_configs <- tenant_configs` — which each tenant may then override
+//! through `/admin/config` (`crate::routes::tenant_config`). A key's `level` comes back with every
+//! entry so a platform admin can tell the two apart.
+//!
+//! Both are still a *weaker* gate than the one protecting the `Operator` tier, which no route here
+//! can reach at all — see `metap_config::keys`'s doc comment for why the SSRF/CORS settings from
+//! audit 04 A#1/A#4 are deliberately unreachable from every API including this one.
 //!
 //! Deliberately not an `EntityDefinition`: same category as `policies`/`cron_jobs`/
 //! `dashboard_configs` — platform plumbing, not a tenant's business data.
@@ -27,11 +32,28 @@ use crate::state::AppState;
 async fn list_config(State(state): State<AppState>, PlatformAdminContext(_): PlatformAdminContext) -> Response {
     let snapshot = state.config.current();
     let items: Vec<Value> = snapshot
-        .platform_global_view()
+        .platform_writable_view()
         .into_iter()
-        .map(|(key, value)| json!({ "key": key, "value": value }))
+        .map(|(def, value)| {
+            json!({
+                "key": def.key,
+                "value": value,
+                "level": level_name(def.level),
+                // A platform admin setting one of these is setting a default, not a decision — the
+                // value a tenant sees may be its own.
+                "tenantOverridable": def.level == metap_config::ConfigLevel::Tenant,
+            })
+        })
         .collect();
     Json(json!({ "data": items })).into_response()
+}
+
+pub(crate) fn level_name(level: metap_config::ConfigLevel) -> &'static str {
+    match level {
+        metap_config::ConfigLevel::Operator => "operator",
+        metap_config::ConfigLevel::PlatformGlobal => "platformGlobal",
+        metap_config::ConfigLevel::Tenant => "tenant",
+    }
 }
 
 #[derive(Deserialize)]
@@ -39,7 +61,7 @@ struct SetConfigBody {
     value: Value,
 }
 
-fn config_error_response(err: ConfigError) -> Response {
+pub(crate) fn config_error_response(err: ConfigError) -> Response {
     match err {
         // 404, not 400: an unknown key is an addressing mistake, and this route is keyed by path.
         ConfigError::UnknownKey(key) => service_error_response(

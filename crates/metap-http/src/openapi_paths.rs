@@ -65,6 +65,9 @@ mod tests {
             "/api/{entity}/{record_id}/workflow-events",
             "/platform/config",
             "/platform/config/{key}",
+            "/admin/config",
+            "/admin/config/{key}",
+            "/public/config",
         ] {
             assert!(paths.contains_key(expected), "missing path: {expected}");
         }
