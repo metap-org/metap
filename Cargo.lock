@@ -3833,6 +3833,7 @@ dependencies = [
  "prost",
  "prost-types",
  "protoc-bin-vendored",
+ "serde",
  "serde_json",
  "sqlx",
  "tokio",

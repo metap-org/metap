@@ -16,6 +16,7 @@ async-trait.workspace = true
 jsonwebtoken.workspace = true
 prost = "0.14"
 prost-types = "0.14"
+serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tonic = { version = "0.14", features = ["tls-ring"] }
