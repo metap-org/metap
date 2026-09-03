@@ -8,6 +8,7 @@ metap-app = { path = "../metap-app" }
 metap-attachments = { path = "../metap-attachments" }
 metap-auth = { path = "../metap-auth" }
 metap-cache = { path = "../metap-cache" }
+metap-config = { path = "../metap-config" }
 metap-control = { path = "../metap-control" }
 metap-cron = { path = "../metap-cron" }
 metap-crud = { path = "../metap-crud" }

@@ -22,6 +22,7 @@ pub use metap_app as app;
 pub use metap_attachments as attachments;
 pub use metap_auth as tenant_auth;
 pub use metap_cache as cache;
+pub use metap_config as config;
 pub use metap_control as control;
 pub use metap_cron as cron;
 pub use metap_crud as crud;

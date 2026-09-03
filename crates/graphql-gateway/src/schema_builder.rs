@@ -45,7 +45,7 @@ pub struct BuiltSchema {
     pub entity_count: usize,
 }
 
-pub async fn build(upstreams: &[UpstreamConfig]) -> anyhow::Result<BuiltSchema> {
+pub async fn build(upstreams: &[UpstreamConfig], limits: SchemaLimits) -> anyhow::Result<BuiltSchema> {
     let http = metap_runtime::http_client::default_client();
     let mut registry = MetadataRegistry::new();
     let mut by_entity: HashMap<String, Arc<dyn RecordBackend>> = HashMap::new();
@@ -140,7 +140,7 @@ pub async fn build(upstreams: &[UpstreamConfig]) -> anyhow::Result<BuiltSchema> 
     registry.validate_references()?;
     let entity_count = registry.list_entities().len();
     let backend: Arc<dyn RecordBackend> = Arc::new(CompositeBackend::new(by_entity));
-    let schema = build_schema(&registry, backend.clone(), SchemaLimits::default())?;
+    let schema = build_schema(&registry, backend.clone(), limits)?;
 
     Ok(BuiltSchema {
         schema: Arc::new(schema),

@@ -20,6 +20,7 @@ mod attachments_workflow;
 mod auth;
 mod core;
 mod cron_dashboards;
+mod platform_config;
 
 use serde_json::{Map, Value};
 
@@ -28,6 +29,7 @@ use attachments_workflow::attachment_workflow_paths;
 use auth::auth_paths;
 use core::core_paths;
 use cron_dashboards::cron_dashboard_paths;
+use platform_config::platform_config_paths;
 
 pub(crate) use metap_runtime::openapi::insert;
 
@@ -38,6 +40,7 @@ pub fn static_paths() -> Map<String, Value> {
     admin_paths(&mut paths);
     cron_dashboard_paths(&mut paths);
     attachment_workflow_paths(&mut paths);
+    platform_config_paths(&mut paths);
     paths
 }
 
@@ -60,6 +63,8 @@ mod tests {
             "/dashboards/me",
             "/api/{entity}/{record_id}/attachments",
             "/api/{entity}/{record_id}/workflow-events",
+            "/platform/config",
+            "/platform/config/{key}",
         ] {
             assert!(paths.contains_key(expected), "missing path: {expected}");
         }

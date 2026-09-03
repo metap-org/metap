@@ -83,6 +83,16 @@ pub struct AppState {
     /// (guarded by a `OnceLock` — `PrometheusMetricLayer::pair()` panics if called a second
     /// time, which every e2e test building its own `AppState` would otherwise trigger) and
     /// returns a cheap-to-clone handle either way.
+    /// Fleet-wide tunables that used to be literals in this crate's source — the GraphQL
+    /// depth/complexity pair (audit 04 A#7), the rate limit, and the session TTL
+    /// (`docs/features/18-config-tiers-db-backed.md`). Backs `crate::routes::platform_config`.
+    ///
+    /// **Starts unloaded**, reading every key back as the same default the code used to hard-code:
+    /// `new` is synchronous and reading the table is not. A host binary should
+    /// `state.config.reload().await` once at boot *before* `build_router`, which is where the rate
+    /// limit is read. Forgetting that is safe rather than broken — the platform simply behaves as
+    /// it did before this table existed.
+    pub config: Arc<metap_config::ConfigStore>,
     pub metrics_handle: axum_prometheus::metrics_exporter_prometheus::PrometheusHandle,
     /// Process-level resource metrics (CPU/RSS/open fds/threads) — `docs/local-benchmarking.md`.
     /// `.collect()` (called by the `/metrics` handler on every scrape, not on a background
@@ -126,8 +136,10 @@ impl AppState {
         router: Router,
     ) -> Self {
         let crud = Arc::new(CrudService::new(router.clone(), metadata.clone(), permissions.clone()));
+        let config = Arc::new(metap_config::ConfigStore::unloaded(pool.clone()));
         Self {
             pool,
+            config,
             router,
             metadata_base,
             metadata,

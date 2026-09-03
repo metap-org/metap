@@ -73,6 +73,12 @@ async fn main() -> anyhow::Result<()> {
     //   metap::grpc::GrpcRecordService::new(state.crud.clone(), auth_config), tls_config)` in
     //   its own `tokio::spawn` alongside the `metap::runtime::serve::run` call below — a second
     //   port, not merged into this router (see that crate's `serve` doc comment for why).
+    // Load fleet-wide tunables (GraphQL limits, rate limit, session TTL) from `platform_configs`
+    // before building the router, since the rate-limit layer reads them once here. Skipping this
+    // is safe — every key falls back to the same default the platform used before the table
+    // existed — but then `PUT /platform/config` has no effect on this process.
+    state.config.reload().await?;
+
     let router = build_router(state, &config.cors_origins, Router::new());
 
     let addr = format!("{}:{}", config.host, config.port);

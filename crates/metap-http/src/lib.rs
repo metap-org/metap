@@ -70,7 +70,16 @@ pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Rout
     // exists) — 200ms/300 burst approximates the old `@fastify/rate-limit` default (`max: 300,
     // timeWindow: "1 minute"`, see git history on the now-deleted
     // `packages/core/src/server/app.ts`).
-    let rate_limit = metap_runtime::rate_limit::build(200, 300);
+    // Both numbers are `PlatformGlobal` config keys now (`docs/features/18-config-tiers-db-backed.md`),
+    // defaulting to exactly the 200/300 they were hard-coded as. Read once here rather than per
+    // request: `GovernorLayer` is built once and owns its own token buckets, so a change through
+    // `PUT /platform/config` reaches this only on the next `build_router` — noted in that route's
+    // response rather than pretended otherwise.
+    let config = state.config.current();
+    let rate_limit = metap_runtime::rate_limit::build(
+        config.get_u64(metap_config::keys::HTTP_RATE_LIMIT_PER_MS),
+        config.get_u64(metap_config::keys::HTTP_RATE_LIMIT_BURST) as u32,
+    );
 
     // `metap_runtime::trace::build`'s doc comment has the full reasoning — one span per
     // request, correlated with the same request_id/trace_id `request_context` puts in the
@@ -90,6 +99,7 @@ pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Rout
         .merge(routes::auth::router())
         .merge(routes::cron::router())
         .merge(routes::dashboards::router())
+        .merge(routes::platform_config::router())
         .merge(routes::preferences::router())
         .merge(extra_routes)
         .layer(cors)

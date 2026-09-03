@@ -10,6 +10,7 @@ members = [
   "crates/metap-attachments",
   "crates/metap-auth",
   "crates/metap-cache",
+  "crates/metap-config",
   "crates/metap-control",
   "crates/metap-cron",
   "crates/metap-crud",

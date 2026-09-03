@@ -269,9 +269,12 @@ async fn one_graphql_query_aggregates_real_data_from_two_independent_services() 
 
     // This is the actual boot-sequence call the real `graphql-gateway` binary makes — discovers
     // both upstreams' schemas over real HTTP and connects a real `GrpcBackend` to each.
-    let built = schema_builder::build(&[jira_like.upstream, crm_like.upstream])
-        .await
-        .unwrap();
+    let built = schema_builder::build(
+        &[jira_like.upstream, crm_like.upstream],
+        metap_graphql::SchemaLimits::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         built.entity_count, 2,
         "both upstreams' entities must be registered into one schema"
