@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Metap is a metadata-driven platform. The core idea: entity behavior (fields, list views, validation, workflow) is declared once as metadata, and CRUD/list/workflow behavior is generated from it — but each concern (metadata, permission, query planning, workflow, outbox) is an explicit service with a fixed boundary, not a grab-bag helper.
 
-After completing the feature, do not commit any changes. Keep the diff intact so I can review it first. Making roadmap stay updated. Respond in Vietnamese.
+When working **locally**, do not commit after completing a feature — keep the diff intact so I can review it first. In a **cloud/remote session, commit and push as normal**: the pull request is the review gate there, so holding the diff back only strands it in a container that gets reclaimed (clarified 2026-09-03 — this line used to read as an unconditional "never commit", which contradicts the repo's own cloud-session workflow and the stop hook that enforces it). Making roadmap stay updated. Respond in Vietnamese.
 
 **`docs/` moved to a separate repo, `../metap-docs` (2026-08-31, `docs/roadmap/54-docs-repo-split.md`
 in that repo).** Every `docs/...` path mentioned anywhere below in this file, in `README.md`, or in
