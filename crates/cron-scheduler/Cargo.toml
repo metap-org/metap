@@ -16,7 +16,7 @@ metap-runtime = { path = "../metap-runtime" }
 metap-cron = { path = "../metap-cron" }
 metap-infra = { path = "../metap-infra" }
 anyhow.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal", "net"] }
 sqlx = { workspace = true, features = [
   "runtime-tokio",
   "tls-rustls",

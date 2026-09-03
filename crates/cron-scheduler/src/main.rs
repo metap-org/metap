@@ -63,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
             password: config.smtp_password.clone(),
             from: config.smtp_from.clone(),
         },
+        webhook: cron_scheduler::executor::WebhookPolicy::from_env(),
     };
     let ticker_config = TickerConfig {
         interval: Duration::from_millis(tick_ms),

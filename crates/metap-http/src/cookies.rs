@@ -20,6 +20,7 @@
 //! forwarding a caller's Bearer token) is completely unaffected — see `crate::auth`'s extractor,
 //! which only falls back to the cookie once no `Authorization` header is present at all.
 
+use axum::http::Method;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use time::Duration;
 
@@ -65,6 +66,32 @@ pub fn session_cookies(
     (session, csrf)
 }
 
+/// Whether a cookie-authenticated request of this method must carry a matching
+/// [`CSRF_HEADER_NAME`] header. Safe methods are exempt because they must not change state — the
+/// standard double-submit rule.
+///
+/// Pulled out of `crate::auth`'s extractor as its own function purely so it is unit-testable
+/// without a database (audit 04 finding B#4: the whole cookie/CSRF mechanism shipped with zero
+/// tests, and this one `if` is the only thing standing between the cookie path and cross-site
+/// state change — inverted or widened by accident, nothing else in the codebase would notice).
+pub fn requires_csrf_check(method: &Method) -> bool {
+    !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+}
+
+/// The double-submit comparison itself: the [`CSRF_COOKIE_NAME`] cookie's value must be present,
+/// non-empty, and equal to the [`CSRF_HEADER_NAME`] header's.
+///
+/// Both-absent and both-empty are rejected explicitly. Without the emptiness guard, a request that
+/// somehow presents an empty cookie *and* an empty header would compare equal and pass — a state
+/// no legitimate client produces (`session_cookies` is only ever called with a fresh UUID), so
+/// treating it as a match could only ever help a caller that shouldn't be there.
+pub fn csrf_matches(cookie_value: Option<&str>, header_value: Option<&str>) -> bool {
+    match (cookie_value, header_value) {
+        (Some(cookie), Some(header)) => !cookie.is_empty() && cookie == header,
+        _ => false,
+    }
+}
+
 /// `POST /auth/logout`'s pair — `Max-Age(0)` (rather than omitting `Max-Age`, which would create
 /// a *session* cookie instead of deleting the existing persistent one) tells the browser to expire
 /// the cookie immediately. Attributes (`Path`/`SameSite`/`Secure`) must match the ones the cookie
@@ -75,4 +102,82 @@ pub fn clear_session_cookies(secure: bool) -> (Cookie<'static>, Cookie<'static>)
     let session = base_cookie(SESSION_COOKIE_NAME, String::new(), true, secure, expire);
     let csrf = base_cookie(CSRF_COOKIE_NAME, String::new(), false, secure, expire);
     (session, csrf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Audit 04 B#4's first missing guard: if this predicate is ever inverted or widened to
+    /// include a mutating method, the cookie path silently loses its CSRF defense. Asserted
+    /// method by method rather than "not GET" so adding a method to the exempt list has to be a
+    /// deliberate edit to this test too.
+    #[test]
+    fn only_safe_methods_skip_the_csrf_check() {
+        for exempt in [Method::GET, Method::HEAD, Method::OPTIONS] {
+            assert!(!requires_csrf_check(&exempt), "{exempt} must be exempt");
+        }
+        for guarded in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
+            assert!(requires_csrf_check(&guarded), "{guarded} must be CSRF-checked");
+        }
+    }
+
+    #[test]
+    fn csrf_matches_only_when_both_are_present_and_equal() {
+        assert!(csrf_matches(Some("abc"), Some("abc")));
+        assert!(!csrf_matches(Some("abc"), Some("different")));
+        assert!(!csrf_matches(Some("abc"), None), "header missing must not pass");
+        assert!(!csrf_matches(None, Some("abc")), "cookie missing must not pass");
+        assert!(!csrf_matches(None, None), "both missing must not pass");
+    }
+
+    #[test]
+    fn empty_values_never_match_each_other() {
+        assert!(!csrf_matches(Some(""), Some("")));
+        assert!(!csrf_matches(Some(""), None));
+    }
+
+    #[test]
+    fn session_cookie_is_http_only_and_csrf_cookie_is_readable_by_script() {
+        let (session, csrf) = session_cookies("jwt-value", "csrf-value", 3600, true);
+        assert_eq!(session.name(), SESSION_COOKIE_NAME);
+        assert_eq!(session.value(), "jwt-value");
+        assert_eq!(session.http_only(), Some(true), "the JWT must never be script-readable");
+        assert_eq!(csrf.name(), CSRF_COOKIE_NAME);
+        assert_eq!(
+            csrf.http_only(),
+            Some(false),
+            "same-origin script must be able to read this to echo it back"
+        );
+        for cookie in [&session, &csrf] {
+            assert_eq!(cookie.path(), Some("/"));
+            assert_eq!(cookie.secure(), Some(true));
+            assert_eq!(cookie.same_site(), Some(SameSite::Lax));
+            assert_eq!(cookie.max_age(), Some(Duration::seconds(3600)));
+        }
+    }
+
+    #[test]
+    fn secure_flag_is_threaded_through_for_local_http_development() {
+        let (session, csrf) = session_cookies("jwt", "csrf", 60, false);
+        assert_eq!(session.secure(), Some(false));
+        assert_eq!(csrf.secure(), Some(false));
+    }
+
+    /// A cleared cookie must keep every attribute the original was set with, or the browser files
+    /// it as a *different* cookie and the real one survives logout — see `clear_session_cookies`'s
+    /// own doc comment.
+    #[test]
+    fn clearing_expires_immediately_and_keeps_the_original_attributes() {
+        let (session, csrf) = clear_session_cookies(true);
+        for cookie in [&session, &csrf] {
+            assert_eq!(cookie.max_age(), Some(Duration::seconds(0)));
+            assert_eq!(cookie.path(), Some("/"));
+            assert_eq!(cookie.secure(), Some(true));
+            assert_eq!(cookie.same_site(), Some(SameSite::Lax));
+            assert_eq!(cookie.value(), "");
+        }
+        assert_eq!(session.http_only(), Some(true));
+        assert_eq!(csrf.http_only(), Some(false));
+    }
 }

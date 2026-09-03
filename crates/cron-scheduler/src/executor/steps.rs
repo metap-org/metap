@@ -206,7 +206,9 @@ async fn run_one_step(
     match TargetType::parse(&step.target_type) {
         Some(TargetType::WorkflowTransition) => run_workflow_transition(http, config, &step.target_config).await,
         Some(TargetType::BulkQueryAction) => run_bulk_query_action(http, config, &step.target_config).await,
-        Some(TargetType::Webhook) => run_webhook(http, chain.job_id, chain.run_id, &step.target_config).await,
+        Some(TargetType::Webhook) => {
+            run_webhook(&config.webhook, chain.job_id, chain.run_id, &step.target_config).await
+        }
         Some(TargetType::Email) => {
             run_email(
                 &config.smtp,

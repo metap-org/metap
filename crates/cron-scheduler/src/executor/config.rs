@@ -21,6 +21,10 @@ pub struct ExecutorConfig {
     /// `smtp_*` fields, carried in `ExecutorConfig` rather than read from env again here so
     /// this stays testable/constructible without touching the environment.
     pub smtp: SmtpConfig,
+    /// Guardrails for `TargetType::Webhook`'s tenant-supplied target URL — see
+    /// `super::ssrf_guard`. Carried here rather than read from env inside `run_webhook` for the
+    /// same reason `smtp` is: this stays constructible/testable without touching the environment.
+    pub webhook: crate::executor::WebhookPolicy,
 }
 
 #[derive(Debug, Clone, Default)]

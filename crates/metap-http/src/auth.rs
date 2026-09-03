@@ -11,7 +11,7 @@
 
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
-use axum::http::{Method, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use axum_extra::extract::cookie::CookieJar;
@@ -113,11 +113,10 @@ where
                     .map(|c| c.value().to_string())
                     .ok_or(AuthError::unauthorized("Missing or invalid authorization header."))?;
 
-                if !matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS) {
+                if crate::cookies::requires_csrf_check(&parts.method) {
                     let csrf_cookie = jar.get(CSRF_COOKIE_NAME).map(|c| c.value());
                     let csrf_header = parts.headers.get(CSRF_HEADER_NAME).and_then(|v| v.to_str().ok());
-                    let matches = matches!((csrf_cookie, csrf_header), (Some(a), Some(b)) if a == b);
-                    if !matches {
+                    if !crate::cookies::csrf_matches(csrf_cookie, csrf_header) {
                         return Err(AuthError::unauthorized("Missing or invalid CSRF token."));
                     }
                 }
