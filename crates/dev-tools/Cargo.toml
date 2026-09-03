@@ -10,6 +10,10 @@ path = "src/main.rs"
 [dependencies]
 metap-runtime = { path = "../metap-runtime" }
 metap-control = { path = "../metap-control" }
+# Only for `put-tenant-secret`'s `load_config()` — it must pick the *configured* secret backend
+# (`build_secret_store`) rather than assume one, so an operator's credential lands where the running
+# services will look for it.
+metap-infra = { path = "../metap-infra" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-reconciler = { path = "../metap-reconciler" }
 anyhow.workspace = true

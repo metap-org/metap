@@ -16,7 +16,7 @@ use aws_sdk_secretsmanager::Client;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
-use crate::secret_store::{DbCreds, SecretStore};
+use crate::secret_store::{DbCreds, SecretStore, ValueSecret};
 
 pub struct AwsSecretsManagerStoreConfig {
     pub region: String,
@@ -103,5 +103,55 @@ impl SecretStore for AwsSecretsManagerStore {
             dsn: SecretString::from(secret.dsn),
             expires_at: None,
         })
+    }
+
+    async fn get_secret(&self, secret_ref: &str) -> anyhow::Result<SecretString> {
+        let output = self
+            .client
+            .get_secret_value()
+            .secret_id(secret_ref)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("AWS Secrets Manager get_secret_value failed for {secret_ref}: {e}"))?;
+        let secret_string = output
+            .secret_string()
+            .ok_or_else(|| anyhow::anyhow!("AWS Secrets Manager secret {secret_ref} has no SecretString value"))?;
+        let secret: ValueSecret = serde_json::from_str(secret_string).map_err(|e| {
+            anyhow::anyhow!(
+                "AWS Secrets Manager secret {secret_ref} is not the expected {{\"value\": ...}} JSON shape: {e}"
+            )
+        })?;
+        Ok(SecretString::from(secret.value))
+    }
+
+    async fn put_secret(&self, secret_ref: &str, value: &str) -> anyhow::Result<()> {
+        let payload = serde_json::to_string(&ValueSecret {
+            value: value.to_string(),
+        })?;
+        // Same best-effort create as `put_dsn`: the version write below is what actually matters.
+        let _ = self.client.create_secret().name(secret_ref).send().await;
+        self.client
+            .put_secret_value()
+            .secret_id(secret_ref)
+            .secret_string(payload)
+            .send()
+            .await
+            // Built from the reference only — the value must never reach an error string.
+            .map_err(|e| anyhow::anyhow!("AWS Secrets Manager put_secret_value failed for {secret_ref}: {e}"))?;
+        Ok(())
+    }
+
+    async fn delete_secret(&self, secret_ref: &str) -> anyhow::Result<()> {
+        self.client
+            .delete_secret()
+            .secret_id(secret_ref)
+            // Without this AWS keeps the secret recoverable for a 30-day window, during which the
+            // same reference still resolves — which would make "the tenant revoked this credential"
+            // untrue for a month.
+            .force_delete_without_recovery(true)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("AWS Secrets Manager delete_secret failed for {secret_ref}: {e}"))?;
+        Ok(())
     }
 }

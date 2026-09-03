@@ -157,9 +157,18 @@ async fn dispatch(
         TargetType::BulkQueryAction => run_bulk_query_action(http, config, &payload.target_config)
             .await
             .map(DispatchOutcome::Completed),
-        TargetType::Webhook => run_webhook(&config.webhook, payload.job_id, payload.run_id, &payload.target_config)
-            .await
-            .map(DispatchOutcome::Completed),
+        TargetType::Webhook => run_webhook(
+            &config.webhook,
+            config.secrets.as_ref(),
+            // From the dispatched job's own row, never from `target_config` — a tenant cannot name
+            // whose credential to send, because it never names one at all.
+            payload.tenant_id,
+            payload.job_id,
+            payload.run_id,
+            &payload.target_config,
+        )
+        .await
+        .map(DispatchOutcome::Completed),
         TargetType::Email => run_email(
             &config.smtp,
             payload.trigger_entity.as_deref(),

@@ -101,6 +101,16 @@ impl Router {
         }
     }
 
+    /// The `SecretStore` this router resolves tenant credentials through.
+    ///
+    /// Exposed so callers outside this crate reach the *same* configured backend rather than
+    /// building a second one from env — `metap-http`'s `/admin/config` needs it to store a tenant's
+    /// webhook credential, and a deployment that picked Vault must not find its HTTP surface
+    /// quietly writing somewhere else. Same reasoning as `AppState.router` existing at all.
+    pub fn secrets(&self) -> &Arc<dyn SecretStore> {
+        &self.secret_store
+    }
+
     /// Looks up (or opens and caches) the dedicated `PgPool` for a `DedicatedDb` tenant, keyed
     /// by `dsn_secret_ref` rather than `TenantId` — two tenants could in principle share a
     /// `dsn_secret_ref` only by operator error, but keying on the thing that actually determines

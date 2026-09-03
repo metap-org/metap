@@ -1,7 +1,9 @@
 //! `ExecutorConfig`/`SmtpConfig` — everything `super::dispatch`'s handlers need that isn't
 //! itself a job's `target_config` (service token, callback base URL, SMTP settings).
 
-#[derive(Debug, Clone)]
+/// No `Debug`: `secrets` is a `dyn SecretStore` (not printable), and a config struct holding the
+/// handle to every tenant's credentials is not something to make trivially loggable anyway.
+#[derive(Clone)]
 pub struct ExecutorConfig {
     /// Base URL of the `crm-server` instance `workflow_transition`/`bulk_query_action` jobs
     /// call back into.
@@ -25,6 +27,14 @@ pub struct ExecutorConfig {
     /// `super::ssrf_guard`. Carried here rather than read from env inside `run_webhook` for the
     /// same reason `smtp` is: this stays constructible/testable without touching the environment.
     pub webhook: crate::executor::WebhookPolicy,
+    /// Resolves a tenant's stored webhook credential (`docs/features/18-config-tiers-db-backed.md`
+    /// slice 3) — the same `SecretStore` backend `metap_control::build_secret_store` picks for
+    /// every other process, so a deployment on Vault does not find this one reading somewhere else.
+    ///
+    /// `None` means no credential can be resolved and a job that asks for one fails saying so. That
+    /// is the honest failure: a webhook silently sent *without* the `Authorization` it was
+    /// configured to carry would look to the tenant like the upstream rejecting them.
+    pub secrets: Option<std::sync::Arc<dyn metap_control::SecretStore>>,
 }
 
 #[derive(Debug, Clone, Default)]

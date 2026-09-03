@@ -207,7 +207,17 @@ async fn run_one_step(
         Some(TargetType::WorkflowTransition) => run_workflow_transition(http, config, &step.target_config).await,
         Some(TargetType::BulkQueryAction) => run_bulk_query_action(http, config, &step.target_config).await,
         Some(TargetType::Webhook) => {
-            run_webhook(&config.webhook, chain.job_id, chain.run_id, &step.target_config).await
+            // The chain's own tenant, exactly as a standalone webhook job would use its row's —
+            // a step inside a chain gets no different credential reach than one outside it.
+            run_webhook(
+                &config.webhook,
+                config.secrets.as_ref(),
+                chain.tenant_id,
+                chain.job_id,
+                chain.run_id,
+                &step.target_config,
+            )
+            .await
         }
         Some(TargetType::Email) => {
             run_email(

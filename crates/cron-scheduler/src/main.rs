@@ -64,6 +64,22 @@ async fn main() -> anyhow::Result<()> {
             from: config.smtp_from.clone(),
         },
         webhook: cron_scheduler::executor::WebhookPolicy::from_env(),
+        // Same backend picker every other binary uses, so a deployment configures Vault/AWS/GCP
+        // once and every process agrees on where a tenant's credentials live. A backend that fails
+        // to construct degrades to `None` rather than refusing to boot — same reasoning as the
+        // service token above: most job types need no credential at all, and only the jobs that
+        // asked for one should fail (with that reason, per job, in `cron_job_runs`).
+        secrets: match metap_control::build_secret_store(&config).await {
+            Ok(store) => Some(store),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "no secret backend available — webhook jobs requesting their tenant's stored credential will \
+                     fail; every other job type is unaffected"
+                );
+                None
+            }
+        },
     };
     let ticker_config = TickerConfig {
         interval: Duration::from_millis(tick_ms),

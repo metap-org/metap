@@ -15,6 +15,14 @@
 //! stops the attack above (metadata endpoints and internal services are all on those ranges)
 //! while leaving a genuine external webhook — the whole point of the feature — working untouched.
 //!
+//! **The one narrowing since** (`docs/features/18-config-tiers-db-backed.md` slice 3): a job may
+//! now carry an `Authorization` header whose value comes from the tenant's own credential in
+//! `SecretStore`, never from `target_config`. [`FORBIDDEN_HEADERS`]'s own comment explains why that
+//! is a different thing from the literal header this module refuses, and `super::webhook` enforces
+//! the ordering that makes it true: the target passes [`WebhookPolicy::check`] *before* the
+//! credential is read, so a secret can only ever be sent to a host that already survived the IP
+//! and allowlist screens.
+//!
 //! **What an operator can tighten or loosen** (`WebhookPolicy::from_env`):
 //! - `CRON_WEBHOOK_ALLOWED_HOSTS` — comma-separated allowlist (`api.example.com`,
 //!   or `.example.com` to match the domain and its subdomains). Unset = allow any *public* host.
@@ -41,11 +49,28 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use reqwest::Url;
 
-/// Request headers a tenant may not set on a webhook. `Authorization`/`Proxy-Authorization` would
-/// let a job forge credentials against whatever it reaches; `Cookie` does the same for a
-/// session-authenticated internal service. Rejected loudly (the job run fails with this reason)
-/// rather than silently dropped — a silently-dropped header looks like the upstream rejecting the
-/// call, which is a much worse thing to debug.
+/// Request headers a tenant may not set **as a literal value** on a webhook.
+/// `Authorization`/`Proxy-Authorization` would let a job forge credentials against whatever it
+/// reaches; `Cookie` does the same for a session-authenticated internal service. Rejected loudly
+/// (the job run fails with this reason) rather than silently dropped — a silently-dropped header
+/// looks like the upstream rejecting the call, which is a much worse thing to debug.
+///
+/// **`authorization` stays on this list even though a webhook may now send one** — see
+/// [`check_headers`]. The credential a job sends comes from `SecretStore`, resolved by
+/// `super::webhook` *after* the target has passed [`WebhookPolicy::check`], and is never a string
+/// the tenant typed into `target_config`. That distinction is the entire reason this can be
+/// loosened at all without giving back what audit 04 A#1 closed:
+///
+/// - A literal value is attacker-chosen text going to an attacker-chosen host, which is credential
+///   forgery — still refused, on every target, with or without an allowlist.
+/// - A `SecretStore` value is *the tenant's own* credential going to a host that already passed the
+///   IP and allowlist checks. It cannot name an internal service (the guard rejected those before
+///   the secret was ever read), it cannot be read back by the tenant (`get_secret` has no HTTP
+///   surface), and its plaintext never appears in `cron_job_runs` (`super::webhook::redact`).
+///
+/// `cookie`/`proxy-authorization` have no such path and are refused unconditionally: there is no
+/// legitimate case for a scheduled job to present a session cookie or a proxy credential, so
+/// nothing is gained by opening them and a session-riding attack is what would be lost.
 const FORBIDDEN_HEADERS: [&str; 3] = ["authorization", "cookie", "proxy-authorization"];
 
 #[derive(Debug, Clone, Default)]
@@ -283,6 +308,23 @@ mod tests {
         assert!(check_headers(["Authorization"].into_iter()).is_err());
         assert!(check_headers(["cookie"].into_iter()).is_err());
         assert!(check_headers(["Proxy-Authorization"].into_iter()).is_err());
+    }
+
+    /// **The A#1 regression for slice 3.** Adding the `SecretStore`-backed `Authorization` path
+    /// must not have made a *literal* one acceptable — that is the exact mistake that would give
+    /// back what audit 04 A#1 closed, and it would be an easy one to make while "allowing
+    /// Authorization for webhooks".
+    #[test]
+    fn a_literal_authorization_header_stays_refused_after_the_secret_path_was_added() {
+        for spelling in ["authorization", "Authorization", "AUTHORIZATION", " Authorization "] {
+            assert!(
+                check_headers([spelling].into_iter()).is_err(),
+                "{spelling:?} must never be settable as a literal header value"
+            );
+        }
+        // And the two with no legitimate case at all stay refused unconditionally.
+        assert!(check_headers(["Cookie"].into_iter()).is_err());
+        assert!(check_headers(["proxy-authorization"].into_iter()).is_err());
     }
 
     #[tokio::test]

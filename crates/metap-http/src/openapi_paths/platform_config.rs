@@ -69,7 +69,8 @@ pub(crate) fn platform_config_paths(paths: &mut Map<String, Value>) {
                 "description": "Any authenticated caller. The tenant comes from the token, never from the \
                                 request, so there is no way to read another tenant's values. `overridden` \
                                 distinguishes a value this tenant set from one inherited from the fleet \
-                                default.",
+                                default. An entry with secret=true is a credential and carries set/secretRef \
+                                instead of value — the credential itself is never returned by any endpoint.",
                 "responses": {
                     "200": { "description": "OK" },
                     "401": { "description": "Not authenticated" },
@@ -84,7 +85,11 @@ pub(crate) fn platform_config_paths(paths: &mut Map<String, Value>) {
             "put": {
                 "summary": "Set one config key for the caller's own tenant",
                 "description": "Requires the admin role. Rejects a platform-global or operator-tier key \
-                                with 403 and an out-of-range value with 422.",
+                                with 403 and an out-of-range value with 422. For a secret key the value is \
+                                the plaintext credential: it is written to the deployment's secret backend \
+                                and only a server-derived reference is stored, so it is write-only — no \
+                                endpoint returns it afterwards. DELETE on a secret key revokes the \
+                                credential rather than merely unlinking it.",
                 "parameters": [{ "name": "key", "in": "path", "required": true, "schema": { "type": "string" } }],
                 "requestBody": { "content": { "application/json": { "schema": {
                     "type": "object",
@@ -96,6 +101,7 @@ pub(crate) fn platform_config_paths(paths: &mut Map<String, Value>) {
                     "403": { "description": "Key is not writable by a tenant admin" },
                     "404": { "description": "No such config key" },
                     "422": { "description": "Value rejected by the key's validator" },
+                    "503": { "description": "The secret backend refused or was unreachable (secret keys only)" },
                 },
             },
             "delete": {

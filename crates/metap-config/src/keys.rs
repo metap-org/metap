@@ -50,6 +50,12 @@ pub enum ConfigLevel {
 /// back as the same number the code used to hard-code, never as `null`. That is what keeps this
 /// whole layer additive: a deployment that never touches `/platform/config` behaves exactly as it
 /// did before the table existed.
+///
+/// **For a [`secret`](Self::secret) key the two value-shaped fields describe different things**, and
+/// conflating them is the easy mistake here: `default` is the *stored marker* (`{}`, meaning no
+/// credential), while `validate` checks the *plaintext a caller sends* before it goes to
+/// `SecretStore`. They are never applied to the same value, which is why the "every default passes
+/// its own validator" test skips secret keys and asserts the marker shape separately.
 pub struct ConfigKeyDef {
     pub key: &'static str,
     pub level: ConfigLevel,
@@ -66,6 +72,19 @@ pub struct ConfigKeyDef {
     /// `true`, and everything a public value touches is validated far more strictly than an
     /// admin-only one, because it is rendered into a page for anyone who can reach the hostname.
     pub public: bool,
+    /// Whether this key's value is a **credential**, stored in `SecretStore` rather than in
+    /// `tenant_configs`.
+    ///
+    /// This changes the shape of the whole key, not just its handling. A secret key's write takes
+    /// the plaintext (which `validate` checks and which is then handed straight to `SecretStore`),
+    /// and what lands in `tenant_configs` is only `{"secretRef": ...}` — a reference the *server*
+    /// derives from the tenant id (`metap_control::tenant_secret_ref`). The config layer therefore
+    /// never holds the value at any point, which is what makes "a read can never return it"
+    /// structural rather than a filter somebody has to remember to apply.
+    ///
+    /// A secret key can never also be [`public`](Self::public) — enforced by a test, since the two
+    /// flags together would mean serving a credential to anybody who can reach a hostname.
+    pub secret: bool,
 }
 
 /// Rejects anything that is not a positive integer within `[min, max]`.
@@ -126,6 +145,29 @@ fn logo_url(value: &Value) -> Result<(), String> {
     Err("must be an https:// URL or a site-relative path starting with '/'".to_string())
 }
 
+/// Validates a credential that will be sent verbatim as an HTTP request header value.
+///
+/// The CR/LF rejection is the load-bearing part and is not stylistic: a header value containing
+/// `\r\n` is header injection into the very request this credential authenticates — a tenant could
+/// append arbitrary headers, or a whole second request, to a call the platform makes on its behalf.
+/// `reqwest` would reject most of these itself, but this platform does not get to rely on a
+/// dependency's validation for a boundary it owns, and refusing at write time gives the tenant an
+/// error at the moment they can fix it rather than one cron run later.
+fn header_credential(value: &Value) -> Result<(), String> {
+    let s = value.as_str().ok_or("must be a string")?;
+    if s.is_empty() {
+        return Err("must not be empty — clear the key instead to remove the credential".to_string());
+    }
+    if s.len() > 4096 {
+        return Err("must be at most 4096 characters".to_string());
+    }
+    // Visible ASCII plus space/tab is exactly what RFC 9110 allows in a field value.
+    if !s.chars().all(|c| c == '\t' || (' '..='~').contains(&c)) {
+        return Err("must contain only printable ASCII (no newlines, no control characters)".to_string());
+    }
+    Ok(())
+}
+
 /// Plain single-line text, bounded. Control characters are rejected rather than stripped — a
 /// silently-altered value is harder to debug than a refused one.
 fn display_text(value: &Value, max_len: usize) -> Result<(), String> {
@@ -144,6 +186,7 @@ pub const GRAPHQL_MAX_COMPLEXITY: &str = "graphql.maxComplexity";
 pub const HTTP_RATE_LIMIT_PER_MS: &str = "http.rateLimitPerMillisecond";
 pub const HTTP_RATE_LIMIT_BURST: &str = "http.rateLimitBurst";
 pub const AUTH_SESSION_TTL_SECONDS: &str = "auth.sessionTtlSeconds";
+pub const CRON_WEBHOOK_AUTHORIZATION: &str = "cron.webhookAuthorization";
 pub const THEME_PRIMARY_COLOR: &str = "theme.primaryColor";
 pub const THEME_LOGO_URL: &str = "theme.logoUrl";
 pub const THEME_DISPLAY_NAME: &str = "theme.displayName";
@@ -162,6 +205,7 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
         // working at all; above 50 the limit no longer bounds anything a hostile query would do.
         validate: |v| positive_int_in(v, 3, 50),
         public: false,
+        secret: false,
     },
     ConfigKeyDef {
         key: GRAPHQL_MAX_COMPLEXITY,
@@ -169,6 +213,7 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
         default: || Value::from(1000),
         validate: |v| positive_int_in(v, 10, 1_000_000),
         public: false,
+        secret: false,
     },
     ConfigKeyDef {
         key: HTTP_RATE_LIMIT_PER_MS,
@@ -176,6 +221,7 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
         default: || Value::from(200),
         validate: |v| positive_int_in(v, 1, 60_000),
         public: false,
+        secret: false,
     },
     ConfigKeyDef {
         key: HTTP_RATE_LIMIT_BURST,
@@ -183,6 +229,7 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
         default: || Value::from(300),
         validate: |v| positive_int_in(v, 1, 100_000),
         public: false,
+        secret: false,
     },
     // --- Tenant: a fleet default a platform admin sets, that each tenant may override ---
     ConfigKeyDef {
@@ -200,6 +247,19 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
         // this platform has no token revocation (audit 04 A#8), so TTL *is* the revocation window.
         validate: |v| positive_int_in(v, 60, 2_592_000),
         public: false,
+        secret: false,
+    },
+    // --- Tenant + secret: the value lives in SecretStore, only a derived reference lands in the DB ---
+    ConfigKeyDef {
+        key: CRON_WEBHOOK_AUTHORIZATION,
+        level: ConfigLevel::Tenant,
+        // Empty object = no credential stored. The stored shape is `{"secretRef": "..."}`, written
+        // by `ConfigStore::set_tenant_secret` and never by a caller.
+        default: || Value::Object(Default::default()),
+        // Validates the *plaintext* a caller sends, not the stored marker — see `ConfigKeyDef::secret`.
+        validate: header_credential,
+        public: false,
+        secret: true,
     },
     // --- Tenant + public: branding a login screen must render before it knows who is looking ---
     ConfigKeyDef {
@@ -215,6 +275,7 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
             hex_color(v)
         },
         public: true,
+        secret: false,
     },
     ConfigKeyDef {
         key: THEME_LOGO_URL,
@@ -222,6 +283,7 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
         default: || Value::from(""),
         validate: logo_url,
         public: true,
+        secret: false,
     },
     ConfigKeyDef {
         key: THEME_DISPLAY_NAME,
@@ -229,6 +291,7 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
         default: || Value::from(""),
         validate: |v| display_text(v, 64),
         public: true,
+        secret: false,
     },
     // --- Operator: declared only so the write surface can refuse them by name ---
     ConfigKeyDef {
@@ -237,6 +300,7 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
         default: || Value::Bool(false),
         validate: |_| Err("operator-only key".to_string()),
         public: false,
+        secret: false,
     },
     ConfigKeyDef {
         key: CRON_WEBHOOK_ALLOWED_HOSTS,
@@ -244,6 +308,7 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
         default: || Value::Array(vec![]),
         validate: |_| Err("operator-only key".to_string()),
         public: false,
+        secret: false,
     },
     ConfigKeyDef {
         key: CORS_ORIGINS,
@@ -251,6 +316,7 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
         default: || Value::Array(vec![]),
         validate: |_| Err("operator-only key".to_string()),
         public: false,
+        secret: false,
     },
 ];
 
@@ -274,11 +340,20 @@ mod tests {
     /// A default that its own validator rejects would mean the platform boots into a state it
     /// refuses to let anyone set — catches a bad edit to either half of a key's declaration.
     ///
-    /// `Operator` keys are excluded because their validator rejects everything by design; every
-    /// other tier is covered, so adding a key at any writable tier is covered automatically.
+    /// `Operator` keys are excluded because their validator rejects everything by design.
+    ///
+    /// **Secret keys are excluded for a different and more interesting reason**, and it is worth
+    /// being explicit about rather than quietly filtering: for a secret key the two fields describe
+    /// different values. `default` is the *stored marker* (`{}` — "no credential"), while `validate`
+    /// checks the *plaintext a caller sends*. Running one against the other compares a marker to a
+    /// credential validator and is meaningless. [`a_secret_keys_default_is_the_empty_marker`] covers
+    /// the half of this that does mean something.
     #[test]
     fn every_writable_default_passes_its_own_validator() {
-        for def in REGISTRY.iter().filter(|d| d.level != ConfigLevel::Operator) {
+        for def in REGISTRY
+            .iter()
+            .filter(|d| d.level != ConfigLevel::Operator && !d.secret)
+        {
             let default = (def.default)();
             assert!(
                 (def.validate)(&default).is_ok(),
@@ -318,6 +393,69 @@ mod tests {
                 def.key
             );
         }
+    }
+
+    /// The two flags must never be set together: `public` means "serve this to anyone who can reach
+    /// the hostname", `secret` means "this is a credential". A key with both would publish a
+    /// credential, and it is a single wrong line to write — hence a test rather than a comment.
+    #[test]
+    fn no_key_is_both_secret_and_public() {
+        for def in REGISTRY {
+            assert!(
+                !(def.secret && def.public),
+                "{} is declared both secret and public",
+                def.key
+            );
+        }
+    }
+
+    /// A secret key's `default` is the "no credential stored" marker, never a credential — a
+    /// non-empty default here would mean shipping a shared credential every tenant inherits.
+    #[test]
+    fn a_secret_keys_default_is_the_empty_marker() {
+        for def in REGISTRY.iter().filter(|d| d.secret) {
+            assert_eq!(
+                (def.default)(),
+                Value::Object(Default::default()),
+                "{}'s default must be the empty marker",
+                def.key
+            );
+        }
+    }
+
+    /// A credential is per-tenant by nature. `PlatformGlobal` would mean one credential shared by
+    /// the whole fleet with tenant admins able to see the reference; `Operator` keys are unwritable
+    /// anyway, so declaring one secret would just be dead weight that reads as a capability.
+    #[test]
+    fn secret_keys_live_only_at_the_tenant_tier() {
+        for def in REGISTRY.iter().filter(|d| d.secret) {
+            assert_eq!(
+                def.level,
+                ConfigLevel::Tenant,
+                "{} is a secret at the wrong tier",
+                def.key
+            );
+        }
+    }
+
+    /// A credential is sent verbatim as an HTTP header value, so the CR/LF rejection is header
+    /// injection prevention, not tidiness — see [`header_credential`].
+    #[test]
+    fn a_credential_with_a_newline_is_refused_as_header_injection() {
+        let def = lookup(CRON_WEBHOOK_AUTHORIZATION).expect("declared");
+        assert!((def.validate)(&Value::from("Bearer sk_live_abc123")).is_ok());
+        for rejected in [
+            "Bearer x\r\nX-Injected: 1",
+            "Bearer x\nX-Injected: 1",
+            "Bearer x\0y",
+            "",
+        ] {
+            assert!(
+                (def.validate)(&Value::from(rejected)).is_err(),
+                "{rejected:?} must not be storable as a header credential"
+            );
+        }
+        assert!((def.validate)(&Value::from(42)).is_err(), "must be a string");
     }
 
     /// These two validators are the security substance of the theme feature: the values they guard
