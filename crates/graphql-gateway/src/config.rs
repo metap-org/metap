@@ -70,10 +70,9 @@ impl GatewayConfig {
 
         let mut upstreams = Vec::new();
         let mut i = 1u32;
-        loop {
-            let Ok(name) = std::env::var(format!("UPSTREAM_{i}_NAME")) else {
-                break;
-            };
+        // `while let`, not `loop { let ... else { break } }` — clippy's `while_let_loop` (which CI's
+        // newer toolchain enforces and an older local one does not) rejects the latter.
+        while let Ok(name) = std::env::var(format!("UPSTREAM_{i}_NAME")) {
             let grpc_addr = require_env(&format!("UPSTREAM_{i}_GRPC_ADDR"))?;
             let metadata_url = require_env(&format!("UPSTREAM_{i}_METADATA_URL"))?;
             let login_url = require_env(&format!("UPSTREAM_{i}_LOGIN_URL"))?;
