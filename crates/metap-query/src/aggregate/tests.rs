@@ -249,7 +249,9 @@ fn empty_metrics_is_rejected() {
     };
 
     let err = plan_aggregate(&registry, &permissions, "waf.security_events", &input, &ctx, &[]).unwrap_err();
-    let err = err.downcast_ref::<InvalidAggregateError>().expect("InvalidAggregateError");
+    let err = err
+        .downcast_ref::<InvalidAggregateError>()
+        .expect("InvalidAggregateError");
     assert!(err.0.contains("At least one metric"));
 }
 
@@ -283,7 +285,9 @@ fn unknown_group_by_field_is_rejected() {
     };
 
     let err = plan_aggregate(&registry, &permissions, "waf.security_events", &input, &ctx, &[]).unwrap_err();
-    let err = err.downcast_ref::<InvalidAggregateError>().expect("InvalidAggregateError");
+    let err = err
+        .downcast_ref::<InvalidAggregateError>()
+        .expect("InvalidAggregateError");
     assert!(err.0.contains("Unknown field"), "{}", err.0);
 }
 
@@ -300,7 +304,9 @@ fn non_indexed_non_enum_field_cannot_be_grouped_by() {
     };
 
     let err = plan_aggregate(&registry, &permissions, "waf.security_events", &input, &ctx, &[]).unwrap_err();
-    let err = err.downcast_ref::<InvalidAggregateError>().expect("InvalidAggregateError");
+    let err = err
+        .downcast_ref::<InvalidAggregateError>()
+        .expect("InvalidAggregateError");
     assert!(err.0.contains("cannot be grouped by"), "{}", err.0);
 }
 
@@ -317,7 +323,11 @@ fn indexed_field_can_be_grouped_by() {
     let planned = plan_aggregate(&registry, &permissions, "waf.security_events", &input, &ctx, &[]).unwrap();
     assert!(planned.sql.contains("AS \"group\""), "sql: {}", planned.sql);
     assert!(planned.sql.contains("GROUP BY"), "sql: {}", planned.sql);
-    assert!(planned.sql.contains("ORDER BY \"count\" DESC NULLS LAST"), "sql: {}", planned.sql);
+    assert!(
+        planned.sql.contains("ORDER BY \"count\" DESC NULLS LAST"),
+        "sql: {}",
+        planned.sql
+    );
 }
 
 #[test]
@@ -355,7 +365,11 @@ fn count_with_field_does_not_require_numeric() {
     };
 
     let planned = plan_aggregate(&registry, &permissions, "waf.security_events", &input, &ctx, &[]).unwrap();
-    assert!(planned.sql.contains("count(jsonb_extract_path_text"), "sql: {}", planned.sql);
+    assert!(
+        planned.sql.contains("count(jsonb_extract_path_text"),
+        "sql: {}",
+        planned.sql
+    );
     assert!(planned.sql.contains("AS \"count_sourceIp\""), "sql: {}", planned.sql);
 }
 
@@ -373,7 +387,9 @@ fn sum_on_non_numeric_field_is_rejected() {
     };
 
     let err = plan_aggregate(&registry, &permissions, "waf.security_events", &input, &ctx, &[]).unwrap_err();
-    let err = err.downcast_ref::<InvalidAggregateError>().expect("InvalidAggregateError");
+    let err = err
+        .downcast_ref::<InvalidAggregateError>()
+        .expect("InvalidAggregateError");
     assert!(err.0.contains("not a numeric field"), "{}", err.0);
 }
 
@@ -461,7 +477,9 @@ fn time_field_that_is_not_a_date_kind_is_rejected() {
     };
 
     let err = plan_aggregate(&registry, &permissions, "waf.security_events", &input, &ctx, &[]).unwrap_err();
-    let err = err.downcast_ref::<InvalidAggregateError>().expect("InvalidAggregateError");
+    let err = err
+        .downcast_ref::<InvalidAggregateError>()
+        .expect("InvalidAggregateError");
     assert!(err.0.contains("not a date field"), "{}", err.0);
 }
 
@@ -558,7 +576,10 @@ fn limit_below_one_is_clamped_up_to_one() {
     let registry = registry_with(vec![shared_entity()]);
     let permissions = permissions();
     let ctx = context(Uuid::new_v4());
-    let input = AggregateInput { limit: 0, ..Default::default() };
+    let input = AggregateInput {
+        limit: 0,
+        ..Default::default()
+    };
 
     let planned = plan_aggregate(&registry, &permissions, "waf.security_events", &input, &ctx, &[]).unwrap();
     assert!(planned.sql.contains("LIMIT 1"), "sql: {}", planned.sql);

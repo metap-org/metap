@@ -1,5 +1,7 @@
 use metap_permission::{EntityAction, RequestContext};
-use metap_query::{apply_params, plan_aggregate, AggregateInput, CrossRecordConditionInListError, InvalidAggregateError};
+use metap_query::{
+    apply_params, plan_aggregate, AggregateInput, CrossRecordConditionInListError, InvalidAggregateError,
+};
 use serde_json::Value;
 use sqlx::Row;
 
@@ -91,11 +93,7 @@ impl CrudService {
             .map(|row| row.try_get::<Value, _>("row"))
             .collect::<Result<_, _>>()?;
 
-        tracing::debug!(
-            entity = entity.name,
-            groups = data.len(),
-            "aggregate returned"
-        );
+        tracing::debug!(entity = entity.name, groups = data.len(), "aggregate returned");
         Ok(ServiceResult::ok(data))
     }
 }

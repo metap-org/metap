@@ -267,10 +267,8 @@ fn assert_groupable(field: &EntityField, entity: &EntityDefinition) -> anyhow::R
         .list_views
         .iter()
         .any(|lv| lv.filters.iter().any(|f| f == &field.name));
-    let groupable = field.name == "status"
-        || field.indexed.unwrap_or(false)
-        || field.enum_values.is_some()
-        || in_list_view_filters;
+    let groupable =
+        field.name == "status" || field.indexed.unwrap_or(false) || field.enum_values.is_some() || in_list_view_filters;
     if !groupable {
         return Err(invalid(format!(
             "`{}` cannot be grouped by — mark it `indexed`, give it `enum_values`, or add it to a \
@@ -392,9 +390,7 @@ pub fn plan_aggregate(
     let mut group_parts: Vec<String> = Vec::new();
 
     if let Some(bucket) = input.bucket {
-        let time_expr = time_expr
-            .as_ref()
-            .expect("time_expr is built whenever bucket is set");
+        let time_expr = time_expr.as_ref().expect("time_expr is built whenever bucket is set");
         let expr = format!("date_trunc('{}', {time_expr})", bucket.trunc_unit());
         select_parts.push(format!("{expr} AS \"bucket\""));
         group_parts.push(expr);
