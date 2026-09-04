@@ -257,7 +257,11 @@ async fn a_tenant_admin_cannot_write_an_operator_or_fleet_key() {
         );
     }
 
-    // ...and none of them is even listed on this surface.
+    // ...and none of the Operator/fleet-wide keys above is even listed on this surface. Only the
+    // two Operator-tier cron keys are checked by prefix-free name — `cron.webhookAuthorization`
+    // is `Tenant`-tier and legitimately appears here (`ConfigStore::tenant_view` lists every
+    // `Tenant`-level key), so a blanket `starts_with("cron.")` would wrongly fail once that key
+    // exists.
     let listed = admin_config(&server, &server.tenant_a_admin).await;
     let keys: Vec<&str> = listed["data"]
         .as_array()
@@ -265,7 +269,9 @@ async fn a_tenant_admin_cannot_write_an_operator_or_fleet_key() {
         .iter()
         .map(|i| i["key"].as_str().unwrap())
         .collect();
-    assert!(!keys.iter().any(|k| k.starts_with("cron.") || k.starts_with("graphql.")));
+    assert!(!keys.contains(&"cron.webhookAllowPrivateTargets"));
+    assert!(!keys.contains(&"cron.webhookAllowedHosts"));
+    assert!(!keys.iter().any(|k| k.starts_with("graphql.")));
     cleanup(&server).await;
 }
 

@@ -203,7 +203,12 @@ async fn an_operator_key_is_refused_even_for_a_platform_admin() {
         .iter()
         .map(|item| item["key"].as_str().unwrap())
         .collect();
-    assert!(!keys.iter().any(|k| k.starts_with("cron.")));
+    // Only the two Operator-tier cron keys must be absent — `cron.webhookAuthorization` is
+    // `Tenant`-tier (a platform admin legitimately sets its fleet default here, per
+    // `ConfigStore::platform_writable_view`'s doc comment), so a blanket `starts_with("cron.")`
+    // would wrongly fail once that key exists.
+    assert!(!keys.contains(&"cron.webhookAllowPrivateTargets"));
+    assert!(!keys.contains(&"cron.webhookAllowedHosts"));
     assert!(!keys.contains(&"http.corsOrigins"));
     cleanup(&server).await;
 }

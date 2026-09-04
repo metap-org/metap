@@ -25,6 +25,7 @@ use uuid::Uuid;
 
 use crate::dto::{JsonObject, RecordDto};
 
+mod aggregate;
 mod check_permission;
 mod create;
 mod delete;
