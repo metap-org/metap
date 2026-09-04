@@ -463,21 +463,28 @@ fn json_object_arg(ctx: &ResolverContext<'_>, name: &str) -> Result<Option<metap
     }
 }
 
-/// Builds the full schema: one `Object` type + one `{Type}Connection` type per entity, a `Query`
-/// root with `get`/`list` fields per entity, a `Mutation` root with `create`/`update`/`delete`
-/// (and `transition`, only for a workflow-bearing entity) fields per entity, plus the shared
-/// `Json` scalar. `backend` becomes schema-wide data (`ctx.data_unchecked::<Arc<dyn RecordBackend>>()`)
-/// — stable for the schema's lifetime, unlike `RequestContext`/the `DataLoader`, which are
-/// per-request data a caller (`metap-graphql-http`) attaches via [`with_request_data`]. Passing an
+/// Builds every piece of the generic entity schema — one `Object` type + one `{Type}Connection`
+/// type per entity registered onto `builder`, and a `Query`/`Mutation` root each carrying
+/// `get`/`list`/`create`/`update`/`delete`(/`transition`) fields per entity — but stops short of
+/// `.finish()`, so a caller that needs fields beyond generic entity CRUD (e.g. a downstream
+/// binary's own hand-written resolvers for an endpoint `metap-graphql` has no way to synthesize,
+/// same reason `metap-http::build_router` takes an `extra_routes` router) can add its own
+/// `.field(...)` calls onto the returned `query`/`mutation` objects before registering and
+/// finishing the schema itself. [`build_schema`] is the common-case thin wrapper that finishes
+/// immediately with no extra fields.
+///
+/// `backend` becomes schema-wide data (`ctx.data_unchecked::<Arc<dyn RecordBackend>>()`) — stable
+/// for the schema's lifetime, unlike `RequestContext`/the `DataLoader`, which are per-request data
+/// a caller (`metap-graphql-http`) attaches via [`with_request_data`]. Passing an
 /// `Arc<dyn RecordBackend>` rather than `Arc<CrudService>` is what lets the same resolver code
 /// serve both a single-service binary (`Arc::new(crud) as Arc<dyn RecordBackend>`) and the BFF
 /// gateway (`crates/graphql-gateway`'s `CompositeBackend`, routing per entity to a remote
 /// `GrpcBackend`) without any resolver knowing which one it got.
-pub fn build_schema(
+pub fn build_schema_parts(
     metadata: &MetadataRegistry,
     backend: Arc<dyn RecordBackend>,
     limits: SchemaLimits,
-) -> Result<Schema, SchemaError> {
+) -> (SchemaBuilder, Object, Object) {
     let entities = metadata.list_entities();
 
     let mut query = Object::new("Query");
@@ -501,6 +508,17 @@ pub fn build_schema(
         mutation = add_mutation_fields(mutation, entity_name, &type_name, summary.workflow.is_some());
     }
 
+    (builder, query, mutation)
+}
+
+/// Builds the full schema with no fields beyond generic entity CRUD — see [`build_schema_parts`]
+/// for the extension point a caller with its own custom resolvers needs instead.
+pub fn build_schema(
+    metadata: &MetadataRegistry,
+    backend: Arc<dyn RecordBackend>,
+    limits: SchemaLimits,
+) -> Result<Schema, SchemaError> {
+    let (builder, query, mutation) = build_schema_parts(metadata, backend, limits);
     builder.register(query).register(mutation).finish()
 }
 

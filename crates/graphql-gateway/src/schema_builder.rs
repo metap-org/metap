@@ -7,8 +7,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use async_graphql::dynamic::Object;
 use metap_crud::RecordBackend;
-use metap_graphql::{build_schema, CompositeBackend, Schema, SchemaLimits};
+use metap_graphql::{build_schema, build_schema_parts, CompositeBackend, Schema, SchemaLimits};
 use metap_grpc::GrpcBackend;
 use metap_metadata::{EntityDefinition, EntityField, EntityWorkflow, MetadataRegistry};
 use serde::Deserialize;
@@ -45,7 +46,12 @@ pub struct BuiltSchema {
     pub entity_count: usize,
 }
 
-pub async fn build(upstreams: &[UpstreamConfig], limits: SchemaLimits) -> anyhow::Result<BuiltSchema> {
+/// Connects every configured upstream, discovers and merges their entities into one registry, and
+/// builds the `CompositeBackend` routing each entity name to the `GrpcBackend` of the upstream
+/// that owns it. Shared by [`build`] and [`build_with_extensions`] — everything up to "have a
+/// registry + backend" is identical between them; they only differ in what happens to the schema
+/// after that.
+async fn connect_upstreams(upstreams: &[UpstreamConfig]) -> anyhow::Result<(MetadataRegistry, Arc<dyn RecordBackend>)> {
     let http = metap_runtime::http_client::default_client();
     let mut registry = MetadataRegistry::new();
     let mut by_entity: HashMap<String, Arc<dyn RecordBackend>> = HashMap::new();
@@ -138,9 +144,41 @@ pub async fn build(upstreams: &[UpstreamConfig], limits: SchemaLimits) -> anyhow
     }
 
     registry.validate_references()?;
-    let entity_count = registry.list_entities().len();
     let backend: Arc<dyn RecordBackend> = Arc::new(CompositeBackend::new(by_entity));
+    Ok((registry, backend))
+}
+
+pub async fn build(upstreams: &[UpstreamConfig], limits: SchemaLimits) -> anyhow::Result<BuiltSchema> {
+    let (registry, backend) = connect_upstreams(upstreams).await?;
+    let entity_count = registry.list_entities().len();
     let schema = build_schema(&registry, backend.clone(), limits)?;
+
+    Ok(BuiltSchema {
+        schema: Arc::new(schema),
+        backend,
+        entity_count,
+    })
+}
+
+/// Same boot as [`build`], but for a caller that needs fields beyond generic entity CRUD — a
+/// downstream binary with its own hand-written resolvers for an endpoint no upstream's metadata
+/// can describe (e.g. `metap-demo-waf`'s custom REST endpoints — DNS verification, scan dispatch,
+/// alert evaluation — none of which are `EntityDefinition` operations `metap-graphql` could
+/// synthesize). `extend` receives the assembled `Query`/`Mutation` objects (already carrying every
+/// upstream entity's generic `get`/`list`/`create`/`update`/`delete`/`transition` fields) before
+/// the schema is finished, and returns them with its own `.field(...)` calls added — see
+/// `metap_graphql::build_schema_parts`'s doc comment for why this crate can't add those fields
+/// itself (that would be exactly the business-entity knowledge this crate must never carry).
+pub async fn build_with_extensions(
+    upstreams: &[UpstreamConfig],
+    limits: SchemaLimits,
+    extend: impl FnOnce(Object, Object) -> (Object, Object),
+) -> anyhow::Result<BuiltSchema> {
+    let (registry, backend) = connect_upstreams(upstreams).await?;
+    let entity_count = registry.list_entities().len();
+    let (builder, query, mutation) = build_schema_parts(&registry, backend.clone(), limits);
+    let (query, mutation) = extend(query, mutation);
+    let schema = builder.register(query).register(mutation).finish()?;
 
     Ok(BuiltSchema {
         schema: Arc::new(schema),

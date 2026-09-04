@@ -23,7 +23,7 @@ mod type_map;
 
 pub use composite_backend::CompositeBackend;
 pub use loader::{RecordKey, RecordLoader};
-pub use schema::{build_schema, with_request_data, SchemaLimits};
+pub use schema::{build_schema, build_schema_parts, with_request_data, SchemaLimits};
 pub use type_map::JSON_SCALAR;
 
 // Re-exported so a downstream binary only needs this crate, not a direct `async-graphql`
@@ -35,3 +35,10 @@ pub use type_map::JSON_SCALAR;
 pub use async_graphql::dynamic::Schema;
 pub use async_graphql::dynamic::SchemaError;
 pub use async_graphql::{Request, Response};
+
+// The `dynamic`-module building blocks a caller of `build_schema_parts` needs to add its own
+// fields onto the returned `Query`/`Mutation` objects (a custom resolver `metap-graphql` has no
+// way to synthesize from metadata alone — see that function's doc comment). Re-exported for the
+// same "one crate, not a direct `async-graphql` dependency" reason as `Schema` above.
+pub use async_graphql::dynamic::{Field, FieldFuture, FieldValue, InputValue, Object, ResolverContext, TypeRef};
+pub use async_graphql::{Error as GqlError, Value as GqlValue};
