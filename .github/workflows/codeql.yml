@@ -29,6 +29,9 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: rust
+      # `.cargo/config.toml` hard-requires the mold linker (2026-09-03) and isn't vendored/
+      # auto-installed by design — see `ci.yml`'s `rust` job for the same install step.
+      - run: sudo apt-get update && sudo apt-get install -y mold
       # CodeQL's Rust support builds the code to extract its database — same command CI's
       # `rust` job already uses, so this sees exactly what actually compiles.
       - run: cargo build --workspace --all-targets --locked

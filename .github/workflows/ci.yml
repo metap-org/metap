@@ -35,6 +35,10 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      # `.cargo/config.toml` hard-requires the mold linker (2026-09-03) and isn't vendored/
+      # auto-installed by design (see that file's own comment) — every `cargo build`/`test`/
+      # `clippy` step below fails at the link step ("cannot find 'ld'") without this.
+      - run: sudo apt-get update && sudo apt-get install -y mold
       - run: cargo build --workspace --all-targets --locked
       # Unit tests only — no DATABASE_URL/RABBITMQ_URL set, so every #[ignore]'d e2e test
       # is skipped automatically (see crates/metap-query/tests/*.rs's doc comment).
