@@ -245,71 +245,22 @@ async fn transition_record(
     }
 }
 
-/// Request body for `POST /api/{entity}/aggregate`. A `POST` rather than query params on a `GET`
-/// because the metric/filter set is a structured object, not a flat string map — and because a
-/// dashboard sends several of these per screen, where a long, hand-encoded query string is the
-/// part most likely to be built wrong. It reads no state and writes none, so it is a `POST` that
-/// is semantically a read; `AuthContext` gates it exactly like `list_records`.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AggregateBody {
-    /// `["count", "sum:bytesBlocked"]` — parsed by `AggregateMetric::parse`, so the wire spelling
-    /// is defined once for every transport rather than per surface.
-    #[serde(default)]
-    metrics: Vec<String>,
-    #[serde(default)]
-    group_by: Option<String>,
-    #[serde(default)]
-    bucket: Option<String>,
-    #[serde(default)]
-    time_field: Option<String>,
-    #[serde(default)]
-    filters: HashMap<String, String>,
-    #[serde(default)]
-    since: Option<String>,
-    #[serde(default)]
-    until: Option<String>,
-    #[serde(default)]
-    limit: Option<i64>,
-}
-
+/// `POST /api/{entity}/aggregate`'s body is `metap_query::AggregateSpec` directly — the same raw
+/// wire shape gRPC's `Aggregate` RPC and GraphQL's `aggregate` field parse too (`AggregateSpec`'s
+/// own doc comment). A `POST` rather than query params on a `GET` because the metric/filter set
+/// is a structured object, not a flat string map — and because a dashboard sends several of these
+/// per screen, where a long, hand-encoded query string is the part most likely to be built wrong.
+/// It reads no state and writes none, so it is a `POST` that is semantically a read; `AuthContext`
+/// gates it exactly like `list_records`.
 async fn aggregate_records(
     State(state): State<AppState>,
     Path(entity): Path<String>,
     AuthContext(context): AuthContext,
-    Json(body): Json<AggregateBody>,
+    Json(spec): Json<metap_query::AggregateSpec>,
 ) -> Response {
-    let metrics = if body.metrics.is_empty() {
-        vec![metap_query::AggregateMetric {
-            func: metap_query::AggregateFn::Count,
-            field: None,
-        }]
-    } else {
-        match body
-            .metrics
-            .iter()
-            .map(|raw| metap_query::AggregateMetric::parse(raw))
-            .collect::<anyhow::Result<Vec<_>>>()
-        {
-            Ok(m) => m,
-            Err(e) => return service_error_response(400, "invalid_aggregate", Some(&e.to_string()), None),
-        }
-    };
-
-    let bucket = match body.bucket.as_deref().map(metap_query::TimeBucket::parse).transpose() {
-        Ok(b) => b,
+    let input = match spec.into_input() {
+        Ok(input) => input,
         Err(e) => return service_error_response(400, "invalid_aggregate", Some(&e.to_string()), None),
-    };
-
-    let input = metap_query::AggregateInput {
-        metrics,
-        group_by: body.group_by,
-        bucket,
-        time_field: body.time_field,
-        filters: body.filters.into_iter().collect(),
-        since: body.since,
-        until: body.until,
-        limit: body.limit.unwrap_or(metap_query::DEFAULT_GROUPS),
     };
 
     match state.crud.aggregate(&entity, &input, &context).await {

@@ -106,7 +106,7 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Re
     };
 
     let ttl = session_ttl_seconds(&state, user.tenant_id).await;
-    match metap_peripherals::mint_jwt(&state.jwt_encoding_key_pem, user.tenant_id, user.id, ttl) {
+    match state.mint_token(user.tenant_id, user.id, None, ttl) {
         // `token` still rides in the JSON body too — non-browser callers (`dev-tools mint-token`
         // never calls this route, but a mobile client or a script hitting `POST /auth/login`
         // directly would) have no cookie jar to read a `Set-Cookie` from and still need the JWT
@@ -188,12 +188,7 @@ async fn issue_token(
     let Some(user_id) = context.user_id.as_deref().and_then(|id| Uuid::parse_str(id).ok()) else {
         return internal_error_response(anyhow::anyhow!("session context has no valid user id"));
     };
-    match metap_peripherals::mint_jwt(
-        &state.jwt_encoding_key_pem,
-        tenant_id,
-        user_id,
-        session_ttl_seconds(&state, tenant_id).await,
-    ) {
+    match state.mint_token(tenant_id, user_id, None, session_ttl_seconds(&state, tenant_id).await) {
         Ok(token) => Json(json!({ "data": { "token": token } })).into_response(),
         Err(e) => internal_error_response(e),
     }
@@ -370,12 +365,7 @@ async fn oidc_callback(
         return internal_error_response(e.into());
     }
 
-    let token = match metap_peripherals::mint_jwt(
-        &state.jwt_encoding_key_pem,
-        user.tenant_id,
-        user.id,
-        session_ttl_seconds(&state, user.tenant_id).await,
-    ) {
+    let token = match state.mint_token(user.tenant_id, user.id, None, session_ttl_seconds(&state, user.tenant_id).await) {
         Ok(token) => token,
         Err(e) => return internal_error_response(e),
     };

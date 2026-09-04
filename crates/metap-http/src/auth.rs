@@ -19,7 +19,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use metap_auth::{AuthProviderKind, LocalPasswordProvider};
 use metap_control::resolve_request_context;
-use metap_peripherals::{decode_access_token, get_roles_for_user};
+use metap_peripherals::get_roles_for_user;
 use metap_permission::RequestContext;
 use uuid::Uuid;
 
@@ -130,7 +130,9 @@ where
         // wider than needed — no revocation list exists, so exp+leeway is the only bound on how
         // long a leaked token stays usable past its stated expiry). Tightened to 20s per project
         // owner decision 2026-08-24 — still enough to forgive minor clock drift between processes.
-        let claims = decode_access_token(token, &app_state.jwt_decoding_key, 20)
+        let claims = app_state
+            .verify_token(token, 20)
+            .await
             .map_err(|_| AuthError::unauthorized("Invalid or expired token."))?;
 
         let tenant_id = Uuid::parse_str(&claims.tenant_id)

@@ -23,28 +23,17 @@
 //! (`Status::unauthenticated`) rather than silently treated as some guessed-at service identity.
 
 use metap_control::{resolve_request_context, ContextAttributesCache, Router};
-use metap_jwks::JwksClient;
-use metap_peripherals::decode_access_token;
+// Re-exported (not just used) so an existing `use metap_grpc::TokenVerifier` — this crate's own
+// tests, `graphql-gateway/tests/gateway_e2e_postgres.rs` — keeps compiling unchanged now that the
+// enum's definition lives in `metap-jwks` (shared with `metap-http`/`graphql-gateway`, which also
+// need this same "Static or Jwks" dispatch — see `metap_jwks::verifier`'s doc comment for why it
+// moved there instead of staying duplicated per transport).
+pub use metap_jwks::verifier::TokenVerifier;
+use metap_jwks::verifier::decode_with_verifier;
 use metap_permission::RequestContext;
 use tonic::metadata::MetadataMap;
 use tonic::Status;
 use uuid::Uuid;
-
-/// Either verification path an issuing deployment might configure — exactly one of the two,
-/// never both, since a token is signed by one trust root or the other. `Static` mirrors
-/// `crates/metap-http/src/auth.rs`'s single-per-app-keypair model (for a microservice that
-/// hasn't opted into the JWKS trust root); `Jwks` is the multi-service trust root
-/// (`metap-jwks`'s doc comment).
-pub enum TokenVerifier {
-    Static {
-        decoding_key: jsonwebtoken::DecodingKey,
-        leeway: u64,
-    },
-    Jwks {
-        client: std::sync::Arc<JwksClient>,
-        leeway: u64,
-    },
-}
 
 /// Everything `authenticate` needs beyond the request itself — bundled so `GrpcCrudService`
 /// holds exactly one of these rather than four loose fields, and so a caller only has to update
@@ -70,20 +59,10 @@ fn bearer_token(metadata: &MetadataMap) -> Result<&str, Status> {
 pub async fn authenticate(metadata: &MetadataMap, config: &AuthConfig) -> Result<RequestContext, Status> {
     let token = bearer_token(metadata)?;
 
-    let (tenant_id, user_id, function_id) = match &config.verifier {
-        TokenVerifier::Static { decoding_key, leeway } => {
-            let claims = decode_access_token(token, decoding_key, *leeway)
-                .map_err(|_| Status::unauthenticated("invalid or expired token"))?;
-            (claims.tenant_id, claims.sub, claims.function_id)
-        }
-        TokenVerifier::Jwks { client, leeway } => {
-            let claims = client
-                .decode(token, *leeway)
-                .await
-                .map_err(|_| Status::unauthenticated("invalid or expired token"))?;
-            (claims.tenant_id, claims.sub, claims.function_id)
-        }
-    };
+    let claims = decode_with_verifier(token, &config.verifier, None)
+        .await
+        .map_err(|_| Status::unauthenticated("invalid or expired token"))?;
+    let (tenant_id, user_id, function_id) = (claims.tenant_id, claims.sub, claims.function_id);
 
     let tenant_id =
         Uuid::parse_str(&tenant_id).map_err(|_| Status::unauthenticated("token is missing required claims"))?;

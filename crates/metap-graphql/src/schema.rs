@@ -330,6 +330,46 @@ fn add_query_fields(mut query: Object, entity_name: &str, type_name: &str, conne
     query
 }
 
+/// One static field, not per-entity (unlike `add_query_fields`) — `aggregate` is generic over
+/// *which* entity via its own `entity` argument, the same way `POST /api/{entity}/aggregate`
+/// (REST) and the `Aggregate` RPC (gRPC) are one endpoint for every entity rather than one per
+/// entity. Added 2026-09-04 alongside `RecordBackend::aggregate` (that method's own doc comment
+/// has the full backstory — this was the one transport still missing it).
+///
+/// Returns the `Json` scalar wrapped as `{"data": [...]}`, matching REST's exact response
+/// envelope (`crates/metap-http/src/routes/records.rs`'s `aggregate_records`) — a caller that
+/// already knows how to read one transport's aggregate response can read the other's identically.
+fn add_aggregate_field(mut query: Object) -> Object {
+    query = query.field(
+        Field::new("aggregate", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+            FieldFuture::new(async move {
+                let backend = backend_from_ctx(&ctx);
+                let context = request_context_from_ctx(&ctx)?;
+                let entity = ctx.args.try_get("entity")?.string()?.to_string();
+                let spec_json = ctx
+                    .args
+                    .try_get("spec")?
+                    .as_value()
+                    .clone()
+                    .into_json()
+                    .map_err(|e| GqlError::new(e.to_string()))?;
+                let spec: metap_query::AggregateSpec =
+                    serde_json::from_value(spec_json).map_err(|e| GqlError::new(e.to_string()))?;
+                let result = backend
+                    .aggregate(&entity, &spec, context)
+                    .await
+                    .map_err(|e| GqlError::new(e.to_string()))?;
+                let rows = service_result_to_gql(result)?;
+                let envelope = serde_json::json!({ "data": rows });
+                Ok(json_field_value(Some(&envelope)))
+            })
+        })
+        .argument(InputValue::new("entity", TypeRef::named_nn(TypeRef::STRING)))
+        .argument(InputValue::new("spec", TypeRef::named_nn(JSON_SCALAR))),
+    );
+    query
+}
+
 fn add_mutation_fields(mut mutation: Object, entity_name: &str, type_name: &str, has_workflow: bool) -> Object {
     let create_entity_name = entity_name.to_string();
     mutation = mutation.field(
@@ -507,6 +547,8 @@ pub fn build_schema_parts(
         query = add_query_fields(query, entity_name, &type_name, &connection_type_name);
         mutation = add_mutation_fields(mutation, entity_name, &type_name, summary.workflow.is_some());
     }
+
+    query = add_aggregate_field(query);
 
     (builder, query, mutation)
 }

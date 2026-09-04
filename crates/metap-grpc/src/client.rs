@@ -31,7 +31,7 @@ use std::borrow::Cow;
 use anyhow::{anyhow, Context as _};
 use metap_crud::{JsonObject, PageInfo, RecordBackend, RecordCapabilities, RecordDto, ServiceResult};
 use metap_permission::RequestContext;
-use metap_query::ListInput;
+use metap_query::{AggregateSpec, ListInput};
 pub use metap_runtime::service_token::ServiceTokenSource;
 use prost_types::Struct as PbStruct;
 use serde_json::{json, Value as JsonValue};
@@ -42,7 +42,7 @@ use uuid::Uuid;
 
 use crate::convert::{json_to_struct, struct_to_json};
 use crate::pb::record_service_client::RecordServiceClient;
-use crate::pb::{CreateRequest, DeleteRequest, GetRequest, ListRequest, TransitionRequest, UpdateRequest};
+use crate::pb::{AggregateRequest, CreateRequest, DeleteRequest, GetRequest, ListRequest, TransitionRequest, UpdateRequest};
 
 pub struct GrpcBackend {
     client: RecordServiceClient<Channel>,
@@ -362,6 +362,29 @@ impl RecordBackend for GrpcBackend {
                     .record
                     .ok_or_else(|| anyhow!("upstream delete response missing record"))?;
                 Ok(ServiceResult::ok(deserialize_record(record)?))
+            }
+            Err(status) => Ok(status_to_service_err(status)),
+        }
+    }
+
+    async fn aggregate(
+        &self,
+        entity: &str,
+        spec: &AggregateSpec,
+        ctx: &RequestContext,
+    ) -> anyhow::Result<ServiceResult<Vec<JsonValue>>> {
+        let request = self.signed_request(
+            AggregateRequest {
+                entity_name: entity.to_string(),
+                spec: Some(json_to_struct(serde_json::to_value(spec)?)),
+            },
+            ctx,
+        )?;
+        let mut client = self.client.clone();
+        match client.aggregate(request).await {
+            Ok(response) => {
+                let rows = response.into_inner().rows.into_iter().map(struct_to_json).collect();
+                Ok(ServiceResult::ok(rows))
             }
             Err(status) => Ok(status_to_service_err(status)),
         }

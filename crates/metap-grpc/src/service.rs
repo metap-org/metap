@@ -15,8 +15,8 @@ use crate::convert::{json_to_struct, struct_to_json};
 use crate::list_input::list_input_from_query;
 use crate::pb::record_service_server::RecordService;
 use crate::pb::{
-    CreateRequest, DeleteRequest, GetRequest, GetResponse, ListRequest, ListResponse, RecordResponse,
-    TransitionRequest, UpdateRequest,
+    AggregateRequest, AggregateResponse, CreateRequest, DeleteRequest, GetRequest, GetResponse, ListRequest,
+    ListResponse, RecordResponse, TransitionRequest, UpdateRequest,
 };
 use crate::status::{error_to_status, internal, service_result_to_status};
 
@@ -161,6 +161,31 @@ impl RecordService for GrpcRecordService {
         let record = service_result_to_status(result)?;
         Ok(Response::new(RecordResponse {
             record: Some(json_to_struct(serde_json::to_value(record).unwrap_or_default())),
+        }))
+    }
+
+    async fn aggregate(&self, request: Request<AggregateRequest>) -> Result<Response<AggregateResponse>, Status> {
+        let context = authenticate(request.metadata(), &self.auth).await?;
+        let req = request.into_inner();
+        let spec: metap_query::AggregateSpec = req
+            .spec
+            .map(struct_to_json)
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| Status::invalid_argument(format!("invalid aggregate spec: {e}")))?
+            .unwrap_or_default();
+        let input = spec
+            .into_input()
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+
+        let result = self
+            .crud
+            .aggregate(&req.entity_name, &input, &context)
+            .await
+            .map_err(internal)?;
+        let rows = service_result_to_status(result)?;
+        Ok(Response::new(AggregateResponse {
+            rows: rows.into_iter().map(json_to_struct).collect(),
         }))
     }
 }

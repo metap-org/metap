@@ -13,6 +13,7 @@ metap-dashboards = { path = "../metap-dashboards" }
 metap-config = { path = "../metap-config" }
 metap-crud = { path = "../metap-crud" }
 metap-infra = { path = "../metap-infra" }
+metap-jwks = { path = "../metap-jwks" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-metadata = { path = "../metap-metadata" }
 metap-permission = { path = "../metap-permission" }

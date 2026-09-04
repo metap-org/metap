@@ -44,6 +44,15 @@ pub struct AppState {
     /// rarely enough that re-parsing per request is not worth holding a second key type in
     /// state for. See `metap_peripherals::mint_jwt`, the only thing that reads this.
     pub jwt_encoding_key_pem: Arc<str>,
+    /// `None` unless the host binary opts in (e.g. `../metap-demo-waf`'s services, all 3 sharing
+    /// one `metap-jwks` Ed25519 key) — when set, `verify_token` uses this instead of
+    /// `jwt_decoding_key`/`jwt_encoding_key_pem` above, same "extra field, post-construction
+    /// opt-in" shape as `object_store`/`cookie_secure`. Every existing caller of `AppState::new`
+    /// is unaffected: this starts `None` and the RS256 static-key path stays the default.
+    pub token_verifier: Option<Arc<metap_jwks::TokenVerifier>>,
+    /// Mint-side counterpart to `token_verifier` — see that field's doc comment. `None` unless
+    /// the host binary opts in; `mint_token` falls back to `jwt_encoding_key_pem` otherwise.
+    pub token_signer: Option<Arc<metap_jwks::TokenSigner>>,
     /// `None` unless the host binary opts in (e.g. `../metap-demo-jira`, `.env`'s `S3_BUCKET`) —
     /// backs `crate::routes::attachments`' generic `/api/{entity}/{id}/attachments*` routes,
     /// always registered in `build_router` regardless of whether a given host actually
@@ -153,6 +162,8 @@ impl AppState {
             crud,
             jwt_decoding_key: Arc::new(jwt_decoding_key),
             jwt_encoding_key_pem: Arc::from(jwt_encoding_key_pem),
+            token_verifier: None,
+            token_signer: None,
             object_store: None,
             attachment_tables: Arc::new(HashMap::new()),
             auth_context_entity: None,
@@ -164,6 +175,36 @@ impl AppState {
             process_collector: process_collector(),
             extra_openapi_paths: Arc::new(serde_json::Map::new()),
             cookie_secure: true,
+        }
+    }
+
+    /// Verifies a Bearer/session token against whichever trust root this app is configured for —
+    /// `token_verifier` (`metap-jwks`) when the host binary opted in, else the platform's default
+    /// static RS256 keypair (`jwt_decoding_key`), unchanged from before this field existed. The
+    /// one place `crate::auth::AuthContext` decodes a token, so a host binary flips its whole
+    /// deployment onto the JWKS trust root by setting `token_verifier` once after `AppState::new`,
+    /// without this crate's routing/extractor code needing to know which one is in play.
+    pub async fn verify_token(&self, token: &str, leeway: u64) -> anyhow::Result<metap_peripherals::AccessClaims> {
+        match &self.token_verifier {
+            Some(verifier) => metap_jwks::decode_with_verifier(token, verifier, Some(leeway)).await,
+            None => metap_peripherals::decode_access_token(token, &self.jwt_decoding_key, leeway)
+                .map_err(|e| anyhow::anyhow!("invalid or expired token: {e}")),
+        }
+    }
+
+    /// Mint-side counterpart to `verify_token` — see that method's doc comment. The one place
+    /// `crate::routes::auth`'s 3 mint call sites (local login, OIDC callback, the WAF gateway's
+    /// short-lived `/auth/token`) create a session token.
+    pub fn mint_token(
+        &self,
+        tenant_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        function_id: Option<String>,
+        ttl_seconds: u64,
+    ) -> anyhow::Result<String> {
+        match &self.token_signer {
+            Some(signer) => metap_jwks::mint_with_signer(signer, tenant_id, user_id, function_id, ttl_seconds),
+            None => metap_peripherals::mint_jwt(&self.jwt_encoding_key_pem, tenant_id, user_id, ttl_seconds),
         }
     }
 

@@ -2,9 +2,17 @@
 # `../../../metap-demo-crm/Dockerfile`) — this one IS buildable today. `graphql-gateway` is a
 # binary inside `metap`'s own Cargo workspace, not a downstream repo depending on `metap` via a
 # `path = "../metap/..."` dependency that can't cross the build context boundary. Build context
-# is this repo's root (`metap/`), not this crate's own directory — e.g. from a downstream repo
-# that wants its own gateway instance (`../metap-demo-waf/data-plane/docker-compose.yml`):
-#   docker build -f ../../metap/crates/graphql-gateway/Dockerfile -t waf-graphql-gateway ../../metap
+# is this repo's root (`metap/`), not this crate's own directory.
+#
+# **Only for a deployment that genuinely wants the generic, entity-agnostic gateway with no
+# custom fields.** A downstream product that needs its own custom, non-CRUD GraphQL fields (e.g.
+# `../metap-demo-waf/data-plane/graphql-gateway`'s `verifyZoneDns`/`aggregate`/6 more, `docs/
+# roadmap/73-waf-graphql-protocol.md`) has its own binary + its own `Dockerfile` wrapping this
+# crate's library (`schema_builder::build_with_extensions`) — build THAT one, not this file
+# labeled to look like it. Found live, 2026-09-04: an earlier version of this comment suggested
+# `docker build ... -t waf-graphql-gateway ../../metap`, i.e. building the *generic* binary and
+# just naming the image after the WAF product — `metap-demo-waf`'s own compose files did exactly
+# that, silently shipping a gateway missing every one of its custom fields.
 #
 # No secrets are baked in: `UPSTREAM_<N>_SERVICE_EMAIL`/`UPSTREAM_<N>_SERVICE_PASSWORD`/
 # `AUTH_JWT_PUBLIC_KEY_PATH` etc. are read from the environment at container start. The gateway's

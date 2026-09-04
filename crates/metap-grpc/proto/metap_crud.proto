@@ -22,6 +22,10 @@ service RecordService {
   rpc Update(UpdateRequest) returns (RecordResponse);
   rpc Transition(TransitionRequest) returns (RecordResponse);
   rpc Delete(DeleteRequest) returns (RecordResponse);
+  // The `GROUP BY`/`COUNT`/`SUM` counterpart to `List` — `metap_query::AggregateSpec`'s raw wire
+  // shape (metrics/bucket still strings, parsed server-side), same reasoning `ListRequest.query`
+  // gives for using a `Struct` instead of a fixed message.
+  rpc Aggregate(AggregateRequest) returns (AggregateResponse);
 }
 
 message ListRequest {
@@ -77,4 +81,16 @@ message DeleteRequest {
 
 message RecordResponse {
   google.protobuf.Struct record = 1;
+}
+
+message AggregateRequest {
+  string entity_name = 1;
+  // `metap_query::AggregateSpec` serialized as a `Struct` — see that type's doc comment.
+  google.protobuf.Struct spec = 2;
+}
+
+message AggregateResponse {
+  // One `Struct` per group/bucket — the same JSON shape `CrudService::aggregate` already
+  // returns for REST, e.g. `{"group": "blocked", "count": 42}`.
+  repeated google.protobuf.Struct rows = 1;
 }

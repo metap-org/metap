@@ -14,6 +14,7 @@ metap-control = { path = "../metap-control" }
 # (`build_secret_store`) rather than assume one, so an operator's credential lands where the running
 # services will look for it.
 metap-infra = { path = "../metap-infra" }
+metap-jwks = { path = "../metap-jwks" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-reconciler = { path = "../metap-reconciler" }
 anyhow.workspace = true

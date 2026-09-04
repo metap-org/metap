@@ -18,11 +18,17 @@
 //! ```ignore
 //! let jwks_router = metap_jwks_http::router(key_store.clone());
 //! let app = build_router(state, &cors_origins, extra_routes)
-//!     .route_service("/.well-known/jwks.json", jwks_router);
+//!     .nest_service("/", jwks_router);
 //! ```
 //!
-//! (`route_service`/`nest_service` accept any `tower::Service<Request, Error = Infallible>` —
-//! `Router<()>` is one — independent of the caller's own state type; see `axum::Router::merge`'s
+//! `nest_service("/", ...)`, not `route_service("/.well-known/jwks.json", ...)` — axum 0.8
+//! refuses the latter outright for a `Router`-typed service ("cannot be used with Routers, use
+//! Router::nest instead"; an earlier axum version this crate was first written against allowed
+//! it — found live, `../metap-demo-waf/data-plane/services/zones-service/src/main.rs`,
+//! 2026-09-04). Nesting at `/` strips no path prefix, so this crate's own internally-registered
+//! `/.well-known/jwks.json` route is exposed unchanged. (`nest_service` still accepts any
+//! `tower::Service<Request, Error = Infallible>` — `Router<()>` is one — independent of the
+//! caller's own state type; see `axum::Router::merge`'s
 //! doc comment for why `.merge()` itself can't be used here instead, since that requires both
 //! routers to share the same state type.)
 

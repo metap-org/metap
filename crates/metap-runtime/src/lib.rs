@@ -10,6 +10,7 @@
 //! (entities, tenants, workflow) belongs here; this is pure cross-cutting plumbing.
 
 pub mod bearer;
+pub mod cookie_auth;
 pub mod cors;
 pub mod env;
 pub mod http_client;

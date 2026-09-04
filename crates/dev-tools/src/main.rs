@@ -30,6 +30,9 @@ async fn router_for(shared_pool: sqlx::PgPool) -> metap_control::Router {
 fn usage() -> ! {
     eprintln!("Usage:");
     eprintln!("  dev-tools gen-keys [dir]                         (default dir: ./keys)");
+    eprintln!(
+        "  dev-tools gen-jwks-key [dir] [kid]                (EdDSA via metap-jwks, default dir: ./keys, default kid: a fresh UUID)"
+    );
     eprintln!("  dev-tools mint-token [tenantId] [userId]         (RS256, reads ./keys/dev-jwt-private.pem)");
     eprintln!("  dev-tools seed-admin <tenantId> <userId>");
     eprintln!("  dev-tools create-user <tenantId> <email> <password>  (local login, argon2id)");
@@ -56,6 +59,10 @@ async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect(); // nosemgrep: rust.lang.security.args.args
     match args.get(1).map(String::as_str) {
         Some("gen-keys") => gen_keys(args.get(2).cloned().unwrap_or_else(|| "keys".to_string())),
+        Some("gen-jwks-key") => gen_jwks_key(
+            args.get(2).cloned().unwrap_or_else(|| "keys".to_string()),
+            args.get(3).cloned().unwrap_or_else(|| Uuid::new_v4().to_string()),
+        ),
         Some("mint-token") => mint_token(&args),
         Some("seed-admin") => seed_admin(&args).await,
         Some("create-user") => create_user(&args).await,
@@ -92,6 +99,28 @@ fn gen_keys(dir: String) -> anyhow::Result<()> {
 
     println!("Generated dev JWT keypair in ./{dir} (gitignored).");
     println!("Set in .env: AUTH_JWT_PUBLIC_KEY_PATH=./{dir}/dev-jwt-public.pem");
+    Ok(())
+}
+
+/// Generates an Ed25519 keypair for `metap-jwks`'s trust root (`docs/features/...` — the
+/// multi-service alternative to `gen_keys`'s per-app static RS256 keypair, see that crate's own
+/// doc comment for when to use which). Writes 2 files a host binary reads back at boot via
+/// `JwksKeyPair::from_pkcs8`: `dev-jwks-private.der` (raw PKCS8 bytes — deliberately not PEM, see
+/// `metap_jwks::keys`'s doc comment for why this crate works in raw bytes end to end) and
+/// `dev-jwks-kid.txt` (the key id, plain text — carried alongside since `from_pkcs8` needs both
+/// to reconstruct the same key a fellow process already generated, unlike `gen_keys`'s RSA pair
+/// where the public PEM alone is enough to re-derive a `DecodingKey`).
+fn gen_jwks_key(dir: String, kid: String) -> anyhow::Result<()> {
+    std::fs::create_dir_all(&dir)?;
+    let private_path = format!("{dir}/dev-jwks-private.der");
+    let kid_path = format!("{dir}/dev-jwks-kid.txt");
+
+    let key = metap_jwks::JwksKeyPair::generate(kid.clone())?;
+    std::fs::write(&private_path, key.private_pkcs8())?;
+    std::fs::write(&kid_path, &kid)?;
+
+    println!("Generated dev JWKS Ed25519 key (kid={kid}) in ./{dir} (gitignored).");
+    println!("Set in .env: JWKS_PRIVATE_KEY_PATH=./{dir}/dev-jwks-private.der, JWKS_KID_PATH=./{dir}/dev-jwks-kid.txt");
     Ok(())
 }
 

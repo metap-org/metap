@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use metap_crud::{JsonObject, RecordBackend, RecordCapabilities, RecordDto, ServiceResult};
 use metap_permission::RequestContext;
-use metap_query::ListInput;
+use metap_query::{AggregateSpec, ListInput};
 use uuid::Uuid;
 
 /// Maps an entity name to the `RecordBackend` that actually owns it. Built once at boot from the
@@ -112,5 +112,14 @@ impl RecordBackend for CompositeBackend {
         ctx: &RequestContext,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         self.resolve(entity)?.delete(entity, id, expected_version, ctx).await
+    }
+
+    async fn aggregate(
+        &self,
+        entity: &str,
+        spec: &AggregateSpec,
+        ctx: &RequestContext,
+    ) -> anyhow::Result<ServiceResult<Vec<serde_json::Value>>> {
+        self.resolve(entity)?.aggregate(entity, spec, ctx).await
     }
 }

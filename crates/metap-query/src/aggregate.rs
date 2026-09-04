@@ -200,6 +200,65 @@ pub const DEFAULT_GROUPS: i64 = 100;
 /// expression over the same scan, so this bounds the query's width, not the number of scans.
 const MAX_METRICS: usize = 10;
 
+/// The raw wire shape of an aggregate request — every metric/bucket is still a string here
+/// (`"sum:bytesBlocked"`, `"day"`), not yet parsed against [`AggregateMetric`]/[`TimeBucket`].
+/// One shape for every transport (REST's JSON body, gRPC's `Struct`, GraphQL's `Json` scalar —
+/// added 2026-09-04 when `aggregate` moved from a REST-only endpoint onto [`RecordBackend`],
+/// `metap-crud`'s crate) — [`Self::into_input`] is the single parse step every one of them calls
+/// instead of re-deriving the same metric/bucket parsing per transport.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateSpec {
+    #[serde(default)]
+    pub metrics: Vec<String>,
+    #[serde(default)]
+    pub group_by: Option<String>,
+    #[serde(default)]
+    pub bucket: Option<String>,
+    #[serde(default)]
+    pub time_field: Option<String>,
+    #[serde(default)]
+    pub filters: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub since: Option<String>,
+    #[serde(default)]
+    pub until: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+impl AggregateSpec {
+    /// Parses metric/bucket strings, same defaults as before this type existed (no metric ->
+    /// a bare count; no limit -> [`DEFAULT_GROUPS`]). A malformed metric/bucket string is the
+    /// only way this returns `Err` — every caller maps that to its own transport's "bad request"
+    /// shape (`400`/`invalid_argument`/a GraphQL error), never a `500`.
+    pub fn into_input(self) -> anyhow::Result<AggregateInput> {
+        let metrics = if self.metrics.is_empty() {
+            vec![AggregateMetric {
+                func: AggregateFn::Count,
+                field: None,
+            }]
+        } else {
+            self.metrics
+                .iter()
+                .map(|raw| AggregateMetric::parse(raw))
+                .collect::<anyhow::Result<Vec<_>>>()?
+        };
+        let bucket = self.bucket.as_deref().map(TimeBucket::parse).transpose()?;
+
+        Ok(AggregateInput {
+            metrics,
+            group_by: self.group_by,
+            bucket,
+            time_field: self.time_field,
+            filters: self.filters.into_iter().collect(),
+            since: self.since,
+            until: self.until,
+            limit: self.limit.unwrap_or(DEFAULT_GROUPS),
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct PlannedAggregateQuery {
     /// Complete `SELECT`, ready to execute — unlike `PlannedListQuery`'s fragments, since an

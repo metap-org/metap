@@ -14,10 +14,14 @@
 mod client;
 mod keys;
 mod mint;
+pub mod signer;
+pub mod verifier;
 
 pub use client::JwksClient;
 pub use keys::{Jwk, JwkSet, JwksKeyPair, JwksKeyStore};
 pub use mint::mint_service_or_user_jwt;
+pub use signer::{mint_with_signer, TokenSigner};
+pub use verifier::{decode_with_verifier, TokenVerifier};
 
 #[cfg(test)]
 mod tests {

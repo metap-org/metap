@@ -36,13 +36,29 @@ pub struct GatewayConfig {
     pub graphql_max_complexity: usize,
     pub upstreams: Vec<UpstreamConfig>,
     /// This gateway's own keypair, decode-only — gates access to `/graphql`, unrelated to any
-    /// per-upstream service credentials above (see `crate::server`'s doc comment).
-    pub auth_public_key_pem: Vec<u8>,
+    /// per-upstream service credentials above (see `crate::server`'s doc comment). `None` when
+    /// `jwks_url` is set instead — the 2 are mutually exclusive verification trust roots, same
+    /// as `metap_jwks::TokenVerifier`'s `Static`/`Jwks` variants this eventually builds.
+    pub auth_public_key_pem: Option<Vec<u8>>,
+    /// `GET /.well-known/jwks.json` of the trust root to verify against (`metap-jwks`) — set this
+    /// instead of `AUTH_JWT_PUBLIC_KEY_PATH` when the gateway's upstreams mint EdDSA tokens via a
+    /// shared `metap-jwks` key (e.g. `../metap-demo-waf`'s 3 services) rather than this crate's
+    /// original static RS256 keypair. `None` (the default) preserves every existing deployment's
+    /// behavior unchanged.
+    pub jwks_url: Option<String>,
+    /// Opt-in cookie fallback for `/graphql` (`COOKIE_AUTH_ENABLED`, default `false` — every
+    /// existing deployment's `Authorization: Bearer`-only behavior is unchanged unless this is
+    /// set) — see `crate::server::authenticate`'s doc comment for the same-origin assumption this
+    /// relies on. Added so `../metap-demo-waf`'s frontend can call `/graphql` directly off its
+    /// existing session cookie instead of minting a fresh short-lived Bearer token via `GET
+    /// /auth/token` before every call (`@metap/platform-ui`'s `useGraphQLQuery`) — that extra
+    /// round trip was the whole reason this exists.
+    pub cookie_auth_enabled: bool,
     pub cors_origins: Vec<String>,
     pub is_production: bool,
 }
 
-use metap_runtime::env::{env_or, require_env};
+use metap_runtime::env::{env_or, flag_enabled, require_env};
 
 impl GatewayConfig {
     pub fn from_env() -> anyhow::Result<Self> {
@@ -63,10 +79,19 @@ impl GatewayConfig {
             })
             .unwrap_or_default();
 
-        let key_path = require_env("AUTH_JWT_PUBLIC_KEY_PATH")
-            .map_err(|e| anyhow::anyhow!("{e} — this gateway's own keypair (see .env.example)"))?;
-        let auth_public_key_pem =
-            std::fs::read(&key_path).map_err(|e| anyhow::anyhow!("failed to read {key_path}: {e}"))?;
+        // `JWKS_URL` and `AUTH_JWT_PUBLIC_KEY_PATH` are mutually exclusive trust roots — exactly
+        // one must be set, same "pick a verifier" choice `metap_jwks::TokenVerifier` encodes at
+        // the type level (see `crate::server::serve`, the one place this becomes a `TokenVerifier`).
+        let jwks_url = std::env::var("JWKS_URL").ok().filter(|v| !v.is_empty());
+        let auth_public_key_pem = match &jwks_url {
+            Some(_) => None,
+            None => {
+                let key_path = require_env("AUTH_JWT_PUBLIC_KEY_PATH").map_err(|e| {
+                    anyhow::anyhow!("{e} — this gateway's own keypair (see .env.example), or set JWKS_URL instead")
+                })?;
+                Some(std::fs::read(&key_path).map_err(|e| anyhow::anyhow!("failed to read {key_path}: {e}"))?)
+            }
+        };
 
         let mut upstreams = Vec::new();
         let mut i = 1u32;
@@ -103,6 +128,8 @@ impl GatewayConfig {
             graphql_max_complexity,
             upstreams,
             auth_public_key_pem,
+            jwks_url,
+            cookie_auth_enabled: flag_enabled("COOKIE_AUTH_ENABLED"),
             cors_origins,
             is_production,
         })

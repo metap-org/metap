@@ -20,18 +20,13 @@
 //! forwarding a caller's Bearer token) is completely unaffected — see `crate::auth`'s extractor,
 //! which only falls back to the cookie once no `Authorization` header is present at all.
 
-use axum::http::Method;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use time::Duration;
 
-pub const SESSION_COOKIE_NAME: &str = "metap_session";
-pub const CSRF_COOKIE_NAME: &str = "metap_csrf";
-/// Request header a browser client must echo the [`CSRF_COOKIE_NAME`] cookie's value into for any
-/// state-changing (non-GET/HEAD/OPTIONS) cookie-authenticated request — see this module's own doc
-/// comment for why. Lowercase: `HeaderName` comparison is case-insensitive regardless, lowercase
-/// is just this crate's own convention for header name constants (see `x-tenant-id` in
-/// `crate::auth::basic_auth`).
-pub const CSRF_HEADER_NAME: &str = "x-csrf-token";
+// Re-exported (not just used) so an existing `use metap_http::cookies::SESSION_COOKIE_NAME` (etc.)
+// keeps compiling unchanged now that the definitions live in `metap-runtime`, shared with
+// `crates/graphql-gateway` — see that module's doc comment for why it moved.
+pub use metap_runtime::cookie_auth::{csrf_matches, requires_csrf_check, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 
 /// `SameSite=Lax` rather than `Strict`: `Strict` withholds the cookie even on a plain top-level
 /// navigation *into* the app from an external link (e.g. a bookmarked page, or a link from an
@@ -64,32 +59,6 @@ pub fn session_cookies(
     let session = base_cookie(SESSION_COOKIE_NAME, token.to_string(), true, secure, max_age);
     let csrf = base_cookie(CSRF_COOKIE_NAME, csrf_value.to_string(), false, secure, max_age);
     (session, csrf)
-}
-
-/// Whether a cookie-authenticated request of this method must carry a matching
-/// [`CSRF_HEADER_NAME`] header. Safe methods are exempt because they must not change state — the
-/// standard double-submit rule.
-///
-/// Pulled out of `crate::auth`'s extractor as its own function purely so it is unit-testable
-/// without a database (audit 04 finding B#4: the whole cookie/CSRF mechanism shipped with zero
-/// tests, and this one `if` is the only thing standing between the cookie path and cross-site
-/// state change — inverted or widened by accident, nothing else in the codebase would notice).
-pub fn requires_csrf_check(method: &Method) -> bool {
-    !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
-}
-
-/// The double-submit comparison itself: the [`CSRF_COOKIE_NAME`] cookie's value must be present,
-/// non-empty, and equal to the [`CSRF_HEADER_NAME`] header's.
-///
-/// Both-absent and both-empty are rejected explicitly. Without the emptiness guard, a request that
-/// somehow presents an empty cookie *and* an empty header would compare equal and pass — a state
-/// no legitimate client produces (`session_cookies` is only ever called with a fresh UUID), so
-/// treating it as a match could only ever help a caller that shouldn't be there.
-pub fn csrf_matches(cookie_value: Option<&str>, header_value: Option<&str>) -> bool {
-    match (cookie_value, header_value) {
-        (Some(cookie), Some(header)) => !cookie.is_empty() && cookie == header,
-        _ => false,
-    }
 }
 
 /// Whether a **credential-issuing** request is allowed to proceed — `GET /auth/token`'s extra gate
@@ -138,34 +107,8 @@ pub fn clear_session_cookies(secure: bool) -> (Cookie<'static>, Cookie<'static>)
 mod tests {
     use super::*;
 
-    /// Audit 04 B#4's first missing guard: if this predicate is ever inverted or widened to
-    /// include a mutating method, the cookie path silently loses its CSRF defense. Asserted
-    /// method by method rather than "not GET" so adding a method to the exempt list has to be a
-    /// deliberate edit to this test too.
-    #[test]
-    fn only_safe_methods_skip_the_csrf_check() {
-        for exempt in [Method::GET, Method::HEAD, Method::OPTIONS] {
-            assert!(!requires_csrf_check(&exempt), "{exempt} must be exempt");
-        }
-        for guarded in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
-            assert!(requires_csrf_check(&guarded), "{guarded} must be CSRF-checked");
-        }
-    }
-
-    #[test]
-    fn csrf_matches_only_when_both_are_present_and_equal() {
-        assert!(csrf_matches(Some("abc"), Some("abc")));
-        assert!(!csrf_matches(Some("abc"), Some("different")));
-        assert!(!csrf_matches(Some("abc"), None), "header missing must not pass");
-        assert!(!csrf_matches(None, Some("abc")), "cookie missing must not pass");
-        assert!(!csrf_matches(None, None), "both missing must not pass");
-    }
-
-    #[test]
-    fn empty_values_never_match_each_other() {
-        assert!(!csrf_matches(Some(""), Some("")));
-        assert!(!csrf_matches(Some(""), None));
-    }
+    // `requires_csrf_check`/`csrf_matches`'s own unit tests moved with them to
+    // `metap_runtime::cookie_auth` — not duplicated here.
 
     fn headers_from(pairs: &[(&str, &str)]) -> axum::http::HeaderMap {
         let mut headers = axum::http::HeaderMap::new();

@@ -20,7 +20,7 @@
 use uuid::Uuid;
 
 use metap_permission::RequestContext;
-use metap_query::ListInput;
+use metap_query::{AggregateSpec, ListInput};
 
 use crate::crud_service::CrudService;
 use crate::dto::{JsonObject, RecordCapabilities, RecordDto};
@@ -83,6 +83,19 @@ pub trait RecordBackend: Send + Sync {
         expected_version: i32,
         ctx: &RequestContext,
     ) -> anyhow::Result<ServiceResult<RecordDto>>;
+
+    /// The `GROUP BY`/`COUNT`/`SUM` counterpart to `list` — see `CrudService::aggregate`'s own
+    /// doc comment for the permission/masking rules this must preserve regardless of which
+    /// backend actually runs it (in-process `CrudService`, or a remote `GrpcBackend` call).
+    /// Added 2026-09-04 alongside every transport this trait already serves (REST already had
+    /// its own direct `CrudService::aggregate` call, unaffected by this) so gRPC/GraphQL callers
+    /// (`crates/graphql-gateway`, `metap-graphql`) get the same capability.
+    async fn aggregate(
+        &self,
+        entity: &str,
+        spec: &AggregateSpec,
+        ctx: &RequestContext,
+    ) -> anyhow::Result<ServiceResult<Vec<serde_json::Value>>>;
 }
 
 #[async_trait::async_trait]
@@ -154,5 +167,21 @@ impl RecordBackend for CrudService {
         ctx: &RequestContext,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         self.delete(entity, id, expected_version, ctx).await
+    }
+
+    /// A malformed `spec` (bad metric/bucket string) surfaces as a `400`-shaped `ServiceResult`,
+    /// not an `Err` — `Err` here means an unexpected failure (e.g. a DB error), the same
+    /// convention every other method in this impl already follows for its own input parsing.
+    async fn aggregate(
+        &self,
+        entity: &str,
+        spec: &AggregateSpec,
+        ctx: &RequestContext,
+    ) -> anyhow::Result<ServiceResult<Vec<serde_json::Value>>> {
+        let input = match spec.clone().into_input() {
+            Ok(input) => input,
+            Err(e) => return Ok(ServiceResult::err_with_message(400, "invalid_aggregate", e.to_string())),
+        };
+        self.aggregate(entity, &input, ctx).await
     }
 }
