@@ -200,6 +200,7 @@ pub const DEFAULT_GROUPS: i64 = 100;
 /// expression over the same scan, so this bounds the query's width, not the number of scans.
 const MAX_METRICS: usize = 10;
 
+#[derive(Debug)]
 pub struct PlannedAggregateQuery {
     /// Complete `SELECT`, ready to execute — unlike `PlannedListQuery`'s fragments, since an
     /// aggregation's projection/`GROUP BY`/`ORDER BY` are meaningless apart from each other and
@@ -489,3 +490,6 @@ pub fn plan_aggregate(
         params: params.params,
     })
 }
+
+#[cfg(test)]
+mod tests;
