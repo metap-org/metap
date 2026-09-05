@@ -22,6 +22,16 @@ use crate::auth::AuthContext;
 use crate::error::{internal_error_response, router_unavailable_response, service_error_response};
 use crate::state::AppState;
 
+// NOTE (2026-09-05, `docs/features/20-record-detail-audit-trail-and-tabs.md`): `WorkflowEvent`'s
+// own `#[derive(Serialize)]` emits its Rust field names verbatim
+// (`record_id`/`from_state`/`to_state`/`created_at`, snake_case) — inconsistent with the rest of
+// this crate's camelCase JSON surfaces (`routes/attachments.rs`'s `to_json`). **Deliberately left
+// as-is, not "fixed" to camelCase**: `../metap-demo-jira/web/src/pages/SprintReportPage.tsx` is a
+// real, already-shipped consumer of this exact route reading these exact snake_case keys — a
+// unilateral wire-format change here would silently break it. Changing this needs a coordinated
+// edit across both repos (and ideally an API-version discipline this route doesn't have), not a
+// solo fix bundled into an unrelated FE feature — flagged, not fixed.
+
 async fn list_workflow_events(
     State(state): State<AppState>,
     Path((entity, record_id)): Path<(String, Uuid)>,
