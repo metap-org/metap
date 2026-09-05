@@ -21,7 +21,12 @@ pub enum TargetType {
     /// `target_config`: `{ entity, filter, action }` — apply `action` to every record
     /// `filter` matches (a `QueryPlanner`-compatible filter object, resolved by `crm-server`).
     BulkQueryAction,
-    /// `target_config`: `{ url, method, headers?, bodyTemplate? }`.
+    /// `target_config`: `{ url, method, headers?, body?, authorizationFromSecret? }` — `body` is
+    /// arbitrary JSON sent verbatim as the request body, not a template (corrected 2026-09-06,
+    /// found live building `platform-ui`'s admin UI for this shape against the real deserializer,
+    /// `cron-scheduler::executor::webhook::WebhookConfig` — this doc comment used to say
+    /// `bodyTemplate?`, which was never the field either serde or `cron-scheduler` actually read,
+    /// and never mentioned `authorizationFromSecret` at all).
     Webhook,
     /// `target_config`: `{ to: string | string[], subject: string, body: string }` — sent via
     /// SMTP (`cron-scheduler`'s `run_email`), configured entity-agnostically by an admin rather
