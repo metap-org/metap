@@ -35,10 +35,14 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use metap_control::{ContextAttributesCache, Router};
 use metap_crud::CrudService;
 use tonic::transport::{Server, ServerTlsConfig};
+use tower_http::classify::GrpcFailureClass;
+use tower_http::trace::TraceLayer;
+use tracing::Span;
 
 use crate::auth::{AuthConfig, TokenVerifier};
 use crate::pb::record_service_server::RecordServiceServer;
@@ -58,7 +62,53 @@ pub async fn serve(
     if let Some(tls) = tls_config {
         builder = builder.tls_config(tls)?;
     }
-    builder.add_service(RecordServiceServer::new(service)).serve(addr).await
+    // Per-RPC access log — until this, a call arriving here left literally no trace in this
+    // process's own log, only the one-time "gRPC listening" line above ever printed. Found live
+    // 2026-09-06: a cross-service GraphQL field (routed to a remote upstream via
+    // `metap_grpc::client::GrpcBackend`, not REST) produced zero log output on the *target*
+    // service's side, unlike `metap-http::build_router`'s `metap_runtime::trace` layer, which
+    // every REST route already gets. `new_for_grpc()`'s classifier reads the `grpc-status`
+    // trailer once the response stream actually completes, not the outer HTTP/2 status (always
+    // `200` for a well-formed gRPC response either way) — so `on_failure` below still fires
+    // correctly for a real RPC error even though `on_response` only ever sees "200".
+    //
+    // `entity`/`record_id` start `Empty` because this layer only ever sees the raw HTTP/2
+    // envelope, before tonic has even decoded the protobuf body — every entity's List/Get/Create/
+    // ... shares the exact same RPC name (`method` below is always e.g.
+    // `/metap.crud.v1.RecordService/List`, generic-over-entity by design, same reason
+    // `metap-http`'s REST routes are all `/api/:entity*`), so without these 2 fields the access
+    // log alone can't tell a `waf.zones` call from a `waf.scan_jobs` one — found live 2026-09-06,
+    // reported as "không biết nó gọi vào đâu" against the very first version of this layer.
+    // `service.rs`'s `record_span_fields` fills them in once the handler has actually decoded the
+    // request, from *inside* this same span (tonic/tower_http run the whole request future
+    // `.instrument()`-ed by it) — `Span::record` on a field this macro didn't declare is a silent
+    // no-op, which is why both names must be reserved here even though this layer itself never
+    // sets them.
+    let trace = TraceLayer::new_for_grpc()
+        .make_span_with(|request: &http::Request<tonic::body::Body>| {
+            tracing::info_span!(
+                "grpc_request",
+                method = %request.uri().path(),
+                entity = tracing::field::Empty,
+                record_id = tracing::field::Empty,
+                latency_ms = tracing::field::Empty,
+            )
+        })
+        .on_response(
+            |_response: &http::Response<tonic::body::Body>, latency: Duration, span: &Span| {
+                span.record("latency_ms", latency.as_millis() as u64);
+                tracing::event!(parent: span, tracing::Level::INFO, "request completed");
+            },
+        )
+        .on_failure(|error: GrpcFailureClass, latency: Duration, span: &Span| {
+            span.record("latency_ms", latency.as_millis() as u64);
+            tracing::event!(parent: span, tracing::Level::ERROR, %error, "request failed");
+        });
+    builder
+        .layer(trace)
+        .add_service(RecordServiceServer::new(service))
+        .serve(addr)
+        .await
 }
 
 /// Bundles what [`optional_serve`] needs from a binary's own composition root — grouped the same

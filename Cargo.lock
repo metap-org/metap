@@ -3843,6 +3843,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "async-trait",
+ "http 1.5.0",
  "jsonwebtoken",
  "metap-control",
  "metap-crud",
@@ -3862,6 +3863,7 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+ "tower-http 0.6.11",
  "tracing",
  "uuid",
 ]

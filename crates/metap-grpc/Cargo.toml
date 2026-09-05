@@ -13,6 +13,7 @@ metap-permission = { path = "../metap-permission" }
 metap-query = { path = "../metap-query" }
 anyhow.workspace = true
 async-trait.workspace = true
+http = "1"
 jsonwebtoken.workspace = true
 prost = "0.14"
 prost-types = "0.14"
@@ -21,6 +22,7 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tonic = { version = "0.14", features = ["tls-ring"] }
 tonic-prost = "0.14"
+tower-http = { workspace = true, features = ["trace"] }
 tracing.workspace = true
 uuid.workspace = true
 
