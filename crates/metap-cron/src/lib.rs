@@ -3,7 +3,7 @@
 //! entities/workflow/policies are defined today, instead of a developer hand-wiring a new
 //! cron entry in code. This crate owns the job definition/run-history storage and the
 //! due-job-claiming logic; the actual dispatch loop (ticker + executor) lives in the
-//! `crates/cron-scheduler` ops binary built on top of it — kept separate so this crate stays
+//! `crates/metap-cron-scheduler` ops binary built on top of it — kept separate so this crate stays
 //! a plain library with no `tokio::main`/process-lifecycle concerns, matching
 //! `metap-permission`/`metap-workflow`'s shape.
 

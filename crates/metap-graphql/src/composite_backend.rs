@@ -1,6 +1,6 @@
 //! Routes a `RecordBackend` call to the right upstream by entity name — the piece that turns a
 //! single `MetadataRegistry` assembled from *several* separately-deployed services'
-//! `/metadata/entities` (see `crates/graphql-gateway`) into one schema that can still reach each
+//! `/metadata/entities` (see `crates/metap-graphql-gateway`) into one schema that can still reach each
 //! entity's real data. Entity-name routing is BFF-gateway-specific (a single-service binary like
 //! `jira-server` has no need for it — it passes its own `Arc<CrudService>` straight through as
 //! `Arc<dyn RecordBackend>`), so this lives here rather than in `metap-crud` alongside the trait

@@ -1,6 +1,6 @@
 //! Cookie/CSRF constants and the pure double-submit check every transport that accepts this
 //! platform's cookie-based session needs to agree on — moved out of `metap-http::cookies` (which
-//! re-exports these, unchanged for existing callers) once `crates/graphql-gateway` needed the
+//! re-exports these, unchanged for existing callers) once `crates/metap-graphql-gateway` needed the
 //! same check too (opt-in cookie fallback alongside its existing Bearer-only auth, for a
 //! same-origin deployment like `../metap-demo-waf`'s — see that crate's `server.rs`). Lives here,
 //! not moved wholesale into `metap-http`, for the same "avoid the heavier dependency" reason

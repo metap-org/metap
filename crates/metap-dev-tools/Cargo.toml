@@ -1,5 +1,5 @@
 [package]
-name = "dev-tools"
+name = "metap-dev-tools"
 version = "0.1.0"
 edition.workspace = true
 

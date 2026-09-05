@@ -11,9 +11,9 @@
 //! script with a `rerun-if-changed` on the directory** — cargo has no way to know a *new*
 //! migration file should trigger recompilation unless something it already tracks (this
 //! file) also changed. Adding a migration file without touching this crate's own source can
-//! leave `cargo build -p db-migrate` reusing a stale cached binary that's silently missing
+//! leave `cargo build -p metap-db-migrate` reusing a stale cached binary that's silently missing
 //! it. If a freshly-added migration doesn't show up in `_sqlx_migrations` after running this,
-//! `touch src/main.rs` (or `cargo clean -p db-migrate`) and rebuild before assuming something
+//! `touch src/main.rs` (or `cargo clean -p metap-db-migrate`) and rebuild before assuming something
 //! else is wrong.
 
 #[tokio::main]

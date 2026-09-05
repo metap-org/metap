@@ -58,7 +58,7 @@ impl PostgresTenantRegistry {
 
     /// Writes a new `control.tenants` row — the provisioning-side counterpart to `get` above.
     /// Not on the `TenantRegistry` trait: only `dev-tools provision-tenant`
-    /// (`crates/dev-tools/src/main.rs`) calls this today, and there's no second `TenantRegistry`
+    /// (`crates/metap-dev-tools/src/main.rs`) calls this today, and there's no second `TenantRegistry`
     /// impl that would need it. `schema_name`/`dsn_secret_ref` are mutually exclusive depending
     /// on `strategy` — same shape `TenantStrategy` enforces on the read side.
     pub async fn provision(

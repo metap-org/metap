@@ -74,7 +74,7 @@ jobs:
       # Same command as the local dev workflow (`.semgrep.yml`'s doc comment) — registry packs
       # can't be referenced from the file's own `rules:` list, they're passed on the command
       # line and merged with it. Was local-only by original request; wired into CI once the one
-      # known finding (`crates/dev-tools/src/main.rs`'s CLI-arg dispatch, not security-sensitive)
+      # known finding (`crates/metap-dev-tools/src/main.rs`'s CLI-arg dispatch, not security-sensitive)
       # was suppressed inline with `# nosemgrep`, so this is a real 0-findings gate, not
       # permanently red.
       - run: pip install semgrep

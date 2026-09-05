@@ -518,7 +518,7 @@ fn json_object_arg(ctx: &ResolverContext<'_>, name: &str) -> Result<Option<metap
 /// a caller (`metap-graphql-http`) attaches via [`with_request_data`]. Passing an
 /// `Arc<dyn RecordBackend>` rather than `Arc<CrudService>` is what lets the same resolver code
 /// serve both a single-service binary (`Arc::new(crud) as Arc<dyn RecordBackend>`) and the BFF
-/// gateway (`crates/graphql-gateway`'s `CompositeBackend`, routing per entity to a remote
+/// gateway (`crates/metap-graphql-gateway`'s `CompositeBackend`, routing per entity to a remote
 /// `GrpcBackend`) without any resolver knowing which one it got.
 pub fn build_schema_parts(
     metadata: &MetadataRegistry,

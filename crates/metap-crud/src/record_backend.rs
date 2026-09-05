@@ -4,7 +4,7 @@
 //! call to another, separately-deployed microservice. This is exactly the "local-vs-remote
 //! dispatch" seam `docs/architectures/04-strategy.md` names as the one piece intentionally left
 //! undesigned until a real split-deploy trigger existed — a BFF gateway aggregating across
-//! multiple already-separately-deployed microservices (`crates/graphql-gateway`) is that trigger.
+//! multiple already-separately-deployed microservices (`crates/metap-graphql-gateway`) is that trigger.
 //!
 //! Lives in `metap-crud`, not `metap-graphql` or a new crate: every type in the trait's
 //! signature (`ServiceResult`, `RecordDto`, `RecordCapabilities`, `JsonObject`, and
@@ -89,7 +89,7 @@ pub trait RecordBackend: Send + Sync {
     /// backend actually runs it (in-process `CrudService`, or a remote `GrpcBackend` call).
     /// Added 2026-09-04 alongside every transport this trait already serves (REST already had
     /// its own direct `CrudService::aggregate` call, unaffected by this) so gRPC/GraphQL callers
-    /// (`crates/graphql-gateway`, `metap-graphql`) get the same capability.
+    /// (`crates/metap-graphql-gateway`, `metap-graphql`) get the same capability.
     async fn aggregate(
         &self,
         entity: &str,

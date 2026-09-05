@@ -45,12 +45,12 @@ if [ "$APP" = "jira" ]; then
   # default to fall back to (see ../metap-demo-jira/.env's JIRA_TENANT_ID).
   : "${TENANT_ID:?jira mode needs TENANT_ID (the provisioned jira tenant, see ../metap-demo-jira/.env)}"
   : "${USER_ID:?jira mode needs USER_ID (see ../metap-demo-jira/.env)}"
-  TOKEN="${TOKEN:-$(cargo run --manifest-path crates/dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)}"
+  TOKEN="${TOKEN:-$(cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)}"
 elif [ "$APP" = "crm" ]; then
   BASE_URL="${BASE_URL:-http://host.docker.internal:3000}"
   TENANT_ID="${TENANT_ID:-00000000-0000-0000-0000-000000000001}"
   USER_ID="${USER_ID:-00000000-0000-0000-0000-000000000002}"
-  TOKEN="${TOKEN:-$(cargo run --manifest-path crates/dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)}"
+  TOKEN="${TOKEN:-$(cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)}"
 else
   echo "unknown APP=$APP (expected crm|jira)" >&2
   exit 1

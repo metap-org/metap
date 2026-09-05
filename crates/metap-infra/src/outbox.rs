@@ -1,6 +1,6 @@
 //! Mirrors `OutboxService.enqueue` (`packages/core/src/core/outbox/outbox-service.ts`) —
 //! just the write half (insert a row in the same transaction as the business write). The
-//! drain/publish half lives in `crates/outbox-publisher/` (Migration Order step 1) and
+//! drain/publish half lives in `crates/metap-outbox-publisher/` (Migration Order step 1) and
 //! `event_bus.rs`'s `EventBus`; unlike the TS `OutboxService` class, this isn't bundled
 //! with either, since `enqueue` never actually touches an `EventBus` — it only needs
 //! whatever executor (pool or open transaction) the caller is already writing through,

@@ -29,7 +29,7 @@
 //!   transaction as the business write (the outbox pattern — never publish to `EventBus`
 //!   directly from a handler).
 //! - **Subscribe to events**: `metap_infra::EventBus::subscribe` — `notification-worker`
-//!   (`crates/notification-worker`) is a full working example of a standalone consumer.
+//!   (`crates/metap-notification-worker`) is a full working example of a standalone consumer.
 //!
 //! What's deliberately NOT here, because it's genuinely different per binary, not boilerplate:
 //! entity registration/reconciliation order, which optional `-http` crates to mount, gRPC/

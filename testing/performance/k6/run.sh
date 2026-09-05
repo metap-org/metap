@@ -36,8 +36,8 @@ TENANT_ID="${TENANT_ID:-00000000-0000-0000-0000-000000000001}"
 USER_ID="${USER_ID:-00000000-0000-0000-0000-000000000002}"
 
 echo "=== seed admin + mint dev token ==="
-cargo run --manifest-path crates/dev-tools/Cargo.toml --quiet -- seed-admin "$TENANT_ID" "$USER_ID" >/dev/null
-TOKEN=$(cargo run --manifest-path crates/dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)
+cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- seed-admin "$TENANT_ID" "$USER_ID" >/dev/null
+TOKEN=$(cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)
 echo "✓ token minted"
 
 COMMON_ENV=(

@@ -2,7 +2,7 @@
 //! as `../metap-demo-jira`/`../metap-demo-crm` would run it) hit through the `RecordBackend` trait
 //! object via `GrpcBackend`, not through raw `RecordServiceClient` calls
 //! (`grpc_crud_postgres.rs` already covers the server side end to end). This is the piece the
-//! BFF gateway (`crates/graphql-gateway`) actually depends on: a `GrpcBackend` behind
+//! BFF gateway (`crates/metap-graphql-gateway`) actually depends on: a `GrpcBackend` behind
 //! `Arc<dyn RecordBackend>` must behave identically to an in-process `CrudService` for every
 //! `RecordBackend` method. `#[ignore]`d, same convention as this crate's other e2e test (needs a
 //! running Postgres, run explicitly via `cargo test -- --ignored`).
