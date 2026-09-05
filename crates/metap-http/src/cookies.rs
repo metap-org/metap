@@ -26,7 +26,9 @@ use time::Duration;
 // Re-exported (not just used) so an existing `use metap_http::cookies::SESSION_COOKIE_NAME` (etc.)
 // keeps compiling unchanged now that the definitions live in `metap-runtime`, shared with
 // `crates/graphql-gateway` — see that module's doc comment for why it moved.
-pub use metap_runtime::cookie_auth::{csrf_matches, requires_csrf_check, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+pub use metap_runtime::cookie_auth::{
+    csrf_matches, requires_csrf_check, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME,
+};
 
 /// `SameSite=Lax` rather than `Strict`: `Strict` withholds the cookie even on a plain top-level
 /// navigation *into* the app from an external link (e.g. a bookmarked page, or a link from an
@@ -71,7 +73,11 @@ pub fn session_cookies(
 ///
 /// `HttpOnly` even though the value (a Unix timestamp) isn't sensitive by itself — no page script
 /// has a legitimate reason to read it, so there's no reason to expose it.
-pub fn session_started_at_cookie(started_at_unix_secs: i64, absolute_max_seconds: i64, secure: bool) -> Cookie<'static> {
+pub fn session_started_at_cookie(
+    started_at_unix_secs: i64,
+    absolute_max_seconds: i64,
+    secure: bool,
+) -> Cookie<'static> {
     base_cookie(
         SESSION_STARTED_AT_COOKIE_NAME,
         started_at_unix_secs.to_string(),

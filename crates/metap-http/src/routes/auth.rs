@@ -438,7 +438,12 @@ async fn oidc_callback(
         return internal_error_response(e.into());
     }
 
-    let token = match state.mint_token(user.tenant_id, user.id, None, session_ttl_seconds(&state, user.tenant_id).await) {
+    let token = match state.mint_token(
+        user.tenant_id,
+        user.id,
+        None,
+        session_ttl_seconds(&state, user.tenant_id).await,
+    ) {
         Ok(token) => token,
         Err(e) => return internal_error_response(e),
     };
