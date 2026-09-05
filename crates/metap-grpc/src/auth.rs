@@ -28,8 +28,8 @@ use metap_control::{resolve_request_context, ContextAttributesCache, Router};
 // enum's definition lives in `metap-jwks` (shared with `metap-http`/`graphql-gateway`, which also
 // need this same "Static or Jwks" dispatch — see `metap_jwks::verifier`'s doc comment for why it
 // moved there instead of staying duplicated per transport).
-pub use metap_jwks::verifier::TokenVerifier;
 use metap_jwks::verifier::decode_with_verifier;
+pub use metap_jwks::verifier::TokenVerifier;
 use metap_permission::RequestContext;
 use tonic::metadata::MetadataMap;
 use tonic::Status;

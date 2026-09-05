@@ -15,7 +15,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context as _;
 use arc_swap::ArcSwap;
 use serde_json::json;
 
@@ -29,6 +28,17 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(2400);
 /// restarting, network blip), not a bad password.
 const RETRY_BACKOFF: Duration = Duration::from_secs(30);
 
+/// How long [`ServiceTokenSource::start`]'s *initial* login may keep retrying a transient
+/// connection failure before giving up and failing the caller's boot sequence for real. Found live
+/// (2026-09-05, `metap-demo-waf`'s dev compose): `graphql-gateway` and its upstreams all
+/// path-depend on this repo's crates and rebuild independently via `cargo watch`, so the gateway
+/// can genuinely race an upstream that hasn't finished restarting yet — a plain connection-refused,
+/// not a real configuration problem, but it crashed the gateway's boot outright before this existed.
+const INITIAL_LOGIN_RETRY_BUDGET: Duration = Duration::from_secs(60);
+/// How often the initial login retries within that budget — short, since the whole point is riding
+/// out a few seconds of "upstream still starting", not waiting out a real outage.
+const INITIAL_LOGIN_RETRY_INTERVAL: Duration = Duration::from_secs(2);
+
 #[derive(serde::Deserialize)]
 struct LoginResponseEnvelope {
     data: LoginResponseData,
@@ -37,6 +47,17 @@ struct LoginResponseEnvelope {
 #[derive(serde::Deserialize)]
 struct LoginResponseData {
     token: String,
+}
+
+/// [`login_once`]'s result, distinguishing a transport-level failure (the upstream isn't reachable
+/// at all — connection refused, DNS not resolving yet, a timeout) from a definite answer the
+/// upstream gave us (a real HTTP error status, or a response body that doesn't parse). Only the
+/// former is worth retrying: a 401 means the credentials are actually wrong, and retrying that for
+/// a minute would just delay a real misconfiguration from being reported.
+enum LoginOutcome {
+    Ok(String),
+    Retryable(anyhow::Error),
+    Fatal(anyhow::Error),
 }
 
 /// A bearer token for one upstream's service account, obtained via that upstream's own
@@ -50,17 +71,39 @@ pub struct ServiceTokenSource {
 }
 
 impl ServiceTokenSource {
-    /// Logs in once, synchronously — a failure here fails the caller's boot sequence, same as a
-    /// missing/invalid static JWT used to — then spawns the background refresh loop.
+    /// Logs in, retrying a transient connection failure for up to [`INITIAL_LOGIN_RETRY_BUDGET`]
+    /// (`LoginOutcome::Retryable`) — but failing the caller's boot sequence immediately on a
+    /// definite answer from the upstream (`LoginOutcome::Fatal`: bad credentials, a real 5xx, an
+    /// unparseable response), same as a missing/invalid static JWT used to. Then spawns the
+    /// background refresh loop.
     pub async fn start(
         http: reqwest::Client,
         login_url: String,
         email: String,
         password: String,
     ) -> anyhow::Result<Self> {
-        let token = login_once(&http, &login_url, &email, &password)
-            .await
-            .with_context(|| format!("logging into {login_url} as {email}"))?;
+        let deadline = tokio::time::Instant::now() + INITIAL_LOGIN_RETRY_BUDGET;
+        let token = loop {
+            match login_once(&http, &login_url, &email, &password).await {
+                LoginOutcome::Ok(token) => break token,
+                LoginOutcome::Fatal(e) => {
+                    return Err(e.context(format!("logging into {login_url} as {email}")));
+                }
+                LoginOutcome::Retryable(e) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(e.context(format!(
+                            "logging into {login_url} as {email} (gave up after {INITIAL_LOGIN_RETRY_BUDGET:?} of retries)"
+                        )));
+                    }
+                    tracing::warn!(
+                        login_url,
+                        error = %e,
+                        "upstream not reachable yet, retrying in {INITIAL_LOGIN_RETRY_INTERVAL:?}"
+                    );
+                    tokio::time::sleep(INITIAL_LOGIN_RETRY_INTERVAL).await;
+                }
+            }
+        };
         let current = Arc::new(ArcSwap::new(Arc::new(token)));
 
         let background_current = current.clone();
@@ -71,12 +114,14 @@ impl ServiceTokenSource {
             // sleep REFRESH_INTERVAL, then sleep RETRY_BACKOFF once more on error before looping"
             // version effectively retried after RETRY_BACKOFF + REFRESH_INTERVAL, not
             // RETRY_BACKOFF — the exact kind of slow-to-recover bug this whole type exists to
-            // avoid).
+            // avoid). Unlike the initial login above, `Retryable` and `Fatal` are treated the same
+            // way here — the first login already proved the credentials are valid, so *any*
+            // failure this far in is presumed transient (see `RETRY_BACKOFF`'s own doc comment).
             let mut next_delay = REFRESH_INTERVAL;
             loop {
                 tokio::time::sleep(next_delay).await;
                 match login_once(&http, &login_url, &email, &password).await {
-                    Ok(token) => {
+                    LoginOutcome::Ok(token) => {
                         background_current.store(Arc::new(token));
                         next_delay = REFRESH_INTERVAL;
                         tracing::info!(
@@ -84,7 +129,7 @@ impl ServiceTokenSource {
                             "refreshed service account token; next refresh in {REFRESH_INTERVAL:?}"
                         );
                     }
-                    Err(e) => {
+                    LoginOutcome::Retryable(e) | LoginOutcome::Fatal(e) => {
                         next_delay = RETRY_BACKOFF;
                         tracing::error!(login_url, error = %e, "failed to refresh service account token, keeping previous one; retrying in {RETRY_BACKOFF:?}");
                     }
@@ -108,17 +153,125 @@ impl ServiceTokenSource {
     }
 }
 
-async fn login_once(http: &reqwest::Client, login_url: &str, email: &str, password: &str) -> anyhow::Result<String> {
-    let response: LoginResponseEnvelope = http
+async fn login_once(http: &reqwest::Client, login_url: &str, email: &str, password: &str) -> LoginOutcome {
+    let response = match http
         .post(login_url)
         .json(&json!({ "email": email, "password": password }))
         .send()
         .await
-        .with_context(|| format!("POST {login_url}"))?
-        .error_for_status()
-        .with_context(|| format!("{login_url} returned an error status"))?
-        .json()
+    {
+        Ok(response) => response,
+        Err(e) => {
+            // No response at all — the upstream isn't there to have answered, which is exactly
+            // the boot-race case worth retrying. Anything else (a redirect loop, an invalid URL)
+            // is a real configuration bug, not a race, so it stays fatal.
+            let retryable = e.is_connect() || e.is_timeout();
+            let err = anyhow::Error::new(e).context(format!("POST {login_url}"));
+            return if retryable {
+                LoginOutcome::Retryable(err)
+            } else {
+                LoginOutcome::Fatal(err)
+            };
+        }
+    };
+    let response = match response.error_for_status() {
+        Ok(response) => response,
+        // A real HTTP status came back — the upstream is up and answered, so this is never a
+        // boot race. Most commonly a 401 (wrong service-account password), which retrying would
+        // only delay reporting.
+        Err(e) => {
+            return LoginOutcome::Fatal(anyhow::Error::new(e).context(format!("{login_url} returned an error status")))
+        }
+    };
+    match response.json::<LoginResponseEnvelope>().await {
+        Ok(body) => LoginOutcome::Ok(body.data.token),
+        Err(e) => LoginOutcome::Fatal(anyhow::Error::new(e).context(format!("parsing {login_url} response"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::routing::post;
+    use axum::Router;
+    use std::net::SocketAddr;
+    use tokio::net::TcpListener;
+
+    async fn ok_login() -> axum::Json<serde_json::Value> {
+        axum::Json(json!({ "data": { "token": "fake-token" } }))
+    }
+
+    async fn unauthorized_login() -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+        (
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::Json(json!({ "error": { "code": "invalid_credentials", "message": "nope" } })),
+        )
+    }
+
+    async fn serve(router: Router, addr: SocketAddr) {
+        let listener = TcpListener::bind(addr).await.expect("bind test server");
+        axum::serve(listener, router).await.expect("test server crashed");
+    }
+
+    /// A definite 401 must fail immediately, not retry for `INITIAL_LOGIN_RETRY_BUDGET` — a wrong
+    /// service-account password is never going to fix itself by waiting.
+    #[tokio::test]
+    async fn fails_fast_on_a_real_unauthorized_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        tokio::spawn(serve(
+            Router::new().route("/auth/login", post(unauthorized_login)),
+            addr,
+        ));
+        // Give the router a moment to actually bind before hitting it.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let started = tokio::time::Instant::now();
+        // Not a real credential and never checked against anything — this mock server rejects
+        // every login unconditionally. A random value rather than a literal so nothing here reads
+        // as a hard-coded password to a secret scanner (`docs/features` doesn't need a brief for
+        // this — a straightforward test-fixture fix, not a design decision).
+        let result = ServiceTokenSource::start(
+            reqwest::Client::new(),
+            format!("http://{addr}/auth/login"),
+            "svc@internal.local".to_string(),
+            uuid::Uuid::new_v4().to_string(),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(
+            started.elapsed() < INITIAL_LOGIN_RETRY_BUDGET,
+            "a definite 401 must not go through the retry budget"
+        );
+    }
+
+    /// The boot-race case this whole change exists for: the upstream isn't listening yet at the
+    /// first attempt (nothing bound to `addr`), then comes up a moment later — `start` must ride
+    /// that out and still succeed, rather than failing on the first connection-refused.
+    #[tokio::test]
+    async fn retries_a_connection_refused_until_the_upstream_comes_up() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener); // nothing listens here yet — the first login attempt(s) must see connection-refused
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            serve(Router::new().route("/auth/login", post(ok_login)), addr).await;
+        });
+
+        // Not a real credential — this mock server accepts any login unconditionally. Random
+        // rather than a literal for the same reason as the test above.
+        let token = ServiceTokenSource::start(
+            reqwest::Client::new(),
+            format!("http://{addr}/auth/login"),
+            "svc@internal.local".to_string(),
+            uuid::Uuid::new_v4().to_string(),
+        )
         .await
-        .with_context(|| format!("parsing {login_url} response"))?;
-    Ok(response.data.token)
+        .expect("should ride out the boot race and eventually log in");
+
+        assert_eq!(*token.current(), "fake-token");
+    }
 }

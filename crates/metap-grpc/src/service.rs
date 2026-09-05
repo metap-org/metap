@@ -174,9 +174,7 @@ impl RecordService for GrpcRecordService {
             .transpose()
             .map_err(|e| Status::invalid_argument(format!("invalid aggregate spec: {e}")))?
             .unwrap_or_default();
-        let input = spec
-            .into_input()
-            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+        let input = spec.into_input().map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         let result = self
             .crud

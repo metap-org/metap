@@ -27,21 +27,19 @@ use crate::client::JwksClient;
 /// re-deriving it.
 #[derive(Clone)]
 pub enum TokenVerifier {
-    Static {
-        decoding_key: DecodingKey,
-        leeway: u64,
-    },
-    Jwks {
-        client: Arc<JwksClient>,
-        leeway: u64,
-    },
+    Static { decoding_key: DecodingKey, leeway: u64 },
+    Jwks { client: Arc<JwksClient>, leeway: u64 },
 }
 
 /// Verifies `token` against whichever trust root `verifier` names — the one place this dispatch
 /// happens, so `metap-http::auth::AuthContext`, `metap-grpc::auth::authenticate`, and
 /// `graphql-gateway::server::authenticate` can't drift from each other on how a `Static` vs
 /// `Jwks` token gets checked.
-pub async fn decode_with_verifier(token: &str, verifier: &TokenVerifier, leeway_override: Option<u64>) -> anyhow::Result<AccessClaims> {
+pub async fn decode_with_verifier(
+    token: &str,
+    verifier: &TokenVerifier,
+    leeway_override: Option<u64>,
+) -> anyhow::Result<AccessClaims> {
     match verifier {
         TokenVerifier::Static { decoding_key, leeway } => {
             decode_access_token(token, decoding_key, leeway_override.unwrap_or(*leeway))
