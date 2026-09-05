@@ -228,11 +228,15 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let started = tokio::time::Instant::now();
+        // Not a real credential and never checked against anything — this mock server rejects
+        // every login unconditionally. A random value rather than a literal so nothing here reads
+        // as a hard-coded password to a secret scanner (`docs/features` doesn't need a brief for
+        // this — a straightforward test-fixture fix, not a design decision).
         let result = ServiceTokenSource::start(
             reqwest::Client::new(),
             format!("http://{addr}/auth/login"),
             "svc@internal.local".to_string(),
-            "wrong".to_string(),
+            uuid::Uuid::new_v4().to_string(),
         )
         .await;
 
@@ -257,11 +261,13 @@ mod tests {
             serve(Router::new().route("/auth/login", post(ok_login)), addr).await;
         });
 
+        // Not a real credential — this mock server accepts any login unconditionally. Random
+        // rather than a literal for the same reason as the test above.
         let token = ServiceTokenSource::start(
             reqwest::Client::new(),
             format!("http://{addr}/auth/login"),
             "svc@internal.local".to_string(),
-            "correct".to_string(),
+            uuid::Uuid::new_v4().to_string(),
         )
         .await
         .expect("should ride out the boot race and eventually log in");

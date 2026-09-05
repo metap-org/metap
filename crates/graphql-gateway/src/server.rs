@@ -172,7 +172,10 @@ pub async fn serve(config: GatewayConfig, built: BuiltSchema) -> anyhow::Result<
             // (`RegistryCache`/`metap_jwks::JwksClient`'s own callers elsewhere all pick a TTL
             // in the tens-of-seconds-to-minutes range); not yet env-configurable, since this
             // gateway only reads it once at boot rather than per-request.
-            client: Arc::new(metap_jwks::JwksClient::new(jwks_url.clone(), std::time::Duration::from_secs(300))),
+            client: Arc::new(metap_jwks::JwksClient::new(
+                jwks_url.clone(),
+                std::time::Duration::from_secs(300),
+            )),
             leeway: 20,
         },
         (None, Some(pem)) => TokenVerifier::Static {

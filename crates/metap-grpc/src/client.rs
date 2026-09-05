@@ -42,7 +42,9 @@ use uuid::Uuid;
 
 use crate::convert::{json_to_struct, struct_to_json};
 use crate::pb::record_service_client::RecordServiceClient;
-use crate::pb::{AggregateRequest, CreateRequest, DeleteRequest, GetRequest, ListRequest, TransitionRequest, UpdateRequest};
+use crate::pb::{
+    AggregateRequest, CreateRequest, DeleteRequest, GetRequest, ListRequest, TransitionRequest, UpdateRequest,
+};
 
 pub struct GrpcBackend {
     client: RecordServiceClient<Channel>,
