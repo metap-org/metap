@@ -38,24 +38,29 @@ async fn session_ttl_seconds(state: &AppState, tenant_id: Uuid) -> u64 {
         .get_u64(metap_config::keys::AUTH_SESSION_TTL_SECONDS)
 }
 
-/// Appends both `Set-Cookie` headers from a `session_cookies`/`clear_session_cookies` pair onto
-/// an already-built response — `HeaderMap` allows repeated header names via `append` (unlike
-/// `insert`, which would silently drop the first), which is required here since both cookies
-/// share the name of no other header but do need to coexist as two separate `Set-Cookie` lines.
+/// Appends one `Set-Cookie` header per cookie onto an already-built response — `HeaderMap` allows
+/// repeated header names via `append` (unlike `insert`, which would silently drop all but the
+/// last), required since a login/logout response always carries 2+ of these at once. Generic over
+/// any number of cookies (not a fixed pair) since login/OIDC callback set 3 (session, CSRF,
+/// session-started-at — `crate::cookies::session_started_at_cookie`'s doc comment) while `me`'s
+/// sliding-refresh path only ever re-sets 2.
 fn attach_cookies(
     mut response: Response,
-    cookies: (
-        axum_extra::extract::cookie::Cookie<'static>,
-        axum_extra::extract::cookie::Cookie<'static>,
-    ),
+    cookies: impl IntoIterator<Item = axum_extra::extract::cookie::Cookie<'static>>,
 ) -> Response {
-    let (a, b) = cookies;
-    for cookie in [a, b] {
+    for cookie in cookies {
         if let Ok(value) = HeaderValue::from_str(&cookie.to_string()) {
             response.headers_mut().append(SET_COOKIE, value);
         }
     }
     response
+}
+
+fn unix_now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 #[derive(Deserialize)]
@@ -115,9 +120,15 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Re
         // the field stays for everyone else who never adopted it.
         Ok(token) => {
             let csrf_value = Uuid::new_v4().to_string();
-            let cookies = session_cookies(&token, &csrf_value, ttl as i64, state.cookie_secure);
+            let (session_cookie, csrf_cookie) = session_cookies(&token, &csrf_value, ttl as i64, state.cookie_secure);
+            let absolute_max = state
+                .effective_config(user.tenant_id)
+                .await
+                .get_u64(metap_config::keys::AUTH_SESSION_ABSOLUTE_MAX_SECONDS);
+            let started_at_cookie =
+                crate::cookies::session_started_at_cookie(unix_now_secs(), absolute_max as i64, state.cookie_secure);
             let response = Json(json!({ "data": { "token": token } })).into_response();
-            attach_cookies(response, cookies)
+            attach_cookies(response, [session_cookie, csrf_cookie, started_at_cookie])
         }
         Err(e) => internal_error_response(e),
     }
@@ -130,7 +141,8 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Re
 /// whose entire job is "make sure there's no session left."
 async fn logout(State(state): State<AppState>) -> Response {
     let response = StatusCode::NO_CONTENT.into_response();
-    attach_cookies(response, clear_session_cookies(state.cookie_secure))
+    let (session, csrf, started_at) = clear_session_cookies(state.cookie_secure);
+    attach_cookies(response, [session, csrf, started_at])
 }
 
 /// Identity + roles for the caller's own token — the frontend's only way to know "am I an
@@ -144,9 +156,14 @@ async fn logout(State(state): State<AppState>) -> Response {
 /// deliberately **additive and best-effort**: any failure resolving it (router unavailable, no
 /// matching row, a token whose `sub` isn't a real user) yields `null` and the identity/roles
 /// payload is returned unchanged, because those are what every caller actually gates on.
-async fn me(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
+async fn me(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    AuthContext(context): AuthContext,
+) -> Response {
     let email = resolve_own_email(&state, &context).await;
-    Json(json!({
+    let refreshed = try_refresh_session(&state, &headers, &context).await;
+    let mut response = Json(json!({
         "data": {
             "userId": context.user_id,
             "tenantId": context.tenant_id,
@@ -154,7 +171,63 @@ async fn me(State(state): State<AppState>, AuthContext(context): AuthContext) ->
             "roles": context.roles.unwrap_or_default(),
         }
     }))
-    .into_response()
+    .into_response();
+
+    if let Some(refreshed) = refreshed {
+        response = attach_cookies(response, [refreshed.0, refreshed.1]);
+    }
+
+    response
+}
+
+/// Sliding session, Part B of `docs/features/31-session-expiry-redirect-and-refresh.md`:
+/// `@metap/platform-ui`'s `AuthContext` now polls `GET /auth/me` periodically while its tab is
+/// open, and a cookie-authenticated caller still inside `auth.sessionAbsoluteMaxSeconds` of their
+/// original login gets a fresh `auth.sessionTtlSeconds` window on every poll — so a continuously
+/// active user is never logged out mid-work purely because the fixed TTL elapsed, while a session
+/// nobody is actively using still expires at its own `exp` exactly as before (nothing here changes
+/// that path at all).
+///
+/// Reuses the *existing* CSRF cookie value rather than minting a new one — the point is only to
+/// extend both cookies' `Max-Age` together, not to rotate the CSRF secret, and reusing it means a
+/// concurrent in-flight request carrying the old CSRF header still validates against the cookie
+/// this response is about to overwrite it with (same value either way).
+///
+/// A `None` covers every reason not to refresh: no session cookie at all (Bearer/Basic/CLI caller
+/// — nothing to reissue), no `session_started_at`/CSRF cookie (predates this feature, or already
+/// past `auth.sessionAbsoluteMaxSeconds` and the browser dropped it on its own — see
+/// `crate::cookies::session_started_at_cookie`'s doc comment), or a parse failure on either
+/// identity field. Every case degrades to "just don't refresh this time", never an error — `me`
+/// itself must keep answering identity/roles regardless.
+async fn try_refresh_session(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    context: &metap_permission::RequestContext,
+) -> Option<(
+    axum_extra::extract::cookie::Cookie<'static>,
+    axum_extra::extract::cookie::Cookie<'static>,
+)> {
+    let jar = axum_extra::extract::cookie::CookieJar::from_headers(headers);
+    jar.get(crate::cookies::SESSION_COOKIE_NAME)?;
+    let started_at: i64 = jar
+        .get(crate::cookies::SESSION_STARTED_AT_COOKIE_NAME)?
+        .value()
+        .parse()
+        .ok()?;
+    let csrf_value = jar.get(crate::cookies::CSRF_COOKIE_NAME)?.value().to_string();
+
+    let tenant_id = Uuid::parse_str(&context.tenant_id).ok()?;
+    let user_id = context.user_id.as_deref().and_then(|id| Uuid::parse_str(id).ok())?;
+
+    let effective = state.effective_config(tenant_id).await;
+    let absolute_max = effective.get_u64(metap_config::keys::AUTH_SESSION_ABSOLUTE_MAX_SECONDS) as i64;
+    if unix_now_secs() - started_at >= absolute_max {
+        return None;
+    }
+
+    let ttl = effective.get_u64(metap_config::keys::AUTH_SESSION_TTL_SECONDS);
+    let token = state.mint_token(tenant_id, user_id, None, ttl).ok()?;
+    Some(session_cookies(&token, &csrf_value, ttl as i64, state.cookie_secure))
 }
 
 /// Mints a fresh, short-lived Bearer token for the caller's own identity — added 2026-09-03
@@ -370,14 +443,20 @@ async fn oidc_callback(
         Err(e) => return internal_error_response(e),
     };
     let csrf_value = Uuid::new_v4().to_string();
-    let cookies = session_cookies(
+    let (session_cookie, csrf_cookie) = session_cookies(
         &token,
         &csrf_value,
         session_ttl_seconds(&state, user.tenant_id).await as i64,
         state.cookie_secure,
     );
+    let absolute_max = state
+        .effective_config(user.tenant_id)
+        .await
+        .get_u64(metap_config::keys::AUTH_SESSION_ABSOLUTE_MAX_SECONDS);
+    let started_at_cookie =
+        crate::cookies::session_started_at_cookie(unix_now_secs(), absolute_max as i64, state.cookie_secure);
     let response = Redirect::to(&config.post_login_redirect).into_response();
-    attach_cookies(response, cookies)
+    attach_cookies(response, [session_cookie, csrf_cookie, started_at_cookie])
 }
 
 pub fn router() -> Router<AppState> {

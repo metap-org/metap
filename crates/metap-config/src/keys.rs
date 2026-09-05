@@ -186,6 +186,7 @@ pub const GRAPHQL_MAX_COMPLEXITY: &str = "graphql.maxComplexity";
 pub const HTTP_RATE_LIMIT_PER_MS: &str = "http.rateLimitPerMillisecond";
 pub const HTTP_RATE_LIMIT_BURST: &str = "http.rateLimitBurst";
 pub const AUTH_SESSION_TTL_SECONDS: &str = "auth.sessionTtlSeconds";
+pub const AUTH_SESSION_ABSOLUTE_MAX_SECONDS: &str = "auth.sessionAbsoluteMaxSeconds";
 pub const CRON_WEBHOOK_AUTHORIZATION: &str = "cron.webhookAuthorization";
 pub const THEME_PRIMARY_COLOR: &str = "theme.primaryColor";
 pub const THEME_LOGO_URL: &str = "theme.logoUrl";
@@ -246,6 +247,27 @@ pub const REGISTRY: &[ConfigKeyDef] = &[
         // Floor of 60s: anything shorter expires mid-session for a real user. Ceiling of 30 days:
         // this platform has no token revocation (audit 04 A#8), so TTL *is* the revocation window.
         validate: |v| positive_int_in(v, 60, 2_592_000),
+        public: false,
+        secret: false,
+    },
+    ConfigKeyDef {
+        key: AUTH_SESSION_ABSOLUTE_MAX_SECONDS,
+        // PlatformGlobal, not Tenant like `AUTH_SESSION_TTL_SECONDS` right above — this is the
+        // platform's own safety cap on how long a sliding-refreshed session may live purely by
+        // staying active (`docs/features/31-session-expiry-redirect-and-refresh.md`'s Part B, the
+        // `GET /auth/me`-driven refresh below), not a per-tenant UX choice. Letting a tenant admin
+        // raise this would let them re-open the exact revocation-window gap `AUTH_SESSION_TTL_SECONDS`'s
+        // own ceiling exists to bound.
+        level: ConfigLevel::PlatformGlobal,
+        // 24h: long enough that one continuous work day never forces a re-login purely from the
+        // absolute cap, short enough that a session nobody ever explicitly logs out of (a forgotten
+        // open tab) can't ride the sliding refresh indefinitely.
+        default: || Value::from(86_400),
+        // Floor matches the session TTL's own ceiling-side reasoning: set below a tenant's actual
+        // `auth.sessionTtlSeconds`, the cap would make sliding refresh pointless (it could never
+        // extend a session before hitting the wall). Ceiling: same 30-day bound as the TTL, same
+        // no-revocation reason (audit 04 A#8).
+        validate: |v| positive_int_in(v, 3600, 2_592_000),
         public: false,
         secret: false,
     },
