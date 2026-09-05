@@ -1,7 +1,7 @@
 //! `GrpcBackend` — implements `metap_crud::RecordBackend` by calling a remote `RecordService`
 //! over gRPC, the client-side counterpart to `service.rs`'s server implementation. This is the
 //! concrete "remote" arm of the local-vs-remote dispatch seam `RecordBackend` exists for (see
-//! that trait's doc comment in `metap-crud`): a BFF gateway (`crates/graphql-gateway`) that has
+//! that trait's doc comment in `metap-crud`): a BFF gateway (`crates/metap-graphql-gateway`) that has
 //! no `CrudService`/Postgres of its own uses one `GrpcBackend` per upstream microservice instead.
 //!
 //! **Auth prefers the caller's own forwarded identity, falling back to a self-refreshing service

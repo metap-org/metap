@@ -74,7 +74,7 @@ impl SchemaHolder {
 /// (so a hot-swapped `metadata`/replaced `crud` is always picked up), this constructor argument
 /// doesn't get held onto. `state.crud` is `Arc<CrudService>`, coerced to `Arc<dyn RecordBackend>`
 /// here — the single-service (in-process) case of the same seam the BFF gateway
-/// (`crates/graphql-gateway`) uses a remote `GrpcBackend`/`CompositeBackend` for instead.
+/// (`crates/metap-graphql-gateway`) uses a remote `GrpcBackend`/`CompositeBackend` for instead.
 pub fn router(state: &AppState, limits: SchemaLimits) -> anyhow::Result<Router<AppState>> {
     let initial_metadata = state.metadata.load_full();
     let initial_backend: Arc<dyn RecordBackend> = state.crud.clone();
@@ -124,7 +124,7 @@ const PLAYGROUND_CSP: &str = "default-src 'self'; script-src 'self' https://unpk
 ///
 /// Generic over `S` rather than fixed to `AppState`: this handler never touches `AppState`'s
 /// fields (Postgres pool, `CrudService`, etc.) at all — it only serves static HTML — so a binary
-/// with no `AppState` (the BFF gateway, `crates/graphql-gateway`, which has no Postgres/CrudService
+/// with no `AppState` (the BFF gateway, `crates/metap-graphql-gateway`, which has no Postgres/CrudService
 /// of its own) can merge this router into its own `axum::Router<GatewayState>` unchanged instead
 /// of reimplementing the same handler.
 pub fn playground_router<S: Clone + Send + Sync + 'static>(endpoint: &str) -> Router<S> {

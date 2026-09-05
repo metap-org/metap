@@ -233,7 +233,7 @@ async fn try_refresh_session(
 /// Mints a fresh, short-lived Bearer token for the caller's own identity — added 2026-09-03
 /// alongside cookie-based sessions, for exactly one kind of consumer: a browser caller that needs
 /// to authenticate to a service which only ever speaks Bearer and has no cookie of its own to
-/// send, e.g. `crates/graphql-gateway` (its own separate deployment/keypair, `Authorization:
+/// send, e.g. `crates/metap-graphql-gateway` (its own separate deployment/keypair, `Authorization:
 /// Bearer` only — see that crate's `authenticate` function). `@metap/platform-ui`'s
 /// `useGraphQLQuery` calls this immediately before every gateway request rather than holding a
 /// token in memory across requests, so the thing this whole cookie migration was for (a session

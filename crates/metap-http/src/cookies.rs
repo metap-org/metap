@@ -25,7 +25,7 @@ use time::Duration;
 
 // Re-exported (not just used) so an existing `use metap_http::cookies::SESSION_COOKIE_NAME` (etc.)
 // keeps compiling unchanged now that the definitions live in `metap-runtime`, shared with
-// `crates/graphql-gateway` — see that module's doc comment for why it moved.
+// `crates/metap-graphql-gateway` — see that module's doc comment for why it moved.
 pub use metap_runtime::cookie_auth::{
     csrf_matches, requires_csrf_check, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME,
 };

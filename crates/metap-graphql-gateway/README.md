@@ -72,12 +72,12 @@ cd ../metap-demo-jira && GRPC_ENABLED=true cargo run   # REST :3100, gRPC :3101
 cd ../metap-demo-crm && GRPC_ENABLED=true cargo run    # REST :3000, gRPC :3001
 
 # 2. Provision one service-account user per upstream (email+password, admin role).
-cd ../metap-demo-jira && cargo run --manifest-path ../metap/crates/dev-tools/Cargo.toml -- create-user <tenantId> <email> <password>
-cd ../metap-demo-jira && cargo run --manifest-path ../metap/crates/dev-tools/Cargo.toml -- seed-admin <tenantId> <userId>
-cd ../metap-demo-crm && cargo run --manifest-path ../metap/crates/dev-tools/Cargo.toml -- create-user <tenantId> <email> <password>
-cd ../metap-demo-crm && cargo run --manifest-path ../metap/crates/dev-tools/Cargo.toml -- seed-admin <tenantId> <userId>
+cd ../metap-demo-jira && cargo run --manifest-path ../metap/crates/metap-dev-tools/Cargo.toml -- create-user <tenantId> <email> <password>
+cd ../metap-demo-jira && cargo run --manifest-path ../metap/crates/metap-dev-tools/Cargo.toml -- seed-admin <tenantId> <userId>
+cd ../metap-demo-crm && cargo run --manifest-path ../metap/crates/metap-dev-tools/Cargo.toml -- create-user <tenantId> <email> <password>
+cd ../metap-demo-crm && cargo run --manifest-path ../metap/crates/metap-dev-tools/Cargo.toml -- seed-admin <tenantId> <userId>
 
-# 3. Generate this gateway's own keypair and fill in crates/graphql-gateway/.env
+# 3. Generate this gateway's own keypair and fill in crates/metap-graphql-gateway/.env
 #    (UPSTREAM_1_*/UPSTREAM_2_* with the two accounts above).
 
 # 4. Run the gateway.

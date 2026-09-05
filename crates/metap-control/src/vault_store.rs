@@ -226,7 +226,7 @@ struct DsnSecret {
 
 impl VaultStore {
     /// Writes the DSN a `dsn_secret_ref` will resolve to — `dev-tools vault-put-dsn`'s only
-    /// caller today (`crates/dev-tools/src/main.rs`), so an operator can populate Vault for a
+    /// caller today (`crates/metap-dev-tools/src/main.rs`), so an operator can populate Vault for a
     /// `dedicated_db` tenant. Not used by `Router`/`db_credentials` (read-only there) — same
     /// read-via-trait/write-via-inherent-method split `PostgresTenantRegistry` already has
     /// between `TenantRegistry::get` and `provision`/`set_status`.

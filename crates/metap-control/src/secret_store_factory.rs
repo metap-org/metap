@@ -1,7 +1,7 @@
 //! Picks which `SecretStore` impl a binary should build from `metap_infra::AppConfig` — the one
 //! piece of the "which `SecretStore` resolves a `DedicatedDb` tenant's DSN" wiring every binary
 //! that builds a `Router` needs (`../metap-demo-crm`, `../metap-demo-jira`,
-//! `crates/reconciler-orchestrator`, `crates/dev-tools`). Centralized here (rather than each
+//! `crates/reconciler-orchestrator`, `crates/metap-dev-tools`). Centralized here (rather than each
 //! binary hand-rolling the same branch, the way it worked when `VaultStore`/`EnvStore` were the
 //! only two options) once a third and fourth backend (`AwsSecretsManagerStore`,
 //! `GcpSecretManagerStore`) made the branch big enough that four independent copies would risk

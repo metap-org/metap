@@ -26,7 +26,7 @@ diễn giải lại logic (đọc code là nguồn thật).
 
 | File | Rule | Vì sao là false positive |
 |---|---|---|
-| `crates/dev-tools/src/main.rs` (dòng `std::env::args().collect()`) | `rust.lang.security.args.args` | Rule cảnh báo dùng `std::env::args()[0]` (đường dẫn executable) cho mục đích bảo mật — file này chỉ dùng `args.get(1)` để chọn subcommand CLI (`gen-keys`/`mint-token`/...), không đọc `args[0]`, không có logic bảo mật nào phụ thuộc executable path. Suppress bằng `# nosemgrep: rust.lang.security.args.args` inline (2026-08-25) để CI job gate được ở 0 finding thật, không phải bị "biết trước 1 finding luôn đỏ" |
+| `crates/metap-dev-tools/src/main.rs` (dòng `std::env::args().collect()`) | `rust.lang.security.args.args` | Rule cảnh báo dùng `std::env::args()[0]` (đường dẫn executable) cho mục đích bảo mật — file này chỉ dùng `args.get(1)` để chọn subcommand CLI (`gen-keys`/`mint-token`/...), không đọc `args[0]`, không có logic bảo mật nào phụ thuộc executable path. Suppress bằng `# nosemgrep: rust.lang.security.args.args` inline (2026-08-25) để CI job gate được ở 0 finding thật, không phải bị "biết trước 1 finding luôn đỏ" |
 
 ## Chưa cover / cân nhắc thêm (ghi nhận, chưa phải việc cần làm ngay)
 

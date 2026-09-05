@@ -5,7 +5,7 @@
 //! `docs/modular-spi-architecture.md` for the target this generalizes toward.
 //!
 //! `subscribe` is the read-side counterpart, added once a real consumer (the notification
-//! worker, see `crates/notification-worker`) needed one — see `docs/roadmap.md` Phase 5's
+//! worker, see `crates/metap-notification-worker`) needed one — see `docs/roadmap.md` Phase 5's
 //! note on the stub `<entity>.workflow.transitioned` topic. `ConsumedEvent` hides the
 //! `lapin`-specific delivery/ack machinery behind the same backend-agnostic shape `publish`
 //! already uses, so a future non-Rabbit `EventBus` impl doesn't leak here either.

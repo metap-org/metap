@@ -1,10 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/cron-scheduler",
-  "crates/db-migrate",
-  "crates/dev-tools",
-  "crates/graphql-gateway",
   "crates/metap",
   "crates/metap-app",
   "crates/metap-attachments",
@@ -13,16 +9,22 @@ members = [
   "crates/metap-config",
   "crates/metap-control",
   "crates/metap-cron",
+  "crates/metap-cron-scheduler",
   "crates/metap-crud",
   "crates/metap-dashboards",
+  "crates/metap-db-migrate",
+  "crates/metap-dev-tools",
   "crates/metap-http",
   "crates/metap-graphql",
+  "crates/metap-graphql-gateway",
   "crates/metap-graphql-http",
   "crates/metap-grpc",
   "crates/metap-infra",
   "crates/metap-jwks",
   "crates/metap-jwks-http",
   "crates/metap-metadata",
+  "crates/metap-notification-worker",
+  "crates/metap-outbox-publisher",
   "crates/metap-peripherals",
   "crates/metap-permission",
   "crates/metap-query",
@@ -30,8 +32,6 @@ members = [
   "crates/metap-runtime",
   "crates/metap-storage",
   "crates/metap-workflow",
-  "crates/notification-worker",
-  "crates/outbox-publisher",
 ]
 
 [workspace.package]
@@ -46,7 +46,7 @@ edition = "2021"
 #   - Feature set genuinely differs per crate (tokio, sqlx, axum, tower-http, async-graphql) ->
 #     version/default-features only here, member does `dep = { workspace = true, features = [...] }`
 #     with its own list (inherited features are additive-only, never a subset — a shared baseline
-#     with everyone's features unioned in would force lighter crates like `graphql-gateway` to
+#     with everyone's features unioned in would force lighter crates like `metap-graphql-gateway` to
 #     compile sqlx's `uuid`/`chrono`/`json` features they never use).
 # A dep used by exactly 1 crate (`tracing-subscriber`, `lapin`, `argon2`, `ring`, ...) stays local
 # to that crate's own `Cargo.toml` — this table is not a dependency dump for every crate in the
