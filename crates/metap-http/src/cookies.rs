@@ -26,7 +26,9 @@ use time::Duration;
 // Re-exported (not just used) so an existing `use metap_http::cookies::SESSION_COOKIE_NAME` (etc.)
 // keeps compiling unchanged now that the definitions live in `metap-runtime`, shared with
 // `crates/graphql-gateway` — see that module's doc comment for why it moved.
-pub use metap_runtime::cookie_auth::{csrf_matches, requires_csrf_check, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+pub use metap_runtime::cookie_auth::{
+    csrf_matches, requires_csrf_check, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME,
+};
 
 /// `SameSite=Lax` rather than `Strict`: `Strict` withholds the cookie even on a plain top-level
 /// navigation *into* the app from an external link (e.g. a bookmarked page, or a link from an
@@ -60,6 +62,32 @@ pub fn session_cookies(
     let csrf = base_cookie(CSRF_COOKIE_NAME, csrf_value.to_string(), false, secure, max_age);
     (session, csrf)
 }
+
+/// Set once at login/OIDC callback, alongside [`session_cookies`]'s pair — **never rewritten**
+/// after that (`routes/auth.rs`'s `try_refresh_session` reads it but never re-sets it), which is
+/// the whole mechanism: this cookie's own `Max-Age` equals `auth.sessionAbsoluteMaxSeconds` *as
+/// measured from the original login*, so the browser drops it on its own once that absolute cap
+/// elapses — no server-side bookkeeping of "when did this session start" needed anywhere else.
+/// A caller with no session cookie at all (Bearer/Basic/CLI) never gets one, and sliding refresh
+/// is a no-op for them (`docs/features/31-session-expiry-redirect-and-refresh.md`'s Part B).
+///
+/// `HttpOnly` even though the value (a Unix timestamp) isn't sensitive by itself — no page script
+/// has a legitimate reason to read it, so there's no reason to expose it.
+pub fn session_started_at_cookie(
+    started_at_unix_secs: i64,
+    absolute_max_seconds: i64,
+    secure: bool,
+) -> Cookie<'static> {
+    base_cookie(
+        SESSION_STARTED_AT_COOKIE_NAME,
+        started_at_unix_secs.to_string(),
+        true,
+        secure,
+        Duration::seconds(absolute_max_seconds),
+    )
+}
+
+pub const SESSION_STARTED_AT_COOKIE_NAME: &str = "metap_session_started_at";
 
 /// Whether a **credential-issuing** request is allowed to proceed — `GET /auth/token`'s extra gate
 /// (audit 04 finding A#4, fixed 2026-09-03).
@@ -96,11 +124,12 @@ pub fn credential_issuing_request_allowed(headers: &axum::http::HeaderMap) -> bo
 /// the cookie immediately. Attributes (`Path`/`SameSite`/`Secure`) must match the ones the cookie
 /// was originally set with, or the browser treats this as a different cookie and the original
 /// persists — `secure` is threaded through for exactly that reason.
-pub fn clear_session_cookies(secure: bool) -> (Cookie<'static>, Cookie<'static>) {
+pub fn clear_session_cookies(secure: bool) -> (Cookie<'static>, Cookie<'static>, Cookie<'static>) {
     let expire = Duration::seconds(0);
     let session = base_cookie(SESSION_COOKIE_NAME, String::new(), true, secure, expire);
     let csrf = base_cookie(CSRF_COOKIE_NAME, String::new(), false, secure, expire);
-    (session, csrf)
+    let started_at = base_cookie(SESSION_STARTED_AT_COOKIE_NAME, String::new(), true, secure, expire);
+    (session, csrf, started_at)
 }
 
 #[cfg(test)]
@@ -189,8 +218,8 @@ mod tests {
     /// own doc comment.
     #[test]
     fn clearing_expires_immediately_and_keeps_the_original_attributes() {
-        let (session, csrf) = clear_session_cookies(true);
-        for cookie in [&session, &csrf] {
+        let (session, csrf, started_at) = clear_session_cookies(true);
+        for cookie in [&session, &csrf, &started_at] {
             assert_eq!(cookie.max_age(), Some(Duration::seconds(0)));
             assert_eq!(cookie.path(), Some("/"));
             assert_eq!(cookie.secure(), Some(true));
@@ -199,5 +228,17 @@ mod tests {
         }
         assert_eq!(session.http_only(), Some(true));
         assert_eq!(csrf.http_only(), Some(false));
+        assert_eq!(started_at.http_only(), Some(true));
+    }
+
+    #[test]
+    fn started_at_cookie_carries_the_absolute_cap_as_its_own_max_age() {
+        let cookie = session_started_at_cookie(1_700_000_000, 86_400, true);
+        assert_eq!(cookie.name(), SESSION_STARTED_AT_COOKIE_NAME);
+        assert_eq!(cookie.value(), "1700000000");
+        assert_eq!(cookie.http_only(), Some(true));
+        assert_eq!(cookie.max_age(), Some(Duration::seconds(86_400)));
+        assert_eq!(cookie.path(), Some("/"));
+        assert_eq!(cookie.secure(), Some(true));
     }
 }
