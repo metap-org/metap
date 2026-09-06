@@ -164,9 +164,12 @@ struct ListAdminUsersResponse {
     data: Vec<UserRolesDto>,
 }
 
+// Explicit operation_id: see `routes/users.rs`'s own `list_users` handler for why the default
+// (bare function name) collides once both are in the same combined OpenApi document.
 #[utoipa::path(
     get,
     path = "/admin/users",
+    operation_id = "listAdminUsers",
     responses((status = 200, description = "OK", body = ListAdminUsersResponse)),
 )]
 async fn list_users(State(state): State<AppState>, AdminContext(context): AdminContext) -> Response {

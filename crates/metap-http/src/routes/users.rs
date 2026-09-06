@@ -30,9 +30,15 @@ struct ListUsersResponse {
     data: Vec<UserSummaryDto>,
 }
 
+// Explicit operation_id: utoipa defaults to the bare function name, which collides with
+// `admin.rs`'s own `list_users` handler (`GET /admin/users`, a different shape for a different
+// purpose — see this file's top doc comment) once both are in the same combined OpenApi document.
+// openapi-typescript's `operations` namespace is keyed by operation_id, so the collision only
+// surfaces there as a `tsc` duplicate-identifier error, not at `cargo build`/`clippy` time.
 #[utoipa::path(
     get,
     path = "/users",
+    operation_id = "listTenantUsers",
     responses((status = 200, description = "OK", body = ListUsersResponse)),
 )]
 async fn list_users(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
