@@ -163,6 +163,10 @@ async fn health() -> &'static str {
     "ok"
 }
 
+async fn schema_sdl(State(state): State<GatewayState>) -> String {
+    state.schema.sdl()
+}
+
 pub async fn serve(config: GatewayConfig, built: BuiltSchema) -> anyhow::Result<()> {
     // Exactly one of the 2 is `Some` — `GatewayConfig::from_env`'s own doc comment on
     // `jwks_url`/`auth_public_key_pem` enforces this at parse time.
@@ -204,7 +208,13 @@ pub async fn serve(config: GatewayConfig, built: BuiltSchema) -> anyhow::Result<
 
     let mut app: Router<GatewayState> = Router::new()
         .route("/health", get(health))
-        .route("/graphql", post(graphql_handler));
+        .route("/graphql", post(graphql_handler))
+        // The gateway's counterpart to `metap-graphql-http`'s own `GET /graphql/schema.graphql`
+        // (`../metap-graphql-http/src/lib.rs`'s doc comment has the full reasoning) — same
+        // unauthenticated plain-text SDL dump, just reading `GatewayState.schema` directly since
+        // this binary builds its schema once at boot (`schema_builder::build_with_extensions`),
+        // with no per-request hot-reload holder to go through like a single service's own mount.
+        .route("/graphql/schema.graphql", get(schema_sdl));
 
     // Same "unauthenticated static HTML, gate by env instead of by the crate itself" convention
     // `../metap-demo-jira/src/main.rs` already established for this exact router.
