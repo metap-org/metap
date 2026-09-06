@@ -6,14 +6,35 @@
 
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use axum::{Json, Router};
+use serde::Serialize;
 use serde_json::json;
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
+use uuid::Uuid;
 
 use crate::auth::AuthContext;
 use crate::error::{internal_error_response, router_unavailable_response};
 use crate::state::AppState;
 
+// Never actually constructed — doc-only, see `health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct UserSummaryDto {
+    id: Uuid,
+    email: String,
+}
+
+#[derive(Serialize, ToSchema)]
+struct ListUsersResponse {
+    data: Vec<UserSummaryDto>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/users",
+    responses((status = 200, description = "OK", body = ListUsersResponse)),
+)]
 async fn list_users(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
     let tenant_id = match state.permissions.scoped_tenant(&context) {
         Ok(id) => id,
@@ -36,6 +57,14 @@ async fn list_users(State(state): State<AppState>, AuthContext(context): AuthCon
     Json(json!({ "data": data })).into_response()
 }
 
+fn build_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(list_users))
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new().route("/users", get(list_users))
+    build_router().split_for_parts().0
+}
+
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    build_router().split_for_parts().1
 }

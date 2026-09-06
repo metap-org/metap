@@ -17,18 +17,46 @@
 
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use axum::{Json, Router};
 use metap_config::ConfigError;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::auth::PlatformAdminContext;
 use crate::error::{internal_error_response, service_error_response};
 use crate::state::AppState;
 
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct ConfigItemDto {
+    key: String,
+    value: Value,
+    level: String,
+    #[serde(rename = "tenantOverridable")]
+    tenant_overridable: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+struct ListConfigResponse {
+    data: Vec<ConfigItemDto>,
+}
+
 /// `Operator` keys are absent from this listing entirely, not rendered as forbidden — an API that
 /// cannot write them has no reason to disclose their values either.
+#[utoipa::path(
+    get,
+    path = "/platform/config",
+    description = "Requires the platform_admin role. Covers both the platformGlobal tier and the \
+                   fleet default of each tenant tier key (level/tenantOverridable say which). \
+                   Operator-tier keys are never listed.",
+    responses(
+        (status = 200, description = "OK", body = ListConfigResponse),
+        (status = 403, description = "Caller is not a platform admin"),
+    ),
+)]
 async fn list_config(State(state): State<AppState>, PlatformAdminContext(_): PlatformAdminContext) -> Response {
     let snapshot = state.config.current();
     let items: Vec<Value> = snapshot
@@ -56,9 +84,23 @@ pub(crate) fn level_name(level: metap_config::ConfigLevel) -> &'static str {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SetConfigBody {
     value: Value,
+}
+
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct SetConfigDto {
+    key: String,
+    value: Value,
+    #[serde(rename = "appliesImmediately")]
+    applies_immediately: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+struct SetConfigResponse {
+    data: SetConfigDto,
 }
 
 pub(crate) fn config_error_response(err: ConfigError) -> Response {
@@ -99,6 +141,22 @@ fn applies_immediately(key: &str) -> bool {
     )
 }
 
+#[utoipa::path(
+    put,
+    path = "/platform/config/{key}",
+    description = "Rejects an operator-tier key with 403 and an out-of-range value with 422. The \
+                   response's appliesImmediately reports whether the change takes effect without a \
+                   restart (false for the rate-limit keys, which are baked into a middleware layer \
+                   at router-build time).",
+    params(("key" = String, Path)),
+    request_body = SetConfigBody,
+    responses(
+        (status = 200, description = "Stored", body = SetConfigResponse),
+        (status = 403, description = "Key is not writable at this tier"),
+        (status = 404, description = "No such config key"),
+        (status = 422, description = "Value rejected by the key's validator"),
+    ),
+)]
 async fn set_config(
     State(state): State<AppState>,
     PlatformAdminContext(_): PlatformAdminContext,
@@ -120,6 +178,16 @@ async fn set_config(
 
 /// Clears an override so the key falls back to its declared default — distinct from setting it to
 /// the default's current value, which would pin it against a future change to that default.
+#[utoipa::path(
+    delete,
+    path = "/platform/config/{key}",
+    params(("key" = String, Path)),
+    responses(
+        (status = 200, description = "Reset, returns the default now in effect", body = SetConfigResponse),
+        (status = 403, description = "Key is not writable at this tier"),
+        (status = 404, description = "No such config key"),
+    ),
+)]
 async fn reset_config(
     State(state): State<AppState>,
     PlatformAdminContext(_): PlatformAdminContext,
@@ -137,11 +205,18 @@ async fn reset_config(
     }
 }
 
+fn build_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_config))
+        .routes(routes!(set_config, reset_config))
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new().route("/platform/config", get(list_config)).route(
-        "/platform/config/{key}",
-        axum::routing::put(set_config).delete(reset_config),
-    )
+    build_router().split_for_parts().0
+}
+
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    build_router().split_for_parts().1
 }
 
 #[cfg(test)]

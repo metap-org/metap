@@ -27,10 +27,12 @@
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::auth::{AdminContext, AuthContext};
@@ -38,9 +40,36 @@ use crate::error::{internal_error_response, router_unavailable_response};
 use crate::routes::platform_config::level_name;
 use crate::state::AppState;
 
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct TenantConfigItemDto {
+    key: String,
+    value: Value,
+    level: String,
+    overridden: bool,
+    public: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+struct ListTenantConfigResponse {
+    data: Vec<TenantConfigItemDto>,
+}
+
 /// Read is `AuthContext`, not `AdminContext`: every one of these keys shapes what the app looks
 /// like or how long a session lasts for the user reading it, so an ordinary member seeing the
 /// effective values is expected. Writing is admin-gated below.
+#[utoipa::path(
+    get,
+    path = "/admin/config",
+    description = "Any authenticated caller. The tenant comes from the token, never from the \
+                   request, so there is no way to read another tenant's values. `overridden` \
+                   distinguishes a value this tenant set from one inherited from the fleet \
+                   default.",
+    responses(
+        (status = 200, description = "OK", body = ListTenantConfigResponse),
+        (status = 401, description = "Not authenticated"),
+    ),
+)]
 async fn list_tenant_config(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
     let tenant_id = match state.permissions.scoped_tenant(&context) {
         Ok(id) => id,
@@ -65,11 +94,43 @@ async fn list_tenant_config(State(state): State<AppState>, AuthContext(context):
     Json(json!({ "data": items })).into_response()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SetConfigBody {
     value: Value,
 }
 
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct SetTenantConfigDto {
+    key: String,
+    value: Value,
+    overridden: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+struct SetTenantConfigResponse {
+    data: SetTenantConfigDto,
+}
+
+#[utoipa::path(
+    put,
+    path = "/admin/config/{key}",
+    description = "Requires the admin role. Rejects a platform-global or operator-tier key with \
+                   403 and an out-of-range value with 422. For a secret key the value is the \
+                   plaintext credential: it is written to the deployment's secret backend and \
+                   only a server-derived reference is stored, so it is write-only — no endpoint \
+                   returns it afterwards. DELETE on a secret key revokes the credential rather \
+                   than merely unlinking it.",
+    params(("key" = String, Path)),
+    request_body = SetConfigBody,
+    responses(
+        (status = 200, description = "Stored", body = SetTenantConfigResponse),
+        (status = 403, description = "Key is not writable by a tenant admin"),
+        (status = 404, description = "No such config key"),
+        (status = 422, description = "Value rejected by the key's validator"),
+        (status = 503, description = "The secret backend refused or was unreachable (secret keys only)"),
+    ),
+)]
 async fn set_tenant_config(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -101,6 +162,16 @@ async fn set_tenant_config(
 
 /// Clears this tenant's override. The key then reads back the fleet default a platform admin set,
 /// or the value declared in Rust if there is none — never `null`.
+#[utoipa::path(
+    delete,
+    path = "/admin/config/{key}",
+    params(("key" = String, Path)),
+    responses(
+        (status = 200, description = "Reset, returns the inherited value now in effect", body = SetTenantConfigResponse),
+        (status = 403, description = "Key is not writable by a tenant admin"),
+        (status = 404, description = "No such config key"),
+    ),
+)]
 async fn reset_tenant_config(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -138,6 +209,28 @@ fn request_hostname(headers: &HeaderMap) -> Option<String> {
     metap_control::normalize_hostname(raw)
 }
 
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct PublicConfigItemDto {
+    key: String,
+    value: Value,
+}
+
+#[derive(Serialize, ToSchema)]
+struct PublicConfigResponse {
+    data: Vec<PublicConfigItemDto>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/public/config",
+    description = "Unauthenticated. Returns only keys declared public in the config registry \
+                   (theme colour, logo, display name) — never any other key, at any tier. The \
+                   tenant is resolved from the Host header; an unrecognised hostname returns the \
+                   fleet-wide values rather than a 404, so this endpoint cannot be used to \
+                   discover which hostnames belong to a tenant.",
+    responses((status = 200, description = "OK", body = PublicConfigResponse)),
+)]
 async fn public_config(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let tenant_id = match request_hostname(&headers) {
         Some(host) => resolve_hostname(&state, &host).await,
@@ -181,14 +274,19 @@ async fn resolve_hostname(state: &AppState, host: &str) -> Option<Uuid> {
     }
 }
 
+fn build_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_tenant_config))
+        .routes(routes!(set_tenant_config, reset_tenant_config))
+        .routes(routes!(public_config))
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/admin/config", get(list_tenant_config))
-        .route(
-            "/admin/config/{key}",
-            axum::routing::put(set_tenant_config).delete(reset_tenant_config),
-        )
-        .route("/public/config", get(public_config))
+    build_router().split_for_parts().0
+}
+
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    build_router().split_for_parts().1
 }
 
 #[cfg(test)]

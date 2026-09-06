@@ -4,10 +4,12 @@
 
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::auth::AuthContext;
@@ -28,6 +30,22 @@ fn user_id(context: &metap_permission::RequestContext) -> Result<Uuid, Box<Respo
         .ok_or_else(|| Box::new(internal_error_response(anyhow::anyhow!("token missing user id"))))
 }
 
+// Never actually constructed — doc-only, see `health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct PreferencesDto {
+    locale: String,
+}
+
+#[derive(Serialize, ToSchema)]
+struct GetPreferencesResponse {
+    data: PreferencesDto,
+}
+
+#[utoipa::path(
+    get,
+    path = "/preferences",
+    responses((status = 200, description = "OK", body = GetPreferencesResponse)),
+)]
 async fn get_preferences(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
     let tenant_id = match state.permissions.scoped_tenant(&context) {
         Ok(id) => id,
@@ -43,11 +61,20 @@ async fn get_preferences(State(state): State<AppState>, AuthContext(context): Au
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct UpdatePreferencesBody {
     locale: String,
 }
 
+#[utoipa::path(
+    put,
+    path = "/preferences",
+    request_body = UpdatePreferencesBody,
+    responses(
+        (status = 200, description = "OK", body = GetPreferencesResponse),
+        (status = 400, description = "Unsupported locale"),
+    ),
+)]
 async fn update_preferences(
     State(state): State<AppState>,
     AuthContext(context): AuthContext,
@@ -75,6 +102,14 @@ async fn update_preferences(
     }
 }
 
+fn build_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(get_preferences, update_preferences))
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new().route("/preferences", get(get_preferences).put(update_preferences))
+    build_router().split_for_parts().0
+}
+
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    build_router().split_for_parts().1
 }

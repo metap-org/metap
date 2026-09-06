@@ -11,16 +11,28 @@
 
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use axum::{Json, Router};
 use metap_crud::ServiceResult;
 use metap_permission::EntityAction;
+use metap_workflow::WorkflowEvent;
+use serde::Serialize;
 use serde_json::json;
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::auth::AuthContext;
 use crate::error::{internal_error_response, router_unavailable_response, service_error_response};
 use crate::state::AppState;
+
+// Never actually constructed — doc-only, see `health.rs`'s comment. Reuses `WorkflowEvent`
+// directly: `Json(json!({"data": events}))` below serializes `Vec<WorkflowEvent>` verbatim
+// (deliberately snake_case, see this file's NOTE above), not a re-typed shape.
+#[derive(Serialize, ToSchema)]
+struct WorkflowEventsResponse {
+    data: Vec<WorkflowEvent>,
+}
 
 // NOTE (2026-09-05, `docs/features/20-record-detail-audit-trail-and-tabs.md`): `WorkflowEvent`'s
 // own `#[derive(Serialize)]` emits its Rust field names verbatim
@@ -32,6 +44,15 @@ use crate::state::AppState;
 // edit across both repos (and ideally an API-version discipline this route doesn't have), not a
 // solo fix bundled into an unrelated FE feature — flagged, not fixed.
 
+#[utoipa::path(
+    get,
+    path = "/api/{entity}/{record_id}/workflow-events",
+    params(
+        ("entity" = String, Path, description = "Entity name"),
+        ("record_id" = Uuid, Path, description = "Record id"),
+    ),
+    responses((status = 200, description = "OK", body = WorkflowEventsResponse)),
+)]
 async fn list_workflow_events(
     State(state): State<AppState>,
     Path((entity, record_id)): Path<(String, Uuid)>,
@@ -68,6 +89,14 @@ async fn list_workflow_events(
     Json(json!({ "data": events })).into_response()
 }
 
+fn build_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(list_workflow_events))
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/{entity}/{record_id}/workflow-events", get(list_workflow_events))
+    build_router().split_for_parts().0
+}
+
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    build_router().split_for_parts().1
 }

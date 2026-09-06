@@ -8,8 +8,11 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::auth::AuthContext;
@@ -63,7 +66,18 @@ fn unix_now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-#[derive(Deserialize)]
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct LoginDto {
+    token: String,
+}
+
+#[derive(Serialize, ToSchema)]
+struct LoginResponse {
+    data: LoginDto,
+}
+
+#[derive(Deserialize, ToSchema)]
 struct LoginBody {
     email: String,
     password: String,
@@ -80,6 +94,15 @@ struct LoginBody {
     tenant_id: Option<Uuid>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/login",
+    request_body = LoginBody,
+    responses(
+        (status = 200, description = "OK", body = LoginResponse),
+        (status = 401, description = "Invalid credentials"),
+    ),
+)]
 async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Response {
     // Local password is one of possibly several providers a tenant can enable
     // (`crates/metap-auth`'s doc comment) — this route only ever speaks the local one; Basic/OIDC
@@ -156,6 +179,27 @@ async fn logout(State(state): State<AppState>) -> Response {
 /// deliberately **additive and best-effort**: any failure resolving it (router unavailable, no
 /// matching row, a token whose `sub` isn't a real user) yields `null` and the identity/roles
 /// payload is returned unchanged, because those are what every caller actually gates on.
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct MeDto {
+    #[serde(rename = "userId")]
+    user_id: Option<String>,
+    #[serde(rename = "tenantId")]
+    tenant_id: String,
+    email: Option<String>,
+    roles: Vec<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct MeResponse {
+    data: MeDto,
+}
+
+#[utoipa::path(
+    get,
+    path = "/auth/me",
+    responses((status = 200, description = "OK", body = MeResponse)),
+)]
 async fn me(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -279,15 +323,32 @@ async fn resolve_own_email(state: &AppState, context: &metap_permission::Request
     user.map(|u| u.email)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct ProvidersQuery {
     #[serde(rename = "tenantId")]
     tenant_id: Uuid,
 }
 
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct ProvidersDto {
+    providers: Vec<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct ProvidersResponse {
+    data: ProvidersDto,
+}
+
 /// Public (no auth) — lets the frontend's login page decide which buttons to show (e.g. "Sign in
 /// with SSO") for a given tenant without leaking any secret; `metap_auth::enabled_providers`
 /// returns kinds only, never the `tenant_auth_configs.config` payload itself.
+#[utoipa::path(
+    get,
+    path = "/auth/providers",
+    params(("tenantId" = Uuid, Query)),
+    responses((status = 200, description = "OK", body = ProvidersResponse)),
+)]
 async fn list_providers(State(state): State<AppState>, Query(query): Query<ProvidersQuery>) -> Response {
     let mut tx = match state.router.begin(query.tenant_id.into()).await {
         Ok(tx) => tx,
@@ -331,6 +392,15 @@ async fn oidc_config_or_404(
 /// cache key) alongside the nonce/PKCE verifier the callback needs — `openidconnect` embeds the
 /// CSRF token as the `state` query param on the URL it returns, so the callback gets it back
 /// automatically from the IdP redirect.
+#[utoipa::path(
+    get,
+    path = "/auth/oidc/{tenant_id}/login",
+    params(("tenant_id" = Uuid, Path)),
+    responses(
+        (status = 302, description = "Redirect to IdP"),
+        (status = 404, description = "OIDC not configured for this tenant"),
+    ),
+)]
 async fn oidc_login(State(state): State<AppState>, Path(tenant_id): Path<Uuid>) -> Response {
     let (config, client_secret) = match oidc_config_or_404(&state, tenant_id).await {
         Ok(v) => v,
@@ -355,7 +425,7 @@ async fn oidc_login(State(state): State<AppState>, Path(tenant_id): Path<Uuid>) 
     Redirect::to(&auth_url).into_response()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct OidcCallbackQuery {
     code: String,
     state: String,
@@ -373,6 +443,20 @@ struct OidcCallbackQuery {
 /// but a `Set-Cookie` header achieves *more completely*: the token now never touches the URL at
 /// all, not even transiently in the browser's address bar or history before client script could
 /// scrub it. See `crate::cookies`'s doc comment for the cookies themselves.
+#[utoipa::path(
+    get,
+    path = "/auth/oidc/{tenant_id}/callback",
+    params(
+        ("tenant_id" = Uuid, Path),
+        ("code" = String, Query),
+        ("state" = String, Query),
+    ),
+    responses(
+        (status = 302, description = "Redirect back to the tenant's frontend"),
+        (status = 400, description = "Invalid/expired OIDC flow state"),
+        (status = 401, description = "OIDC verification failed"),
+    ),
+)]
 async fn oidc_callback(
     State(state): State<AppState>,
     Path(tenant_id): Path<Uuid>,
@@ -464,13 +548,24 @@ async fn oidc_callback(
     attach_cookies(response, [session_cookie, csrf_cookie, started_at_cookie])
 }
 
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/auth/login", post(login))
+// `logout`/`issue_token` are deliberately undocumented (not in scope of this crate's utoipa
+// migration, matching what the old hand-written `openapi_paths::auth_paths` covered) — plain
+// `.route()` calls, not `routes!`, so they don't need a `#[utoipa::path]` annotation.
+fn build_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(login))
         .route("/auth/logout", post(logout))
-        .route("/auth/me", get(me))
+        .routes(routes!(me))
         .route("/auth/token", get(issue_token))
-        .route("/auth/providers", get(list_providers))
-        .route("/auth/oidc/{tenant_id}/login", get(oidc_login))
-        .route("/auth/oidc/{tenant_id}/callback", get(oidc_callback))
+        .routes(routes!(list_providers))
+        .routes(routes!(oidc_login))
+        .routes(routes!(oidc_callback))
+}
+
+pub fn router() -> Router<AppState> {
+    build_router().split_for_parts().0
+}
+
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    build_router().split_for_parts().1
 }

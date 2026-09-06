@@ -11,23 +11,39 @@ use std::collections::HashMap;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
-use axum::{Json, Router};
 use metap_permission::{EntityAction, PolicyCondition, PolicyEffect, PolicyRow, PolicySubject};
-use serde::Deserialize;
+use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::auth::AdminContext;
 use crate::error::{internal_error_response, router_unavailable_response, service_error_response};
 use crate::state::AppState;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreateUserBody {
     email: String,
     password: String,
     #[serde(default)]
     roles: Vec<String>,
+}
+
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct CreatedUserDto {
+    #[serde(rename = "userId")]
+    user_id: Uuid,
+    email: String,
+    roles: Vec<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct CreateUserResponse {
+    data: CreatedUserDto,
 }
 
 /// Provisions a new local-login user (`docs/roadmap.md` Phase 15) — the admin-driven
@@ -40,6 +56,15 @@ struct CreateUserBody {
 /// closes a pre-existing atomicity gap: a role assignment failing partway used to leave a user
 /// row committed with only some of `body.roles` granted, with no way to tell which; now the
 /// whole request commits or rolls back together.
+#[utoipa::path(
+    post,
+    path = "/admin/users",
+    request_body = CreateUserBody,
+    responses(
+        (status = 201, description = "Created", body = CreateUserResponse),
+        (status = 409, description = "Email already taken"),
+    ),
+)]
 async fn create_user(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -91,6 +116,26 @@ async fn create_user(
         .into_response()
 }
 
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment. `policy_to_json`
+// below builds this exact shape by hand (not `PolicyRow`'s own field names/casing), so this DTO
+// mirrors `policy_to_json`'s output rather than the domain struct.
+#[derive(Serialize, ToSchema)]
+struct PolicyDto {
+    id: Uuid,
+    #[serde(rename = "tenantId")]
+    tenant_id: Uuid,
+    entity: String,
+    action: String,
+    field: Option<String>,
+    subject: String,
+    roles: Option<Vec<String>>,
+    #[schema(value_type = Option<serde_json::Value>)]
+    condition: Option<PolicyCondition>,
+    #[serde(rename = "createdBy")]
+    created_by: Option<Uuid>,
+    effect: String,
+}
+
 fn policy_to_json(row: &PolicyRow) -> Value {
     json!({
         "id": row.id,
@@ -106,6 +151,24 @@ fn policy_to_json(row: &PolicyRow) -> Value {
     })
 }
 
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct UserRolesDto {
+    #[serde(rename = "userId")]
+    user_id: Uuid,
+    roles: Vec<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct ListAdminUsersResponse {
+    data: Vec<UserRolesDto>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/users",
+    responses((status = 200, description = "OK", body = ListAdminUsersResponse)),
+)]
 async fn list_users(State(state): State<AppState>, AdminContext(context): AdminContext) -> Response {
     let tenant_id = match state.permissions.scoped_tenant(&context) {
         Ok(id) => id,
@@ -133,11 +196,31 @@ async fn list_users(State(state): State<AppState>, AdminContext(context): AdminC
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct AssignRoleBody {
     role: String,
 }
 
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment.
+#[derive(Serialize, ToSchema)]
+struct AssignedRoleDto {
+    #[serde(rename = "userId")]
+    user_id: Uuid,
+    role: String,
+}
+
+#[derive(Serialize, ToSchema)]
+struct AssignRoleResponse {
+    data: AssignedRoleDto,
+}
+
+#[utoipa::path(
+    post,
+    path = "/admin/users/{userId}/roles",
+    params(("userId" = Uuid, Path)),
+    request_body = AssignRoleBody,
+    responses((status = 201, description = "Created", body = AssignRoleResponse)),
+)]
 async fn assign_role(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
@@ -169,6 +252,12 @@ async fn assign_role(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/admin/users/{userId}/roles/{role}",
+    params(("userId" = Uuid, Path), ("role" = String, Path)),
+    responses((status = 204, description = "No content")),
+)]
 async fn revoke_role(
     State(state): State<AppState>,
     Path((user_id, role)): Path<(Uuid, String)>,
@@ -200,6 +289,12 @@ async fn revoke_role(
 /// very next request instead of up to `AUTH_CONTEXT_CACHE_TTL_SECONDS` later. No-op (still
 /// `204`) if the cache had nothing for this user — invalidating something that was never cached,
 /// or already expired, isn't an error.
+#[utoipa::path(
+    post,
+    path = "/admin/users/{userId}/context/invalidate",
+    params(("userId" = Uuid, Path)),
+    responses((status = 204, description = "No content")),
+)]
 async fn invalidate_context(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
@@ -213,6 +308,17 @@ async fn invalidate_context(
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[derive(Serialize, ToSchema)]
+struct ListPoliciesResponse {
+    data: Vec<PolicyDto>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/policies",
+    params(("entity" = Option<String>, Query)),
+    responses((status = 200, description = "OK", body = ListPoliciesResponse)),
+)]
 async fn list_policies(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
@@ -232,11 +338,12 @@ async fn list_policies(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreatePolicyBody {
     entity: String,
     action: String,
     roles: Option<Vec<String>>,
+    #[schema(value_type = Option<serde_json::Value>)]
     condition: Option<PolicyCondition>,
     field: Option<String>,
     subject: Option<String>,
@@ -245,6 +352,17 @@ struct CreatePolicyBody {
     effect: Option<String>,
 }
 
+#[derive(Serialize, ToSchema)]
+struct CreatePolicyResponse {
+    data: PolicyDto,
+}
+
+#[utoipa::path(
+    post,
+    path = "/admin/policies",
+    request_body = CreatePolicyBody,
+    responses((status = 201, description = "Created", body = CreatePolicyResponse)),
+)]
 async fn create_policy(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -295,7 +413,7 @@ const KNOWN_ACTIONS: [&str; 5] = [
     EntityAction::Transition.as_str(),
 ];
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SeedDefaultPoliciesBody {
     entity: String,
     roles: Vec<String>,
@@ -303,6 +421,11 @@ struct SeedDefaultPoliciesBody {
     /// everything on this entity" case right after onboarding it.
     #[serde(default)]
     actions: Vec<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct SeedDefaultPoliciesResponse {
+    data: Vec<PolicyDto>,
 }
 
 /// Bulk-creates one context-subject, no-condition (pure RBAC) policy per action for `roles` on
@@ -315,6 +438,12 @@ struct SeedDefaultPoliciesBody {
 /// twice with the same `entity`/`roles` creates duplicate policy rows (each still evaluates the
 /// same OR-combined result, so it's harmless, just untidy); `DELETE /admin/policies/:id` is how
 /// an operator cleans that up.
+#[utoipa::path(
+    post,
+    path = "/admin/policies/seed-defaults",
+    request_body = SeedDefaultPoliciesBody,
+    responses((status = 201, description = "Created", body = SeedDefaultPoliciesResponse)),
+)]
 async fn seed_default_policies(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -368,6 +497,12 @@ async fn seed_default_policies(
     (StatusCode::CREATED, Json(json!({ "data": created }))).into_response()
 }
 
+#[utoipa::path(
+    delete,
+    path = "/admin/policies/{id}",
+    params(("id" = Uuid, Path)),
+    responses((status = 204, description = "No content")),
+)]
 async fn delete_policy(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -383,14 +518,14 @@ async fn delete_policy(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct MatrixGrant {
     /// `None` = the matrix's pinned "Everyone" row (an open, `roles IS NULL` policy).
     role: Option<String>,
     action: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SyncMatrixBody {
     entity: String,
     /// The complete desired set of `(role, action)` grants for this entity — anything not
@@ -398,11 +533,22 @@ struct SyncMatrixBody {
     grants: Vec<MatrixGrant>,
 }
 
+#[derive(Serialize, ToSchema)]
+struct SyncMatrixResponse {
+    data: Vec<PolicyDto>,
+}
+
 /// The RBAC permission matrix's single save call — replaces every basic-shaped policy for
 /// `body.entity` with exactly `body.grants` in one atomic transaction
 /// (`PolicyStore::sync_basic_policies`), instead of the matrix firing one `POST`/`DELETE` per
 /// checkbox click. Never touches an Advanced-tab policy (condition/field/record-subject/deny) —
 /// see that trait method's doc comment for the exact boundary.
+#[utoipa::path(
+    put,
+    path = "/admin/policies/matrix",
+    request_body = SyncMatrixBody,
+    responses((status = 200, description = "OK", body = SyncMatrixResponse)),
+)]
 async fn sync_matrix_policies(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -439,14 +585,25 @@ async fn sync_matrix_policies(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct ExplainBody {
     entity: String,
     action: String,
     field: Option<String>,
+    #[schema(value_type = Option<serde_json::Value>)]
     record: Option<serde_json::Map<String, Value>>,
 }
 
+/// The response body is `{"data": PolicyExplanation}` (`metap-permission`) — left undocumented
+/// beyond the request shape, same fidelity the old hand-written `openapi_paths::admin_paths` had
+/// for this route (no response schema either), since `PolicyExplanation`/`PolicyTraceEntry`
+/// don't derive `ToSchema` and adding it is out of scope for this pass.
+#[utoipa::path(
+    post,
+    path = "/admin/policies/explain",
+    request_body = ExplainBody,
+    responses((status = 200, description = "OK")),
+)]
 async fn explain_policy(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -468,15 +625,23 @@ async fn explain_policy(
     }
 }
 
+fn build_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_users, create_user))
+        .routes(routes!(assign_role))
+        .routes(routes!(revoke_role))
+        .routes(routes!(invalidate_context))
+        .routes(routes!(list_policies, create_policy))
+        .routes(routes!(seed_default_policies))
+        .routes(routes!(sync_matrix_policies))
+        .routes(routes!(explain_policy))
+        .routes(routes!(delete_policy))
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/admin/users", get(list_users).post(create_user))
-        .route("/admin/users/{userId}/roles", post(assign_role))
-        .route("/admin/users/{userId}/roles/{role}", axum::routing::delete(revoke_role))
-        .route("/admin/users/{userId}/context/invalidate", post(invalidate_context))
-        .route("/admin/policies", get(list_policies).post(create_policy))
-        .route("/admin/policies/seed-defaults", post(seed_default_policies))
-        .route("/admin/policies/matrix", put(sync_matrix_policies))
-        .route("/admin/policies/explain", post(explain_policy))
-        .route("/admin/policies/{id}", axum::routing::delete(delete_policy))
+    build_router().split_for_parts().0
+}
+
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    build_router().split_for_parts().1
 }

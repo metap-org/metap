@@ -42,6 +42,8 @@ axum-prometheus = "0.10.1"
 metrics-process = "2.4.3"
 axum-extra = { version = "0.12.6", default-features = false, features = ["cookie"] }
 time = "0.3.55"
+utoipa = { version = "5", features = ["uuid", "chrono"] }
+utoipa-axum = "0.2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

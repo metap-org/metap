@@ -6,15 +6,41 @@
 
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use axum::{Json, Router};
-use serde::Deserialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::auth::{AdminContext, AuthContext};
 use crate::error::{internal_error_response, router_unavailable_response, service_error_response};
 use crate::state::AppState;
+
+// Never actually constructed — doc-only, see `health.rs`'s comment. `to_json` below builds this
+// exact shape by hand (not `DashboardConfig`'s own `Serialize`, which it doesn't have), so this
+// DTO mirrors `to_json`'s field set rather than the domain struct's.
+#[derive(Serialize, ToSchema)]
+struct DashboardConfigDto {
+    id: Uuid,
+    #[serde(rename = "ownerUserId")]
+    owner_user_id: Option<Uuid>,
+    layout: Value,
+    #[serde(rename = "updatedAt")]
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct GetDashboardResponse {
+    data: Option<DashboardConfigDto>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct SaveDashboardResponse {
+    data: DashboardConfigDto,
+}
 
 fn to_json(config: &metap_dashboards::DashboardConfig) -> Value {
     json!({
@@ -33,11 +59,16 @@ fn parse_user_id(context: &metap_permission::RequestContext) -> Result<Uuid, Box
         .ok_or_else(|| Box::new(service_error_response(401, "unauthorized", None, None)))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SaveLayoutBody {
     layout: Value,
 }
 
+#[utoipa::path(
+    get,
+    path = "/dashboards/me",
+    responses((status = 200, description = "OK", body = GetDashboardResponse)),
+)]
 async fn get_my_dashboard(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
     let tenant_id = match state.permissions.scoped_tenant(&context) {
         Ok(id) => id,
@@ -60,6 +91,12 @@ async fn get_my_dashboard(State(state): State<AppState>, AuthContext(context): A
     Json(json!({ "data": config.as_ref().map(to_json) })).into_response()
 }
 
+#[utoipa::path(
+    put,
+    path = "/dashboards/me",
+    request_body = SaveLayoutBody,
+    responses((status = 200, description = "OK", body = SaveDashboardResponse)),
+)]
 async fn save_my_dashboard(
     State(state): State<AppState>,
     AuthContext(context): AuthContext,
@@ -88,6 +125,11 @@ async fn save_my_dashboard(
     Json(json!({ "data": to_json(&config) })).into_response()
 }
 
+#[utoipa::path(
+    get,
+    path = "/dashboards/tenant-default",
+    responses((status = 200, description = "OK", body = GetDashboardResponse)),
+)]
 async fn get_tenant_default_dashboard(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
     let tenant_id = match state.permissions.scoped_tenant(&context) {
         Ok(id) => id,
@@ -106,6 +148,12 @@ async fn get_tenant_default_dashboard(State(state): State<AppState>, AuthContext
     Json(json!({ "data": config.as_ref().map(to_json) })).into_response()
 }
 
+#[utoipa::path(
+    put,
+    path = "/dashboards/tenant-default",
+    request_body = SaveLayoutBody,
+    responses((status = 200, description = "OK", body = SaveDashboardResponse)),
+)]
 async fn save_tenant_default_dashboard(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -134,11 +182,16 @@ async fn save_tenant_default_dashboard(
     Json(json!({ "data": to_json(&config) })).into_response()
 }
 
+fn build_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(get_my_dashboard, save_my_dashboard))
+        .routes(routes!(get_tenant_default_dashboard, save_tenant_default_dashboard))
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/dashboards/me", get(get_my_dashboard).put(save_my_dashboard))
-        .route(
-            "/dashboards/tenant-default",
-            get(get_tenant_default_dashboard).put(save_tenant_default_dashboard),
-        )
+    build_router().split_for_parts().0
+}
+
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    build_router().split_for_parts().1
 }

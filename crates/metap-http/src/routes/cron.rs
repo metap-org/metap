@@ -8,16 +8,37 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use metap_cron::{
-    DispatchMode, JobUpdate, NewCronJob, OnRecordEventTriggerConfig, OnTransitionTriggerConfig, TargetType,
-    TriggerType, WaitEventTargetConfig,
+    CronJob, CronJobRun, DispatchMode, JobUpdate, NewCronJob, OnRecordEventTriggerConfig, OnTransitionTriggerConfig,
+    TargetType, TriggerType, WaitEventTargetConfig,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::auth::AdminContext;
 use crate::error::{internal_error_response, service_error_response};
 use crate::state::AppState;
+
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment. `Json(json!({"data":
+// job}))` below serializes `CronJob`'s own `Serialize` directly, so these DTOs reuse it rather
+// than re-typing every field.
+#[derive(Serialize, ToSchema)]
+struct CronJobResponse {
+    data: CronJob,
+}
+
+#[derive(Serialize, ToSchema)]
+struct ListCronJobsResponse {
+    data: Vec<CronJob>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct ListCronJobRunsResponse {
+    data: Vec<CronJobRun>,
+}
 
 fn not_found() -> Response {
     service_error_response(404, "cron_job_not_found", Some("Cron job not found."), None)
@@ -27,7 +48,7 @@ fn validation_error(message: &str) -> Response {
     service_error_response(400, "validation_failed", Some(message), None)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreateCronJobBody {
     name: String,
     #[serde(rename = "triggerType", default = "default_trigger_type")]
@@ -226,6 +247,12 @@ fn validate_target_config(target_type: &str, target_config: &Value) -> Result<()
     Ok(())
 }
 
+#[utoipa::path(
+    post,
+    path = "/admin/cron-jobs",
+    request_body = CreateCronJobBody,
+    responses((status = 201, description = "Created", body = CronJobResponse)),
+)]
 async fn create_cron_job(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -281,6 +308,11 @@ async fn create_cron_job(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/cron-jobs",
+    responses((status = 200, description = "OK", body = ListCronJobsResponse)),
+)]
 async fn list_cron_jobs(State(state): State<AppState>, AdminContext(context): AdminContext) -> Response {
     let tenant_id = match state.permissions.scoped_tenant(&context) {
         Ok(id) => id,
@@ -292,6 +324,15 @@ async fn list_cron_jobs(State(state): State<AppState>, AdminContext(context): Ad
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/cron-jobs/{id}",
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "OK", body = CronJobResponse),
+        (status = 404, description = "Not found"),
+    ),
+)]
 async fn get_cron_job(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -308,7 +349,7 @@ async fn get_cron_job(
     }
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, ToSchema)]
 struct UpdateCronJobBody {
     name: Option<String>,
     #[serde(rename = "triggerType")]
@@ -331,6 +372,16 @@ struct UpdateCronJobBody {
     enabled: Option<bool>,
 }
 
+#[utoipa::path(
+    patch,
+    path = "/admin/cron-jobs/{id}",
+    params(("id" = Uuid, Path)),
+    request_body = UpdateCronJobBody,
+    responses(
+        (status = 200, description = "OK", body = CronJobResponse),
+        (status = 404, description = "Not found"),
+    ),
+)]
 async fn update_cron_job(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -420,6 +471,12 @@ async fn update_cron_job(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/admin/cron-jobs/{id}",
+    params(("id" = Uuid, Path)),
+    responses((status = 204, description = "No content")),
+)]
 async fn delete_cron_job(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -435,6 +492,15 @@ async fn delete_cron_job(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/cron-jobs/{id}/runs",
+    params(
+        ("id" = Uuid, Path),
+        ("limit" = Option<i64>, Query, description = "Max 200, default 50"),
+    ),
+    responses((status = 200, description = "OK", body = ListCronJobRunsResponse)),
+)]
 async fn list_cron_job_runs(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -478,16 +544,24 @@ async fn get_workflow_run(
     }
 }
 
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/admin/cron-jobs", get(list_cron_jobs).post(create_cron_job))
-        .route(
-            "/admin/cron-jobs/{id}",
-            get(get_cron_job).patch(update_cron_job).delete(delete_cron_job),
-        )
-        .route("/admin/cron-jobs/{id}/runs", get(list_cron_job_runs))
+// `get_workflow_run` is deliberately undocumented (not in scope of this crate's utoipa
+// migration, matching what the old hand-written `openapi_paths::cron_dashboard_paths` covered —
+// it never documented this route) — a plain `.route()` call, not `routes!`.
+fn build_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_cron_jobs, create_cron_job))
+        .routes(routes!(get_cron_job, update_cron_job, delete_cron_job))
+        .routes(routes!(list_cron_job_runs))
         .route(
             "/admin/cron-jobs/{jobId}/runs/{runId}/workflow-run",
             get(get_workflow_run),
         )
+}
+
+pub fn router() -> Router<AppState> {
+    build_router().split_for_parts().0
+}
+
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    build_router().split_for_parts().1
 }

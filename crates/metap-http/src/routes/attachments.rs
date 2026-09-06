@@ -15,17 +15,59 @@
 use axum::extract::{Multipart, Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Json, Router};
+use chrono::{DateTime, Utc};
 use metap_attachments::AttachmentRecord;
 use metap_crud::ServiceResult;
 use metap_permission::EntityAction;
+use serde::Serialize;
 use serde_json::json;
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::auth::AuthContext;
 use crate::error::{internal_error_response, router_unavailable_response, service_error_response};
 use crate::state::AppState;
+
+// Never actually constructed — doc-only, see `routes/health.rs`'s comment. `to_json` below
+// builds this exact shape by hand (not `AttachmentRecord`'s own field names), so this DTO
+// mirrors `to_json`'s output rather than the domain struct.
+#[derive(Serialize, ToSchema)]
+struct AttachmentDto {
+    id: Uuid,
+    #[serde(rename = "entityName")]
+    entity_name: String,
+    #[serde(rename = "recordId")]
+    record_id: Uuid,
+    filename: String,
+    key: String,
+    size: i64,
+    #[serde(rename = "contentType")]
+    content_type: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct ListAttachmentsResponse {
+    data: Vec<AttachmentDto>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct UploadAttachmentResponse {
+    data: AttachmentDto,
+}
+
+/// Never actually constructed — the real extractor is `axum::extract::Multipart`, which has no
+/// `ToSchema` of its own; this only documents the multipart shape (single `file` field).
+#[allow(dead_code)]
+#[derive(ToSchema)]
+struct UploadAttachmentForm {
+    #[schema(value_type = String, format = Binary)]
+    file: Vec<u8>,
+}
 
 fn table_for<'a>(state: &'a AppState, entity: &str) -> &'a str {
     state
@@ -79,6 +121,19 @@ fn to_json(record: &AttachmentRecord) -> serde_json::Value {
     })
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/{entity}/{record_id}/attachments",
+    params(
+        ("entity" = String, Path, description = "Entity name"),
+        ("record_id" = Uuid, Path, description = "Record id"),
+    ),
+    request_body(content = UploadAttachmentForm, content_type = "multipart/form-data"),
+    responses(
+        (status = 201, description = "Created", body = UploadAttachmentResponse),
+        (status = 503, description = "Object storage not configured"),
+    ),
+)]
 async fn upload_attachment(
     State(state): State<AppState>,
     Path((entity, record_id)): Path<(String, Uuid)>,
@@ -157,6 +212,15 @@ async fn upload_attachment(
     (StatusCode::CREATED, Json(json!({ "data": to_json(&record) }))).into_response()
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/{entity}/{record_id}/attachments",
+    params(
+        ("entity" = String, Path, description = "Entity name"),
+        ("record_id" = Uuid, Path, description = "Record id"),
+    ),
+    responses((status = 200, description = "OK", body = ListAttachmentsResponse)),
+)]
 async fn list_attachments(
     State(state): State<AppState>,
     Path((entity, record_id)): Path<(String, Uuid)>,
@@ -211,6 +275,20 @@ async fn load_owned_attachment(
     Ok(record)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/{entity}/{record_id}/attachments/{attachment_id}/download",
+    params(
+        ("entity" = String, Path, description = "Entity name"),
+        ("record_id" = Uuid, Path, description = "Record id"),
+        ("attachment_id" = Uuid, Path, description = "Attachment id"),
+    ),
+    responses(
+        (status = 200, description = "OK"),
+        (status = 404, description = "Not found"),
+        (status = 503, description = "Object storage not configured"),
+    ),
+)]
 async fn download_attachment(
     State(state): State<AppState>,
     Path((entity, record_id, attachment_id)): Path<(String, Uuid, Uuid)>,
@@ -274,6 +352,19 @@ async fn download_attachment(
         .into_response()
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/{entity}/{record_id}/attachments/{attachment_id}",
+    params(
+        ("entity" = String, Path, description = "Entity name"),
+        ("record_id" = Uuid, Path, description = "Record id"),
+        ("attachment_id" = Uuid, Path, description = "Attachment id"),
+    ),
+    responses(
+        (status = 204, description = "No content"),
+        (status = 503, description = "Object storage not configured"),
+    ),
+)]
 async fn delete_attachment(
     State(state): State<AppState>,
     Path((entity, record_id, attachment_id)): Path<(String, Uuid, Uuid)>,
@@ -322,18 +413,17 @@ async fn delete_attachment(
     StatusCode::NO_CONTENT.into_response()
 }
 
+fn build_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(upload_attachment, list_attachments))
+        .routes(routes!(download_attachment))
+        .routes(routes!(delete_attachment))
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/api/{entity}/{record_id}/attachments",
-            post(upload_attachment).get(list_attachments),
-        )
-        .route(
-            "/api/{entity}/{record_id}/attachments/{attachment_id}/download",
-            get(download_attachment),
-        )
-        .route(
-            "/api/{entity}/{record_id}/attachments/{attachment_id}",
-            axum::routing::delete(delete_attachment),
-        )
+    build_router().split_for_parts().0
+}
+
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    build_router().split_for_parts().1
 }

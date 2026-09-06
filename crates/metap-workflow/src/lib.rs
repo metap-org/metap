@@ -10,6 +10,7 @@ use metap_metadata::{EntityDefinition, WorkflowTransition};
 use metap_permission::{evaluate_condition, resolve_value, RequestContext};
 use serde_json::{json, Value};
 use sqlx::{FromRow, PgExecutor};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 pub type JsonObject = serde_json::Map<String, Value>;
@@ -128,7 +129,7 @@ pub async fn record_event<'c, E: PgExecutor<'c>>(
 /// One row of `workflow_events` — the read side of `record_event`'s append-only audit log.
 /// Generic across every entity/app (a plain data row, no business meaning attached), same shape
 /// as `metap_attachments::AttachmentRecord`.
-#[derive(Debug, Clone, FromRow, serde::Serialize)]
+#[derive(Debug, Clone, FromRow, serde::Serialize, ToSchema)]
 pub struct WorkflowEvent {
     pub id: Uuid,
     pub entity: String,

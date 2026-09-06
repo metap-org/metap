@@ -22,22 +22,23 @@ async fn openapi_json(State(state): State<AppState>) -> Response {
     // the composition root wired in (`state.extra_openapi_paths` — see that field's doc
     // comment). `generate_openapi_document` only knows about `/metadata/*` and the per-entity
     // `/api/{entity}*` paths it derives from `MetadataRegistry`; every other route this binary
-    // serves is documented by hand here instead, since none of it is metadata-driven.
+    // serves is documented by `crate::openapi_paths` instead (`utoipa`-derived since
+    // 2026-09-06, see that module's doc comment), since none of it is metadata-driven.
     if let Some(paths) = doc.get_mut("paths").and_then(Value::as_object_mut) {
         paths.extend(crate::openapi_paths::static_paths());
         paths.extend((*state.extra_openapi_paths).clone());
     }
     // `state.extra_openapi_schemas`'s own doc comment: a `$ref` merged into `paths` above
-    // without its target merged here resolves to nothing in the served document — this crate's
-    // own `static_paths()` never uses `$ref` (every schema is inlined at the point of use), so
-    // it has nothing to contribute here; only an optional platform capability generating its
-    // paths via `utoipa` does.
+    // without its target merged here resolves to nothing in the served document. This crate's
+    // own `static_paths()` is `utoipa`-generated now, so it contributes real `$ref`s too — not
+    // just the optional platform capabilities that used to be the only source.
     if let Some(schemas) = doc
         .get_mut("components")
         .and_then(Value::as_object_mut)
         .and_then(|components| components.get_mut("schemas"))
         .and_then(Value::as_object_mut)
     {
+        schemas.extend(crate::openapi_paths::static_schemas());
         schemas.extend((*state.extra_openapi_schemas).clone());
     }
     Json(doc).into_response()

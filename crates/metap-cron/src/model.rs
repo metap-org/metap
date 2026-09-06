@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// What a due job actually does. `WorkflowTransition`/`BulkQueryAction` both call back into
@@ -204,7 +205,7 @@ pub struct OnRecordEventTriggerConfig {
     pub event: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CronJob {
     pub id: Uuid,
     #[serde(rename = "tenantId")]
@@ -275,7 +276,7 @@ impl RunStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CronJobRun {
     pub id: Uuid,
     #[serde(rename = "tenantId")]
