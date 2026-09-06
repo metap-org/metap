@@ -15,10 +15,17 @@ metap-control = { path = "../metap-control" }
 # services will look for it.
 metap-infra = { path = "../metap-infra" }
 metap-jwks = { path = "../metap-jwks" }
+# Only for `migrate-to-dedicated-table`'s `EntityDefinition` reconstruction — this crate stays
+# business-entity-agnostic (it only ever parses generic `EntityField`/`EntityWorkflow` shapes off
+# disk, the same `GET /metadata/entities/{entity}` wire format `metap-graphql-gateway`'s
+# `schema_builder.rs` already deserializes), never a hardcoded entity of its own.
+metap-metadata = { path = "../metap-metadata" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-reconciler = { path = "../metap-reconciler" }
 anyhow.workspace = true
 dotenvy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "macros", "migrate"] }
 uuid.workspace = true

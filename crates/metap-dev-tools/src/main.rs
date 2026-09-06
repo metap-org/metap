@@ -49,6 +49,7 @@ fn usage() -> ! {
     eprintln!("  dev-tools enqueue-reconcile <tenantId> <entityName> <desiredVersion>");
     eprintln!("  dev-tools set-tenant-hostname <tenantId> <hostname>");
     eprintln!("  dev-tools put-tenant-secret <tenantId> <configKey> <value>");
+    eprintln!("  dev-tools migrate-to-dedicated-table <tenantId> <entityJsonPath> [sourceTable]");
     std::process::exit(1);
 }
 
@@ -74,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
         Some("enqueue-reconcile") => enqueue_reconcile(&args).await,
         Some("set-tenant-hostname") => set_tenant_hostname(&args).await,
         Some("put-tenant-secret") => put_tenant_secret(&args).await,
+        Some("migrate-to-dedicated-table") => migrate_to_dedicated_table(&args).await,
         _ => usage(),
     }
 }
@@ -498,6 +500,109 @@ async fn put_tenant_secret(args: &[String]) -> anyhow::Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+/// Mirrors the subset of `metap_metadata::EntitySummary` (`GET /metadata/entities/{entity}`'s
+/// `data` field) this command needs to reconstruct an `EntityDefinition` — same shape
+/// `metap-graphql-gateway`'s `schema_builder.rs::RemoteEntitySummary` already deserializes from
+/// the list variant of the same endpoint, kept as its own copy here rather than a shared type
+/// since the two crates have no other reason to depend on each other and the wire shape is simple
+/// enough not to be worth a shared dependency just for this. `list_views`/`version` in the real
+/// response are ignored (unknown fields aren't rejected by default) — `compile()`/`reconcile()`
+/// never consult either.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteEntitySummary {
+    name: String,
+    label: String,
+    fields: Vec<metap_metadata::EntityField>,
+    #[serde(default)]
+    workflow: Option<metap_metadata::EntityWorkflow>,
+}
+
+#[derive(serde::Deserialize)]
+struct MetadataEntityFile {
+    data: RemoteEntitySummary,
+}
+
+/// `docs/features/12-migration-generic-to-dedicated-table.md` — moves an entity already living on
+/// the shared generic `records` table (or another generic table passed as `sourceTable`) onto its
+/// own dedicated table, without losing any row. Thin CLI wrapper around
+/// `metap_reconciler::migrate_generic_to_dedicated`; all the actual logic (creating the target
+/// table via `reconcile()`, the checkpointed batch copy) lives there — this only resolves the
+/// tenant's database and reconstructs the `EntityDefinition` this crate has no business-entity
+/// knowledge of on its own.
+///
+/// `entityJsonPath` is a local file holding exactly what `GET /metadata/entities/{entity}` returns
+/// (e.g. `curl -H "Authorization: Bearer $TOKEN" <baseUrl>/metadata/entities/<entity> -o
+/// entity.json`) — fetched *before* stopping the service, since after that the service (and
+/// therefore this endpoint) is down. This command itself never talks to the running service at
+/// all, only the database, which is what makes running it after the service is stopped possible.
+///
+/// **The service owning this entity must already be stopped before running this** — see the
+/// brief's "Quyết định cơ chế": no dual-write/shadow-read, so a concurrent writer to `sourceTable`
+/// during the copy could still write a row after this command has already passed it by. This
+/// command does not check or enforce that itself (it has no way to know whether some other
+/// process is running); the caller owns getting the sequencing right.
+///
+/// After this returns, two steps remain that this command deliberately does not do (see
+/// `metap_reconciler::migrate`'s doc comment): update this entity's own `EntityDefinition.table_name`
+/// in source code to the printed dedicated-table name, and restart the service.
+async fn migrate_to_dedicated_table(args: &[String]) -> anyhow::Result<()> {
+    let (Some(tenant_id), Some(entity_json_path)) = (args.get(2), args.get(3)) else {
+        eprintln!("Usage: dev-tools migrate-to-dedicated-table <tenantId> <entityJsonPath> [sourceTable]");
+        eprintln!(
+            "  entityJsonPath: a local file holding exactly what GET /metadata/entities/<entity> returns, e.g.:"
+        );
+        eprintln!("    curl -H \"Authorization: Bearer $TOKEN\" <baseUrl>/metadata/entities/<entity> -o entity.json");
+        eprintln!("  fetched BEFORE stopping the service that owns this entity — that service must already be");
+        eprintln!("  stopped by the time you run this command (see docs/features/12-migration-generic-to-dedicated-table.md).");
+        eprintln!("  sourceTable defaults to \"records\".");
+        std::process::exit(1);
+    };
+    let source_table = args.get(4).map(String::as_str).unwrap_or("records");
+
+    dotenvy::dotenv().ok();
+    let database_url = metap_runtime::env::require_env("DATABASE_URL")?;
+    // Unlike this file's other subcommands (all `max_connections(1)`), `reconcile()` (called via
+    // `migrate_generic_to_dedicated`) holds one connection for its advisory lock for the whole
+    // duration of `executor::execute` while issuing further queries against the same pool for
+    // each DDL op — a 1-connection pool deadlocks (found live: `pool timed out while waiting for
+    // an open connection`) the moment the resolved tenant's strategy is `Schema` (`pool_for`
+    // returns this exact pool, not a fresh one).
+    let shared_pool = PgPoolOptions::new().max_connections(5).connect(&database_url).await?;
+    let tenant_id: Uuid = tenant_id.parse()?;
+
+    let file_contents = std::fs::read_to_string(entity_json_path)
+        .map_err(|e| anyhow::anyhow!("failed to read {entity_json_path}: {e}"))?;
+    let parsed: MetadataEntityFile = serde_json::from_str(&file_contents).map_err(|e| {
+        anyhow::anyhow!("failed to parse {entity_json_path} as a GET /metadata/entities/<entity> response: {e}")
+    })?;
+    let entity = metap_metadata::EntityDefinition {
+        name: parsed.data.name,
+        label: parsed.data.label,
+        table_name: source_table.to_string(),
+        fields: parsed.data.fields,
+        list_views: vec![],
+        workflow: parsed.data.workflow,
+    };
+
+    let router = router_for(shared_pool).await;
+    let pool = router.pool_for(tenant_id.into()).await?;
+
+    let outcome = metap_reconciler::migrate_generic_to_dedicated(&pool, tenant_id, &entity, source_table).await?;
+
+    println!(
+        "Migrated entity \"{}\" for tenant {tenant_id}: {} row(s) copied from \"{source_table}\" into \"{}\" \
+         ({} DDL op(s) applied to build the target table).",
+        entity.name, outcome.copy.rows_scanned, outcome.table, outcome.reconcile.ops_applied
+    );
+    println!(
+        "Remaining steps this command does NOT do: update this entity's EntityDefinition.table_name in source \
+         code to \"{}\", recompile, and restart the service.",
+        outcome.table
+    );
+    Ok(())
 }
 
 fn print_deny_by_default_note() {
