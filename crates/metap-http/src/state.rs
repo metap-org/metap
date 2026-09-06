@@ -121,6 +121,17 @@ pub struct AppState {
     /// (`crate::openapi_paths::static_paths`) and the per-entity dynamic ones
     /// (`metap_metadata::generate_openapi_document`) — see `routes::metadata::openapi_json`.
     pub extra_openapi_paths: Arc<serde_json::Map<String, serde_json::Value>>,
+    /// Same "optional platform capability" boundary as `extra_openapi_paths` above, for
+    /// `components.schemas` instead of `paths` — needed once an optional router's paths are
+    /// generated via `utoipa`/`utoipa-axum` rather than hand-written JSON
+    /// (`docs/features/02-utoipa-migration.md`), since `utoipa` documents a response/request
+    /// body as a `$ref` into `components.schemas` rather than inlining its shape at the point of
+    /// use. A `$ref` merged into `paths` without its target also merged here resolves to
+    /// nothing in the final document — found live 2026-09-06 migrating `metap-control-http`,
+    /// where every response schema turned out to be exactly this: a dangling `$ref`. Empty by
+    /// default; a crate whose paths are still hand-written JSON (inlined schemas, no `$ref`) has
+    /// nothing to contribute here and can leave this unset, same as `extra_openapi_paths`.
+    pub extra_openapi_schemas: Arc<serde_json::Map<String, serde_json::Value>>,
     /// The `Secure` attribute on both cookies `crate::cookies`/`routes::auth` issue — defaults to
     /// `true` (the correct value for any real deployment, served over HTTPS) so no existing
     /// caller of `AppState::new` picks up an insecure default just by rebuilding. A local dev
@@ -174,6 +185,7 @@ impl AppState {
             metrics_handle: prometheus_handle(),
             process_collector: process_collector(),
             extra_openapi_paths: Arc::new(serde_json::Map::new()),
+            extra_openapi_schemas: Arc::new(serde_json::Map::new()),
             cookie_secure: true,
         }
     }

@@ -27,6 +27,19 @@ async fn openapi_json(State(state): State<AppState>) -> Response {
         paths.extend(crate::openapi_paths::static_paths());
         paths.extend((*state.extra_openapi_paths).clone());
     }
+    // `state.extra_openapi_schemas`'s own doc comment: a `$ref` merged into `paths` above
+    // without its target merged here resolves to nothing in the served document — this crate's
+    // own `static_paths()` never uses `$ref` (every schema is inlined at the point of use), so
+    // it has nothing to contribute here; only an optional platform capability generating its
+    // paths via `utoipa` does.
+    if let Some(schemas) = doc
+        .get_mut("components")
+        .and_then(Value::as_object_mut)
+        .and_then(|components| components.get_mut("schemas"))
+        .and_then(Value::as_object_mut)
+    {
+        schemas.extend((*state.extra_openapi_schemas).clone());
+    }
     Json(doc).into_response()
 }
 
