@@ -11,8 +11,9 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FieldKind {
     Id,
@@ -33,7 +34,7 @@ pub enum FieldKind {
 /// JSONB table (`crates/metap-crud`) does not yet consult this; it exists so a future
 /// per-entity reconciler has "where should this field live" as input without re-deriving the
 /// rule. `None` (the common case) means "derive from flags".
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FieldStorage {
     /// Force T1 (stay inside `data jsonb`) even if indexed/sortable/unique/searchable is set.
@@ -42,7 +43,7 @@ pub enum FieldStorage {
     Column,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityField {
     pub name: String,
@@ -103,7 +104,7 @@ pub struct EntityField {
 /// separate, not parsed out of `expression`, so `compiler::validate` can check it without writing
 /// a template parser in the metadata crate) — `compiler::validate` requires every token in
 /// `expression` to also be listed here.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputedSpec {
     pub expression: String,
@@ -175,7 +176,7 @@ pub fn field_kind_sql_type(kind: FieldKind) -> &'static str {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityListView {
     pub name: String,
@@ -213,14 +214,21 @@ pub struct EntityListView {
 /// every save. `metap_workflow::run_guard` was already entity-agnostic before this change
 /// (it evaluates a `PolicyCondition` against record data + context, no code-authored
 /// assumption anywhere) — this was purely a serialization gap, not a runtime one.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowTransition {
     pub action: String,
     pub from: String,
     pub to: String,
     pub label: String,
+    /// `value_type = serde_json::Value` rather than deriving `ToSchema` on
+    /// `metap_permission::PolicyCondition` itself — same reasoning
+    /// `metap-metadata/src/openapi.rs`'s hand-written schema already documented for this exact
+    /// field: `PolicyCondition`/`PolicyValue` are `metap-permission`'s wire format, not this
+    /// crate's to re-derive. `serde_json::Value`'s own `ToSchema` impl (utoipa's built-in one)
+    /// produces an "any value" schema, matching that hand-written `{}` shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<serde_json::Value>)]
     pub guard: Option<metap_permission::PolicyCondition>,
     /// A second, distinct check from `guard` — matches the real "condition vs. validator" split
     /// a workflow engine like Jira's makes: `guard` decides whether this transition is even
@@ -232,6 +240,7 @@ pub struct WorkflowTransition {
     /// `guard` — no new evaluator needed, `metap_workflow::run_validator` just points it at
     /// different data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<serde_json::Value>)]
     pub validator: Option<metap_permission::PolicyCondition>,
     /// A declarative, entity-agnostic post-function: field values to set automatically when
     /// this transition fires, applied *after* `validator` passes (so these system-computed
@@ -246,10 +255,11 @@ pub struct WorkflowTransition {
     /// business-entity knowledge" boundary rules out anything more dynamic than this living
     /// here).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<serde_json::Value>)]
     pub set_fields: Option<std::collections::HashMap<String, metap_permission::PolicyValue>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityWorkflow {
     pub state_field: String,
@@ -290,7 +300,7 @@ pub struct EntityWorkflow {
 /// no `EntityField` list to default to. This is a real, unavoidable consequence of staying
 /// cross-service-safe, not a shortcut: an entity author still has to name which fields they want,
 /// same as they already do for `EntityListView.fields`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RelatedView {
     /// Section key — becomes the GraphQL query alias `RelatedRecordsPanel` sends, and the key in
@@ -336,7 +346,7 @@ pub struct RelatedView {
 /// `field()` helpers, one per entity-definition module, no shared builder) — adding a field
 /// there would mean touching every one of those 23 helpers, not just the entity that actually
 /// needs a hint. This way, declaring a hint touches only the entity module that needs one.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FieldDisplayHint {
     /// Name of the field this hint applies to, e.g. `"assignedTo"` — must match an
