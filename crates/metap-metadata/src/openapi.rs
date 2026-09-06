@@ -127,6 +127,7 @@ pub fn entity_list_view_json_schema() -> Value {
             "label": { "type": "string" },
             "fields": { "type": "array", "items": { "type": "string" } },
             "filters": { "type": "array", "items": { "type": "string" } },
+            "requiredFields": { "type": "array", "items": { "type": "string" } },
             "defaultSort": { "type": "string" },
             "maxLimit": { "type": "number" },
         },
@@ -184,8 +185,9 @@ pub fn field_display_hint_json_schema() -> Value {
         "properties": {
             "field": { "type": "string" },
             "resolveVia": { "type": "string" },
+            "enumTones": { "type": "object", "additionalProperties": { "type": "string" } },
         },
-        "required": ["field", "resolveVia"],
+        "required": ["field"],
     })
 }
 

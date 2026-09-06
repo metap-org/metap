@@ -201,6 +201,7 @@ async fn reconcile_creates_an_index_postgres_actually_selects_for_the_exact_quer
             label: "Default".to_string(),
             fields: vec![],
             filters: vec![],
+            required_fields: vec![],
             default_sort: None,
             max_limit: 50,
         }],

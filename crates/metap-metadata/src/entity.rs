@@ -8,6 +8,8 @@
 //! schema. That validator is `CrudService`-layer work, not part of the metadata shape
 //! itself.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,6 +182,17 @@ pub struct EntityListView {
     pub label: String,
     pub fields: Vec<String>,
     pub filters: Vec<String>,
+    /// Subset of `fields` a caller may not hide from this list view's column-visibility toggle
+    /// (`@metap/platform-ui`'s `GeneratedList`, `docs/features/32-generated-list-column-visibility.md`)
+    /// — same "unchecked, must be a subset of `fields`" contract `filters` already has above, not
+    /// itself validated against `fields`. Empty (the default, including for every old low-code
+    /// definition predating this field — `#[serde(default)]`) means every column is hideable,
+    /// the exact pre-existing behavior. Deliberately independent of `EntityField.required`
+    /// (validation — "must have a value") rather than reusing it: a field can be required to fill
+    /// in but not important enough to always show in *this* view, and a nullable field (e.g.
+    /// `status`) is often exactly the one a caller wants pinned visible.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_fields: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_sort: Option<String>,
     pub max_limit: u32,
@@ -299,10 +312,22 @@ pub struct RelatedView {
     pub limit: Option<u32>,
 }
 
-/// Tells a generic list/detail renderer that a plain `String` field's value is an id from a
-/// platform-level collection this entity's own `MetadataRegistry` cannot see (today: only
-/// `"users"` — a `metap` user id, e.g. `Incident.assignedTo`), so it should be resolved to a
-/// display value client-side instead of shown as a raw id.
+/// Tells a generic list/detail renderer something about how to display a field's raw value that
+/// the field's own `kind`/`enumValues` don't already say. Two independent hints today, both
+/// optional on the same `field` — a hint may carry either, or (nothing stops it, though no caller
+/// needs both yet) both:
+///
+/// - `resolve_via`: this plain `String` field's value is an id from a platform-level collection
+///   this entity's own `MetadataRegistry` cannot see (today: only `"users"` — a `metap` user id,
+///   e.g. `Incident.assignedTo`), so it should be resolved to a display value client-side instead
+///   of shown as a raw id.
+/// - `enum_tones` (added `docs/features/29-field-value-enum-tone-mapping.md`): this `enum` field's
+///   values should render with a semantic badge tone instead of the generic renderer's flat
+///   `variant="secondary"` for every value — e.g. `{"failed": "destructive", "active": "success"}`.
+///   Values are plain strings, not a `BadgeVariant` enum, for the same reason `resolve_via` is: an
+///   unrecognized value is the frontend's problem to fall back safely on
+///   (`@metap/platform-ui`'s `FieldValue`), not a reason to fail metadata compilation or force a
+///   `metap-metadata` recompile to add a new tone name design-system adds later.
 ///
 /// A separate registration (`submit_field_display_hints!`, mirroring `RelatedView`/
 /// `submit_related_views!` above), not a field on `EntityField` itself, for the same reason
@@ -311,12 +336,6 @@ pub struct RelatedView {
 /// `field()` helpers, one per entity-definition module, no shared builder) — adding a field
 /// there would mean touching every one of those 23 helpers, not just the entity that actually
 /// needs a hint. This way, declaring a hint touches only the entity module that needs one.
-///
-/// `resolve_via` is a plain string, not an enum, for the same reason `RelatedView.entity` is —
-/// the set of resolvable platform-level collections may grow, and this struct shouldn't need a
-/// new variant/recompile of `metap-metadata` itself to add one; only `"users"` is actually
-/// implemented on the frontend today (`@metap/platform-ui`'s `UserFieldValue`, resolved against
-/// `GET /users`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FieldDisplayHint {
@@ -325,7 +344,10 @@ pub struct FieldDisplayHint {
     /// `RelatedView`'s `entity`/`filter_field` aren't: keeping this a plain, unchecked
     /// declaration is what lets it work without both sides being in the same registry).
     pub field: String,
-    pub resolve_via: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolve_via: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enum_tones: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -455,5 +477,33 @@ mod storage_tier_tests {
         });
         let f: EntityField = serde_json::from_value(json).unwrap();
         assert_eq!(f.storage, None);
+    }
+}
+
+#[cfg(test)]
+mod field_display_hint_tests {
+    use super::*;
+
+    #[test]
+    fn enum_tones_round_trips_through_json_camel_case_without_resolve_via() {
+        let hint = FieldDisplayHint {
+            field: "status".to_string(),
+            resolve_via: None,
+            enum_tones: Some(HashMap::from([("failed".to_string(), "destructive".to_string())])),
+        };
+        let json = serde_json::to_value(&hint).unwrap();
+        assert!(json.get("resolveVia").is_none());
+        assert_eq!(json["enumTones"]["failed"], serde_json::json!("destructive"));
+        let back: FieldDisplayHint = serde_json::from_value(json).unwrap();
+        assert_eq!(back.enum_tones, hint.enum_tones);
+        assert_eq!(back.resolve_via, None);
+    }
+
+    #[test]
+    fn only_field_deserializes_with_both_hints_none_for_old_definitions() {
+        let json = serde_json::json!({ "field": "assignedTo" });
+        let hint: FieldDisplayHint = serde_json::from_value(json).unwrap();
+        assert_eq!(hint.resolve_via, None);
+        assert_eq!(hint.enum_tones, None);
     }
 }

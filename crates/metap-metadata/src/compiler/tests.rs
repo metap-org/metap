@@ -137,6 +137,7 @@ fn list_view_unknown_field_is_rejected() {
         label: "Default".to_string(),
         fields: vec!["nope".to_string()],
         filters: vec![],
+        required_fields: vec![],
         default_sort: None,
         max_limit: 50,
     });
@@ -152,6 +153,7 @@ fn list_view_implicit_system_field_is_allowed() {
         label: "Default".to_string(),
         fields: vec!["createdAt".to_string()],
         filters: vec![],
+        required_fields: vec![],
         default_sort: None,
         max_limit: 50,
     });

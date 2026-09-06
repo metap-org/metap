@@ -464,7 +464,8 @@ mod tests {
     fn submitted_field_display_hints_a() -> Vec<FieldDisplayHint> {
         vec![FieldDisplayHint {
             field: "assignedTo".to_string(),
-            resolve_via: "users".to_string(),
+            resolve_via: Some("users".to_string()),
+            enum_tones: None,
         }]
     }
     crate::submit_field_display_hints!("test.submitted_a", submitted_field_display_hints_a);
@@ -476,7 +477,7 @@ mod tests {
         let hints = registry.get_field_display_hints("test.submitted_a");
         assert_eq!(hints.len(), 1);
         assert_eq!(hints[0].field, "assignedTo");
-        assert_eq!(hints[0].resolve_via, "users");
+        assert_eq!(hints[0].resolve_via, Some("users".to_string()));
     }
 
     #[test]
@@ -492,7 +493,7 @@ mod tests {
         registry.register_all_submitted().unwrap();
         let summary = registry.get_entity_metadata("test.submitted_a").unwrap();
         assert_eq!(summary.field_display_hints.len(), 1);
-        assert_eq!(summary.field_display_hints[0].resolve_via, "users");
+        assert_eq!(summary.field_display_hints[0].resolve_via, Some("users".to_string()));
     }
 
     #[test]

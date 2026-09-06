@@ -56,6 +56,7 @@ fn bench_entity() -> EntityDefinition {
             label: "Default".to_string(),
             fields: vec!["title".to_string(), "status".to_string()],
             filters: vec!["status".to_string(), "priority".to_string()],
+            required_fields: vec![],
             default_sort: None,
             max_limit: 100,
         }],

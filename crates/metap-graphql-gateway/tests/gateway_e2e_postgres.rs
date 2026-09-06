@@ -99,6 +99,7 @@ fn simple_entity(name: &str, label: &str) -> EntityDefinition {
             label: "Default".to_string(),
             fields: vec!["name".to_string()],
             filters: vec![],
+            required_fields: vec![],
             default_sort: None,
             max_limit: 50,
         }],

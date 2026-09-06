@@ -52,6 +52,7 @@ pub fn example_entity() -> EntityDefinition {
             label: "Default".to_string(),
             fields: vec!["title".to_string(), "status".to_string()],
             filters: vec![],
+            required_fields: vec![],
             default_sort: Some("-createdAt".to_string()),
             max_limit: 50,
         }],

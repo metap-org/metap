@@ -265,6 +265,7 @@ mod tests {
                 label: "Default".to_string(),
                 fields: vec![],
                 filters: vec![],
+                required_fields: vec![],
                 default_sort: None,
                 max_limit: 50,
             }],
