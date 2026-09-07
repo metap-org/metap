@@ -91,7 +91,12 @@ pub async fn run_batched_update(
 /// `pub(crate)` (not private) — reused as-is by `migrate::copy_generic_records`, which needs the
 /// exact same checkpoint-table shape for a different kind of op (`migrate::MIGRATE_OP_ID` instead
 /// of a real `BackfillColumn`'s `op_id`), not a parallel copy of the same 3 queries.
-pub(crate) async fn load_cursor(pool: &PgPool, tenant_id: Uuid, entity_name: &str, op_id: &str) -> anyhow::Result<Option<Uuid>> {
+pub(crate) async fn load_cursor(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    entity_name: &str,
+    op_id: &str,
+) -> anyhow::Result<Option<Uuid>> {
     let cursor: Option<Uuid> = sqlx::query_scalar(
         "SELECT cursor_id FROM reconciler_backfill_progress WHERE tenant_id = $1 AND entity_name = $2 AND op_id = $3",
     )
@@ -128,7 +133,12 @@ pub(crate) async fn save_progress(
     Ok(())
 }
 
-pub(crate) async fn mark_completed(pool: &PgPool, tenant_id: Uuid, entity_name: &str, op_id: &str) -> anyhow::Result<()> {
+pub(crate) async fn mark_completed(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    entity_name: &str,
+    op_id: &str,
+) -> anyhow::Result<()> {
     sqlx::query(
         "INSERT INTO reconciler_backfill_progress (tenant_id, entity_name, op_id, completed, updated_at)
          VALUES ($1, $2, $3, true, now())

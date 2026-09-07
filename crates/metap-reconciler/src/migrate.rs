@@ -102,7 +102,11 @@ pub async fn copy_generic_records(
     let mut rows_scanned: i64 = 0;
     loop {
         let mut tx = pool.begin().await?;
-        let rows = sqlx::query(&sql).bind(cursor).bind(tenant_id).fetch_all(&mut *tx).await?;
+        let rows = sqlx::query(&sql)
+            .bind(cursor)
+            .bind(tenant_id)
+            .fetch_all(&mut *tx)
+            .await?;
         if rows.is_empty() {
             tx.commit().await?;
             break;

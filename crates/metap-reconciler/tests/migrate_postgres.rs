@@ -10,7 +10,11 @@ use uuid::Uuid;
 
 async fn connect() -> PgPool {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-    PgPoolOptions::new().max_connections(5).connect(&database_url).await.unwrap()
+    PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap()
 }
 
 fn plain_field(name: &str, kind: FieldKind) -> EntityField {
@@ -118,7 +122,9 @@ async fn migrates_existing_records_rows_onto_a_dedicated_table_without_loss() {
     .await
     .unwrap();
 
-    let outcome = migrate_generic_to_dedicated(&pool, tenant_id, &def, "records").await.unwrap();
+    let outcome = migrate_generic_to_dedicated(&pool, tenant_id, &def, "records")
+        .await
+        .unwrap();
     assert_eq!(outcome.table, "entities.test_migrate_customers");
     assert_eq!(outcome.copy.rows_scanned, 3);
 
@@ -128,12 +134,16 @@ async fn migrates_existing_records_rows_onto_a_dedicated_table_without_loss() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let dest_count: i64 = sqlx::query_scalar("SELECT count(*) FROM entities.test_migrate_customers WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(source_count, 3, "source rows are left in place — this is a copy, not a move");
+    let dest_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM entities.test_migrate_customers WHERE tenant_id = $1")
+            .bind(tenant_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        source_count, 3,
+        "source rows are left in place — this is a copy, not a move"
+    );
     assert_eq!(dest_count, 3, "no record lost");
 
     let rows: Vec<(Uuid, i32, bool, f64, String)> = sqlx::query_as(
@@ -149,7 +159,9 @@ async fn migrates_existing_records_rows_onto_a_dedicated_table_without_loss() {
 
     // A second run must be a safe no-op (idempotent resume / accidental re-invocation) — zero new
     // rows, same counts.
-    let second = migrate_generic_to_dedicated(&pool, tenant_id, &def, "records").await.unwrap();
+    let second = migrate_generic_to_dedicated(&pool, tenant_id, &def, "records")
+        .await
+        .unwrap();
     assert_eq!(second.copy.rows_scanned, 0, "already-migrated rows are not rescanned");
     let dest_count_again: i64 =
         sqlx::query_scalar("SELECT count(*) FROM entities.test_migrate_customers WHERE tenant_id = $1")
@@ -219,7 +231,9 @@ async fn resumes_from_a_saved_checkpoint_after_a_simulated_crash() {
     .await
     .unwrap();
 
-    let outcome = migrate_generic_to_dedicated(&pool, tenant_id, &def, "records").await.unwrap();
+    let outcome = migrate_generic_to_dedicated(&pool, tenant_id, &def, "records")
+        .await
+        .unwrap();
     assert_eq!(
         outcome.copy.rows_scanned, 2,
         "resume must only scan the 2 rows past the saved checkpoint, not all 3"
@@ -230,7 +244,10 @@ async fn resumes_from_a_saved_checkpoint_after_a_simulated_crash() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(dest_count, 3, "all 3 rows present after resume — none lost, none duplicated");
+    assert_eq!(
+        dest_count, 3,
+        "all 3 rows present after resume — none lost, none duplicated"
+    );
 
     cleanup_records(&pool, tenant_id, entity_name).await;
     drop_table_if_exists(&pool, "test_migrate_resume").await;

@@ -551,9 +551,7 @@ struct MetadataEntityFile {
 async fn migrate_to_dedicated_table(args: &[String]) -> anyhow::Result<()> {
     let (Some(tenant_id), Some(entity_json_path)) = (args.get(2), args.get(3)) else {
         eprintln!("Usage: dev-tools migrate-to-dedicated-table <tenantId> <entityJsonPath> [sourceTable]");
-        eprintln!(
-            "  entityJsonPath: a local file holding exactly what GET /metadata/entities/<entity> returns, e.g.:"
-        );
+        eprintln!("  entityJsonPath: a local file holding exactly what GET /metadata/entities/<entity> returns, e.g.:");
         eprintln!("    curl -H \"Authorization: Bearer $TOKEN\" <baseUrl>/metadata/entities/<entity> -o entity.json");
         eprintln!("  fetched BEFORE stopping the service that owns this entity — that service must already be");
         eprintln!("  stopped by the time you run this command (see docs/features/12-migration-generic-to-dedicated-table.md).");
