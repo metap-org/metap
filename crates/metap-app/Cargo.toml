@@ -7,8 +7,10 @@ edition.workspace = true
 metap-cache = { path = "../metap-cache", features = ["redis-backend"] }
 metap-control = { path = "../metap-control" }
 metap-infra = { path = "../metap-infra" }
+metap-metadata = { path = "../metap-metadata" }
 metap-permission = { path = "../metap-permission" }
 anyhow.workspace = true
 jsonwebtoken.workspace = true
+serde_norway.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
 tracing.workspace = true

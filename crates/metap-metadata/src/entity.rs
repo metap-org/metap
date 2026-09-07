@@ -49,24 +49,30 @@ pub struct EntityField {
     pub name: String,
     pub label: String,
     pub kind: FieldKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // `#[serde(default)]` added to every optional flag below (2026-09-07,
+    // `docs/features/33-declarative-yaml-app-bootstrap.md`) so a hand-authored entity file (YAML
+    // or JSON) can omit a flag entirely instead of writing `null` for it — before this, only
+    // `storage`/`min`/`max`/`minLength`/`maxLength`/`computed` had `default`, so any of these 9
+    // fields being absent (not just `null`) was a deserialize error. Purely additive: an existing
+    // caller that already sends every key (with `null` for unset ones) is unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub indexed: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unique: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enum_values: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ref_entity: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ref_display_field: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub searchable: Option<bool>,
     /// "substring" (default) or "fts" — only meaningful when `searchable: true`.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub search_mode: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sortable: Option<bool>,
     /// See `FieldStorage`'s doc comment. `None` (default) derives the tier from the flags above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -366,9 +372,14 @@ pub struct EntityDefinition {
     pub name: String,
     pub label: String,
     pub table_name: String,
+    // `#[serde(default)]` (2026-09-07, `docs/features/33-declarative-yaml-app-bootstrap.md`) so a
+    // hand-authored entity file can omit `fields`/`listViews`/`workflow` entirely instead of
+    // writing `[]`/`null` — same rationale as `EntityField`'s own fields above.
+    #[serde(default)]
     pub fields: Vec<EntityField>,
+    #[serde(default)]
     pub list_views: Vec<EntityListView>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<EntityWorkflow>,
 }
 

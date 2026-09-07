@@ -1,9 +1,25 @@
-//! Env-var-numbered upstream configuration — `UPSTREAM_1_NAME`, `UPSTREAM_1_GRPC_ADDR`,
-//! `UPSTREAM_1_METADATA_URL`, `UPSTREAM_1_LOGIN_URL`, `UPSTREAM_1_SERVICE_EMAIL`,
-//! `UPSTREAM_1_SERVICE_PASSWORD`, `UPSTREAM_2_...`, stopping at the first missing `_NAME` — no
-//! config-parsing dependency added, matching this platform's other env-var-heavy ops binaries
-//! (`cron-scheduler`, `outbox-publisher`).
+//! Upstream configuration — two mutually exclusive sources, picked by whether
+//! `UPSTREAM_CONFIG_FILE` is set (`docs/features/33-declarative-yaml-app-bootstrap.md`):
+//! - **File** (`UPSTREAM_CONFIG_FILE=path/to/upstreams.yaml`): one YAML file listing every
+//!   upstream under an `upstreams:` key, same field names as `UpstreamConfig` itself
+//!   (`camelCase` — `grpcAddr`/`metadataUrl`/...). Meant for a deployment with more than a
+//!   couple of upstreams, where N numbered env-var blocks stop being reviewable as one unit.
+//! - **Env vars** (default, unchanged): `UPSTREAM_1_NAME`, `UPSTREAM_1_GRPC_ADDR`,
+//!   `UPSTREAM_1_METADATA_URL`, `UPSTREAM_1_LOGIN_URL`, `UPSTREAM_1_SERVICE_EMAIL`,
+//!   `UPSTREAM_1_SERVICE_PASSWORD`, `UPSTREAM_2_...`, stopping at the first missing `_NAME` —
+//!   matches this platform's other env-var-heavy ops binaries (`cron-scheduler`,
+//!   `outbox-publisher`). Every existing deployment (`../metap-demo-waf`'s
+//!   `waf-graphql-gateway`) leaves `UPSTREAM_CONFIG_FILE` unset and is unaffected.
+//!
+//! Every other `GatewayConfig` field (host/port/limits/auth/CORS) stays env-var-only — this
+//! binary owns no Postgres pool to read a `metap_config`-style tiered config from (see
+//! `GatewayConfig::graphql_max_depth`'s own doc comment), and those fields don't suffer from the
+//! same "N numbered blocks" unwieldiness the upstream list does.
 
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpstreamConfig {
     pub name: String,
     /// Full URI (`http://host:port`) — passed straight to `GrpcBackend::connect`.
@@ -18,6 +34,26 @@ pub struct UpstreamConfig {
     pub login_url: String,
     pub service_email: String,
     pub service_password: String,
+}
+
+/// Top-level shape of `UPSTREAM_CONFIG_FILE`'s YAML — just a list, wrapped in a named key rather
+/// than a bare top-level array so the file has room to grow another top-level key later without
+/// becoming ambiguous.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamConfigFile {
+    upstreams: Vec<UpstreamConfig>,
+}
+
+/// Parses `UPSTREAM_CONFIG_FILE`'s contents — split out from `GatewayConfig::from_env` so it's
+/// unit-testable against a string literal without touching the filesystem or env vars.
+fn parse_upstreams_yaml(source: &str) -> anyhow::Result<Vec<UpstreamConfig>> {
+    let file: UpstreamConfigFile =
+        serde_norway::from_str(source).map_err(|e| anyhow::anyhow!("invalid UPSTREAM_CONFIG_FILE YAML: {e}"))?;
+    if file.upstreams.is_empty() {
+        anyhow::bail!("UPSTREAM_CONFIG_FILE was set but its \"upstreams\" list is empty");
+    }
+    Ok(file.upstreams)
 }
 
 pub struct GatewayConfig {
@@ -93,33 +129,44 @@ impl GatewayConfig {
             }
         };
 
-        let mut upstreams = Vec::new();
-        let mut i = 1u32;
-        // `while let`, not `loop { let ... else { break } }` — clippy's `while_let_loop` (which CI's
-        // newer toolchain enforces and an older local one does not) rejects the latter.
-        while let Ok(name) = std::env::var(format!("UPSTREAM_{i}_NAME")) {
-            let grpc_addr = require_env(&format!("UPSTREAM_{i}_GRPC_ADDR"))?;
-            let metadata_url = require_env(&format!("UPSTREAM_{i}_METADATA_URL"))?;
-            let login_url = require_env(&format!("UPSTREAM_{i}_LOGIN_URL"))?;
-            let service_email = require_env(&format!("UPSTREAM_{i}_SERVICE_EMAIL"))?;
-            let service_password = require_env(&format!("UPSTREAM_{i}_SERVICE_PASSWORD"))?;
-            upstreams.push(UpstreamConfig {
-                name,
-                grpc_addr,
-                metadata_url,
-                login_url,
-                service_email,
-                service_password,
-            });
-            i += 1;
-        }
-        if upstreams.is_empty() {
-            anyhow::bail!(
-                "no upstreams configured — set UPSTREAM_1_NAME/UPSTREAM_1_GRPC_ADDR/\
-                 UPSTREAM_1_METADATA_URL/UPSTREAM_1_LOGIN_URL/UPSTREAM_1_SERVICE_EMAIL/\
-                 UPSTREAM_1_SERVICE_PASSWORD (see .env.example)"
-            );
-        }
+        let upstreams = match std::env::var("UPSTREAM_CONFIG_FILE") {
+            Ok(path) => {
+                let source = std::fs::read_to_string(&path)
+                    .map_err(|e| anyhow::anyhow!("failed to read UPSTREAM_CONFIG_FILE {path}: {e}"))?;
+                parse_upstreams_yaml(&source)?
+            }
+            Err(_) => {
+                let mut upstreams = Vec::new();
+                let mut i = 1u32;
+                // `while let`, not `loop { let ... else { break } }` — clippy's `while_let_loop`
+                // (which CI's newer toolchain enforces and an older local one does not) rejects
+                // the latter.
+                while let Ok(name) = std::env::var(format!("UPSTREAM_{i}_NAME")) {
+                    let grpc_addr = require_env(&format!("UPSTREAM_{i}_GRPC_ADDR"))?;
+                    let metadata_url = require_env(&format!("UPSTREAM_{i}_METADATA_URL"))?;
+                    let login_url = require_env(&format!("UPSTREAM_{i}_LOGIN_URL"))?;
+                    let service_email = require_env(&format!("UPSTREAM_{i}_SERVICE_EMAIL"))?;
+                    let service_password = require_env(&format!("UPSTREAM_{i}_SERVICE_PASSWORD"))?;
+                    upstreams.push(UpstreamConfig {
+                        name,
+                        grpc_addr,
+                        metadata_url,
+                        login_url,
+                        service_email,
+                        service_password,
+                    });
+                    i += 1;
+                }
+                if upstreams.is_empty() {
+                    anyhow::bail!(
+                        "no upstreams configured — set UPSTREAM_CONFIG_FILE, or UPSTREAM_1_NAME/\
+                         UPSTREAM_1_GRPC_ADDR/UPSTREAM_1_METADATA_URL/UPSTREAM_1_LOGIN_URL/\
+                         UPSTREAM_1_SERVICE_EMAIL/UPSTREAM_1_SERVICE_PASSWORD (see .env.example)"
+                    );
+                }
+                upstreams
+            }
+        };
 
         Ok(Self {
             host,
@@ -133,5 +180,48 @@ impl GatewayConfig {
             cors_origins,
             is_production,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_upstreams_from_yaml_with_camel_case_keys() {
+        let upstreams = parse_upstreams_yaml(
+            r#"
+upstreams:
+  - name: crm
+    grpcAddr: "http://localhost:5100"
+    metadataUrl: "http://localhost:3100/metadata/entities"
+    loginUrl: "http://localhost:3100/auth/login"
+    serviceEmail: "gateway@crm.local"
+    servicePassword: "hunter2"
+  - name: jira
+    grpcAddr: "http://localhost:5200"
+    metadataUrl: "http://localhost:3200/metadata/entities"
+    loginUrl: "http://localhost:3200/auth/login"
+    serviceEmail: "gateway@jira.local"
+    servicePassword: "hunter2"
+"#,
+        )
+        .unwrap();
+        assert_eq!(upstreams.len(), 2);
+        assert_eq!(upstreams[0].name, "crm");
+        assert_eq!(upstreams[0].grpc_addr, "http://localhost:5100");
+        assert_eq!(upstreams[1].name, "jira");
+    }
+
+    #[test]
+    fn rejects_an_empty_upstreams_list() {
+        let err = parse_upstreams_yaml("upstreams: []").unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn rejects_malformed_yaml_with_a_readable_error() {
+        let err = parse_upstreams_yaml("not: [valid").unwrap_err();
+        assert!(err.to_string().contains("invalid UPSTREAM_CONFIG_FILE YAML"));
     }
 }
