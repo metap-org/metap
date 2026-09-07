@@ -1,5 +1,10 @@
-//! `webhook` targets — calls an external URL, injecting `jobId`/`runId` into a JSON body (see
-//! `super`'s doc comment).
+//! `webhook` targets — calls an external URL, injecting `jobId`/`runId` (always) and `entity`/
+//! `recordId` (when the firing came from an `on_transition`/`on_record_event` trigger — a plain
+//! `schedule` job has neither) into a JSON body (see `super`'s doc comment). Added 2026-09-07:
+//! `run_email` already did this (its own doc comment claimed `run_webhook` did too, which was
+//! actually not true until now — that comment described the intent, not the code); a webhook
+//! receiver had no way to know *which* record fired it beyond the static `target_config.body` a
+//! tenant admin wrote once at job-creation time.
 //!
 //! **The URL, method, headers and body all come from a tenant admin**, so every one of them goes
 //! through `super::ssrf_guard` first — see that module's doc comment for the responsive-SSRF this
@@ -77,6 +82,8 @@ pub(crate) async fn run_webhook(
     tenant_id: Uuid,
     job_id: Uuid,
     run_id: Uuid,
+    trigger_entity: Option<&str>,
+    trigger_record_id: Option<Uuid>,
     target_config: &Value,
 ) -> anyhow::Result<Value> {
     let cfg: WebhookConfig = serde_json::from_value(target_config.clone())?;
@@ -113,6 +120,15 @@ pub(crate) async fn run_webhook(
     if let Value::Object(map) = &mut body {
         map.insert("jobId".to_string(), json!(job_id));
         map.insert("runId".to_string(), json!(run_id));
+        // Only present for an `on_transition`/`on_record_event`-triggered firing — same
+        // `CronJobDuePayload` fields `run_email` already appends to its own body, same "a plain
+        // `schedule` job has neither" condition.
+        if let Some(entity) = trigger_entity {
+            map.insert("entity".to_string(), json!(entity));
+        }
+        if let Some(record_id) = trigger_record_id {
+            map.insert("recordId".to_string(), json!(record_id));
+        }
     }
 
     let mut req = client().request(method, url).json(&body);
@@ -178,7 +194,88 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{redact, truncate};
+    use super::{redact, run_webhook, truncate, WebhookPolicy};
+    use uuid::Uuid;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Live verification (a real outbound HTTP call, against a mock server rather than the
+    /// network) that an `on_record_event`/`on_transition`-triggered firing's `entity`/`recordId`
+    /// actually reach the webhook body — the gap `run_email` didn't have (2026-09-07).
+    #[tokio::test]
+    async fn injects_entity_and_record_id_when_the_firing_has_trigger_context() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let policy = WebhookPolicy {
+            allow_private_targets: true,
+            ..Default::default()
+        };
+        let job_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let record_id = Uuid::new_v4();
+        let target_config = serde_json::json!({ "url": server.uri() });
+
+        run_webhook(
+            &policy,
+            None,
+            Uuid::new_v4(),
+            job_id,
+            run_id,
+            Some("crm.customers"),
+            Some(record_id),
+            &target_config,
+        )
+        .await
+        .expect("webhook call succeeds");
+
+        let requests = server.received_requests().await.expect("request recording enabled");
+        assert_eq!(requests.len(), 1);
+        let body: serde_json::Value = requests[0].body_json().expect("valid JSON body");
+        assert_eq!(body["jobId"], job_id.to_string());
+        assert_eq!(body["runId"], run_id.to_string());
+        assert_eq!(body["entity"], "crm.customers");
+        assert_eq!(body["recordId"], record_id.to_string());
+    }
+
+    /// A plain `schedule`-triggered job has no trigger context — `entity`/`recordId` must not
+    /// appear at all (not even `null`), so a receiver can distinguish "no context" from "context
+    /// happened to be empty".
+    #[tokio::test]
+    async fn omits_entity_and_record_id_when_the_firing_has_no_trigger_context() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let policy = WebhookPolicy {
+            allow_private_targets: true,
+            ..Default::default()
+        };
+        let target_config = serde_json::json!({ "url": server.uri() });
+
+        run_webhook(
+            &policy,
+            None,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            None,
+            None,
+            &target_config,
+        )
+        .await
+        .expect("webhook call succeeds");
+
+        let requests = server.received_requests().await.expect("request recording enabled");
+        let body: serde_json::Value = requests[0].body_json().expect("valid JSON body");
+        assert!(!body.as_object().unwrap().contains_key("entity"));
+        assert!(!body.as_object().unwrap().contains_key("recordId"));
+    }
 
     /// The response body is what a tenant admin reads back from `cron_job_runs`, so a credential
     /// echoed by the upstream must not survive the trip.

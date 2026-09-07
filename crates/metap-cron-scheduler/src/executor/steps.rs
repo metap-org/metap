@@ -215,6 +215,8 @@ async fn run_one_step(
                 chain.tenant_id,
                 chain.job_id,
                 chain.run_id,
+                chain.trigger_entity.as_deref(),
+                chain.trigger_record_id,
                 &step.target_config,
             )
             .await
