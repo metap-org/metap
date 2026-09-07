@@ -160,4 +160,55 @@ mod tests {
         let claims = client.decode(&token_b, 20).await.unwrap();
         assert_eq!(claims.sub.len(), 36);
     }
+
+    /// The other direction of `jwks_client_picks_up_a_newly_rotated_in_key_on_cache_miss`: a
+    /// token signed by a key that has since been retired (`remove_key`, no longer published in
+    /// the issuer's `JwkSet`) must be rejected by a verifier that hasn't already cached that
+    /// specific `kid` — a cache *miss* always re-fetches the current JWKS (`decoding_key_for`),
+    /// and the retired `kid` is simply absent from it. This is the trust-root property the whole
+    /// 3-step rotation exists for: once retirement has actually propagated, a key that's gone is
+    /// gone, not "gone until someone remembers to check."
+    ///
+    /// This deliberately does not test the complementary grace-window behavior — a verifier that
+    /// already cached the retired key's `DecodingKey` *before* retirement keeps accepting it
+    /// until its own cache entry's TTL elapses, since `refresh()` only ever inserts currently-
+    /// published keys and never proactively evicts one that's disappeared (see that method's own
+    /// doc comment). That's an accepted, documented design tradeoff — the 3-step rotation
+    /// protocol's "grace window" — not a gap, and asserting on moka's internal TTL timing here
+    /// would only make this test slow/flaky without proving anything the design doc doesn't
+    /// already state.
+    #[tokio::test]
+    async fn jwks_client_rejects_a_token_signed_by_a_key_no_longer_published_in_the_jwks() {
+        let key_a = JwksKeyPair::generate("kid-a").unwrap();
+        let mut store = JwksKeyStore::new(key_a);
+        let token_a =
+            mint_service_or_user_jwt(store.signing_key(), Uuid::new_v4(), Uuid::new_v4(), None, 3600).unwrap();
+
+        // Full rotation lifecycle: a second key takes over signing, then the original is retired
+        // — the issuer's own JWKS no longer publishes `kid-a` at all.
+        let key_b = JwksKeyPair::generate("kid-b").unwrap();
+        store.add_key(key_b);
+        store.promote("kid-b").unwrap();
+        store.remove_key("kid-a").unwrap();
+        assert!(store.jwk_set().keys.iter().all(|k| k.kid != "kid-a"));
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/.well-known/jwks.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(store.jwk_set()))
+            .mount(&server)
+            .await;
+
+        // A fresh client, never having cached `kid-a` — its first lookup is a cache miss, which
+        // always fetches the issuer's *current* (post-retirement) JWKS.
+        let client = JwksClient::new(
+            format!("{}/.well-known/jwks.json", server.uri()),
+            Duration::from_secs(300),
+        );
+        let result = client.decode(&token_a, 20).await;
+        assert!(
+            result.is_err(),
+            "a token signed by a retired, no-longer-published key must not verify"
+        );
+    }
 }

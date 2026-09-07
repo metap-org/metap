@@ -129,9 +129,10 @@ services:
       - --web.enable-remote-write-receiver
     ports:
       - "9090:9090"
-    # crm-server runs on the host (`pnpm dev:rs`), not in this compose file — needs
-    # `host.docker.internal` to resolve from inside the container. Works on Linux (Docker
-    # 20.10+) via `host-gateway`, not just Docker Desktop's built-in Mac/Windows resolution.
+    # The app under test (`../metap-demo-crm`'s server, `cargo run`, since 2026-08-31 its own
+    # sibling repo — no `pnpm dev:rs` in this repo anymore) runs on the host, not in this compose
+    # file — needs `host.docker.internal` to resolve from inside the container. Works on Linux
+    # (Docker 20.10+) via `host-gateway`, not just Docker Desktop's built-in Mac/Windows resolution.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -141,9 +142,9 @@ services:
   # `testing/performance/k6/`) — Grafana's own k6, not a hand-rolled stress-test client. Not a
   # long-running service: no `ports`, never started by a plain `up`, invoked per-run via
   # `docker compose run --rm k6 run /scripts/<script>.js` (see `testing/performance/k6/run.sh`).
-  # Reaches `crm-server` (runs on the host) via `host.docker.internal:3000`, same pattern as
-  # `prometheus` above, and pushes its own metrics to `prometheus:9090` over this compose
-  # network's remote-write receiver.
+  # Reaches the app under test (`../metap-demo-crm`'s server, runs on the host) via
+  # `host.docker.internal:3000`, same pattern as `prometheus` above, and pushes its own metrics
+  # to `prometheus:9090` over this compose network's remote-write receiver.
   k6:
     image: grafana/k6:latest
     profiles: ["observability"]
