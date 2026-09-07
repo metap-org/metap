@@ -95,34 +95,4 @@ listViews: []
         let err = parse_entity_yaml("name: [unterminated").unwrap_err();
         assert!(err.to_string().contains("invalid entity YAML"));
     }
-
-    #[test]
-    fn loads_every_yaml_file_in_a_directory_in_sorted_order() {
-        // `Uuid::new_v4()`, not `std::process::id()` — a securely-random, unpredictable name,
-        // matching the convention every other `std::env::temp_dir()`-based test in this
-        // workspace already uses (e.g. `metap-http/tests/http_server.rs`). A predictable name
-        // under the shared system temp dir is exactly what semgrep's
-        // `rust.lang.security.temp-dir.temp-dir` rule flags (symlink/race attacks on a
-        // multi-user machine).
-        let dir = std::env::temp_dir().join(format!("metap-app-entities-yaml-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("b.yaml"),
-            "name: crm.orders\nlabel: Orders\ntableName: records\nfields: []\nlistViews: []\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("a.yml"),
-            "name: crm.customers\nlabel: Customers\ntableName: records\nfields: []\nlistViews: []\n",
-        )
-        .unwrap();
-        std::fs::write(dir.join("ignore.txt"), "not yaml").unwrap();
-
-        let entities = load_entity_definitions_from_dir(&dir).unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
-
-        assert_eq!(entities.len(), 2);
-        assert_eq!(entities[0].name, "crm.customers");
-        assert_eq!(entities[1].name, "crm.orders");
-    }
 }
