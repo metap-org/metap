@@ -98,7 +98,13 @@ listViews: []
 
     #[test]
     fn loads_every_yaml_file_in_a_directory_in_sorted_order() {
-        let dir = std::env::temp_dir().join(format!("metap-app-entities-yaml-test-{}", std::process::id()));
+        // `Uuid::new_v4()`, not `std::process::id()` — a securely-random, unpredictable name,
+        // matching the convention every other `std::env::temp_dir()`-based test in this
+        // workspace already uses (e.g. `metap-http/tests/http_server.rs`). A predictable name
+        // under the shared system temp dir is exactly what semgrep's
+        // `rust.lang.security.temp-dir.temp-dir` rule flags (symlink/race attacks on a
+        // multi-user machine).
+        let dir = std::env::temp_dir().join(format!("metap-app-entities-yaml-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("b.yaml"),

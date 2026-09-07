@@ -14,3 +14,6 @@ jsonwebtoken.workspace = true
 serde_norway.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
 tracing.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true

@@ -3577,6 +3577,7 @@ dependencies = [
  "serde_norway",
  "sqlx",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
