@@ -138,6 +138,7 @@ fn shared_entity() -> EntityDefinition {
             max_limit: 50,
         }],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 
@@ -182,6 +183,7 @@ fn dedicated_entity() -> EntityDefinition {
                 set_fields: None,
             }],
         }),
+        unique_constraints: vec![],
     }
 }
 

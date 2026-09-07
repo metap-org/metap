@@ -79,6 +79,7 @@ fn summary(name: &str, version: &str) -> EntitySummary {
         workflow: None,
         related_views: vec![],
         field_display_hints: vec![],
+        unique_constraints: vec![],
         version: version.to_string(),
     }
 }
@@ -208,6 +209,7 @@ async fn reconcile_creates_an_index_postgres_actually_selects_for_the_exact_quer
         workflow: None,
         related_views: vec![],
         field_display_hints: vec![],
+        unique_constraints: vec![],
         version: "v1".to_string(),
     };
 
@@ -281,6 +283,7 @@ async fn reconcile_creates_an_index_postgres_actually_selects_for_the_exact_quer
         workflow: None,
         related_views: vec![],
         field_display_hints: vec![],
+        unique_constraints: vec![],
         version: "v1".to_string(),
     };
     {
@@ -321,6 +324,7 @@ async fn reconcile_creates_a_trigram_index_postgres_actually_selects_for_ilike()
         workflow: None,
         related_views: vec![],
         field_display_hints: vec![],
+        unique_constraints: vec![],
         version: "v1".to_string(),
     };
 
@@ -441,6 +445,7 @@ async fn reconcile_continues_past_one_entitys_index_failure() {
         workflow: None,
         related_views: vec![],
         field_display_hints: vec![],
+        unique_constraints: vec![],
         version: "v1".to_string(),
     };
     let entity_b = EntitySummary {
@@ -451,6 +456,7 @@ async fn reconcile_continues_past_one_entitys_index_failure() {
         workflow: None,
         related_views: vec![],
         field_display_hints: vec![],
+        unique_constraints: vec![],
         version: "v1".to_string(),
     };
 

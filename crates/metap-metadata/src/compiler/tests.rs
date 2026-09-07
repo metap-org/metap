@@ -1,5 +1,5 @@
 use super::*;
-use crate::entity::{ComputedSpec, EntityField, FieldKind};
+use crate::entity::{ComputedSpec, EntityField, EntityUniqueConstraint, FieldKind};
 
 fn field(name: &str, kind: FieldKind) -> EntityField {
     EntityField {
@@ -32,6 +32,7 @@ fn minimal_entity() -> EntityDefinition {
         fields: vec![field("name", FieldKind::String)],
         list_views: vec![],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 
@@ -379,4 +380,66 @@ fn computed_field_expression_token_missing_from_depends_on_is_rejected() {
     entity.fields.push(computed_field("greeting", "hello {name}", &[]));
     let err = validate(&entity).unwrap_err();
     assert!(err.issues.iter().any(|i| i.contains("not listed in dependsOn")));
+}
+
+fn entity_with_type_kind_value() -> EntityDefinition {
+    // The blacklist/whitelist motivating case: `(type, kind)` — e.g. `("blacklist", "ip")` —
+    // must be unique together, neither field alone.
+    let mut entity = minimal_entity();
+    entity.fields = vec![field("type", FieldKind::String), field("kind", FieldKind::String)];
+    entity
+}
+
+#[test]
+fn composite_unique_constraint_over_existing_fields_passes() {
+    let mut entity = entity_with_type_kind_value();
+    entity.unique_constraints = vec![EntityUniqueConstraint {
+        fields: vec!["type".to_string(), "kind".to_string()],
+    }];
+    assert!(validate(&entity).is_ok());
+}
+
+#[test]
+fn composite_unique_constraint_with_one_field_is_rejected() {
+    let mut entity = entity_with_type_kind_value();
+    entity.unique_constraints = vec![EntityUniqueConstraint {
+        fields: vec!["type".to_string()],
+    }];
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains(">= 2 fields")));
+}
+
+#[test]
+fn composite_unique_constraint_referencing_unknown_field_is_rejected() {
+    let mut entity = entity_with_type_kind_value();
+    entity.unique_constraints = vec![EntityUniqueConstraint {
+        fields: vec!["type".to_string(), "ghost".to_string()],
+    }];
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("unknown field \"ghost\"")));
+}
+
+#[test]
+fn composite_unique_constraint_with_a_repeated_field_is_rejected() {
+    let mut entity = entity_with_type_kind_value();
+    entity.unique_constraints = vec![EntityUniqueConstraint {
+        fields: vec!["type".to_string(), "type".to_string()],
+    }];
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("more than once")));
+}
+
+#[test]
+fn duplicate_composite_unique_constraint_field_set_is_rejected_regardless_of_order() {
+    let mut entity = entity_with_type_kind_value();
+    entity.unique_constraints = vec![
+        EntityUniqueConstraint {
+            fields: vec!["type".to_string(), "kind".to_string()],
+        },
+        EntityUniqueConstraint {
+            fields: vec!["kind".to_string(), "type".to_string()],
+        },
+    ];
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("same field set")));
 }

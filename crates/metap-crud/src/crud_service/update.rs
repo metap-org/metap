@@ -133,7 +133,7 @@ impl CrudService {
         let row = match query.bind(expected_version).fetch_optional(&mut *tx).await {
             Ok(row) => row,
             Err(e) => {
-                if let Some(result) = unique_violation(&entity.name, &e) {
+                if let Some(result) = unique_violation(&entity, &e) {
                     tx.rollback().await.ok();
                     tracing::warn!(entity = entity.name, record_id = %id, "update rejected: unique constraint violated");
                     return Ok(result);

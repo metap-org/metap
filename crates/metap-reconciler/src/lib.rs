@@ -24,7 +24,9 @@ mod sqlfmt;
 pub mod status;
 pub mod watchdog;
 
-pub use compile::{compile, qualified_table_name_for, table_name_for, ENTITY_SCHEMA};
+pub use compile::{
+    check_table_name_length, compile, qualified_table_name_for, table_name_for, ENTITY_SCHEMA,
+};
 pub use diff::{diff, DdlOp};
 pub use introspect::introspect;
 pub use migrate::{copy_generic_records, migrate_generic_to_dedicated, CopySummary, MigrateOutcome, MIGRATE_OP_ID};

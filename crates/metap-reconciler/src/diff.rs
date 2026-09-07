@@ -160,7 +160,16 @@ pub fn diff(desired: &PhysicalSchema, actual: Option<&PhysicalSchema>, renames: 
         }
     }
     for name in actual.indexes.keys() {
-        if !desired.indexes.contains_key(name) {
+        // A `UNIQUE`/`PRIMARY KEY` constraint automatically owns a backing index under its own
+        // name — `introspect()`'s index scan (`pg_indexes`) sees it like any other index, but
+        // it isn't a separate object this diff manages: Postgres won't let a plain `DROP INDEX`
+        // remove it while the constraint exists (dropping the constraint via `DropUnique`
+        // already takes the index with it). Without this guard, every `unique: true` real-column
+        // field (`schema.uniques` in `compile()`) proposed a `DropIndexConcurrently` for its own
+        // constraint's index on every single pass — Postgres refuses it, the op is a permanent
+        // silent no-op, and `ops_applied` never reaches 0. Found live migrating
+        // `metap-demo-waf`'s `waf.ddos_policies.zoneId` to table-per-entity (2026-09-07).
+        if !desired.indexes.contains_key(name) && !actual.uniques.contains_key(name) {
             ops.push(DdlOp::DropIndexConcurrently { name: name.clone() });
         }
     }
@@ -246,6 +255,15 @@ fn index_matches(actual: &IndexSpec, desired: &IndexSpec) -> bool {
     normalize_expr(&actual.expression) == normalize_expr(&desired.expression)
         && actual.unique == desired.unique
         && actual.using == desired.using
+        && where_clause_matches(&actual.where_clause, &desired.where_clause)
+}
+
+fn where_clause_matches(actual: &Option<String>, desired: &Option<String>) -> bool {
+    match (actual, desired) {
+        (None, None) => true,
+        (Some(a), Some(d)) => normalize_expr(a) == normalize_expr(d),
+        _ => false,
+    }
 }
 
 fn fk_matches(actual: &FkSpec, desired: &FkSpec) -> bool {

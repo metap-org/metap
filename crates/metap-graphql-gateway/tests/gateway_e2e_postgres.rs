@@ -104,6 +104,7 @@ fn simple_entity(name: &str, label: &str) -> EntityDefinition {
             max_limit: 50,
         }],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 

@@ -77,35 +77,92 @@ pub(crate) fn forbidden_with_field<T>(decision: PermissionDecision) -> ServiceRe
     }
 }
 
-/// A DB unique-index violation on `records` — `EntityField.unique: true` (`docs/roadmap.md`
-/// Phase 11 field builder flags) is enforced purely as a Postgres unique index
-/// (`crates/metap-peripherals/src/index_reconciler.rs::ensure_index`, named
-/// `uniq_records_<entity, dots as underscores>_<field>`), not pre-checked here — so a
-/// racing/duplicate write must be caught after the fact, at the `INSERT`/`UPDATE` call site,
-/// rather than surfacing as an unhandled 500 (`?` on the query result would otherwise convert
-/// straight to `anyhow::Error`, mirrors the same catch `routes/admin.rs::create_user` does for
-/// `email_taken`, just generalized to any entity's `unique` field). Returns `None` for any
-/// other database error, so the caller's `Err(e) => return Err(e.into())` fallback still
-/// applies.
-pub(crate) fn unique_violation<T>(entity_name: &str, error: &sqlx::Error) -> Option<ServiceResult<T>> {
+/// A DB unique-index violation, caught after the fact at the `INSERT`/`UPDATE` call site (never
+/// pre-checked) and turned into a `409` naming *what* collided, rather than surfacing as an
+/// unhandled 500 (`?` on the query result would otherwise convert straight to `anyhow::Error`).
+/// Returns `None` for any other database error, so the caller's `Err(e) => return Err(e.into())`
+/// fallback still applies.
+///
+/// The field-name extraction has to reverse-engineer the violated constraint's identity from
+/// its bare DB name, which comes from two different naming schemes depending on where the field
+/// lives (`is_dedicated`): the shared `records` table's `uniq_records_<entity>_<field>`
+/// (`metap-peripherals::index_reconciler::ensure_index`) or a dedicated table's
+/// `uniq_<table>_<field>`/`uniq_<table>_<field1>_<field2>_...` (`metap_reconciler::compile()`'s
+/// single- and composite-field naming — no `records_` in the middle). Found live, 2026-09-07: a
+/// `waf.ddos_policies` create returned only `{"code":"unique_violation"}` to the browser, no
+/// field/table at all, because this function only ever tried the `records` prefix — every
+/// dedicated-table entity's violation silently fell through to the generic branch. Takes the
+/// full `EntityDefinition` (not just the name) to pick the right prefix via `is_dedicated`, and
+/// to try `entity.unique_constraints` by exact recomputed name *before* falling back to a plain
+/// `strip_prefix` (which alone can't tell a composite constraint's joined field names apart from
+/// one field literally named that way).
+fn unnamed_unique_violation<T>(entity: &EntityDefinition) -> ServiceResult<T> {
+    ServiceResult::err_with_message(
+        409,
+        "unique_violation",
+        format!("A unique constraint was violated on \"{}\".", entity.name),
+    )
+}
+
+/// `prefix` is already `uniq_records_<entity>_`/`uniq_<table>_` (the caller's own
+/// `is_dedicated`-picked one) — this just joins the constraint's field names onto it, matching
+/// `metap_reconciler::compile::composite_unique_index_name`'s naming exactly for any name that
+/// didn't need that function's 63-byte truncate-with-hash fallback (see `unique_violation`'s doc
+/// comment for why that fallback isn't reproduced here too).
+fn composite_unique_index_name(prefix: &str, fields: &[String]) -> String {
+    format!("{prefix}{}", fields.join("_"))
+}
+
+pub(crate) fn unique_violation<T>(entity: &EntityDefinition, error: &sqlx::Error) -> Option<ServiceResult<T>> {
     let sqlx::Error::Database(db_err) = error else {
         return None;
     };
     if !db_err.is_unique_violation() {
         return None;
     }
-    let prefix = format!("uniq_records_{}_", entity_name.replace('.', "_"));
-    let field = db_err
-        .constraint()
-        .and_then(|c| c.strip_prefix(&prefix))
-        .map(str::to_string);
+    let Some(constraint_name) = db_err.constraint() else {
+        return Some(unnamed_unique_violation(entity));
+    };
+
+    let mangled = entity.name.replace('.', "_");
+    let prefix = if is_dedicated(entity) {
+        format!("uniq_{mangled}_")
+    } else {
+        format!("uniq_records_{mangled}_")
+    };
+
+    // Composite constraints first — exact-name match against what `compile()` would have built
+    // (`metap_reconciler::compile::composite_unique_index_name`, duplicated here rather than
+    // depended on: `metap-crud` sits below `metap-reconciler` in the layering, and this is the
+    // same "duplicate the trivial pure naming logic" convention `metap-peripherals`'s own index
+    // naming already uses instead of depending on `metap-reconciler` for it). A composite
+    // constraint's fields all get blamed — a form UI highlighting all of them is more useful
+    // than guessing which one "really" caused it.
+    for constraint in &entity.unique_constraints {
+        if composite_unique_index_name(&prefix, &constraint.fields) == constraint_name {
+            let message = vec!["A record with this combination of values already exists.".to_string()];
+            let field_errors = constraint.fields.iter().map(|f| (f.clone(), message.clone())).collect();
+            return Some(ServiceResult::err_with_field_errors(409, "unique_violation", field_errors));
+        }
+    }
+
+    let field = constraint_name.strip_prefix(&prefix).map(str::to_string);
     Some(match field {
         Some(field) => ServiceResult::err_with_field_errors(
             409,
             "unique_violation",
             HashMap::from([(field, vec!["A record with this value already exists.".to_string()])]),
         ),
-        None => ServiceResult::err(409, "unique_violation"),
+        // Constraint name didn't match either known naming convention — either a composite
+        // constraint whose name got hash-truncated (`compile()`'s 63-byte fallback; not
+        // reproduced here, a rare case not worth a third copy of that hashing logic) or
+        // something outside what this crate itself ever declares. Still say *which entity*,
+        // never a bare code with zero context.
+        None => ServiceResult::err_with_message(
+            409,
+            "unique_violation",
+            format!("A unique constraint was violated on \"{}\".", entity.name),
+        ),
     })
 }
 

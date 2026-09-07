@@ -111,6 +111,7 @@ mod tests {
             ],
             list_views: vec![],
             workflow: None,
+            unique_constraints: vec![],
         }
     }
 

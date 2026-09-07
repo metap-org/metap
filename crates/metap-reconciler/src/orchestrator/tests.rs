@@ -17,6 +17,7 @@ fn def(name: &str, fields: Vec<EntityField>) -> EntityDefinition {
         fields,
         list_views: vec![],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 

@@ -434,6 +434,7 @@ mod tests {
             }],
             list_views: vec![],
             workflow: None,
+            unique_constraints: vec![],
         };
         let summary = EntitySummary {
             name: entity.name.clone(),
@@ -443,6 +444,7 @@ mod tests {
             workflow: entity.workflow.clone(),
             related_views: Vec::new(),
             field_display_hints: Vec::new(),
+            unique_constraints: Vec::new(),
             version: compiler::hash(&entity).unwrap(),
         };
         let doc = generate_openapi_document(&[summary]);

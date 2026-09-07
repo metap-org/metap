@@ -2,7 +2,7 @@
 //! `metap-query/tests/query_planner_postgres.rs`'s doc comment for the convention (unit tests
 //! never touch a DB; these run explicitly via `cargo test -- --ignored`).
 
-use metap_metadata::{EntityDefinition, EntityField, EntityListView, FieldKind, FieldStorage};
+use metap_metadata::{EntityDefinition, EntityField, EntityListView, EntityUniqueConstraint, FieldKind, FieldStorage};
 use metap_reconciler::reconcile;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -56,6 +56,7 @@ fn entity(name: &str, fields: Vec<EntityField>) -> EntityDefinition {
             max_limit: 50,
         }],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 
@@ -282,4 +283,155 @@ async fn reference_field_gets_a_real_fk_once_both_entities_are_tables() {
 
     drop_table_if_exists(&pool, "test_reconciler_employees").await;
     drop_table_if_exists(&pool, "test_reconciler_departments").await;
+}
+
+/// A `unique: true` `Reference` field (0..1 child per parent — `waf.ddos_policies.zoneId`'s real
+/// shape) used to never converge: `compile()` emitted both an `IndexSpec`-driven unique index
+/// (`uniq_...`) and a `UniqueSpec`-driven unique constraint (`uq_...`) for the same column, and
+/// `diff()`/`introspect()` didn't recognize the two as interchangeable, so every pass kept
+/// re-proposing whichever one it didn't see — found live migrating `metap-demo-waf` to
+/// table-per-entity (2026-09-07). A second, related bug found the same day, same field: the
+/// resulting blanket `UNIQUE` constraint had no soft-delete awareness at all — a
+/// deleted-then-recreated row (a real WAF portal action: delete a DDoS policy, create a new one
+/// for the same zone) was permanently rejected with `unique_violation` against its own
+/// soft-deleted predecessor. Fixed by making `unique: true` a *partial* unique index (`WHERE
+/// deleted = false`) instead of a blanket constraint. Regression test for both fixes.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn reconcile_converges_to_zero_ops_for_a_unique_reference_field() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    drop_table_if_exists(&pool, "test_reconciler_zones").await;
+    drop_table_if_exists(&pool, "test_reconciler_ddos_policies").await;
+
+    let zones = entity(
+        "test.reconciler_zones",
+        vec![plain_field("hostname", FieldKind::String)],
+    );
+    reconcile(&pool, tenant_id, &zones, &[]).await.unwrap();
+
+    let mut zone_ref = plain_field("zoneId", FieldKind::Reference);
+    zone_ref.ref_entity = Some("test.reconciler_zones".to_string());
+    zone_ref.unique = Some(true);
+    let ddos_policies = entity("test.reconciler_ddos_policies", vec![zone_ref]);
+
+    let first = reconcile(&pool, tenant_id, &ddos_policies, &[]).await.unwrap();
+    assert!(first.ops_applied > 0, "first reconcile must actually do work");
+
+    let second = reconcile(&pool, tenant_id, &ddos_policies, &[]).await.unwrap();
+    assert_eq!(
+        second.ops_applied, 0,
+        "second reconcile against an unchanged unique+reference field must be a no-op"
+    );
+    let third = reconcile(&pool, tenant_id, &ddos_policies, &[]).await.unwrap();
+    assert_eq!(third.ops_applied, 0);
+
+    // No blanket table-level `UNIQUE` constraint anymore — `compile()` stopped populating
+    // `schema.uniques` for this case.
+    let unique_constraint_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid \
+         WHERE t.relname = 'test_reconciler_ddos_policies' AND c.contype = 'u')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        !unique_constraint_exists,
+        "unique: true must not produce a blanket table constraint anymore"
+    );
+
+    // The real regression scenario: a soft-deleted row must NOT block a new row reusing its
+    // unique value, but two *live* rows sharing it must still be rejected.
+    let zone_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO entities.test_reconciler_zones (id, tenant_id) VALUES ($1, $2)")
+        .bind(zone_id)
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "INSERT INTO entities.test_reconciler_ddos_policies (id, tenant_id, data, deleted) \
+         VALUES ($1, $2, $3, true)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(tenant_id)
+    .bind(sqlx::types::Json(serde_json::json!({ "zoneId": zone_id })))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO entities.test_reconciler_ddos_policies (id, tenant_id, data, deleted) \
+         VALUES ($1, $2, $3, false)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(tenant_id)
+    .bind(sqlx::types::Json(serde_json::json!({ "zoneId": zone_id })))
+    .execute(&pool)
+    .await
+    .expect("a live row must be allowed to reuse a soft-deleted row's unique value");
+
+    let second_live_attempt = sqlx::query(
+        "INSERT INTO entities.test_reconciler_ddos_policies (id, tenant_id, data, deleted) \
+         VALUES ($1, $2, $3, false)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(tenant_id)
+    .bind(sqlx::types::Json(serde_json::json!({ "zoneId": zone_id })))
+    .execute(&pool)
+    .await;
+    assert!(
+        second_live_attempt.is_err(),
+        "two live rows must still be rejected for the same unique value"
+    );
+
+    drop_table_if_exists(&pool, "test_reconciler_ddos_policies").await;
+    drop_table_if_exists(&pool, "test_reconciler_zones").await;
+}
+
+/// The blacklist/whitelist motivating case for `EntityDefinition.unique_constraints`
+/// (2026-09-07): `(type, value)` together must be unique, neither field alone — real rows like
+/// `("blacklist", "1.2.3.4")` and `("whitelist", "1.2.3.4")` must coexist fine (same `value`,
+/// different `type`), but two `("blacklist", "1.2.3.4")` rows must not.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn composite_unique_constraint_allows_same_value_under_a_different_type_but_rejects_a_true_duplicate() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    drop_table_if_exists(&pool, "test_reconciler_list_entries").await;
+
+    let mut def = entity(
+        "test.reconciler_list_entries",
+        vec![plain_field("type", FieldKind::String), plain_field("value", FieldKind::String)],
+    );
+    def.unique_constraints = vec![EntityUniqueConstraint {
+        fields: vec!["type".to_string(), "value".to_string()],
+    }];
+
+    let first = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
+    assert!(first.ops_applied > 0);
+    let second = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
+    assert_eq!(second.ops_applied, 0, "composite unique index must converge too");
+
+    async fn insert(pool: &PgPool, tenant_id: Uuid, kind: &str, value: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO entities.test_reconciler_list_entries (id, tenant_id, data) VALUES ($1, $2, $3)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(tenant_id)
+        .bind(sqlx::types::Json(serde_json::json!({ "type": kind, "value": value })))
+        .execute(pool)
+        .await
+        .map(|_| ())
+    }
+
+    insert(&pool, tenant_id, "blacklist", "1.2.3.4").await.unwrap();
+    insert(&pool, tenant_id, "whitelist", "1.2.3.4")
+        .await
+        .expect("same value under a different type must be allowed — the pair is what's unique, not either field alone");
+    let dup = insert(&pool, tenant_id, "blacklist", "1.2.3.4").await;
+    assert!(dup.is_err(), "the exact same (type, value) pair twice must be rejected");
+
+    drop_table_if_exists(&pool, "test_reconciler_list_entries").await;
 }

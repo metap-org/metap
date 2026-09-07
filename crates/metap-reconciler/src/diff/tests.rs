@@ -15,6 +15,7 @@ fn idx(expression: &str) -> IndexSpec {
         unique: false,
         using: None,
         valid: true,
+        where_clause: None,
     }
 }
 

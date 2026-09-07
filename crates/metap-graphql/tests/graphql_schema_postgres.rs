@@ -109,6 +109,7 @@ fn parent_entity() -> EntityDefinition {
             max_limit: 50,
         }],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 
@@ -147,6 +148,7 @@ fn child_entity() -> EntityDefinition {
             max_limit: 50,
         }],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 
@@ -201,6 +203,7 @@ fn workflow_entity() -> EntityDefinition {
                 set_fields: None,
             }],
         }),
+        unique_constraints: vec![],
     }
 }
 

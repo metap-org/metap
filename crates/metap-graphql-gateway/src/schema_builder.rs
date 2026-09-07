@@ -29,6 +29,8 @@ struct RemoteEntitySummary {
     fields: Vec<EntityField>,
     #[serde(default)]
     workflow: Option<EntityWorkflow>,
+    #[serde(default)]
+    unique_constraints: Vec<metap_metadata::EntityUniqueConstraint>,
 }
 
 #[derive(Deserialize)]
@@ -130,6 +132,7 @@ async fn connect_upstreams(upstreams: &[UpstreamConfig]) -> anyhow::Result<(Meta
                 fields: entity.fields,
                 list_views: vec![],
                 workflow: entity.workflow,
+                unique_constraints: entity.unique_constraints,
             };
             // `register` itself rejects a name already present in `registry` — this is what
             // catches two upstreams both claiming the same entity name, fail-fast at boot.

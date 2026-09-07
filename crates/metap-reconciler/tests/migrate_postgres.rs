@@ -56,6 +56,7 @@ fn entity(name: &str, fields: Vec<EntityField>) -> EntityDefinition {
             max_limit: 50,
         }],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 

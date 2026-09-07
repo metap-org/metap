@@ -290,6 +290,7 @@ mod tests {
                     set_fields: None,
                 }],
             }),
+            unique_constraints: vec![],
         }
     }
 

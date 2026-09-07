@@ -8,7 +8,7 @@ use metap_metadata::{
     FieldStorageTier,
 };
 
-use crate::schema::{ColumnOrigin, ColumnSpec, FkSpec, IndexSpec, OnDelete, PhysicalSchema, UniqueSpec};
+use crate::schema::{ColumnOrigin, ColumnSpec, FkSpec, IndexSpec, OnDelete, PhysicalSchema};
 
 /// The fixed columns every per-entity table has, independent of `EntityField`s — same shape as
 /// the shared `records` table (`crates/migrations/0000_green_jean_grey.sql`) minus `entity`
@@ -50,8 +50,78 @@ pub fn qualified_table_name_for(entity_name: &str) -> String {
     format!("{ENTITY_SCHEMA}.{}", table_name_for(entity_name))
 }
 
+/// Postgres silently truncates an identifier over 63 bytes rather than erroring — two entity
+/// names differing only after byte 63 of their mangled form (`table_name_for`) would then
+/// collide on one physical table with no warning. Only mattered in theory while every
+/// `table_name_for` input was a short, developer-chosen Rust literal; now that a low-code
+/// entity's operator-supplied name reaches this same path (`metap-lowcode`'s
+/// `LowCodeEntityDefinition`), it's worth a real check rather than relying on Postgres's silent
+/// truncation to never collide by luck.
+pub fn check_table_name_length(entity_name: &str) -> anyhow::Result<()> {
+    let mangled = table_name_for(entity_name);
+    if mangled.len() > 63 {
+        bail!(
+            "entity name '{entity_name}' mangles to a {}-byte table name ('{mangled}'), over Postgres's 63-byte identifier limit — choose a shorter entity name",
+            mangled.len()
+        );
+    }
+    Ok(())
+}
+
 fn index_name(entity_name: &str, field_name: &str, kind: &str) -> String {
     format!("{kind}_{}_{field_name}", table_name_for(entity_name))
+}
+
+/// FNV-1a, not `std::hash::DefaultHasher` — the latter's algorithm isn't guaranteed stable
+/// across Rust/std versions (documented explicitly), which would silently break reconcile
+/// convergence for any entity whose composite index name needs the hash fallback below (a
+/// different hash after a toolchain upgrade = a "new" desired name = the old index orphaned,
+/// never cleaned up automatically the way a same-named rebuild is).
+fn fnv1a(bytes: &[u8]) -> u32 {
+    let mut hash: u32 = 0x811c9dc5;
+    for &b in bytes {
+        hash ^= b as u32;
+        hash = hash.wrapping_mul(0x01000193);
+    }
+    hash
+}
+
+/// Deterministic name for a composite `unique_constraints` entry — the same `uniq_<table>_<field>`
+/// shape a single `unique: true` field gets (`index_name`), extended to join every field in the
+/// group with `_`. Postgres silently truncates an identifier over 63 bytes (same class of risk
+/// `check_table_name_length` guards against for table names) — unlike a table name, an over-long
+/// composite index name is a real possibility even with short table/field names once 3-4 fields
+/// are involved, so this truncates deterministically with a short hash suffix rather than
+/// rejecting the entity outright (a name collision is the actual failure mode to prevent, not
+/// length by itself).
+fn composite_unique_index_name(entity_name: &str, fields: &[String]) -> String {
+    let full = format!("uniq_{}_{}", table_name_for(entity_name), fields.join("_"));
+    if full.len() <= 63 {
+        return full;
+    }
+    let suffix = format!("_{:08x}", fnv1a(full.as_bytes()));
+    let keep = 63 - suffix.len();
+    let mut end = keep.min(full.len());
+    while end > 0 && !full.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &full[..end], suffix)
+}
+
+/// The expression a field contributes to an index — same shape whether it's this field's own
+/// promoted single-field index or one of several fields inside a composite `unique_constraints`
+/// entry. A quoted column reference for a real (FK/`storage: column`) column, otherwise the same
+/// JSONB expression form the per-field loop below builds inline (kept identical, including the
+/// `Date`/`Datetime` uncast special case — see that loop's own comment for why).
+fn field_index_expression(field: &metap_metadata::EntityField) -> String {
+    if field_has_real_column(field) {
+        format!("\"{}\"", field.name)
+    } else {
+        match field.kind {
+            FieldKind::Date | FieldKind::Datetime => format!("(data ->> '{}')", field.name),
+            _ => format!("((data ->> '{}')::{})", field.name, field_kind_sql_type(field.kind)),
+        }
+    }
 }
 
 /// Compiles an `EntityDefinition` into its target `PhysicalSchema` under table-per-entity.
@@ -67,6 +137,7 @@ fn index_name(entity_name: &str, field_name: &str, kind: &str) -> String {
 ///   `search_mode: fts`, trigram otherwise) regardless of `storage` — a real column doesn't
 ///   remove the need for the derived search expression.
 pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
+    check_table_name_length(&entity.name)?;
     let mut schema = PhysicalSchema::empty(qualified_table_name_for(&entity.name));
 
     let framework_names: std::collections::HashSet<&str> = FRAMEWORK_COLUMNS.iter().map(|(name, ..)| *name).collect();
@@ -102,7 +173,16 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
         let sql_type = field_kind_sql_type(field.kind);
 
         // `searchable` always uses an expression-based GIN index straight over `data` —
-        // independent of every other flag, `continue`s before anything else runs.
+        // independent of every other flag. Does *not* unconditionally `continue` past the rest
+        // of this loop body anymore: a field can be both `searchable` and `unique` (`waf.zones`'s
+        // `hostname`, real-world case) — the two need genuinely separate index objects (a GIN
+        // trigram/tsvector index can't enforce uniqueness), so a `unique: true` field still needs
+        // to fall through into the unique-handling logic below. Found live, 2026-09-07: the old
+        // unconditional `continue` here silently dropped `hostname`'s uniqueness entirely once
+        // `waf.zones` moved to table-per-entity — it was enforced on the old shared `records`
+        // table (built by the unrelated `metap-peripherals::index_reconciler` path, which has no
+        // such conflict), so this was a real regression this migration introduced, not a
+        // pre-existing gap.
         if field.searchable == Some(true) {
             let fts = field.search_mode.as_deref() == Some("fts");
             let (kind, expr) = if fts {
@@ -117,9 +197,12 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
                     unique: false,
                     using: Some("gin".to_string()),
                     valid: true,
+                    where_clause: None,
                 },
             );
-            continue;
+            if field.unique != Some(true) {
+                continue;
+            }
         }
 
         // A real SQL `FOREIGN KEY` needs a real physical column to attach to — a `Reference`
@@ -152,6 +235,15 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
                     },
                 },
             );
+            // A `unique: true` field gets a *partial* unique index (`WHERE deleted = false`),
+            // never a blanket table `UNIQUE` constraint — a plain constraint can't express "not
+            // among soft-deleted rows", so a deleted record would permanently occupy its unique
+            // value, blocking a legitimate new row from ever reusing it. Found live (2026-09-07):
+            // `metap-demo-waf`'s `waf.ddos_policies.zoneId` — a real deleted-then-recreated
+            // DDoS policy hit exactly this, rejected with `unique_violation` against a row the
+            // portal itself had already soft-deleted. (This single `IndexSpec` also replaces
+            // what used to be two separate, redundant unique constructs for the same field —
+            // see this crate's `schema.uniques`/`UniqueSpec`, now unused by `compile()`.)
             if indexed {
                 schema.indexes.insert(
                     index_name(&entity.name, &field.name, if unique { "uniq" } else { "idx" }),
@@ -160,14 +252,7 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
                         unique,
                         using: None,
                         valid: true,
-                    },
-                );
-            }
-            if unique {
-                schema.uniques.insert(
-                    format!("uq_{}_{}", table_name_for(&entity.name), field.name),
-                    UniqueSpec {
-                        columns: vec![field.name.clone()],
+                        where_clause: unique.then(|| "deleted = false".to_string()),
                     },
                 );
             }
@@ -217,6 +302,47 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
                     unique,
                     using: None,
                     valid: true,
+                    // Same soft-delete-aware partial index as the real-column case above — a
+                    // JSONB-only `unique: true` field has the identical "soft-deleted row
+                    // permanently occupies its value" gap otherwise.
+                    where_clause: unique.then(|| "deleted = false".to_string()),
+                },
+            );
+        }
+    }
+
+    // Composite `unique_constraints` (`compiler::validate` already rejected an unknown field
+    // name, a <2-field entry, or a duplicate field-set before this ever runs) — same partial
+    // (`WHERE deleted = false`) shape a single-field `unique: true` gets, over all of the
+    // constraint's fields' expressions joined. Deliberately a second pass over
+    // `entity.unique_constraints` rather than folded into the per-field loop above: a composite
+    // constraint's fields don't need to individually be `unique`/`indexed`/`sortable` to
+    // participate (the blacklist/whitelist motivating case — `type`/`kind` are plain fields,
+    // only their *combination* is constrained), so there's no single field iteration this could
+    // hang off of.
+    if !entity.unique_constraints.is_empty() {
+        let field_by_name: std::collections::HashMap<&str, &metap_metadata::EntityField> =
+            entity.fields.iter().map(|f| (f.name.as_str(), f)).collect();
+        for constraint in &entity.unique_constraints {
+            let exprs: Vec<String> = constraint
+                .fields
+                .iter()
+                .map(|name| {
+                    field_index_expression(
+                        field_by_name
+                            .get(name.as_str())
+                            .expect("compiler::validate already rejected an unknown field name"),
+                    )
+                })
+                .collect();
+            schema.indexes.insert(
+                composite_unique_index_name(&entity.name, &constraint.fields),
+                IndexSpec {
+                    expression: exprs.join(", "),
+                    unique: true,
+                    using: None,
+                    valid: true,
+                    where_clause: Some("deleted = false".to_string()),
                 },
             );
         }
@@ -270,6 +396,7 @@ mod tests {
                 max_limit: 50,
             }],
             workflow: None,
+            unique_constraints: vec![],
         }
     }
 
@@ -333,13 +460,19 @@ mod tests {
     }
 
     #[test]
-    fn unique_storage_column_gets_a_unique_constraint_and_unique_index() {
+    fn unique_storage_column_gets_a_single_partial_unique_index_not_a_blanket_constraint() {
         let mut f = plain_field("sku", FieldKind::String);
         f.unique = Some(true);
         f.storage = Some(FieldStorage::Column);
         let schema = compile(&entity("t.e", vec![f])).unwrap();
-        assert_eq!(schema.uniques.len(), 1);
-        assert!(schema.indexes.values().next().unwrap().unique);
+        // `schema.uniques`/`UniqueSpec` (a blanket table `UNIQUE` constraint) is no longer
+        // populated by `compile()` at all — see this fix's call site comment for why a blanket
+        // constraint is wrong (can't express "unique among non-deleted rows").
+        assert!(schema.uniques.is_empty());
+        assert_eq!(schema.indexes.len(), 1);
+        let idx = schema.indexes.values().next().unwrap();
+        assert!(idx.unique);
+        assert_eq!(idx.where_clause.as_deref(), Some("deleted = false"));
     }
 
     #[test]
@@ -380,8 +513,84 @@ mod tests {
     }
 
     #[test]
+    fn searchable_and_unique_field_gets_both_a_gin_index_and_a_partial_unique_index() {
+        // `waf.zones.hostname`'s real shape — searchable (trigram) AND unique. Used to lose
+        // uniqueness entirely: the searchable branch's unconditional `continue` skipped the
+        // unique-handling logic below it for any field that was also searchable.
+        let mut f = plain_field("hostname", FieldKind::String);
+        f.searchable = Some(true);
+        f.unique = Some(true);
+        let schema = compile(&entity("t.e", vec![f])).unwrap();
+        assert_eq!(schema.indexes.len(), 2, "one GIN trgm index + one partial unique index");
+        let gin = schema
+            .indexes
+            .values()
+            .find(|i| i.expression.contains("gin_trgm_ops"))
+            .expect("trgm index must still exist");
+        assert!(!gin.unique);
+        let uniq = schema
+            .indexes
+            .values()
+            .find(|i| i.unique)
+            .expect("unique index must exist despite the field also being searchable");
+        assert_eq!(uniq.where_clause.as_deref(), Some("deleted = false"));
+    }
+
+    #[test]
+    fn composite_unique_constraint_builds_one_partial_unique_index_over_both_fields() {
+        // The blacklist/whitelist motivating case: neither `type` nor `value` alone is unique,
+        // only the pair — plain JSONB fields, not individually `unique`/`indexed`.
+        let mut e = entity(
+            "t.e",
+            vec![plain_field("type", FieldKind::String), plain_field("value", FieldKind::String)],
+        );
+        e.unique_constraints = vec![metap_metadata::EntityUniqueConstraint {
+            fields: vec!["type".to_string(), "value".to_string()],
+        }];
+        let schema = compile(&e).unwrap();
+        let uniq = schema
+            .indexes
+            .values()
+            .find(|i| i.unique)
+            .expect("composite unique index must exist");
+        assert_eq!(uniq.where_clause.as_deref(), Some("deleted = false"));
+        assert!(uniq.expression.contains("'type'") && uniq.expression.contains("'value'"));
+        // Neither field gets its own single-field index — only the composite one exists.
+        assert_eq!(schema.indexes.len(), 1);
+    }
+
+    #[test]
+    fn composite_unique_index_name_is_deterministically_truncated_when_too_long() {
+        let fields = vec!["a".repeat(30), "b".repeat(30), "c".repeat(30)];
+        let name = composite_unique_index_name("t.e", &fields);
+        assert!(name.len() <= 63);
+        // Stable across calls — same inputs must always mangle to the same name, or reconcile
+        // would never converge (a "new" name every pass looks identical to a rename to `diff()`).
+        assert_eq!(name, composite_unique_index_name("t.e", &fields));
+    }
+
+    #[test]
     fn field_name_colliding_with_a_framework_column_is_rejected() {
         let err = compile(&entity("t.e", vec![plain_field("tenant_id", FieldKind::String)])).unwrap_err();
         assert!(err.to_string().contains("tenant_id"));
+    }
+
+    #[test]
+    fn short_entity_name_passes_the_table_name_length_guard() {
+        check_table_name_length("hr.employees").unwrap();
+    }
+
+    #[test]
+    fn entity_name_mangling_to_over_63_bytes_is_rejected_not_silently_truncated() {
+        let long_name = format!("test.{}", "a".repeat(70));
+        let err = check_table_name_length(&long_name).unwrap_err();
+        assert!(err.to_string().contains("63-byte"));
+    }
+
+    #[test]
+    fn compile_rejects_an_entity_whose_table_name_would_be_too_long() {
+        let long_name = format!("test.{}", "a".repeat(70));
+        let err = compile(&entity(&long_name, vec![])).unwrap_err();
+        assert!(err.to_string().contains("63-byte"));
     }
 }

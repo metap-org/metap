@@ -43,6 +43,24 @@ pub enum FieldStorage {
     Column,
 }
 
+/// A multi-field uniqueness rule — "these fields *together* must be unique", distinct from
+/// `EntityField.unique` (one field, unique on its own). Lives at the entity level, same tier as
+/// `list_views`/`workflow`, since it's a property of the whole record shape, not any one field.
+/// `metap_reconciler::compile()` turns each entry into one partial unique index (`WHERE deleted =
+/// false`, same soft-delete-aware shape a single-field `unique: true` gets) over all of
+/// `fields`'s expressions joined — see that crate's doc comment for why partial, not blanket.
+/// Real motivating case (2026-09-07): a blacklist/whitelist-shaped entity storing many entry
+/// `type`s (`ip`/`uri`/`ipRange`/...) in one table, where `(type, value)` — not either field
+/// alone — must be unique per record.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityUniqueConstraint {
+    /// At least 2 field names, each an existing field on this entity (`compiler::validate`
+    /// enforces both) — a single-field entry belongs on that field's own `unique: true` instead,
+    /// which already covers the one-field case with less indirection.
+    pub fields: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityField {
@@ -381,6 +399,11 @@ pub struct EntityDefinition {
     pub list_views: Vec<EntityListView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<EntityWorkflow>,
+    /// Multi-field uniqueness rules — see `EntityUniqueConstraint`'s own doc comment. Empty by
+    /// far the common case (most entities have none), same `#[serde(default)]` treatment as
+    /// `fields`/`listViews` above so existing hand-authored/low-code entity JSON needs no change.
+    #[serde(default)]
+    pub unique_constraints: Vec<EntityUniqueConstraint>,
 }
 
 #[cfg(test)]

@@ -148,6 +148,7 @@ fn test_entity() -> EntityDefinition {
                 set_fields: None,
             }],
         }),
+        unique_constraints: vec![],
     }
 }
 

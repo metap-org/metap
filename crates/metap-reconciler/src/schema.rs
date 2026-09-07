@@ -71,6 +71,14 @@ pub struct IndexSpec {
     /// `Some(method)` for a non-default access method (`gin`), `None` for the default btree.
     pub using: Option<String>,
     pub valid: bool,
+    /// A partial index's `WHERE` predicate (unnormalized SQL text — `diff()`'s `index_matches`
+    /// normalizes both sides via `normalize::normalize_expr` before comparing, same as
+    /// `expression`), `None` for a full-table index. `compile()` sets this to `Some("deleted =
+    /// false")` for every `unique: true` field — see that function's doc comment on why a
+    /// blanket unique constraint/index is wrong for a soft-deletable table (found live,
+    /// 2026-09-07: `metap-demo-waf`'s `waf.ddos_policies.zoneId`, a real deleted-then-recreated
+    /// row permanently blocked by a unique value a soft-deleted row still "held").
+    pub where_clause: Option<String>,
 }
 
 /// Whether `pg_constraint.convalidated` is `true` (introspected side) — an FK added

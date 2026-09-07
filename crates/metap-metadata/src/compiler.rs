@@ -370,6 +370,49 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
         ));
     }
 
+    // Composite `unique_constraints` — `field_names` here is the same set the per-field loop
+    // above built, so a constraint referencing an unknown field is caught the same way a
+    // `ref_display_field`/`computed.depends_on` typo would be. Requires >= 2 fields: a one-field
+    // "composite" is just that field's own `unique: true`, which already exists and is simpler
+    // (no entity-level indirection) — letting both express the same thing would just be two ways
+    // to write one rule, with no way for a caller to tell which one `compile()` actually built.
+    let mut seen_field_sets: HashSet<Vec<&str>> = HashSet::new();
+    for constraint in &entity.unique_constraints {
+        if constraint.fields.len() < 2 {
+            issues.push(format!(
+                "uniqueConstraints entry {:?} needs >= 2 fields — a single field belongs on that field's own \"unique\" flag instead",
+                constraint.fields
+            ));
+            continue;
+        }
+        let mut names_in_constraint: HashSet<&str> = HashSet::new();
+        for name in &constraint.fields {
+            if !field_names.contains(name.as_str()) {
+                issues.push(format!(
+                    "uniqueConstraints entry {:?} references unknown field \"{name}\"",
+                    constraint.fields
+                ));
+            }
+            if !names_in_constraint.insert(name.as_str()) {
+                issues.push(format!(
+                    "uniqueConstraints entry {:?} lists field \"{name}\" more than once",
+                    constraint.fields
+                ));
+            }
+        }
+        // Order-independent duplicate-group check — `(a, b)` and `(b, a)` are the same
+        // constraint, and `compile()`'s index naming (join in declared order) would otherwise
+        // silently build two different-named indexes enforcing the identical rule.
+        let mut sorted: Vec<&str> = constraint.fields.iter().map(String::as_str).collect();
+        sorted.sort_unstable();
+        if !seen_field_sets.insert(sorted) {
+            issues.push(format!(
+                "uniqueConstraints has more than one entry over the same field set {:?}",
+                constraint.fields
+            ));
+        }
+    }
+
     // `entity.name` had no charset check at all until this validation existed — same gap
     // `field.name` had (see that check's doc comment above), just harder to hit accidentally
     // since a code-authored entity's name is a Rust string literal, not admin-supplied metadata.

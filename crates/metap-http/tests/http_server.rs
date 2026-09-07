@@ -139,6 +139,7 @@ fn test_entity() -> EntityDefinition {
                 set_fields: None,
             }],
         }),
+        unique_constraints: vec![],
     }
 }
 
@@ -561,6 +562,7 @@ fn plain_string_entity(name: &str, field_names: &[&str]) -> EntityDefinition {
         fields: field_names.iter().map(|f| string_field(f)).collect(),
         list_views: vec![],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 

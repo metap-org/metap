@@ -108,7 +108,7 @@ impl CrudService {
         {
             Ok(row) => row,
             Err(e) => {
-                if let Some(result) = unique_violation(&entity.name, &e) {
+                if let Some(result) = unique_violation(&entity, &e) {
                     tx.rollback().await.ok();
                     tracing::warn!(entity = entity.name, "create rejected: unique constraint violated");
                     return Ok(result);

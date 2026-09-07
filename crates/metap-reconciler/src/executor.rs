@@ -233,8 +233,16 @@ fn build_sql(table: &str, op: &DdlOp) -> Vec<String> {
 fn build_create_index_sql(table: &str, name: &str, spec: &IndexSpec) -> String {
     let unique = if spec.unique { "UNIQUE " } else { "" };
     let using = spec.using.as_deref().map(|m| format!("USING {m} ")).unwrap_or_default();
+    // `where_clause` is always a fixed string this crate itself generates (`compile()`'s
+    // `"deleted = false"`), never request/tenant input — safe to inline unquoted, same trust
+    // boundary `index_name`/`table_name_for` already rely on for entity/field names.
+    let where_clause = spec
+        .where_clause
+        .as_deref()
+        .map(|w| format!(" WHERE {w}"))
+        .unwrap_or_default();
     format!(
-        "CREATE {unique}INDEX CONCURRENTLY IF NOT EXISTS {} ON {} {using}({})",
+        "CREATE {unique}INDEX CONCURRENTLY IF NOT EXISTS {} ON {} {using}({}){where_clause}",
         quote_ident(name),
         quote_qualified_ident(table),
         spec.expression

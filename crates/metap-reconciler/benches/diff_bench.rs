@@ -61,6 +61,7 @@ fn bench_entity() -> EntityDefinition {
             max_limit: 100,
         }],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 

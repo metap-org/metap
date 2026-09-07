@@ -179,6 +179,7 @@ fn test_entity() -> EntityDefinition {
                 },
             ],
         }),
+        unique_constraints: vec![],
     }
 }
 
@@ -214,6 +215,7 @@ fn unique_field_entity() -> EntityDefinition {
         }],
         list_views: vec![],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 
@@ -247,6 +249,7 @@ fn parent_entity() -> EntityDefinition {
         }],
         list_views: vec![],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 
@@ -279,6 +282,7 @@ fn child_entity() -> EntityDefinition {
         }],
         list_views: vec![],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 
@@ -313,6 +317,7 @@ fn grandchild_entity() -> EntityDefinition {
         }],
         list_views: vec![],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 
@@ -346,6 +351,7 @@ fn self_ref_entity() -> EntityDefinition {
         }],
         list_views: vec![],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 
@@ -423,6 +429,7 @@ fn computed_field_entity() -> EntityDefinition {
         ],
         list_views: vec![],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 
@@ -435,6 +442,176 @@ async fn ensure_sku_unique_index(pool: &PgPool) {
     .execute(pool)
     .await
     .unwrap();
+}
+
+/// A dedicated-table counterpart to `unique_field_entity()` — same `unique: true` shape, but
+/// `table_name` is a real table-per-entity table, not `records`. `metap_reconciler::compile()`
+/// names this table's unique index `uniq_test_unique_widgets_sku` (no `records_` in the middle,
+/// unlike the generic-table case above) — hand-rolled here rather than pulling in
+/// `metap-reconciler` as a dev-dependency, same reasoning `unique_field_entity()`'s own doc
+/// comment gives for `metap-peripherals`.
+fn dedicated_table_unique_field_entity() -> EntityDefinition {
+    EntityDefinition {
+        name: "test.unique_widgets".to_string(),
+        label: "Unique Widget".to_string(),
+        table_name: "entities.test_unique_widgets".to_string(),
+        fields: vec![EntityField {
+            name: "sku".to_string(),
+            label: "SKU".to_string(),
+            kind: FieldKind::String,
+            required: Some(true),
+            indexed: None,
+            unique: Some(true),
+            enum_values: None,
+            ref_entity: None,
+            ref_display_field: None,
+            searchable: None,
+            search_mode: None,
+            sortable: None,
+            storage: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
+            computed: None,
+        }],
+        list_views: vec![],
+        workflow: None,
+        unique_constraints: vec![],
+    }
+}
+
+async fn ensure_dedicated_unique_widgets_table(pool: &PgPool) {
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities").execute(pool).await.unwrap();
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS entities.test_unique_widgets ( \
+         id uuid PRIMARY KEY DEFAULT gen_random_uuid(), \
+         tenant_id uuid NOT NULL, \
+         code varchar(120), \
+         status varchar(80), \
+         data jsonb NOT NULL DEFAULT '{}'::jsonb, \
+         version integer NOT NULL DEFAULT 1, \
+         deleted boolean NOT NULL DEFAULT false, \
+         created_at timestamptz NOT NULL DEFAULT now(), \
+         updated_at timestamptz NOT NULL DEFAULT now(), \
+         created_by uuid, \
+         updated_by uuid)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uniq_test_unique_widgets_sku \
+         ON entities.test_unique_widgets ((jsonb_extract_path_text(data, 'sku'))) \
+         WHERE deleted = false",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn drop_dedicated_unique_widgets_table(pool: &PgPool) {
+    sqlx::query("DROP TABLE IF EXISTS entities.test_unique_widgets CASCADE")
+        .execute(pool)
+        .await
+        .ok();
+}
+
+/// The blacklist/whitelist motivating case for `EntityDefinition.unique_constraints`
+/// (2026-09-07): `type`/`value` are plain fields, neither individually `unique`, only their
+/// combination — `unique_violation`'s field-name extraction must recognize the composite
+/// constraint's name (`uniq_test_unique_list_entries_type_value`, `compile()`'s naming) and blame
+/// *both* fields, not just fall through to the generic "no field named" branch.
+fn dedicated_table_composite_unique_entity() -> EntityDefinition {
+    EntityDefinition {
+        name: "test.unique_list_entries".to_string(),
+        label: "Unique List Entry".to_string(),
+        table_name: "entities.test_unique_list_entries".to_string(),
+        fields: vec![
+            EntityField {
+                name: "type".to_string(),
+                label: "Type".to_string(),
+                kind: FieldKind::String,
+                required: Some(true),
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
+                computed: None,
+            },
+            EntityField {
+                name: "value".to_string(),
+                label: "Value".to_string(),
+                kind: FieldKind::String,
+                required: Some(true),
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
+                computed: None,
+            },
+        ],
+        list_views: vec![],
+        workflow: None,
+        unique_constraints: vec![metap_metadata::EntityUniqueConstraint {
+            fields: vec!["type".to_string(), "value".to_string()],
+        }],
+    }
+}
+
+async fn ensure_dedicated_unique_list_entries_table(pool: &PgPool) {
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities").execute(pool).await.unwrap();
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS entities.test_unique_list_entries ( \
+         id uuid PRIMARY KEY DEFAULT gen_random_uuid(), \
+         tenant_id uuid NOT NULL, \
+         code varchar(120), \
+         status varchar(80), \
+         data jsonb NOT NULL DEFAULT '{}'::jsonb, \
+         version integer NOT NULL DEFAULT 1, \
+         deleted boolean NOT NULL DEFAULT false, \
+         created_at timestamptz NOT NULL DEFAULT now(), \
+         updated_at timestamptz NOT NULL DEFAULT now(), \
+         created_by uuid, \
+         updated_by uuid)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uniq_test_unique_list_entries_type_value \
+         ON entities.test_unique_list_entries \
+         ((jsonb_extract_path_text(data, 'type')), (jsonb_extract_path_text(data, 'value'))) \
+         WHERE deleted = false",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn drop_dedicated_unique_list_entries_table(pool: &PgPool) {
+    sqlx::query("DROP TABLE IF EXISTS entities.test_unique_list_entries CASCADE")
+        .execute(pool)
+        .await
+        .ok();
 }
 
 async fn connect() -> PgPool {
@@ -1063,6 +1240,108 @@ async fn unique_field_violation_is_a_clean_409_not_a_500() {
     cleanup(&pool, tenant_id).await;
 }
 
+/// Regression test for a real bug (2026-09-07): `unique_violation`'s field-name extraction only
+/// ever tried the `uniq_records_<entity>_<field>` prefix (the generic shared-table naming), so a
+/// `unique: true` field on a *dedicated* table (`uniq_<table>_<field>`, no `records_` in the
+/// middle) always fell through to a bare `409 {"code":"unique_violation"}` with no field name at
+/// all — reported live by a user hitting exactly this on `metap-demo-waf`'s
+/// `waf.ddos_policies.zoneId`, the first `unique: true` field on a dedicated table anywhere in
+/// this codebase's history. The generic-table case above already covered the old prefix; this
+/// covers the one that was silently broken.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn unique_field_violation_on_a_dedicated_table_still_names_the_field() {
+    let pool = connect().await;
+    drop_dedicated_unique_widgets_table(&pool).await;
+    ensure_dedicated_unique_widgets_table(&pool).await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(dedicated_table_unique_field_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
+
+    let mut payload = JsonObject::new();
+    payload.insert("sku".to_string(), json!("WID-1"));
+    crud.create("test.unique_widgets", &payload, &ctx).await.unwrap();
+
+    match crud.create("test.unique_widgets", &payload, &ctx).await.unwrap() {
+        ServiceResult::Err {
+            status,
+            error,
+            field_errors,
+            ..
+        } => {
+            assert_eq!(status, 409);
+            assert_eq!(error, "unique_violation");
+            assert!(
+                field_errors.unwrap().contains_key("sku"),
+                "must name the field even on a dedicated table, not just the generic records table"
+            );
+        }
+        other => panic!("expected unique_violation on duplicate create, got {other:?}"),
+    }
+
+    drop_dedicated_unique_widgets_table(&pool).await;
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn composite_unique_field_violation_names_every_field_in_the_constraint() {
+    let pool = connect().await;
+    drop_dedicated_unique_list_entries_table(&pool).await;
+    ensure_dedicated_unique_list_entries_table(&pool).await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(dedicated_table_composite_unique_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
+
+    let mut payload = JsonObject::new();
+    payload.insert("type".to_string(), json!("blacklist"));
+    payload.insert("value".to_string(), json!("1.2.3.4"));
+    crud.create("test.unique_list_entries", &payload, &ctx).await.unwrap();
+
+    // Same value, different type — the pair isn't a duplicate, must succeed.
+    let mut other_type = JsonObject::new();
+    other_type.insert("type".to_string(), json!("whitelist"));
+    other_type.insert("value".to_string(), json!("1.2.3.4"));
+    match crud.create("test.unique_list_entries", &other_type, &ctx).await.unwrap() {
+        ServiceResult::Ok { .. } => {}
+        other => panic!("same value under a different type must be allowed, got {other:?}"),
+    }
+
+    // The exact same (type, value) pair again — must be rejected, naming both fields.
+    match crud.create("test.unique_list_entries", &payload, &ctx).await.unwrap() {
+        ServiceResult::Err {
+            status,
+            error,
+            field_errors,
+            ..
+        } => {
+            assert_eq!(status, 409);
+            assert_eq!(error, "unique_violation");
+            let errors = field_errors.unwrap();
+            assert!(errors.contains_key("type"), "must blame \"type\", got {errors:?}");
+            assert!(errors.contains_key("value"), "must blame \"value\", got {errors:?}");
+        }
+        other => panic!("expected unique_violation on duplicate (type, value), got {other:?}"),
+    }
+
+    drop_dedicated_unique_list_entries_table(&pool).await;
+}
+
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn delete_is_rejected_when_another_record_still_references_it() {
@@ -1457,6 +1736,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
             fields: vec![plain_field("name", FieldKind::String)],
             list_views: vec![],
             workflow: None,
+            unique_constraints: vec![],
         })
         .unwrap();
     registry
@@ -1471,6 +1751,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
             ],
             list_views: vec![],
             workflow: None,
+            unique_constraints: vec![],
         })
         .unwrap();
     registry
@@ -1518,6 +1799,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
                 max_limit: 100,
             }],
             workflow: None,
+            unique_constraints: vec![],
         })
         .unwrap();
 
@@ -1682,6 +1964,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
             fields: vec![plain_field("name", FieldKind::String)],
             list_views: vec![],
             workflow: None,
+            unique_constraints: vec![],
         })
         .unwrap();
     registry
@@ -1696,6 +1979,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
             ],
             list_views: vec![],
             workflow: None,
+            unique_constraints: vec![],
         })
         .unwrap();
     registry
@@ -1745,6 +2029,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
                 max_limit: 100,
             }],
             workflow: None,
+            unique_constraints: vec![],
         })
         .unwrap();
 

@@ -171,6 +171,7 @@ mod tests {
             fields,
             list_views: vec![],
             workflow: None,
+            unique_constraints: vec![],
         }
     }
 

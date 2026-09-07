@@ -518,6 +518,8 @@ struct RemoteEntitySummary {
     fields: Vec<metap_metadata::EntityField>,
     #[serde(default)]
     workflow: Option<metap_metadata::EntityWorkflow>,
+    #[serde(default)]
+    unique_constraints: Vec<metap_metadata::EntityUniqueConstraint>,
 }
 
 #[derive(serde::Deserialize)]
@@ -583,6 +585,7 @@ async fn migrate_to_dedicated_table(args: &[String]) -> anyhow::Result<()> {
         fields: parsed.data.fields,
         list_views: vec![],
         workflow: parsed.data.workflow,
+        unique_constraints: parsed.data.unique_constraints,
     };
 
     let router = router_for(shared_pool).await;

@@ -85,7 +85,7 @@ pub async fn introspect(
         let valid: bool = row.try_get("indisvalid")?;
         let unique: bool = row.try_get("indisunique")?;
         let amname: String = row.try_get("amname")?;
-        let expression = extract_index_expression(&indexdef);
+        let (expression, where_clause) = extract_index_expression_and_where(&indexdef);
         indexes.insert(
             index_name,
             IndexSpec {
@@ -93,6 +93,7 @@ pub async fn introspect(
                 unique,
                 using: (amname != "btree").then_some(amname),
                 valid,
+                where_clause,
             },
         );
     }
@@ -218,20 +219,53 @@ fn pg_type_to_short(
 
 /// `pg_get_indexdef` returns the *whole* `CREATE INDEX ...` statement — this crate only wants
 /// the column/expression list (plus any trailing opclass, e.g. `gin_trgm_ops`, which sits
-/// *outside* the expression's own parens). Format is always
-/// `... USING <method> (<expr>)[ <opclass>]`; per-entity tables never use partial indexes (one
-/// table = one entity already, unlike the shared `records` table's `WHERE entity = ...`), so
-/// there's no `WHERE` clause to strip and nothing after the closing paren but an optional
-/// opclass — safe to just take everything from the first `(` after `USING <method> ` to the end
-/// of the string. `normalize_expr` strips every paren anyway, so exact bracket-matching here
-/// would be work spent for no comparison benefit.
-fn extract_index_expression(indexdef: &str) -> String {
+/// *outside* the expression's own parens) and, separately, a partial index's `WHERE` predicate.
+/// Format is always `... USING <method> (<expr>)[ <opclass>][ WHERE (<predicate>)]` — a
+/// `unique: true` field's index is the only partial-index case `compile()` produces (`WHERE
+/// deleted = false`, so a soft-deleted row doesn't permanently occupy its unique value; see
+/// `compile()`'s own doc comment), so balanced-paren matching only needs to find *one* split
+/// point (the expression's closing paren), not handle nested `WHERE`-inside-expression cases
+/// this codebase never generates. `normalize_expr` strips every paren anyway, so exact
+/// bracket-matching only needs to find where the expression ends, not preserve its structure.
+fn extract_index_expression_and_where(indexdef: &str) -> (String, Option<String>) {
     let Some(using_pos) = indexdef.find(" USING ") else {
-        return indexdef.to_string();
+        return (indexdef.to_string(), None);
     };
     let after_using = &indexdef[using_pos + " USING ".len()..];
-    match after_using.find('(') {
-        Some(paren_start) => after_using[paren_start..].trim().to_string(),
-        None => after_using.trim().to_string(),
+    let Some(paren_start) = after_using.find('(') else {
+        return (after_using.trim().to_string(), None);
+    };
+    let expr_region = &after_using[paren_start..];
+    let Some(paren_end) = matching_close_paren(expr_region) else {
+        return (after_using.trim().to_string(), None);
+    };
+    let (paren_expr, rest) = expr_region.split_at(paren_end + 1);
+    let rest = rest.trim();
+    match rest.strip_prefix("WHERE ") {
+        Some(predicate) => (paren_expr.to_string(), Some(predicate.trim().to_string())),
+        // No `WHERE` — `rest` is either empty or a trailing opclass (`gin_trgm_ops`); either way
+        // it belongs on the expression side, matching `compile()`'s own non-partial expressions
+        // (e.g. the trgm case's `"(data ->> 'title') gin_trgm_ops"`).
+        None if rest.is_empty() => (paren_expr.to_string(), None),
+        None => (format!("{paren_expr} {rest}"), None),
     }
+}
+
+/// Finds the index (into `s`) of the `)` that closes the `(` at `s`'s start, accounting for
+/// nesting — `s` must start with `(`.
+fn matching_close_paren(s: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
