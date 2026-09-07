@@ -12,6 +12,21 @@
 //! `metap-infra`). This crate sits at the same tier as the facade `metap` instead: depends on
 //! every core crate it needs, nothing core depends back on it.
 //!
+//! ## Declaring entities via YAML instead of Rust
+//!
+//! `entities_yaml::load_entity_definitions_from_dir` (2026-09-07,
+//! `docs/features/33-declarative-yaml-app-bootstrap.md`) reads a directory of `*.yaml`/`*.yml`
+//! files into `Vec<EntityDefinition>` — one entity per file, same shape `EntityDefinition`'s own
+//! `camelCase` JSON already uses. The caller still calls `registry.register(entity)?` per
+//! returned entity itself, the identical call a hand-written `EntityDefinition` goes through, so
+//! YAML-loaded and Rust-authored entities can't validate differently. This is purely a
+//! boilerplate reduction for the *declarative* shape of an entity — it does not add any way to
+//! attach custom Rust code to one. For real custom logic, register a
+//! `metap_infra::HandlerRegistry.on("<entityName>.record.created", ...)` handler in the binary's
+//! own `main.rs` using the entity's name (already known from the YAML, no new hook-name field
+//! needed) — see that feature brief for why an embedded scripting/expression mechanism was
+//! deliberately not built.
+//!
 //! ## Writing a custom (non-entity) backend on top of this
 //!
 //! Beyond declaring entities via `MetadataRegistry`, a real custom route/handler is built from
@@ -44,6 +59,9 @@ use metap_control::{PostgresPolicyStore, PostgresTenantRegistry, RegistryCache, 
 use metap_infra::AppConfig;
 use metap_permission::PermissionService;
 use sqlx::PgPool;
+
+pub mod entities_yaml;
+pub use entities_yaml::{load_entity_definitions_from_dir, parse_entity_yaml};
 
 pub struct PlatformParts {
     pub pool: PgPool,

@@ -68,6 +68,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Maintained fork of the now-archived `serde_yaml` (same API — `serde_norway::from_str`/`to_string`
+# are drop-in) — used by `metap-app`'s entity YAML loader and `metap-graphql-gateway`'s upstream
+# YAML loader (`docs/features/33-declarative-yaml-app-bootstrap.md`).
+serde_norway = "0.9"
 sqlx = { version = "0.8", default-features = false }
 tokio = "1"
 tower-http = "0.6"

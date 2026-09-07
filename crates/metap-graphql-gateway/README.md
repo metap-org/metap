@@ -18,8 +18,10 @@ intentionally undesigned until a real split-deploy trigger existed — this bina
 
 ## Boot sequence
 
-1. Read `UPSTREAM_<N>_{NAME,GRPC_ADDR,METADATA_URL,LOGIN_URL,SERVICE_EMAIL,SERVICE_PASSWORD}` env
-   vars (see `.env.example`), `N = 1, 2, ...` until the first missing `_NAME`.
+1. Read the upstream list — either `UPSTREAM_CONFIG_FILE` (one YAML file, recommended past a
+   couple of upstreams) or `UPSTREAM_<N>_{NAME,GRPC_ADDR,METADATA_URL,LOGIN_URL,SERVICE_EMAIL,
+   SERVICE_PASSWORD}` env vars (`N = 1, 2, ...` until the first missing `_NAME`) — see
+   `.env.example` and `src/config.rs`'s module doc comment for both forms.
 2. For each upstream: log into `LOGIN_URL` (that service's own `POST /auth/login`) as
    `SERVICE_EMAIL`/`SERVICE_PASSWORD`, `GET {METADATA_URL}` (bearer the token just obtained) to
    discover its entities, and connect one `GrpcBackend` to `GRPC_ADDR`.
