@@ -161,9 +161,24 @@ jobs:
       # whose only output is `eprintln!` numbers this invocation doesn't even capture (no
       # `--nocapture`) — pure CI cost with no assertion value. `--ignored` was too blunt to tell
       # the two categories apart; skip these 3 explicitly by name instead.
+      #
+      # `--exclude metap-storage` (found live, 2026-09-07): its 3 `#[ignore]`d tests
+      # (`crates/metap-storage/tests/s3_seaweedfs.rs`) need a real S3-compatible endpoint
+      # (`docker compose up -d seaweedfs`), and unlike postgres/rabbitmq/redis/vault above, no
+      # seaweedfs service is provisioned in this job — this workflow would otherwise fail every
+      # single run on these 3 with plain connection-refused, none of which is a real regression.
+      # A bare `--skip same_key_different_tenants_never_collide` can't disambiguate: the exact
+      # same test name also exists (deliberately, same invariant, different backend) in
+      # `crates/metap-cache/src/redis_cache.rs`'s own `#[ignore]`d e2e test, which the `redis`
+      # service above genuinely does provision for — `--skip` matches by substring across every
+      # test binary in the workspace, so it would silently skip that real, runnable test too.
+      # Excluding the whole crate is precise (its only other tests are plain, non-`#[ignore]`d
+      # unit tests that `--ignored` was never going to run in this invocation regardless) and
+      # loses no coverage this job could otherwise provide, since it provisions no seaweedfs
+      # service to run these tests against in the first place.
       - name: Run e2e tests
         run: |
-          cargo test --workspace --locked -- --ignored \
+          cargo test --workspace --exclude metap-storage --locked -- --ignored \
             --skip sustained_concurrent_list_against_a_real_multi_entity_abac_workflow \
             --skip sustained_concurrent_list_across_many_tenants_at_ten_million_rows \
             --skip sustained_concurrent_create_update_transition_delete_cycle

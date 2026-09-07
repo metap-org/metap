@@ -205,7 +205,11 @@ async fn graphql_endpoint_requires_auth_and_serves_a_real_mutation_and_query() {
 
     // `GET /graphql/schema.graphql` — the checked-in-file counterpart to introspection (below):
     // unauthenticated like `openapi_json`, and its own live SDL, not a stale/hand-written one.
-    let sdl_res = client.get(format!("{base}/graphql/schema.graphql")).send().await.unwrap();
+    let sdl_res = client
+        .get(format!("{base}/graphql/schema.graphql"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(sdl_res.status(), 200);
     let sdl = sdl_res.text().await.unwrap();
     assert!(sdl.contains("type Query"), "expected real SDL, got: {sdl}");
