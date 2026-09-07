@@ -77,6 +77,9 @@ tokio = "1"
 tower-http = "0.6"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
+# Dev-dependency only (metap-jwks, metap-cron-scheduler) — mock HTTP server for tests that make a
+# real outbound request (JWKS fetch, webhook target) without a live network dependency.
+wiremock = "0.6"
 
 # Baseline lint policy for the workspace (`docs/roadmap.md` Phase 8). The actual gate is
 # `.github/workflows/ci.yml`'s `cargo clippy -- -D warnings` — this table just codifies the same

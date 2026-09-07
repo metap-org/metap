@@ -165,6 +165,8 @@ async fn dispatch(
             payload.tenant_id,
             payload.job_id,
             payload.run_id,
+            payload.trigger_entity.as_deref(),
+            payload.trigger_record_id,
             &payload.target_config,
         )
         .await
