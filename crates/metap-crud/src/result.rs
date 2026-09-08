@@ -62,6 +62,25 @@ impl<T> ServiceResult<T> {
         }
     }
 
+    /// Both a human-readable `message` (for a client that just shows it as-is, same as
+    /// `err_with_message`) and structured `field_errors` (for a client that wants to do more,
+    /// same wire shape `err_with_field_errors` already produces) on the same error — used by
+    /// `delete()`'s `record_referenced` guard, which needs a readable summary of the first
+    /// blocker *and* the full list every blocker maps to.
+    pub fn err_with_message_and_field_errors(
+        status: u16,
+        error: impl Into<String>,
+        message: impl Into<String>,
+        field_errors: HashMap<String, Vec<String>>,
+    ) -> Self {
+        ServiceResult::Err {
+            status,
+            error: error.into(),
+            message: Some(message.into()),
+            field_errors: Some(field_errors),
+        }
+    }
+
     pub fn is_ok(&self) -> bool {
         matches!(self, ServiceResult::Ok { .. })
     }

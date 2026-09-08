@@ -287,7 +287,7 @@ fn child_entity() -> EntityDefinition {
 }
 
 /// A *second*, distinct entity referencing `test.parents` — for testing that
-/// `find_referencing_record`'s combined single-query check (`docs/roadmap.md`, code review
+/// `find_referencing_records`'s combined single-query check (`docs/roadmap.md`, code review
 /// 2026-08-22) catches a reference through *either* `test.children` or this entity, not just
 /// whichever one happens to be first in `referencing_fields`'s result.
 fn grandchild_entity() -> EntityDefinition {
@@ -1621,6 +1621,92 @@ async fn delete_is_rejected_when_referenced_by_any_of_multiple_referencing_entit
             assert!(
                 message.is_some_and(|m| m.contains("test.grandchildren")),
                 "error message should name the actual referencing entity"
+            );
+        }
+        other => panic!("expected record_referenced, got {other:?}"),
+    }
+
+    cleanup(&pool, tenant_id).await;
+}
+
+/// `find_referencing_records` (`metap-crud/src/crud_service/helpers.rs`) reports **every**
+/// blocking row, not just the first one found — added 2026-09-09 after a user hit a
+/// `record_referenced` delete on the WAF portal and asked why the error only ever named one
+/// referencing record when more than one field errors is what tells the frontend which records
+/// to link the operator to (`ReferencedByErrorMessage.tsx`, `platform-ui`). Covers both: two
+/// *different* referencing entities (`test.children`/`test.grandchildren`, same as the test
+/// above) and two rows of the *same* referencing entity+field, all sharing the generic `records`
+/// table.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running Postgres"]
+async fn delete_rejected_lists_every_blocking_record_not_just_the_first() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(parent_entity()).unwrap();
+    registry.register(child_entity()).unwrap();
+    registry.register(grandchild_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    );
+
+    let mut parent_payload = JsonObject::new();
+    parent_payload.insert("name".to_string(), json!("Parent A"));
+    let parent = match crud.create("test.parents", &parent_payload, &ctx).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    // 2 children referencing the same parent through the same field...
+    let mut child_ids = Vec::new();
+    for _ in 0..2 {
+        let mut child_payload = JsonObject::new();
+        child_payload.insert("parentId".to_string(), json!(parent.id));
+        let child = match crud.create("test.children", &child_payload, &ctx).await.unwrap() {
+            ServiceResult::Ok { data, .. } => data,
+            other => panic!("expected create to succeed, got {other:?}"),
+        };
+        child_ids.push(child.id.to_string());
+    }
+
+    // ...plus 1 grandchild through a completely different entity/field.
+    let mut grandchild_payload = JsonObject::new();
+    grandchild_payload.insert("grandparentId".to_string(), json!(parent.id));
+    let grandchild = match crud
+        .create("test.grandchildren", &grandchild_payload, &ctx)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    match crud
+        .delete("test.parents", parent.id, parent.version, &ctx)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Err {
+            status, field_errors, ..
+        } => {
+            assert_eq!(status, 409);
+            let field_errors = field_errors.expect("record_referenced should carry field_errors");
+
+            let mut children_hits = field_errors.get("test.children.parentId").cloned().unwrap_or_default();
+            children_hits.sort();
+            let mut expected_children = child_ids.clone();
+            expected_children.sort();
+            assert_eq!(children_hits, expected_children, "both blocking children must be listed");
+
+            assert_eq!(
+                field_errors.get("test.grandchildren.grandparentId"),
+                Some(&vec![grandchild.id.to_string()]),
+                "the grandchild on a different entity/field must be listed too"
             );
         }
         other => panic!("expected record_referenced, got {other:?}"),

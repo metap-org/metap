@@ -220,6 +220,19 @@ pub(crate) fn referencing_fields(metadata: &MetadataRegistry, target_entity: &st
     result
 }
 
+/// One blocking row `delete()`'s reference-integrity guard found — enough for the API response to
+/// name exactly which record is blocking the delete (`entity`/`id`), not just which field.
+pub(crate) struct ReferencingRecordHit {
+    pub(crate) entity: String,
+    pub(crate) field: String,
+    pub(crate) id: Uuid,
+}
+
+/// Total blocking rows reported across every referencing table combined — this only runs on the
+/// (cold, delete-time) path, so this exists purely to keep the error response bounded, not for
+/// query performance.
+const MAX_REFERENCING_HITS: i64 = 50;
+
 /// One combined query per **distinct physical table** among `referencing_fields`'s results
 /// (`delete()`'s original one-query-per-pair loop, found too slow in code review 2026-08-22 —
 /// an entity referenced by K fields used to cost K sequential round trips — got fixed by
@@ -230,19 +243,26 @@ pub(crate) fn referencing_fields(metadata: &MetadataRegistry, target_entity: &st
 /// record whose self-reference points at itself would match its own row and could never be
 /// deleted, a second bug found in the same review pass).
 ///
+/// Returns every blocking row (up to [`MAX_REFERENCING_HITS`] total), not just the first —
+/// `delete()` reports the full list so the caller can jump straight to what's blocking it instead
+/// of discovering blockers one delete attempt at a time (found live, 2026-09-08, after a user
+/// hit this on the WAF portal and asked for more context than a single field name).
+///
 /// A dedicated table holds exactly one entity's rows, so every `ReferencingField` grouped under
 /// it shares the same `ref_entity` — no `entity` column to read back, unlike the `records` group.
-/// If the same entity has two different fields both pointing at the target (rare), the field
-/// reported is whichever appears first in that table's group — same tolerance the original
-/// `records`-only version already had for the analogous case.
-pub(crate) async fn find_referencing_record(
+/// If the same entity has two different fields both pointing at the target (rare), every matching
+/// row in that table is attributed to the group's first field — same tolerance the original
+/// single-hit version already had for the analogous case, now applied per row instead of
+/// per query.
+pub(crate) async fn find_referencing_records(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     tenant_id: Uuid,
     id: Uuid,
     refs: &[ReferencingField],
-) -> anyhow::Result<Option<(String, String)>> {
+) -> anyhow::Result<Vec<ReferencingRecordHit>> {
+    let mut hits = Vec::new();
     if refs.is_empty() {
-        return Ok(None);
+        return Ok(hits);
     }
 
     let mut by_table: std::collections::BTreeMap<&str, Vec<&ReferencingField>> = std::collections::BTreeMap::new();
@@ -251,9 +271,14 @@ pub(crate) async fn find_referencing_record(
     }
 
     for (table, group) in by_table {
+        if hits.len() as i64 >= MAX_REFERENCING_HITS {
+            break;
+        }
+        let remaining = MAX_REFERENCING_HITS - hits.len() as i64;
+
         if table == "records" {
             let mut sql =
-                String::from("SELECT entity FROM records WHERE tenant_id = $1 AND deleted = false AND id != $2 AND (");
+                String::from("SELECT id, entity FROM records WHERE tenant_id = $1 AND deleted = false AND id != $2 AND (");
             let mut clauses = Vec::with_capacity(group.len());
             let mut param_idx = 3;
             for _ in &group {
@@ -266,16 +291,19 @@ pub(crate) async fn find_referencing_record(
                 param_idx += 3;
             }
             sql.push_str(&clauses.join(" OR "));
-            sql.push_str(") LIMIT 1");
+            sql.push_str(&format!(") LIMIT {remaining}"));
 
-            let mut query = sqlx::query_scalar::<_, String>(&sql).bind(tenant_id).bind(id);
+            let mut query = sqlx::query_as::<_, (Uuid, String)>(&sql).bind(tenant_id).bind(id);
             for r in &group {
                 query = query.bind(&r.ref_entity).bind(&r.ref_field).bind(id.to_string());
             }
-            let matched_entity: Option<String> = query.fetch_optional(&mut **tx).await?;
-            if let Some(matched) = matched_entity {
-                if let Some(r) = group.iter().find(|r| r.ref_entity == matched) {
-                    return Ok(Some((r.ref_entity.clone(), r.ref_field.clone())));
+            for (row_id, row_entity) in query.fetch_all(&mut **tx).await? {
+                if let Some(r) = group.iter().find(|r| r.ref_entity == row_entity) {
+                    hits.push(ReferencingRecordHit {
+                        entity: r.ref_entity.clone(),
+                        field: r.ref_field.clone(),
+                        id: row_id,
+                    });
                 }
             }
         } else {
@@ -289,21 +317,23 @@ pub(crate) async fn find_referencing_record(
                 }
             }
             let sql = format!(
-                "SELECT id FROM {table} WHERE tenant_id = $1 AND deleted = false AND id != $2 AND ({}) LIMIT 1",
+                "SELECT id FROM {table} WHERE tenant_id = $1 AND deleted = false AND id != $2 AND ({}) LIMIT {remaining}",
                 clauses.join(" OR ")
             );
             let mut query = sqlx::query_scalar::<_, Uuid>(&sql).bind(tenant_id).bind(id);
             for _ in &group {
                 query = query.bind(id.to_string());
             }
-            let matched: Option<Uuid> = query.fetch_optional(&mut **tx).await?;
-            if matched.is_some() {
-                let r = group[0];
-                return Ok(Some((r.ref_entity.clone(), r.ref_field.clone())));
+            for row_id in query.fetch_all(&mut **tx).await? {
+                hits.push(ReferencingRecordHit {
+                    entity: group[0].ref_entity.clone(),
+                    field: group[0].ref_field.clone(),
+                    id: row_id,
+                });
             }
         }
     }
-    Ok(None)
+    Ok(hits)
 }
 
 pub(crate) async fn fetch_existing<'e, E: PgExecutor<'e>>(

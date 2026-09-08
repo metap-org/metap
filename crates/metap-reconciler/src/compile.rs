@@ -47,7 +47,33 @@ pub fn table_name_for(entity_name: &str) -> String {
 /// The actual physical table identifier `PhysicalSchema.table`/`EntityDefinition.table_name`
 /// use — `ENTITY_SCHEMA` + `table_name_for`'s mangled name, e.g. `"entities.jira_issues"`.
 pub fn qualified_table_name_for(entity_name: &str) -> String {
-    format!("{ENTITY_SCHEMA}.{}", table_name_for(entity_name))
+    qualified_table_name_in(entity_name, ENTITY_SCHEMA)
+}
+
+/// Same as [`qualified_table_name_for`], but for a caller that already knows which schema it
+/// wants instead of always taking the one shared `ENTITY_SCHEMA` — the plumbing a real
+/// per-tenant-schema split would need (today `ENTITY_SCHEMA` is one fixed name shared by every
+/// tenant of every product on a `Schema`-strategy pool, confirmed live 2026-09-08,
+/// `../metap-docs/docs/roadmap/81-*.md`), not itself wired up to anything yet — every entity
+/// definition in this codebase still calls `qualified_table_name_for` and gets `ENTITY_SCHEMA`
+/// exactly as before. Added ahead of that split so the naming logic doesn't need touching again
+/// when it happens, without taking on the split itself (much bigger — splitting live shared
+/// multi-tenant tables, not a rename) in the same pass.
+pub fn qualified_table_name_in(entity_name: &str, schema: &str) -> String {
+    format!("{schema}.{}", table_name_for(entity_name))
+}
+
+/// The schema portion of an already-qualified table identifier (`"waf.zones"` -> `"waf"`) —
+/// every dedicated `EntityDefinition.table_name` is always `"{schema}.{table}"`
+/// (`qualified_table_name_for`/`qualified_table_name_in`, never called with anything else), so
+/// this is just the substring before the first `.`. Panics on a `table_name` with no `.` at all
+/// (i.e. `"records"`) — `compile()` (this function's only caller) is never invoked for a
+/// generic-table entity to begin with, so that shape should never reach here.
+fn schema_of(table_name: &str) -> &str {
+    table_name
+        .split_once('.')
+        .map(|(schema, _)| schema)
+        .unwrap_or_else(|| panic!("compile() called with a non-schema-qualified table_name: {table_name:?}"))
 }
 
 /// Postgres silently truncates an identifier over 63 bytes rather than erroring — two entity
@@ -138,7 +164,15 @@ fn field_index_expression(field: &metap_metadata::EntityField) -> String {
 ///   remove the need for the derived search expression.
 pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
     check_table_name_length(&entity.name)?;
-    let mut schema = PhysicalSchema::empty(qualified_table_name_for(&entity.name));
+    // Uses `entity.table_name` as-is, not a freshly recomputed `qualified_table_name_for(&entity.name)`
+    // — those two used to always agree by construction (every dedicated entity set `table_name:
+    // qualified_table_name_for(name)` itself), which hid the fact this never actually read the
+    // field. Broke silently the moment an app started calling `qualified_table_name_in(name, app)`
+    // instead (found live 2026-09-09, splitting `entities` into a schema per product) — reconcile
+    // would keep managing DDL against the old `entities.*` table while `CrudService` read/wrote
+    // the new one, two processes silently disagreeing on which table is "the" table.
+    let entity_schema = schema_of(&entity.table_name);
+    let mut schema = PhysicalSchema::empty(entity.table_name.clone());
 
     let framework_names: std::collections::HashSet<&str> = FRAMEWORK_COLUMNS.iter().map(|(name, ..)| *name).collect();
     for (name, sql_type, nullable) in FRAMEWORK_COLUMNS {
@@ -261,8 +295,15 @@ pub fn compile(entity: &EntityDefinition) -> anyhow::Result<PhysicalSchema> {
                     format!("fk_{}_{}", table_name_for(&entity.name), field.name),
                     FkSpec {
                         column: field.name.clone(),
-                        ref_table: qualified_table_name_for(
+                        // Assumes the referenced entity lives in this *same* schema as the
+                        // entity being compiled — true for every `Reference` in this codebase
+                        // today (no entity anywhere references one in a different product's
+                        // schema); a real cross-schema reference would need the caller to pass
+                        // a full registry lookup instead of a bare name, which `compile()`
+                        // doesn't have (it only sees the one `EntityDefinition` being compiled).
+                        ref_table: qualified_table_name_in(
                             field.ref_entity.as_deref().expect("checked by is_fk_reference"),
+                            entity_schema,
                         ),
                         ref_column: "id".to_string(),
                         on_delete: OnDelete::Restrict,
@@ -384,7 +425,12 @@ mod tests {
         EntityDefinition {
             name: name.to_string(),
             label: name.to_string(),
-            table_name: "records".to_string(),
+            // Every real dedicated entity always sets this to a schema-qualified
+            // `qualified_table_name_for`/`_in` result — `compile()` now reads it as-is
+            // (`schema_of`) rather than recomputing it, so this helper has to match that shape
+            // too, not the generic-`records` shape (this helper is only ever used to test
+            // table-per-entity `compile()`, never the shared-table path).
+            table_name: qualified_table_name_for(name),
             fields,
             list_views: vec![EntityListView {
                 name: "default".to_string(),
@@ -403,6 +449,23 @@ mod tests {
     #[test]
     fn table_name_mangles_dots() {
         assert_eq!(table_name_for("hr.employees"), "hr_employees");
+    }
+
+    #[test]
+    fn qualified_table_name_for_defaults_to_entity_schema() {
+        assert_eq!(qualified_table_name_for("hr.employees"), "entities.hr_employees");
+        assert_eq!(
+            qualified_table_name_for("hr.employees"),
+            qualified_table_name_in("hr.employees", ENTITY_SCHEMA)
+        );
+    }
+
+    #[test]
+    fn qualified_table_name_in_honors_a_different_schema() {
+        assert_eq!(
+            qualified_table_name_in("hr.employees", "t_acme"),
+            "t_acme.hr_employees"
+        );
     }
 
     #[test]

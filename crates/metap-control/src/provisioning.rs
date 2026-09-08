@@ -77,6 +77,14 @@ pub async fn provision_dedicated_db_tenant(
         .connect(dedicated_database_url)
         .await?;
     sqlx::migrate!("../migrations").run(&dedicated_pool).await?;
+    // `0028_metadata_schema.sql` (run just above) sets the database's own default
+    // `search_path` for *new* connections — this pool's one connection (`max_connections(1)`)
+    // was already open before that ran, so it keeps whatever `search_path` it started with
+    // unless told otherwise here. A plain `SET` (not `SET LOCAL`) is fine — this pool is
+    // private to this one provisioning call, never returned to a shared application pool.
+    sqlx::query("SET search_path TO public, metadata, control")
+        .execute(&dedicated_pool)
+        .await?;
     // `control.tenants` (`0012_control_tenants.sql`) is genuinely global platform data — the
     // one registry every tenant is looked up through — never tenant-scoped data itself
     // (real feedback: this used to leave an empty, unused `control` schema baked into every

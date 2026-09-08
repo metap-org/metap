@@ -25,7 +25,8 @@ pub mod status;
 pub mod watchdog;
 
 pub use compile::{
-    check_table_name_length, compile, qualified_table_name_for, table_name_for, ENTITY_SCHEMA,
+    check_table_name_length, compile, qualified_table_name_for, qualified_table_name_in, table_name_for,
+    ENTITY_SCHEMA,
 };
 pub use diff::{diff, DdlOp};
 pub use introspect::introspect;

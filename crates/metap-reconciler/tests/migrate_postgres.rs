@@ -44,7 +44,13 @@ fn entity(name: &str, fields: Vec<EntityField>) -> EntityDefinition {
     EntityDefinition {
         name: name.to_string(),
         label: name.to_string(),
-        table_name: "records".to_string(),
+        // The *destination* dedicated table `migrate_generic_to_dedicated` reconciles onto —
+        // `"records"` is passed separately as that function's own `source_table` argument, not
+        // set here. This fixture used to set it to `"records"` too, silently working only
+        // because `compile()` used to ignore `table_name` and always recompute
+        // `qualified_table_name_for(&entity.name)` itself; now that it reads the field as-is,
+        // this has to already be the real target.
+        table_name: metap_reconciler::qualified_table_name_for(name),
         fields,
         list_views: vec![EntityListView {
             name: "default".to_string(),

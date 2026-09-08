@@ -184,7 +184,18 @@ impl Router {
                 // Bẫy #1 (docs/multi-tenant-platform-design.md §2.2/§12): must be `SET LOCAL`,
                 // never session-level `SET` — a session-level set would leak this tenant's
                 // schema to whichever request the pool hands this physical connection to next.
-                sqlx::query(&format!("SET LOCAL search_path TO {schema_name}"))
+                // `, metadata, control` — the platform's own framework tables (`users`/
+                // `policies`/`outbox_events`/... and metap-lowcode's own per-tenant bookkeeping,
+                // `low_code_entity_versions`/...) live in `metadata`, not `schema_name`
+                // (`crates/migrations/0028_metadata_schema.sql`, corrected by `0029_*.sql` to
+                // move the low-code tables out of `control` — that schema is reserved for
+                // `control.tenants`/`tenant_hostnames`, genuinely global platform data
+                // `metap_control::provision_dedicated_db_tenant` deliberately drops from every
+                // `dedicated_db` tenant's own database, unlike anything per-tenant). `SET LOCAL
+                // search_path` replaces the whole path for this transaction rather than
+                // extending the database-level default that same migration also sets, so both
+                // fallback schemas need listing explicitly here too.
+                sqlx::query(&format!("SET LOCAL search_path TO {schema_name}, metadata, control"))
                     .execute(&mut *tx)
                     .await?;
                 Ok(tx)
@@ -207,7 +218,12 @@ impl Router {
     /// per-tenant schema isolation isn't built yet (`crates/metap-control/src/provisioning.rs`'s
     /// doc comment: `schema_name` is always `"public"` in practice), so the shared pool's
     /// default `search_path` already resolves there the same way `begin()`'s `SET LOCAL
-    /// search_path TO public` would. `DedicatedDb` returns the same cached pool `begin()` uses.
+    /// search_path TO public, metadata, control` would for `public`. Framework/lowcode tables
+    /// resolve too without a per-connection `SET` here specifically because
+    /// `0028_metadata_schema.sql` sets `metadata`/`control` into the *database's own* default
+    /// search path, not because of anything this function does — a caller of this function
+    /// still can't see a different tenant's `public`-schema business data than the shared pool's
+    /// own default already exposes. `DedicatedDb` returns the same cached pool `begin()` uses.
     pub async fn pool_for(&self, tenant: TenantId) -> anyhow::Result<PgPool> {
         match self.resolve(tenant).await? {
             TenantStrategy::Schema { schema_name } => {

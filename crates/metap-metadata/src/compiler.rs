@@ -71,7 +71,7 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
     // `field.name` is interpolated directly into SQL just like `table_name` below — as a real
     // column identifier (`metap-reconciler::compile`'s table-per-entity DDL, e.g.
     // `format!("\"{}\"", field.name)`) or as a JSONB path literal
-    // (`data ->> '{field.name}'`, `metap-crud::find_referencing_record`) — but unlike
+    // (`data ->> '{field.name}'`, `metap-crud::find_referencing_records`) — but unlike
     // `table_name` had no charset check at all until this validation existed. Since a
     // low-code-authored entity's field names come from admin-supplied metadata (not a
     // developer's own source), an unvalidated name is a live SQL-injection vector at every one

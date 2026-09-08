@@ -54,7 +54,7 @@ fn field_name_with_unsafe_characters_is_rejected() {
     // Regression test for the SQL-injection vector `AUDIT_2.md` flagged: `field.name` is
     // interpolated directly into SQL as a column identifier
     // (`metap-reconciler::compile`) and a JSONB path literal
-    // (`metap-crud::find_referencing_record`) — a name like `x") OR 1=1 --` must be
+    // (`metap-crud::find_referencing_records`) — a name like `x") OR 1=1 --` must be
     // rejected here, at the trust boundary, since low-code-authored fields come from
     // admin-supplied metadata.
     let mut entity = minimal_entity();

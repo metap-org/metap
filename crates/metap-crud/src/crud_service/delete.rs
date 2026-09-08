@@ -5,8 +5,10 @@ use uuid::Uuid;
 use crate::dto::RecordDto;
 use crate::result::ServiceResult;
 
+use std::collections::HashMap;
+
 use super::helpers::{
-    fetch_existing, find_referencing_record, forbidden, is_dedicated, mask_record_for_read, parse_user_id,
+    fetch_existing, find_referencing_records, forbidden, is_dedicated, mask_record_for_read, parse_user_id,
     referencing_fields, router_unavailable, row_to_dto, row_to_dto_dedicated, RECORD_COLUMNS, RECORD_COLUMNS_DEDICATED,
 };
 use super::CrudService;
@@ -77,19 +79,40 @@ impl CrudService {
         // sequential round trips on every delete).
         let metadata = self.metadata.load();
         let refs = referencing_fields(&metadata, &entity.name);
-        if let Some((ref_entity, ref_field)) = find_referencing_record(&mut tx, tenant_id, id, &refs).await? {
+        let blockers = find_referencing_records(&mut tx, tenant_id, id, &refs).await?;
+        if let Some(first) = blockers.first() {
             tx.rollback().await.ok();
             tracing::warn!(
                 entity = entity.name,
                 record_id = %id,
-                referencing_entity = ref_entity,
-                referencing_field = ref_field,
+                referencing_entity = first.entity,
+                referencing_field = first.field,
+                blocker_count = blockers.len(),
                 "delete rejected: record is still referenced by another record"
             );
-            return Ok(ServiceResult::err_with_message(
+            // Keyed `"<entity>.<field>"` (not just the field name) so the same field name on two
+            // different referencing entities doesn't collide — reuses the existing `fieldErrors`
+            // wire shape (`ApiError.fieldErrors` on the frontend) instead of adding a new response
+            // field, so every other `ServiceResult::Err` call site across metap-http/-graphql/-grpc
+            // needs no change. Value is each blocker's own record id (not a message), letting the
+            // frontend link straight to it (`ReferencedByErrorMessage.tsx`) — a deliberate reuse of
+            // this map for a different payload shape than validation messages, same as
+            // `unique_violation`'s composite-constraint case above.
+            let mut field_errors: HashMap<String, Vec<String>> = HashMap::new();
+            for hit in &blockers {
+                field_errors
+                    .entry(format!("{}.{}", hit.entity, hit.field))
+                    .or_default()
+                    .push(hit.id.to_string());
+            }
+            return Ok(ServiceResult::err_with_message_and_field_errors(
                 409,
                 "record_referenced",
-                format!("This record is referenced by \"{ref_field}\" on \"{ref_entity}\" and cannot be deleted."),
+                format!(
+                    "This record is referenced by \"{}\" on \"{}\" and cannot be deleted.",
+                    first.field, first.entity
+                ),
+                field_errors,
             ));
         }
 
