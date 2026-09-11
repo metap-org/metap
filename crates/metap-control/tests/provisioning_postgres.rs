@@ -89,13 +89,10 @@ async fn cleanup(pool: &sqlx::PgPool, tenant_id: Uuid) {
         .execute(pool)
         .await
         .ok();
-    sqlx::query(&format!(
-        "DROP SCHEMA IF EXISTS \"t_{}\" CASCADE",
-        tenant_id.simple()
-    ))
-    .execute(pool)
-    .await
-    .ok();
+    sqlx::query(&format!("DROP SCHEMA IF EXISTS \"t_{}\" CASCADE", tenant_id.simple()))
+        .execute(pool)
+        .await
+        .ok();
     sqlx::query("DELETE FROM control.tenants WHERE id = $1")
         .bind(tenant_id)
         .execute(pool)
