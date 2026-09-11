@@ -73,6 +73,12 @@ async fn drop_throwaway_database(database_url: &str, name: &str) {
 }
 
 async fn cleanup(pool: &sqlx::PgPool, tenant_id: Uuid) {
+    // `provision_schema_tenant` now creates a real `t_<id>` schema (own `users`/`user_roles`/...)
+    // rather than writing into the shared `public`/`metadata` tables these two DELETEs target —
+    // harmless no-ops against a real per-tenant-schema tenant, still needed for anything that
+    // inserted straight into `control.tenants` without going through provisioning (this file's
+    // `single_connection_pool_never_leaks_search_path_between_two_registered_tenants`-style
+    // helpers elsewhere use their own schema names, unaffected by this).
     sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1")
         .bind(tenant_id)
         .execute(pool)
@@ -80,6 +86,10 @@ async fn cleanup(pool: &sqlx::PgPool, tenant_id: Uuid) {
         .ok();
     sqlx::query("DELETE FROM users WHERE tenant_id = $1")
         .bind(tenant_id)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query(&format!("DROP SCHEMA IF EXISTS \"t_{}\" CASCADE", tenant_id.simple()))
         .execute(pool)
         .await
         .ok();
@@ -113,17 +123,116 @@ async fn provision_schema_tenant_writes_registry_row_and_admin_user() {
         .await
         .expect("get")
         .expect("tenant row exists");
-    assert!(matches!(routing.strategy, TenantStrategy::Schema { schema_name } if schema_name == "public"));
+    let expected_schema = format!("t_{}", tenant_id.simple());
+    assert!(
+        matches!(&routing.strategy, TenantStrategy::Schema { schema_name } if *schema_name == expected_schema),
+        "real per-tenant schema isolation: schema_name must be \"{expected_schema}\", not \"public\" — got {:?}",
+        routing.strategy
+    );
 
-    let roles: Vec<String> = sqlx::query_scalar("SELECT role FROM user_roles WHERE tenant_id = $1 AND user_id = $2")
-        .bind(tenant_id)
-        .bind(provisioned.admin_user_id)
-        .fetch_all(&pool)
-        .await
-        .expect("fetch roles");
+    // The admin user's role now lives in this tenant's own cloned `user_roles`, not the shared
+    // `metadata.user_roles` — query it schema-qualified rather than through the bare pool's
+    // default search_path (which would silently find `metadata.user_roles` instead and miss
+    // this entirely, since `public` isn't even the fallback here — a real per-tenant schema is).
+    let roles: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT role FROM \"{expected_schema}\".user_roles WHERE tenant_id = $1 AND user_id = $2"
+    ))
+    .bind(tenant_id)
+    .bind(provisioned.admin_user_id)
+    .fetch_all(&pool)
+    .await
+    .expect("fetch roles");
     assert_eq!(roles, vec!["admin"]);
 
     cleanup(&pool, tenant_id).await;
+}
+
+/// Real per-tenant schema isolation (`../metap-docs/docs/features/35-*.md`): two tenants
+/// provisioned via `provision_schema_tenant` each get their own physical copy of every
+/// tenant-scoped table, not just a `tenant_id` filter on shared tables. Writes a `policies` row
+/// into each tenant's own schema through `Router::begin`'s ordinary tenant-scoped transaction
+/// (the real path every HTTP request uses, not a schema-qualified test shortcut) and confirms
+/// each only ever sees its own row. Also confirms the 3 FK constraints `create_tenant_schema`
+/// adds by hand actually work in a fresh tenant schema, since Postgres's `CREATE TABLE (LIKE
+/// ...)` never copies foreign keys under any `INCLUDING` option.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn provision_schema_tenant_creates_isolated_real_tables_with_working_fks() {
+    let pool = connect().await;
+    let registry = PostgresTenantRegistry::new(pool.clone());
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+
+    metap_control::provision_schema_tenant(&pool, &registry, tenant_a, "a@fks.test.local", "pass123")
+        .await
+        .expect("provision a");
+    metap_control::provision_schema_tenant(&pool, &registry, tenant_b, "b@fks.test.local", "pass123")
+        .await
+        .expect("provision b");
+
+    let router = Router::new(
+        pool.clone(),
+        RegistryCache::new(Arc::new(PostgresTenantRegistry::new(pool.clone()))),
+        Arc::new(EnvStore),
+    );
+
+    let mut tx_a = router.begin(TenantId(tenant_a)).await.expect("begin tenant A");
+    sqlx::query(
+        "INSERT INTO policies (id, tenant_id, entity, action, effect) VALUES (gen_random_uuid(), $1, 'x', 'read', 'allow')",
+    )
+    .bind(tenant_a)
+    .execute(&mut *tx_a)
+    .await
+    .expect("insert policy for tenant A");
+    tx_a.commit().await.expect("commit A");
+
+    // Tenant B's own transaction must see zero policies — not tenant A's row leaking through a
+    // shared table, and not a stale search_path from whichever connection served tenant A.
+    let mut tx_b = router.begin(TenantId(tenant_b)).await.expect("begin tenant B");
+    let b_policy_count: i64 = sqlx::query_scalar("SELECT count(*) FROM policies")
+        .fetch_one(&mut *tx_b)
+        .await
+        .expect("count policies for tenant B");
+    assert_eq!(b_policy_count, 0, "tenant B must not see tenant A's policy row");
+    tx_b.commit().await.expect("commit B");
+
+    // FK enforcement: a cron_job_run referencing a real cron_job in the *same* tenant schema
+    // succeeds; referencing a nonexistent id is rejected — proves the hand-added FK constraint
+    // (never copied by `LIKE`) is actually there and actually enforced, not just declared.
+    let mut tx_a2 = router.begin(TenantId(tenant_a)).await.expect("begin tenant A again");
+    let job_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO cron_jobs (id, tenant_id, name, target_type, target_config) \
+         VALUES (gen_random_uuid(), $1, 'test', 'webhook', '{}'::jsonb) RETURNING id",
+    )
+    .bind(tenant_a)
+    .fetch_one(&mut *tx_a2)
+    .await
+    .expect("insert cron_job");
+    sqlx::query(
+        "INSERT INTO cron_job_runs (id, tenant_id, job_id, status, scheduled_for) \
+         VALUES (gen_random_uuid(), $1, $2, 'running', now())",
+    )
+    .bind(tenant_a)
+    .bind(job_id)
+    .execute(&mut *tx_a2)
+    .await
+    .expect("insert cron_job_run referencing a real cron_job must succeed");
+
+    let rejected = sqlx::query(
+        "INSERT INTO cron_job_runs (id, tenant_id, job_id, status, scheduled_for) \
+         VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'running', now())",
+    )
+    .bind(tenant_a)
+    .execute(&mut *tx_a2)
+    .await;
+    assert!(
+        rejected.is_err(),
+        "cron_job_runs.job_id FK must be enforced in a fresh tenant schema — LIKE never copies FKs"
+    );
+    tx_a2.rollback().await.ok();
+
+    cleanup(&pool, tenant_a).await;
+    cleanup(&pool, tenant_b).await;
 }
 
 #[tokio::test]
