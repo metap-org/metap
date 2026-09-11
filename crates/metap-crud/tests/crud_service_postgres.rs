@@ -482,7 +482,10 @@ fn dedicated_table_unique_field_entity() -> EntityDefinition {
 }
 
 async fn ensure_dedicated_unique_widgets_table(pool: &PgPool) {
-    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities").execute(pool).await.unwrap();
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities")
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS entities.test_unique_widgets ( \
          id uuid PRIMARY KEY DEFAULT gen_random_uuid(), \
@@ -578,7 +581,10 @@ fn dedicated_table_composite_unique_entity() -> EntityDefinition {
 }
 
 async fn ensure_dedicated_unique_list_entries_table(pool: &PgPool) {
-    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities").execute(pool).await.unwrap();
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities")
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS entities.test_unique_list_entries ( \
          id uuid PRIMARY KEY DEFAULT gen_random_uuid(), \
@@ -1317,7 +1323,11 @@ async fn composite_unique_field_violation_names_every_field_in_the_constraint() 
     let mut other_type = JsonObject::new();
     other_type.insert("type".to_string(), json!("whitelist"));
     other_type.insert("value".to_string(), json!("1.2.3.4"));
-    match crud.create("test.unique_list_entries", &other_type, &ctx).await.unwrap() {
+    match crud
+        .create("test.unique_list_entries", &other_type, &ctx)
+        .await
+        .unwrap()
+    {
         ServiceResult::Ok { .. } => {}
         other => panic!("same value under a different type must be allowed, got {other:?}"),
     }
@@ -1701,7 +1711,10 @@ async fn delete_rejected_lists_every_blocking_record_not_just_the_first() {
             children_hits.sort();
             let mut expected_children = child_ids.clone();
             expected_children.sort();
-            assert_eq!(children_hits, expected_children, "both blocking children must be listed");
+            assert_eq!(
+                children_hits, expected_children,
+                "both blocking children must be listed"
+            );
 
             assert_eq!(
                 field_errors.get("test.grandchildren.grandparentId"),
