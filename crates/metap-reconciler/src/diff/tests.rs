@@ -86,6 +86,68 @@ fn invalid_index_is_dropped_then_recreated_drop_strictly_before_create() {
 }
 
 #[test]
+fn unique_constraint_to_partial_index_same_name_drops_constraint_before_rebuilding_index() {
+    // Reproduces the real, twice-hit "transition-state" bug (WAF's `waf.ddos_policies.zoneId`,
+    // Phase 80; Jira's `jira.projects.key`, Phase 82): a `unique: true` field used to be a
+    // blanket `UNIQUE` constraint — introspected as *both* an `actual.uniques` entry (the
+    // constraint) and an `actual.indexes` entry under the same deterministic name (the
+    // constraint's own backing index, which `pg_indexes` lists like any other index) — and
+    // `compile()` now wants it to be a plain partial unique index under that same name, with no
+    // `UniqueSpec` at all. Before the `topo_sort` rank fix, `DropIndexConcurrently` for this name
+    // (from the index-rebuild branch) could run before `DropUnique` (from the separate
+    // no-longer-desired-unique branch), and Postgres refuses to drop a constraint's backing index
+    // while the constraint still exists — so the rebuild silently never completed.
+    let name = "uniq_t_field";
+    let mut desired = PhysicalSchema::empty("t");
+    desired.indexes.insert(
+        name.to_string(),
+        IndexSpec {
+            expression: "field".to_string(),
+            unique: true,
+            using: None,
+            valid: true,
+            where_clause: Some("deleted = false".to_string()),
+        },
+    );
+
+    let mut actual = PhysicalSchema::empty("t");
+    actual.indexes.insert(
+        name.to_string(),
+        IndexSpec {
+            expression: "field".to_string(),
+            unique: true,
+            using: None,
+            valid: true,
+            where_clause: None, // the old blanket shape — no partial predicate
+        },
+    );
+    actual.uniques.insert(
+        name.to_string(),
+        UniqueSpec {
+            columns: vec!["field".to_string()],
+        },
+    );
+
+    let ops = diff(&desired, Some(&actual), &[]);
+
+    let pos = |pred: &dyn Fn(&DdlOp) -> bool| ops.iter().position(pred).unwrap();
+    let p_drop_unique = pos(&|o| matches!(o, DdlOp::DropUnique { name: n } if n == name));
+    let p_drop_index = pos(&|o| matches!(o, DdlOp::DropIndexConcurrently { name: n } if n == name));
+    let p_create_index = pos(&|o| matches!(o, DdlOp::CreateIndexConcurrently { name: n, .. } if n == name));
+
+    assert!(
+        p_drop_unique < p_drop_index,
+        "DropUnique must run before DropIndexConcurrently for the same name, so the index is \
+         already free of its constraint by the time the bare DROP INDEX runs"
+    );
+    assert!(
+        p_drop_unique < p_create_index,
+        "DropUnique must run before the new index is created under the same name"
+    );
+    assert!(p_drop_index < p_create_index, "drop strictly before recreate, as elsewhere in this file");
+}
+
+#[test]
 fn missing_column_not_in_desired_is_never_dropped() {
     let desired = PhysicalSchema::empty("t");
     let mut actual = PhysicalSchema::empty("t");

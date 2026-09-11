@@ -170,7 +170,10 @@ async fn run_one(
 /// Builds the SQL statement(s) for one `DdlOp`. Multiple statements only for `CreateTable`
 /// (table + its framework-column types are all fixed, so it's issued as one `CREATE TABLE`) —
 /// kept a `Vec` for uniformity with ops that could plausibly need more than one statement later.
-fn build_sql(table: &str, op: &DdlOp) -> Vec<String> {
+/// `pub(crate)` (not `pub`) so `plan.rs` can reuse it for a DB-free "what would `execute()` run"
+/// preview without duplicating this match — `execute()` itself is still the only caller that
+/// actually runs the returned SQL against Postgres.
+pub(crate) fn build_sql(table: &str, op: &DdlOp) -> Vec<String> {
     let t = quote_qualified_ident(table);
     match op {
         // The table's schema (`ensure_schema_exists`, called once per `execute()` before any op
