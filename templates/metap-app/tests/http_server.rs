@@ -84,6 +84,7 @@ fn test_entity() -> EntityDefinition {
         min_length: None,
         max_length: None,
         storage: None,
+        computed: None,
         }],
         list_views: vec![EntityListView {
             name: "default".to_string(),
@@ -95,6 +96,7 @@ fn test_entity() -> EntityDefinition {
             max_limit: 50,
         }],
         workflow: None,
+        unique_constraints: vec![],
     }
 }
 

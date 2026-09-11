@@ -1,0 +1,11 @@
+-- Standard pattern going forward for every new app (2026-09-11, chủ dự án's explicit direction):
+-- framework tables in `metadata`, business entities in their own `<<app-name>>` schema
+-- (`qualified_table_name_in`, already the convention `../metap-demo-waf`/`../metap-demo-crm`/
+-- `../metap-demo-jira` converged on for code-authored entities). This column closes the matching
+-- gap for `metap-lowcode`'s SaaS low-code entities, which today all fall into one shared
+-- `entities` schema regardless of which downstream product they belong to (`qualified_table_name_for`
+-- always uses `ENTITY_SCHEMA`) — there was no per-tenant "which product/app is this" identifier
+-- anywhere in the system to key a schema name off of. `product` is nullable and optional: a tenant
+-- with no `product` set keeps today's behavior (shared `entities` schema) exactly as before —
+-- this is additive, not a forced migration for every existing tenant.
+ALTER TABLE control.tenants ADD COLUMN product text;

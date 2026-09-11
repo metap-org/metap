@@ -40,6 +40,26 @@ async fn main() -> anyhow::Result<()> {
     registry.validate_references()?;
     let metadata_base = Arc::new(registry);
 
+    // Every code-authored entity here is on a dedicated table in its own schema (the standard
+    // pattern — see `example_entity.rs`'s own comment), so it needs a real DDL reconcile at
+    // boot, same as `../metap-demo-waf`/`../metap-demo-crm`/`../metap-demo-jira`. Listed by the
+    // entity-constructor function directly (not via the registry's `list_entities()`, which
+    // returns the lighter `EntitySummary` shape `check_metadata_drift`/`reconcile_indexes` below
+    // use, not the full `EntityDefinition` this needs) — a second entity referencing this one via
+    // `Reference` must be added *after* it here, since order is load-bearing (its FK is compiled
+    // straight into the referencing table's DDL). Creates the schema/table on first boot,
+    // no-ops (`ops_applied: 0`) on every boot after. `PLATFORM_TENANT_ID` is a sentinel here, not
+    // a real tenant — this DDL isn't itself tenant-scoped (only the rows written into the
+    // resulting table are, via `tenant_id`).
+    for entity in [example_entity::example_entity()] {
+        let outcome =
+            metap::reconciler::reconcile(&pool, metap::control::PLATFORM_TENANT_ID, &entity, &[]).await?;
+        eprintln!(
+            "[{{project-name}}] reconciled {} -> {} (ops_applied={})",
+            entity.name, outcome.table, outcome.ops_applied
+        );
+    }
+
     let entities = metadata_base.list_entities();
     check_metadata_drift(&pool, &entities).await;
     reconcile_indexes(&pool, &entities).await;

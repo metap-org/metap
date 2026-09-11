@@ -310,6 +310,32 @@ async fn list_returns_every_provisioned_tenant() {
 
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn get_product_reflects_set_product_and_defaults_to_none() {
+    let pool = connect().await;
+    let registry = PostgresTenantRegistry::new(pool.clone());
+    let tenant_id = Uuid::new_v4();
+
+    metap_control::provision_schema_tenant(&pool, &registry, tenant_id, "product@test.local", "pass123")
+        .await
+        .expect("provision");
+
+    assert_eq!(registry.get_product(tenant_id).await.expect("get_product before set"), None);
+
+    let updated = registry.set_product(tenant_id, "my_saas_app").await.expect("set_product");
+    assert!(updated);
+    assert_eq!(
+        registry.get_product(tenant_id).await.expect("get_product after set"),
+        Some("my_saas_app".to_string())
+    );
+
+    let unknown_id_updated = registry.set_product(Uuid::new_v4(), "x").await.expect("set_product unknown id");
+    assert!(!unknown_id_updated);
+
+    cleanup(&pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn provisioning_a_duplicate_tenant_id_fails_with_a_downcastable_unique_violation() {
     let pool = connect().await;
     let registry = PostgresTenantRegistry::new(pool.clone());

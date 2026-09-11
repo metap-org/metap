@@ -26,6 +26,7 @@ pub struct TenantSummary {
     pub status: TenantStatus,
     pub created_at: DateTime<Utc>,
     pub trial_expires_at: Option<DateTime<Utc>>,
+    pub product: Option<String>,
 }
 
 fn parse_strategy(
@@ -104,6 +105,38 @@ impl PostgresTenantRegistry {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Sets which downstream product/app a tenant belongs to (`crates/migrations/
+    /// 0031_control_tenants_product.sql`) — the identifier `metap-lowcode`'s entity publish flow
+    /// resolves into a real Postgres schema (`qualified_table_name_in(entity_name, product)`)
+    /// instead of every low-code entity across every tenant falling into the one shared
+    /// `entities` schema. A separate mutation rather than a `provision()` parameter, same
+    /// reasoning as `set_status` above: `provision()` has one caller today
+    /// (`dev-tools provision-tenant`, plain multi-tenancy, no product concept), while this is
+    /// meant for a low-code-aware caller (`metap-lowcode`'s own tenant-provisioning HTTP route)
+    /// to set right after provisioning — adding it to `provision()`'s signature would force every
+    /// existing caller to pass `None` for a concept they don't have. Returns `false` (not an
+    /// error) when `id` doesn't match any row, same convention as `set_status`/`deprovision`.
+    pub async fn set_product(&self, id: Uuid, product: &str) -> anyhow::Result<bool> {
+        let result = sqlx::query("UPDATE control.tenants SET product = $2 WHERE id = $1")
+            .bind(id)
+            .bind(product)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Reads a tenant's `product` (see `set_product` above) — `None` both when the tenant has no
+    /// row at all and when it has one but never had a product set, since neither case gives a
+    /// caller anything to key a schema name off of; a caller needing to tell those apart should
+    /// use `list`/`get` instead.
+    pub async fn get_product(&self, id: Uuid) -> anyhow::Result<Option<String>> {
+        let row = sqlx::query("SELECT product FROM control.tenants WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.try_get::<Option<String>, _>("product").ok().flatten()))
+    }
+
     /// Deprovisions a tenant — `DELETE /platform/tenants/{id}` (`metap-control-http`,
     /// `docs/roadmap.md` Phase 16). Sets `status = 'deleted'`, same one-column write as
     /// `set_status`, but deliberately its own method rather than one more value accepted by
@@ -128,7 +161,7 @@ impl PostgresTenantRegistry {
     /// shouldn't hide every other tenant from an operator trying to see what's provisioned.
     pub async fn list(&self) -> anyhow::Result<Vec<TenantSummary>> {
         let rows = sqlx::query(
-            "SELECT id, tier, strategy, schema_name, dsn_secret_ref, status, created_at, trial_expires_at \
+            "SELECT id, tier, strategy, schema_name, dsn_secret_ref, status, created_at, trial_expires_at, product \
              FROM control.tenants ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -160,6 +193,7 @@ impl PostgresTenantRegistry {
                 status,
                 created_at: row.try_get("created_at")?,
                 trial_expires_at: row.try_get("trial_expires_at")?,
+                product: row.try_get("product")?,
             });
         }
         Ok(summaries)

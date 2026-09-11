@@ -27,6 +27,7 @@ fn field(name: &str, label: &str, kind: FieldKind) -> EntityField {
         max: None,
         min_length: None,
         max_length: None,
+        computed: None,
     }
 }
 
@@ -34,7 +35,14 @@ pub fn example_entity() -> EntityDefinition {
     EntityDefinition {
         name: "example.tasks".to_string(),
         label: "Task".to_string(),
-        table_name: "records".to_string(),
+        // Standard pattern for a new app: a dedicated table in its own schema, not the shared
+        // `records` table — same convention `../metap-demo-waf`/`../metap-demo-crm`/
+        // `../metap-demo-jira` all converged on (`qualified_table_name_in(entity_name, schema)`,
+        // `metap` repo's `crates/metap-reconciler/src/compile.rs`). Rename `"example_app"` to
+        // this project's own name — `main.rs`'s boot-time `reconcile()` call creates both the
+        // schema (`executor::ensure_schema_exists`, `CREATE SCHEMA IF NOT EXISTS`) and the table,
+        // nothing to set up by hand first.
+        table_name: metap::reconciler::qualified_table_name_in("example.tasks", "example_app"),
         fields: vec![
             EntityField {
                 required: Some(true),
@@ -76,6 +84,7 @@ pub fn example_entity() -> EntityDefinition {
                 set_fields: None,
             }],
         }),
+        unique_constraints: vec![],
     }
 }
 

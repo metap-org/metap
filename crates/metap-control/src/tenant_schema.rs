@@ -38,8 +38,8 @@ const TENANT_SCOPED_TABLES: &[(&str, &str)] = &[
     ("metadata", "user_roles"),
     ("metadata", "users"),
     ("metadata", "workflow_events"),
-    ("public", "attachments"),
-    ("public", "records"),
+    ("metadata", "attachments"),
+    ("metadata", "records"),
     // These 3 have FKs to each other (below) — created last, in dependency order, so
     // `create_tenant_schema` can add the FK constraints in one pass right after this loop
     // without needing a second topological sort at runtime.
