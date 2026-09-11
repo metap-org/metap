@@ -17,6 +17,7 @@ mod router;
 mod secret_store;
 mod secret_store_factory;
 mod tenant;
+mod tenant_schema;
 mod vault_store;
 
 pub use auth_context::{resolve_request_context, ContextAttributesCache};
@@ -31,4 +32,5 @@ pub use router::{validate_schema_name, Router, RouterError};
 pub use secret_store::{tenant_secret_ref, DbCreds, EnvStore, SecretStore};
 pub use secret_store_factory::build_secret_store;
 pub use tenant::{TenantId, TenantRouting, TenantStatus, TenantStrategy, PLATFORM_TENANT_ID};
+pub use tenant_schema::create_tenant_schema;
 pub use vault_store::VaultStore;
