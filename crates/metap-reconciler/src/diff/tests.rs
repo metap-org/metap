@@ -144,7 +144,10 @@ fn unique_constraint_to_partial_index_same_name_drops_constraint_before_rebuildi
         p_drop_unique < p_create_index,
         "DropUnique must run before the new index is created under the same name"
     );
-    assert!(p_drop_index < p_create_index, "drop strictly before recreate, as elsewhere in this file");
+    assert!(
+        p_drop_index < p_create_index,
+        "drop strictly before recreate, as elsewhere in this file"
+    );
 }
 
 #[test]

@@ -68,12 +68,15 @@ mod tests {
                 source_field: "f".to_string(),
                 sql_type: "text".to_string(),
             },
-            sql: build_sql("t", &DdlOp::BackfillColumn {
-                op_id: "op".to_string(),
-                column: "c".to_string(),
-                source_field: "f".to_string(),
-                sql_type: "text".to_string(),
-            }),
+            sql: build_sql(
+                "t",
+                &DdlOp::BackfillColumn {
+                    op_id: "op".to_string(),
+                    column: "c".to_string(),
+                    source_field: "f".to_string(),
+                    sql_type: "text".to_string(),
+                },
+            ),
         };
         assert!(planned_op.sql.is_empty());
     }

@@ -188,7 +188,10 @@ async fn unique_field_converges_from_a_legacy_blanket_constraint_to_a_partial_in
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(is_partial.0, "must end up a partial index, not still the blanket constraint");
+    assert!(
+        is_partial.0,
+        "must end up a partial index, not still the blanket constraint"
+    );
 
     drop_table_if_exists(&pool, "test_reconciler_unique_transition").await;
 }
