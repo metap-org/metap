@@ -142,7 +142,11 @@ pub(crate) fn unique_violation<T>(entity: &EntityDefinition, error: &sqlx::Error
         if composite_unique_index_name(&prefix, &constraint.fields) == constraint_name {
             let message = vec!["A record with this combination of values already exists.".to_string()];
             let field_errors = constraint.fields.iter().map(|f| (f.clone(), message.clone())).collect();
-            return Some(ServiceResult::err_with_field_errors(409, "unique_violation", field_errors));
+            return Some(ServiceResult::err_with_field_errors(
+                409,
+                "unique_violation",
+                field_errors,
+            ));
         }
     }
 
@@ -277,8 +281,9 @@ pub(crate) async fn find_referencing_records(
         let remaining = MAX_REFERENCING_HITS - hits.len() as i64;
 
         if table == "records" {
-            let mut sql =
-                String::from("SELECT id, entity FROM records WHERE tenant_id = $1 AND deleted = false AND id != $2 AND (");
+            let mut sql = String::from(
+                "SELECT id, entity FROM records WHERE tenant_id = $1 AND deleted = false AND id != $2 AND (",
+            );
             let mut clauses = Vec::with_capacity(group.len());
             let mut param_idx = 3;
             for _ in &group {

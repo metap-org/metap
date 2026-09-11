@@ -403,7 +403,10 @@ async fn composite_unique_constraint_allows_same_value_under_a_different_type_bu
 
     let mut def = entity(
         "test.reconciler_list_entries",
-        vec![plain_field("type", FieldKind::String), plain_field("value", FieldKind::String)],
+        vec![
+            plain_field("type", FieldKind::String),
+            plain_field("value", FieldKind::String),
+        ],
     );
     def.unique_constraints = vec![EntityUniqueConstraint {
         fields: vec!["type".to_string(), "value".to_string()],
@@ -415,21 +418,19 @@ async fn composite_unique_constraint_allows_same_value_under_a_different_type_bu
     assert_eq!(second.ops_applied, 0, "composite unique index must converge too");
 
     async fn insert(pool: &PgPool, tenant_id: Uuid, kind: &str, value: &str) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO entities.test_reconciler_list_entries (id, tenant_id, data) VALUES ($1, $2, $3)",
-        )
-        .bind(Uuid::new_v4())
-        .bind(tenant_id)
-        .bind(sqlx::types::Json(serde_json::json!({ "type": kind, "value": value })))
-        .execute(pool)
-        .await
-        .map(|_| ())
+        sqlx::query("INSERT INTO entities.test_reconciler_list_entries (id, tenant_id, data) VALUES ($1, $2, $3)")
+            .bind(Uuid::new_v4())
+            .bind(tenant_id)
+            .bind(sqlx::types::Json(serde_json::json!({ "type": kind, "value": value })))
+            .execute(pool)
+            .await
+            .map(|_| ())
     }
 
     insert(&pool, tenant_id, "blacklist", "1.2.3.4").await.unwrap();
-    insert(&pool, tenant_id, "whitelist", "1.2.3.4")
-        .await
-        .expect("same value under a different type must be allowed — the pair is what's unique, not either field alone");
+    insert(&pool, tenant_id, "whitelist", "1.2.3.4").await.expect(
+        "same value under a different type must be allowed — the pair is what's unique, not either field alone",
+    );
     let dup = insert(&pool, tenant_id, "blacklist", "1.2.3.4").await;
     assert!(dup.is_err(), "the exact same (type, value) pair twice must be rejected");
 

@@ -462,10 +462,7 @@ mod tests {
 
     #[test]
     fn qualified_table_name_in_honors_a_different_schema() {
-        assert_eq!(
-            qualified_table_name_in("hr.employees", "t_acme"),
-            "t_acme.hr_employees"
-        );
+        assert_eq!(qualified_table_name_in("hr.employees", "t_acme"), "t_acme.hr_employees");
     }
 
     #[test]
@@ -605,7 +602,10 @@ mod tests {
         // only the pair — plain JSONB fields, not individually `unique`/`indexed`.
         let mut e = entity(
             "t.e",
-            vec![plain_field("type", FieldKind::String), plain_field("value", FieldKind::String)],
+            vec![
+                plain_field("type", FieldKind::String),
+                plain_field("value", FieldKind::String),
+            ],
         );
         e.unique_constraints = vec![metap_metadata::EntityUniqueConstraint {
             fields: vec!["type".to_string(), "value".to_string()],
