@@ -2,7 +2,8 @@
 //! `metap-query/tests/query_planner_postgres.rs`'s doc comment for the convention.
 
 use metap_reconciler::orchestrator::{
-    advance_wave, claim_due, enqueue_deployment, record_failure, record_success, run_claimed_batch, WaveDecision,
+    advance_wave, claim_due, enqueue_deployment, get_deployment_status, record_failure, record_success,
+    run_claimed_batch, WaveDecision,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -342,6 +343,58 @@ async fn advance_wave_proceeds_when_prior_wave_is_healthy() {
 
     let w1 = advance_wave(&pool, entity_name, 5, &tenants, 1, 10).await.unwrap();
     assert_eq!(w1, WaveDecision::Advanced { tenants_in_wave: 2 }); // 5% of 10 = 1, canary floor 2 wins
+
+    cleanup(&pool, entity_name).await;
+}
+
+/// `get_deployment_status`'s read-only counterpart to the write-side functions above — first
+/// real consumer: `metap-lowcode-http`'s `GET .../deployment-status`, letting a caller poll
+/// whether a just-published entity's dedicated table is ready without guessing from CRUD 404s.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn get_deployment_status_reflects_every_row_state() {
+    let pool = connect().await;
+    let entity_name = "test.orchestrator_deployment_status";
+    cleanup(&pool, entity_name).await;
+    let tenant_id = Uuid::new_v4();
+
+    // No row at all: never enqueued (still on `records`, or migrated synchronously) — nothing to
+    // wait on.
+    assert!(get_deployment_status(&pool, tenant_id, entity_name).await.unwrap().is_none());
+
+    seed_pending(&pool, entity_name, &[tenant_id], 1).await;
+    let pending = get_deployment_status(&pool, tenant_id, entity_name).await.unwrap().unwrap();
+    assert_eq!(pending.status, "pending");
+    assert!(!pending.ready());
+
+    record_success(&pool, tenant_id, entity_name, 1).await.unwrap();
+    let done = get_deployment_status(&pool, tenant_id, entity_name).await.unwrap().unwrap();
+    assert_eq!(done.status, "done");
+    assert_eq!(done.applied_version, Some(1));
+    assert!(done.ready());
+
+    // A second publish bumps desired_version while the row still reads "done" from the
+    // *previous* one (not yet re-claimed) — must not read as ready just because status == "done".
+    sqlx::query(
+        "UPDATE reconciler_entity_deployments SET desired_version = 2 WHERE tenant_id = $1 AND entity_name = $2",
+    )
+    .bind(tenant_id)
+    .bind(entity_name)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let stale = get_deployment_status(&pool, tenant_id, entity_name).await.unwrap().unwrap();
+    assert_eq!(stale.status, "done");
+    assert_eq!(stale.desired_version, 2);
+    assert_eq!(stale.applied_version, Some(1));
+    assert!(!stale.ready(), "applied_version behind desired_version must not read as ready");
+
+    let fake_error = anyhow::anyhow!("boom");
+    record_failure(&pool, tenant_id, entity_name, &fake_error).await.unwrap();
+    let failed = get_deployment_status(&pool, tenant_id, entity_name).await.unwrap().unwrap();
+    assert_eq!(failed.status, "blocked");
+    assert!(!failed.ready());
+    assert!(failed.last_error.unwrap().contains("boom"));
 
     cleanup(&pool, entity_name).await;
 }

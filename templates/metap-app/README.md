@@ -34,6 +34,19 @@ Paste the minted token as a `Bearer` token against `http://localhost:3000/api/ex
 (or whatever entity/port you configured). `GET /health` and `GET /metadata/openapi.json` are
 public, no token needed.
 
+## Adding a new entity
+
+`src/example_entity.rs`'s pattern is the standard one: a dedicated table in its own schema
+(`metap::reconciler::qualified_table_name_in("your.entity", "your_app_schema")`, not the shared
+`records` table), reconciled at boot. **A dedicated table doesn't create itself** — `src/main.rs`
+has a loop (`for entity in [example_entity::example_entity()]`) that calls `reconcile()` for every
+such entity before the server starts serving; add your new entity's constructor to that same
+array, in the array (not a separate loop) so ordering stays explicit. Order matters when one
+entity's `Reference` field points at another — the referenced entity must come first, since its
+FK is compiled straight into the referencing table's DDL at reconcile time. Forgetting to add an
+entity here doesn't fail loudly: the entity registers fine and shows up in `/metadata/openapi.json`,
+but every request against it 500s because the table was never created.
+
 ## Test
 
 ```bash

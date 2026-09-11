@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 
 use futures::stream::{self, StreamExt};
 use metap_metadata::{EntityDefinition, FieldKind};
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -274,6 +274,62 @@ pub async fn record_failure(
     .execute(pool)
     .await?;
     Ok(class)
+}
+
+/// One `reconciler_entity_deployments` row, read-only — the counterpart to
+/// `claim_due`/`enqueue_deployment`/`record_success`/`record_failure` above for a caller that
+/// only needs to know where a `(tenant, entity)` deployment currently stands, not claim or
+/// mutate it. First real consumer: `metap-lowcode-http`'s `GET .../deployment-status`, letting a
+/// caller poll whether a just-published entity's dedicated table is actually ready yet instead
+/// of guessing from `/api/:entity` 404s/500s.
+#[derive(Debug, Clone)]
+pub struct DeploymentStatus {
+    /// `"pending"` / `"running"` / `"done"` / `"failed"` / `"blocked"` — the column's own values,
+    /// not remapped into a Rust enum here, since `claim_due`/`record_success`/`record_failure`
+    /// above already treat the column as the raw string this crate's own SQL writes.
+    pub status: String,
+    pub desired_version: i64,
+    pub applied_version: Option<i64>,
+    pub failure_class: Option<String>,
+    pub last_error: Option<String>,
+}
+
+impl DeploymentStatus {
+    /// `true` once `applied_version` has actually caught up to `desired_version` — deliberately
+    /// not just `status == "done"`: a second publish can bump `desired_version` again while the
+    /// row still reads `"done"` from the *previous* one, until `claim_due` re-claims it for the
+    /// new version.
+    pub fn ready(&self) -> bool {
+        self.status == "done" && self.applied_version.is_some_and(|v| v >= self.desired_version)
+    }
+}
+
+/// Returns `None` when no row exists at all — either the entity has never been enqueued (still
+/// on the shared `records` table, which needs no async provisioning), or migrated onto a
+/// dedicated table synchronously (`metap_lowcode::migrate_to_dedicated_table`, which never goes
+/// through this queue). Both cases mean "nothing to wait on," which the caller should treat the
+/// same as [`DeploymentStatus::ready`] returning `true`.
+pub async fn get_deployment_status(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    entity_name: &str,
+) -> anyhow::Result<Option<DeploymentStatus>> {
+    let row = sqlx::query(
+        "SELECT status, desired_version, applied_version, failure_class, last_error \
+         FROM reconciler_entity_deployments WHERE tenant_id = $1 AND entity_name = $2",
+    )
+    .bind(tenant_id)
+    .bind(entity_name)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|row| DeploymentStatus {
+        status: row.get("status"),
+        desired_version: row.get("desired_version"),
+        applied_version: row.get("applied_version"),
+        failure_class: row.get("failure_class"),
+        last_error: row.get("last_error"),
+    }))
 }
 
 #[derive(Debug)]

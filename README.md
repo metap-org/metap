@@ -36,6 +36,19 @@ cargo test --workspace -- --ignored      # e2e tests — needs DATABASE_URL + th
 To actually run something end to end (mint a token, migrate a DB, serve HTTP), go to
 `../metap-demo-crm`/`../metap-demo-jira`/`../metap-demo-waf` and follow that repo's own README.
 
+**An entity on a dedicated table needs a `reconcile()` call at boot, or its table never gets
+created.** By default `EntityDefinition.table_name` is the shared `records` table, which needs
+nothing extra. The moment you set `table_name` to a dedicated one
+(`metap_reconciler::qualified_table_name_in(entity_name, "your_app_schema")` — the standard
+pattern every real app here uses, see `templates/metap-app/src/example_entity.rs`), your own
+binary's `main.rs` must call `metap::reconciler::reconcile(&pool, tenant_id, &entity, &[]).await?`
+for that entity before serving traffic — see `templates/metap-app/src/main.rs`'s boot sequence for
+the exact call, and `../metap-demo-waf`'s `zones-service/src/main.rs` for a multi-entity example
+with FK ordering. Nothing in this library calls `reconcile()` for you automatically, and nothing
+warns you if you forget — the table just silently never exists until you add the call.
+(A low-code-authored entity, `../metap-lowcode`, is different: publishing one enqueues it and a
+separate `reconciler-orchestrator` process applies it asynchronously — see that repo's own docs.)
+
 Docs: moved to a separate repo, [`../metap-docs`](../metap-docs) (2026-08-31,
 `docs/roadmap/54-docs-repo-split.md` in that repo) — every `docs/...` path below (and everywhere
 else in this repo, including `CLAUDE.md` and `crates/*.rs` doc comments) resolves relative to that
