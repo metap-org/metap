@@ -273,11 +273,18 @@ fn fk_matches(actual: &FkSpec, desired: &FkSpec) -> bool {
         && actual.on_delete == desired.on_delete
 }
 
-/// §5.4 step 5: `CreateTable → AddColumn → MigrateData → Index → FK NotValid → ValidateFK →
-/// Drop`. A stable sort by rank, with a same-name rebuild's `Drop` given the *same* rank as its
-/// paired `Create`/`Add` (rather than a later "drop" bucket) — `diff()` above always pushes the
-/// drop immediately before its rebuild partner, and a stable sort preserves that relative order,
-/// so "drop this index, then recreate it" can never land the recreate before its own drop.
+/// §5.4 step 5: `CreateTable → AddColumn → MigrateData → Drop(FK/Unique/Index) →
+/// Create(Index/Unique/FK) → ValidateFK`. Every drop in the FK/unique/index family now ranks
+/// strictly before every create/add in that family — not paired same-rank with its own
+/// create/add the way it used to be — because a same-*name* transition from a `UNIQUE`
+/// constraint to a plain index (a real case: a `unique: true` field moving from a blanket
+/// constraint to a partial index, both sharing the same deterministic name) needs its
+/// `DropUnique` to run *before* any `DropIndexConcurrently`/`CreateIndexConcurrently` touching
+/// that name — the constraint's backing index can't be dropped by a bare `DROP INDEX` while the
+/// constraint still exists, so `DropUnique` has to go first and take it with it. Grouping "all
+/// drops, then all creates" gives every same-name rebuild pair `drop < create` for free (a drop
+/// op's rank is always lower than every create/add op's rank in this table), so this is strictly
+/// more general than the old same-rank-plus-stable-sort trick, not just a fix for one case.
 fn topo_sort(mut ops: Vec<DdlOp>) -> Vec<DdlOp> {
     fn rank(op: &DdlOp) -> u8 {
         match op {
@@ -286,10 +293,13 @@ fn topo_sort(mut ops: Vec<DdlOp>) -> Vec<DdlOp> {
             DdlOp::AddColumn { .. } => 2,
             DdlOp::AddSyncTrigger { .. } => 3,
             DdlOp::BackfillColumn { .. } => 4,
-            DdlOp::CreateIndexConcurrently { .. } | DdlOp::DropIndexConcurrently { .. } => 5,
-            DdlOp::AddUnique { .. } | DdlOp::DropUnique { .. } => 6,
-            DdlOp::AddForeignKeyNotValid { .. } | DdlOp::DropForeignKey { .. } => 7,
-            DdlOp::ValidateForeignKey { .. } => 8,
+            DdlOp::DropForeignKey { .. } => 5,
+            DdlOp::DropUnique { .. } => 6,
+            DdlOp::DropIndexConcurrently { .. } => 7,
+            DdlOp::CreateIndexConcurrently { .. } => 8,
+            DdlOp::AddUnique { .. } => 9,
+            DdlOp::AddForeignKeyNotValid { .. } => 10,
+            DdlOp::ValidateForeignKey { .. } => 11,
         }
     }
     ops.sort_by_key(rank);

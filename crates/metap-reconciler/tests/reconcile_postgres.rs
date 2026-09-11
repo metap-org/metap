@@ -44,7 +44,12 @@ fn entity(name: &str, fields: Vec<EntityField>) -> EntityDefinition {
     EntityDefinition {
         name: name.to_string(),
         label: name.to_string(),
-        table_name: "records".to_string(),
+        // `compile()` (this file's whole point) panics on a non-schema-qualified `table_name`
+        // since Phase 82's fix stopped silently recomputing it from `entity.name` — pre-existing
+        // test staleness, unrelated to this session's own change, found while trying to run this
+        // suite for real: fixed here rather than worked around, since every test in this file was
+        // broken by it.
+        table_name: metap_reconciler::qualified_table_name_for(name),
         fields,
         list_views: vec![EntityListView {
             name: "default".to_string(),
@@ -110,6 +115,82 @@ async fn reconcile_converges_to_zero_ops_on_a_second_pass() {
     assert_eq!(third.ops_applied, 0);
 
     drop_table_if_exists(&pool, "test_reconciler_convergence").await;
+}
+
+/// Regression for the real, twice-hit "transition-state" bug (WAF's `waf.ddos_policies.zoneId`,
+/// Phase 80; Jira's `jira.projects.key`, Phase 82): a `unique: true` field still enforced by the
+/// *old* blanket `UNIQUE` constraint shape (simulated here by manually reverting a
+/// freshly-reconciled partial index back to a constraint, under the same deterministic name —
+/// exactly what a real pre-Phase-79 entity looked like) must converge to today's partial index
+/// in one corrective `reconcile()` pass, not stay stuck forever needing a manual `DROP INDEX`
+/// outside the reconciler (the actual workaround used live, both times, before this was fixed).
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn unique_field_converges_from_a_legacy_blanket_constraint_to_a_partial_index_in_one_pass() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let entity_name = "test.reconciler_unique_transition";
+    drop_table_if_exists(&pool, "test_reconciler_unique_transition").await;
+
+    let mut sku = plain_field("sku", FieldKind::String);
+    sku.unique = Some(true);
+    sku.storage = Some(FieldStorage::Column);
+    let def = entity(entity_name, vec![sku]);
+
+    // Pass 1: reconcile for real, producing today's correct shape — a partial unique index.
+    let first = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
+    assert!(first.ops_applied > 0);
+
+    // Read back the index's real, deterministic name rather than hardcoding compile()'s naming
+    // scheme in this test.
+    let (index_name,): (String,) = sqlx::query_as(
+        "SELECT indexname FROM pg_indexes WHERE schemaname = 'entities' \
+         AND tablename = 'test_reconciler_unique_transition' AND indexname LIKE '%sku%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Revert it to the legacy shape a pre-Phase-79 `compile()` produced: a blanket `UNIQUE`
+    // constraint under the *same* name, no partial predicate — needs the partial index gone
+    // first (Postgres won't let two indexes share a name).
+    sqlx::query(&format!("DROP INDEX CONCURRENTLY \"entities\".\"{index_name}\""))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!(
+        "ALTER TABLE entities.test_reconciler_unique_transition ADD CONSTRAINT \"{index_name}\" UNIQUE (sku)"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Pass 2: reconcile against the same desired state again. Before the `topo_sort` rank fix,
+    // this transition never actually completed — `DropIndexConcurrently` for this name ran
+    // before the constraint's own `DropUnique`, so it either errored or was a structural no-op,
+    // and the follow-up `CreateIndexConcurrently ... IF NOT EXISTS` then silently skipped
+    // creating the real partial index because the name was still taken. `ops_applied` stayed
+    // nonzero on every subsequent pass — the actual reported symptom, both times.
+    reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
+
+    let third = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
+    assert_eq!(
+        third.ops_applied, 0,
+        "must converge within 1 corrective pass — this is the bug: it used to never converge at all"
+    );
+
+    // Confirm the *real* fix, not just a green ops_applied count: the index that exists under
+    // this name now really is partial (a soft-deleted row no longer permanently holds the value).
+    let is_partial: (bool,) = sqlx::query_as(
+        "SELECT indpred IS NOT NULL FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = $1",
+    )
+    .bind(&index_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(is_partial.0, "must end up a partial index, not still the blanket constraint");
+
+    drop_table_if_exists(&pool, "test_reconciler_unique_transition").await;
 }
 
 /// `storage: column` end to end: a field promoted to a real column on an entity that already

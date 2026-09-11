@@ -50,6 +50,7 @@ fn usage() -> ! {
     eprintln!("  dev-tools set-tenant-hostname <tenantId> <hostname>");
     eprintln!("  dev-tools put-tenant-secret <tenantId> <configKey> <value>");
     eprintln!("  dev-tools migrate-to-dedicated-table <tenantId> <entityJsonPath> [sourceTable]");
+    eprintln!("  dev-tools reconcile-plan <tenantId> <entityJsonPath> <tableName>");
     std::process::exit(1);
 }
 
@@ -76,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
         Some("set-tenant-hostname") => set_tenant_hostname(&args).await,
         Some("put-tenant-secret") => put_tenant_secret(&args).await,
         Some("migrate-to-dedicated-table") => migrate_to_dedicated_table(&args).await,
+        Some("reconcile-plan") => reconcile_plan(&args).await,
         _ => usage(),
     }
 }
@@ -603,6 +605,92 @@ async fn migrate_to_dedicated_table(args: &[String]) -> anyhow::Result<()> {
          code to \"{}\", recompile, and restart the service.",
         outcome.table
     );
+    Ok(())
+}
+
+/// Prints the SQL a real `reconcile()` for this `(tenant, entity)` would run, without executing
+/// any of it — the "let a dev review generated SQL and apply it themselves" mode, alongside
+/// (never instead of) the auto-apply every downstream service's boot sequence already relies on.
+/// Same modern-migration-tool split as Prisma's `migrate dev` (auto-apply) vs `migrate diff
+/// --script` (generate only): this is the `--script` side, built on
+/// `metap_reconciler::plan` — the same pure, DB-free-except-for-`introspect` primitive
+/// `diff/tests.rs`'s regression tests use to assert on generated SQL without a live Postgres.
+///
+/// `entityJsonPath` is the same shape `migrate-to-dedicated-table` takes (a local file holding
+/// exactly what `GET /metadata/entities/{entity}` returns) — this crate has no business-entity
+/// knowledge of its own, so reconstructing an `EntityDefinition` always means reading one back in
+/// from a real service's own metadata endpoint. Unlike that command, `table_name` isn't part of
+/// that endpoint's response (it's an internal reconciler detail, not public API shape), so it's a
+/// required 3rd argument here — pass the entity's own real, already-qualified `table_name`
+/// (e.g. `waf.ddos_policies`), not a generic default the way `migrate-to-dedicated-table`'s
+/// `sourceTable` has one.
+async fn reconcile_plan(args: &[String]) -> anyhow::Result<()> {
+    let (Some(tenant_id), Some(entity_json_path), Some(table_name)) = (args.get(2), args.get(3), args.get(4)) else {
+        eprintln!("Usage: dev-tools reconcile-plan <tenantId> <entityJsonPath> <tableName>");
+        eprintln!("  entityJsonPath: same shape migrate-to-dedicated-table takes — a local file holding exactly");
+        eprintln!("    what GET /metadata/entities/<entity> returns, e.g.:");
+        eprintln!("    curl -H \"Authorization: Bearer $TOKEN\" <baseUrl>/metadata/entities/<entity> -o entity.json");
+        eprintln!("  tableName: the entity's own real, already-qualified table_name, e.g. \"waf.ddos_policies\".");
+        eprintln!("  Prints the SQL a real reconcile() would run — nothing is executed. Review it, then apply");
+        eprintln!("  by hand (psql or your own migration tool). The owning service's boot-time reconcile() is");
+        eprintln!("  completely unaffected by this and keeps auto-applying exactly as it always has.");
+        std::process::exit(1);
+    };
+
+    dotenvy::dotenv().ok();
+    let database_url = metap_runtime::env::require_env("DATABASE_URL")?;
+    let shared_pool = PgPoolOptions::new().max_connections(5).connect(&database_url).await?;
+    let tenant_id: Uuid = tenant_id.parse()?;
+
+    let file_contents = std::fs::read_to_string(entity_json_path)
+        .map_err(|e| anyhow::anyhow!("failed to read {entity_json_path}: {e}"))?;
+    let parsed: MetadataEntityFile = serde_json::from_str(&file_contents).map_err(|e| {
+        anyhow::anyhow!("failed to parse {entity_json_path} as a GET /metadata/entities/<entity> response: {e}")
+    })?;
+    let entity = metap_metadata::EntityDefinition {
+        name: parsed.data.name,
+        label: parsed.data.label,
+        table_name: table_name.clone(),
+        fields: parsed.data.fields,
+        list_views: vec![],
+        workflow: parsed.data.workflow,
+        unique_constraints: parsed.data.unique_constraints,
+    };
+
+    let router = router_for(shared_pool).await;
+    let pool = router.pool_for(tenant_id.into()).await?;
+
+    let desired = metap_reconciler::compile(&entity)?;
+    let actual = metap_reconciler::introspect(&pool, tenant_id, &entity.name, &desired.table).await?;
+    let planned = metap_reconciler::plan(&desired, actual.as_ref(), &[]);
+
+    if planned.is_empty() {
+        println!(
+            "-- No changes: \"{}\" (table \"{}\") already matches this EntityDefinition. --",
+            entity.name, desired.table
+        );
+        return Ok(());
+    }
+
+    println!(
+        "-- {} planned operation(s) for entity \"{}\" (tenant {tenant_id}), table \"{}\" --",
+        planned.len(),
+        entity.name,
+        desired.table
+    );
+    println!("-- Nothing has been executed — review, then apply by hand. --\n");
+    for planned_op in &planned {
+        if planned_op.sql.is_empty() {
+            println!(
+                "-- {:?}: checkpointed batch backfill, not a single SQL statement — run a real reconcile() to apply it",
+                planned_op.op
+            );
+            continue;
+        }
+        for stmt in &planned_op.sql {
+            println!("{stmt};");
+        }
+    }
     Ok(())
 }
 

@@ -17,6 +17,7 @@ pub mod migrate;
 pub mod migration;
 pub mod normalize;
 pub mod orchestrator;
+pub mod plan;
 pub mod quarantine;
 pub mod reconcile;
 pub mod schema;
@@ -32,6 +33,7 @@ pub use diff::{diff, DdlOp};
 pub use introspect::introspect;
 pub use migrate::{copy_generic_records, migrate_generic_to_dedicated, CopySummary, MigrateOutcome, MIGRATE_OP_ID};
 pub use migration::{run_migration, MigrationOp, MigrationOutcome, PreflightReport, QuarantinePolicy};
+pub use plan::{plan, PlannedOp};
 pub use reconcile::{reconcile, ReconcileOutcome};
 pub use schema::{
     ColumnOrigin, ColumnSpec, Cost, ExecutionMode, FkSpec, IndexSpec, OnDelete, PhysicalSchema, UniqueSpec,
