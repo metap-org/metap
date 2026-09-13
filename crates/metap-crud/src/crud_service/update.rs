@@ -22,6 +22,7 @@ impl CrudService {
         expected_version: i32,
         raw_data: &JsonObject,
         context: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let Some(entity) = self.get_entity(entity_name) else {
             tracing::debug!(entity = entity_name, "update rejected: entity not found");
@@ -161,6 +162,23 @@ impl CrudService {
         emit_updated(&mut *tx, &entity, tenant_id, record.id, &data, record.version).await?;
         tx.commit().await?;
         tracing::info!(entity = entity.name, record_id = %record.id, version = record.version, "record updated");
+
+        self.record_audit(
+            &entity,
+            metap_audit::AuditEntry {
+                tenant_id,
+                entity: entity.name.clone(),
+                record_id: record.id,
+                action: metap_audit::AuditAction::Update,
+                transition_action: None,
+                actor_user_id: user_id,
+                reason: reason.map(str::to_string),
+                diff: metap_audit::diff_json_objects(&existing.data, &data),
+                version_after: Some(record.version),
+                occurred_at: chrono::Utc::now(),
+            },
+        )
+        .await;
 
         Ok(ServiceResult::ok(mask_record_for_read(
             &entity, context, &snapshot, record,

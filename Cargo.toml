@@ -4,6 +4,7 @@ members = [
   "crates/metap",
   "crates/metap-app",
   "crates/metap-attachments",
+  "crates/metap-audit",
   "crates/metap-auth",
   "crates/metap-cache",
   "crates/metap-config",
@@ -62,6 +63,9 @@ bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# Shared by `metap-runtime` (HTTP rate limiting, via `tower_governor`) and `metap-grpc` (its own
+# small gRPC rate-limit layer, built directly on this crate — see `metap-grpc/src/rate_limit.rs`).
+governor = "0.10"
 jsonwebtoken = "9"
 moka = { version = "0.12", features = ["future"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

@@ -110,6 +110,7 @@ fn parent_entity() -> EntityDefinition {
         }],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -149,6 +150,7 @@ fn child_entity() -> EntityDefinition {
         }],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -204,6 +206,7 @@ fn workflow_entity() -> EntityDefinition {
             }],
         }),
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -278,7 +281,7 @@ async fn full_graphql_lifecycle_reference_expansion_and_field_masking() {
     parent_payload.insert("name".to_string(), json!("Acme"));
     parent_payload.insert("secret".to_string(), json!("classified"));
     let parent = match crud
-        .create("test.gql_parents", &parent_payload, &admin_ctx)
+        .create("test.gql_parents", &parent_payload, &admin_ctx, None)
         .await
         .unwrap()
     {
@@ -289,7 +292,7 @@ async fn full_graphql_lifecycle_reference_expansion_and_field_masking() {
     for _ in 0..2 {
         let mut child_payload = metap_crud::JsonObject::new();
         child_payload.insert("parentId".to_string(), json!(parent.id.to_string()));
-        crud.create("test.gql_children", &child_payload, &admin_ctx)
+        crud.create("test.gql_children", &child_payload, &admin_ctx, None)
             .await
             .unwrap();
     }

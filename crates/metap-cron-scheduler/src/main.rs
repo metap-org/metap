@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
         // to construct degrades to `None` rather than refusing to boot — same reasoning as the
         // service token above: most job types need no credential at all, and only the jobs that
         // asked for one should fail (with that reason, per job, in `cron_job_runs`).
-        secrets: match metap_control::build_secret_store(&config).await {
+        secrets: match metap_control::build_secret_store(&metap_control::SecretStoreConfig::from(&config)).await {
             Ok(store) => Some(store),
             Err(e) => {
                 tracing::warn!(

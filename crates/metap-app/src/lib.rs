@@ -82,7 +82,7 @@ pub async fn bootstrap_platform(config: &AppConfig) -> anyhow::Result<PlatformPa
     tracing::info!("connecting to postgres...");
     let pool = metap_infra::connect_db(&config.database_url).await?;
 
-    let secret_store = metap_control::build_secret_store(config).await?;
+    let secret_store = metap_control::build_secret_store(&metap_control::SecretStoreConfig::from(config)).await?;
     let tenant_registry = Arc::new(PostgresTenantRegistry::new(pool.clone()));
     let router = Router::new(pool.clone(), RegistryCache::new(tenant_registry), secret_store);
 

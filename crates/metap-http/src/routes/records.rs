@@ -109,6 +109,12 @@ async fn get_record(
 #[derive(Deserialize)]
 struct RecordBody {
     data: HashMap<String, Value>,
+    /// Optional audit-trail reason (`metap-audit`, audit 04 finding 05) — ignored entirely
+    /// unless the entity being written has opted into the audit trail
+    /// (`EntityDefinition.audit`); additive, so an existing client that never sends this field
+    /// is completely unaffected.
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 async fn create_record(
@@ -118,7 +124,7 @@ async fn create_record(
     Json(body): Json<RecordBody>,
 ) -> Response {
     let data: metap_crud::JsonObject = body.data.into_iter().collect();
-    match state.crud.create(&entity, &data, &context).await {
+    match state.crud.create(&entity, &data, &context, body.reason.as_deref()).await {
         Ok(ServiceResult::Ok { data, .. }) => (StatusCode::CREATED, Json(json!({ "data": data }))).into_response(),
         Ok(ServiceResult::Err {
             status,
@@ -134,6 +140,8 @@ async fn create_record(
 struct UpdateBody {
     version: i32,
     data: HashMap<String, Value>,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 async fn update_record(
@@ -143,7 +151,11 @@ async fn update_record(
     Json(body): Json<UpdateBody>,
 ) -> Response {
     let data: metap_crud::JsonObject = body.data.into_iter().collect();
-    match state.crud.update(&entity, id, body.version, &data, &context).await {
+    match state
+        .crud
+        .update(&entity, id, body.version, &data, &context, body.reason.as_deref())
+        .await
+    {
         Ok(ServiceResult::Ok { data, .. }) => {
             invalidate_context_cache_if_auth_context_entity(&state, &context, &entity, &data.data).await;
             Json(json!({ "data": data })).into_response()
@@ -195,6 +207,8 @@ async fn invalidate_context_cache_if_auth_context_entity(
 #[derive(Deserialize)]
 struct DeleteBody {
     version: i32,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 async fn delete_record(
@@ -203,7 +217,11 @@ async fn delete_record(
     AuthContext(context): AuthContext,
     Json(body): Json<DeleteBody>,
 ) -> Response {
-    match state.crud.delete(&entity, id, body.version, &context).await {
+    match state
+        .crud
+        .delete(&entity, id, body.version, &context, body.reason.as_deref())
+        .await
+    {
         Ok(ServiceResult::Ok { data, .. }) => Json(json!({ "data": data })).into_response(),
         Ok(ServiceResult::Err {
             status,
@@ -220,6 +238,8 @@ struct TransitionBody {
     version: i32,
     #[serde(default)]
     data: Option<HashMap<String, Value>>,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 async fn transition_record(
@@ -231,7 +251,15 @@ async fn transition_record(
     let payload: Option<metap_crud::JsonObject> = body.data.map(|d| d.into_iter().collect());
     match state
         .crud
-        .transition(&entity, id, &action, body.version, payload.as_ref(), &context)
+        .transition(
+            &entity,
+            id,
+            &action,
+            body.version,
+            payload.as_ref(),
+            &context,
+            body.reason.as_deref(),
+        )
         .await
     {
         Ok(ServiceResult::Ok { data, .. }) => Json(json!({ "data": data })).into_response(),

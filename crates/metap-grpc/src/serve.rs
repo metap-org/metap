@@ -53,6 +53,17 @@ use crate::service::GrpcRecordService;
 /// verification for the machine-to-machine case this crate's auth design calls for (see
 /// `auth.rs`'s doc comment for why deriving identity from the cert itself is still a deferred
 /// extension point, not implemented here).
+///
+/// **`optional_serve` always passes `None` (audit 04 finding A#3, confirmed intentional
+/// 2026-09-13, not a gap to close).** Every caller of `optional_serve` today runs in a
+/// service-mesh-shaped deployment (containers on one private network, `../metap-demo-waf`'s
+/// `docker-compose.dev.yml` and its production equivalent) where transport encryption between
+/// services is the sidecar's job (Istio/Envoy/Linkerd mTLS), not this process's — plaintext gRPC
+/// on a mesh-internal port is the deliberate default for that topology, the same reasoning
+/// `metap-grpc/src/auth.rs`'s own module doc gives for deferring peer-certificate-derived
+/// identity. A binary running gRPC directly on an untrusted network (no mesh) needs `Some(...)`
+/// here and should call `serve` directly rather than `optional_serve`, which has no way to thread
+/// a `ServerTlsConfig` through today.
 pub async fn serve(
     addr: SocketAddr,
     service: GrpcRecordService,
@@ -104,8 +115,13 @@ pub async fn serve(
             span.record("latency_ms", latency.as_millis() as u64);
             tracing::event!(parent: span, tracing::Level::ERROR, %error, "request failed");
         });
+    // Same token-bucket shape/defaults as `graphql-gateway`'s own `metap_runtime::rate_limit::build`
+    // call (200ms per token, burst 300) — see `crate::rate_limit`'s doc comment for why this
+    // transport needs its own small layer instead of reusing that function directly (audit 04 A#3).
+    let rate_limit = crate::rate_limit::RateLimitLayer::new(200, 300);
     builder
         .layer(trace)
+        .layer(rate_limit)
         .add_service(RecordServiceServer::new(service))
         .serve(addr)
         .await
@@ -120,16 +136,27 @@ pub struct OptionalServeConfig {
     pub jwt_decoding_key: Arc<jsonwebtoken::DecodingKey>,
     pub auth_context_entity: Option<String>,
     pub context_attributes_cache: ContextAttributesCache,
+    /// When `Some`, gRPC verifies against this trust root instead of building
+    /// `TokenVerifier::Static` from `jwt_decoding_key` above — set this to a binary's own
+    /// `state.token_verifier` (`TokenVerifier::Jwks`) once it has opted into the JWKS multi-service
+    /// trust root for its other transports, so gRPC can't silently keep verifying against the old
+    /// static key after everything else moved off it (audit 04 finding A#10 — found live on
+    /// `../metap-demo-waf`'s 3 `data-plane` services, which had each independently reimplemented
+    /// this whole function just to pass a `TokenVerifier::Jwks` through, before this field
+    /// existed). `None` (the default for a binary that hasn't adopted JWKS, e.g.
+    /// `../metap-demo-jira`) preserves this function's original all-`Static` behavior exactly.
+    pub token_verifier_override: Option<Arc<TokenVerifier>>,
 }
 
 /// Convenience wrapper around [`serve`] for the common case: read `GRPC_ENABLED`/`GRPC_PORT`
-/// (falling back to `default_port`) to decide whether to run gRPC at all, authenticate with the
-/// binary's own static per-app keypair (`TokenVerifier::Static`), and spawn [`serve`] in its own
-/// task. Found byte-near-identical (only `default_port`/`auth_context_entity` genuinely differed)
-/// in both `../metap-demo-crm`'s and `../metap-demo-jira`'s `main.rs` before this existed.
-/// Returns `Ok(None)` (no task spawned) when `GRPC_ENABLED` isn't set. A binary that needs
-/// `TokenVerifier::Jwks` instead, or wants gRPC unconditionally on, still builds `AuthConfig`/
-/// calls [`serve`] directly — this helper doesn't cover those cases.
+/// (falling back to `default_port`) to decide whether to run gRPC at all, authenticate (with
+/// either the binary's own static per-app keypair or, when `token_verifier_override` is set, the
+/// JWKS trust root — see that field's doc comment), and spawn [`serve`] in its own task. Found
+/// byte-near-identical (only `default_port`/`auth_context_entity` genuinely differed) in both
+/// `../metap-demo-crm`'s and `../metap-demo-jira`'s `main.rs` before this existed. Returns
+/// `Ok(None)` (no task spawned) when `GRPC_ENABLED` isn't set. A binary that wants gRPC
+/// unconditionally on still builds `AuthConfig`/calls [`serve`] directly — this helper doesn't
+/// cover that case.
 pub async fn optional_serve(
     host: &str,
     default_port: u16,
@@ -140,11 +167,15 @@ pub async fn optional_serve(
     }
     let grpc_port: u16 = metap_runtime::env::env_or("GRPC_PORT", default_port);
     let grpc_addr: SocketAddr = format!("{host}:{grpc_port}").parse()?;
-    let auth = AuthConfig {
-        verifier: TokenVerifier::Static {
+    let verifier = match config.token_verifier_override {
+        Some(verifier) => (*verifier).clone(),
+        None => TokenVerifier::Static {
             decoding_key: (*config.jwt_decoding_key).clone(),
             leeway: 20,
         },
+    };
+    let auth = AuthConfig {
+        verifier,
         router: config.router,
         auth_context_entity: config.auth_context_entity,
         context_attributes_cache: config.context_attributes_cache,

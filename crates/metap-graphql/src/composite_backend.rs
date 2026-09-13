@@ -73,8 +73,9 @@ impl RecordBackend for CompositeBackend {
         entity: &str,
         data: &JsonObject,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
-        self.resolve(entity)?.create(entity, data, ctx).await
+        self.resolve(entity)?.create(entity, data, ctx, reason).await
     }
 
     async fn update(
@@ -84,12 +85,14 @@ impl RecordBackend for CompositeBackend {
         expected_version: i32,
         data: &JsonObject,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         self.resolve(entity)?
-            .update(entity, id, expected_version, data, ctx)
+            .update(entity, id, expected_version, data, ctx, reason)
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn transition(
         &self,
         entity: &str,
@@ -98,9 +101,10 @@ impl RecordBackend for CompositeBackend {
         expected_version: i32,
         data: Option<&JsonObject>,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         self.resolve(entity)?
-            .transition(entity, id, action, expected_version, data, ctx)
+            .transition(entity, id, action, expected_version, data, ctx, reason)
             .await
     }
 
@@ -110,8 +114,11 @@ impl RecordBackend for CompositeBackend {
         id: Uuid,
         expected_version: i32,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
-        self.resolve(entity)?.delete(entity, id, expected_version, ctx).await
+        self.resolve(entity)?
+            .delete(entity, id, expected_version, ctx, reason)
+            .await
     }
 
     async fn aggregate(

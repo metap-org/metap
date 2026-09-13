@@ -413,6 +413,10 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
         }
     }
 
+    // `entity.audit` (`EntityAuditConfig`) needs no validation here — `enabled: bool` has no
+    // invalid states. Considered deliberately, not an oversight: unlike `unique_constraints`
+    // above, there's no cross-field reference or uniqueness rule to check.
+
     // `entity.name` had no charset check at all until this validation existed — same gap
     // `field.name` had (see that check's doc comment above), just harder to hit accidentally
     // since a code-authored entity's name is a Rust string literal, not admin-supplied metadata.

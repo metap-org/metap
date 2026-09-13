@@ -20,6 +20,7 @@
 
 pub use metap_app as app;
 pub use metap_attachments as attachments;
+pub use metap_audit as audit;
 pub use metap_auth as tenant_auth;
 pub use metap_cache as cache;
 pub use metap_config as config;
@@ -53,13 +54,15 @@ pub mod prelude {
     //! wins the unqualified name here; reach the others through their namespaced module
     //! (`metap::permission::JsonObject`, `metap::workflow::JsonObject`).
     pub use metap_app::{bootstrap_platform, load_entity_definitions_from_dir, PlatformParts};
+    pub use metap_audit::{AuditTrailStore, PostgresAuditTrailStore};
     pub use metap_control::PostgresPolicyStore;
     pub use metap_crud::{CrudService, JsonObject, RecordCapabilities, RecordDto};
     pub use metap_http::{build_router, AdminContext, AppState, AuthContext, PlatformAdminContext};
     pub use metap_infra::{connect_db, load_config, AppConfig};
     pub use metap_metadata::{
-        submit_entity, submit_field_display_hints, submit_related_views, EntityDefinition, EntityField, EntityListView,
-        EntityWorkflow, FieldDisplayHint, FieldKind, MetadataRegistry, RelatedView, WorkflowTransition,
+        submit_entity, submit_field_display_hints, submit_related_views, EntityAuditConfig, EntityDefinition,
+        EntityField, EntityListView, EntityWorkflow, FieldDisplayHint, FieldKind, MetadataRegistry, RelatedView,
+        WorkflowTransition,
     };
     pub use metap_peripherals::{check_metadata_drift, reconcile_indexes};
     pub use metap_permission::{PermissionService, PolicyCondition};

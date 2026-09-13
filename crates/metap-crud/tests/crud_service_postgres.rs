@@ -180,6 +180,7 @@ fn test_entity() -> EntityDefinition {
             ],
         }),
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -216,6 +217,7 @@ fn unique_field_entity() -> EntityDefinition {
         list_views: vec![],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -250,6 +252,7 @@ fn parent_entity() -> EntityDefinition {
         list_views: vec![],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -283,6 +286,7 @@ fn child_entity() -> EntityDefinition {
         list_views: vec![],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -318,6 +322,7 @@ fn grandchild_entity() -> EntityDefinition {
         list_views: vec![],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -352,6 +357,7 @@ fn self_ref_entity() -> EntityDefinition {
         list_views: vec![],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -430,6 +436,7 @@ fn computed_field_entity() -> EntityDefinition {
         list_views: vec![],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -478,6 +485,7 @@ fn dedicated_table_unique_field_entity() -> EntityDefinition {
         list_views: vec![],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -577,6 +585,7 @@ fn dedicated_table_composite_unique_entity() -> EntityDefinition {
         unique_constraints: vec![metap_metadata::EntityUniqueConstraint {
             fields: vec!["type".to_string(), "value".to_string()],
         }],
+        audit: None,
     }
 }
 
@@ -663,6 +672,11 @@ async fn cleanup(pool: &PgPool, tenant_id: Uuid) {
         .execute(pool)
         .await
         .ok();
+    sqlx::query("DELETE FROM metadata.audit_trail_entries WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .ok();
     sqlx::query("DELETE FROM records WHERE tenant_id = $1")
         .bind(tenant_id)
         .execute(pool)
@@ -673,6 +687,158 @@ async fn cleanup(pool: &PgPool, tenant_id: Uuid) {
         .execute(pool)
         .await
         .ok();
+}
+
+/// Same shape as `test_entity()`, but opted into the audit trail
+/// (`EntityAuditConfig { enabled: true }`) — kept as a separate entity (not just a variant of
+/// `test_entity()`) so `audited_entity_writes_are_recorded_and_unaudited_entity_writes_are_not`
+/// below can register BOTH in one registry and prove the per-entity gate actually gates,
+/// rather than just proving the feature works at all.
+fn audited_entity() -> EntityDefinition {
+    EntityDefinition {
+        name: "test.audited_orders".to_string(),
+        audit: Some(metap_metadata::EntityAuditConfig { enabled: true }),
+        ..test_entity()
+    }
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn audited_entity_writes_are_recorded_and_unaudited_entity_writes_are_not() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(audited_entity()).unwrap();
+    registry.register(test_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let audit_store = std::sync::Arc::new(metap_audit::PostgresAuditTrailStore::new(pool.clone()));
+    let crud = CrudService::with_audit(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+        audit_store,
+    );
+
+    // Same `CrudService` (same configured `AuditTrailStore`), one entity opted in, one not —
+    // the create on `test.orders` below must produce zero audit rows even though the store
+    // itself is fully wired up, proving the gate is per-entity, not per-service.
+    let mut unaudited_payload = JsonObject::new();
+    unaudited_payload.insert("name".to_string(), json!("Not audited"));
+    unaudited_payload.insert("amount".to_string(), json!(1));
+    crud.create("test.orders", &unaudited_payload, &ctx, None).await.unwrap();
+
+    let mut payload = JsonObject::new();
+    payload.insert("name".to_string(), json!("Audited order"));
+    payload.insert("amount".to_string(), json!(100));
+    let created = match crud.create("test.audited_orders", &payload, &ctx, None).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    // Update a field the "approve" guard below doesn't look at (the guard requires
+    // `amount == 100`, set at create above) — this update must still show up in the diff.
+    let mut update_payload = JsonObject::new();
+    update_payload.insert("name".to_string(), json!("Audited order (renamed)"));
+    let updated = match crud
+        .update("test.audited_orders", created.id, created.version, &update_payload, &ctx, None)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected update to succeed, got {other:?}"),
+    };
+
+    let transitioned = match crud
+        .transition("test.audited_orders", created.id, "approve", updated.version, None, &ctx, None)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected transition to succeed, got {other:?}"),
+    };
+
+    // `close` needs `resolution` set and is only valid from `approved` — reuse the same
+    // transition path `full_lifecycle_...` above already proves works, just to get to a state
+    // `delete` can act on without the reference-integrity guard getting in the way.
+    let mut close_payload = JsonObject::new();
+    close_payload.insert("resolution".to_string(), json!("done"));
+    // `reason` on this one call — the actual new capability this test needs to prove, not just
+    // that the older `None`-only call sites still compile.
+    let closed = match crud
+        .transition(
+            "test.audited_orders",
+            created.id,
+            "close",
+            transitioned.version,
+            Some(&close_payload),
+            &ctx,
+            Some("customer requested closure"),
+        )
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected transition to succeed, got {other:?}"),
+    };
+
+    crud.delete("test.audited_orders", created.id, closed.version, &ctx, None)
+        .await
+        .unwrap();
+
+    let rows = sqlx::query_as::<_, (String, Option<String>, serde_json::Value, Option<String>)>(
+        "SELECT action, transition_action, diff, reason FROM metadata.audit_trail_entries \
+         WHERE tenant_id = $1 AND record_id = $2 ORDER BY occurred_at",
+    )
+    .bind(tenant_id)
+    .bind(created.id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        rows.iter().map(|(action, ..)| action.as_str()).collect::<Vec<_>>(),
+        vec!["create", "update", "transition", "transition", "delete"],
+        "one audit row per write, in order, and nothing from the unaudited entity's create"
+    );
+    assert_eq!(
+        rows[1].2["name"],
+        json!({ "before": "Audited order", "after": "Audited order (renamed)" }),
+        "update diff"
+    );
+    assert_eq!(rows[2].1.as_deref(), Some("approve"));
+    assert_eq!(rows[2].3, None, "no reason was passed for the approve transition");
+    assert_eq!(rows[3].1.as_deref(), Some("close"));
+    assert_eq!(
+        rows[3].3.as_deref(),
+        Some("customer requested closure"),
+        "reason must round-trip end to end from the CrudService call into the stored row"
+    );
+    assert_eq!(rows[4].0, "delete");
+    assert_eq!(rows[4].2, json!({}), "delete is action-based, not diff-based");
+
+    let unaudited_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM metadata.audit_trail_entries WHERE tenant_id = $1 AND entity = 'test.orders'",
+    )
+    .bind(tenant_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(unaudited_count, 0, "an entity with no audit config must produce zero rows");
+
+    // The pre-existing mechanisms this feature is explicitly additive to, not a replacement
+    // for, must be completely unaffected.
+    let workflow_events_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM workflow_events WHERE tenant_id = $1 AND record_id = $2")
+            .bind(tenant_id)
+            .bind(created.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(workflow_events_count, 2, "workflow_events must still get its own 2 rows (approve, close)");
+
+    cleanup(&pool, tenant_id).await;
 }
 
 #[tokio::test]
@@ -695,7 +861,7 @@ async fn full_lifecycle_create_get_update_transition_delete() {
     let mut payload = JsonObject::new();
     payload.insert("name".to_string(), json!("First order"));
     payload.insert("amount".to_string(), json!(50));
-    let created = match crud.create("test.orders", &payload, &ctx).await.unwrap() {
+    let created = match crud.create("test.orders", &payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
@@ -709,7 +875,7 @@ async fn full_lifecycle_create_get_update_transition_delete() {
     // create validation failure: missing required "name"
     let mut bad_payload = JsonObject::new();
     bad_payload.insert("amount".to_string(), json!(1));
-    match crud.create("test.orders", &bad_payload, &ctx).await.unwrap() {
+    match crud.create("test.orders", &bad_payload, &ctx, None).await.unwrap() {
         ServiceResult::Err {
             status,
             error,
@@ -741,7 +907,7 @@ async fn full_lifecycle_create_get_update_transition_delete() {
     let mut update_payload = JsonObject::new();
     update_payload.insert("amount".to_string(), json!(100));
     match crud
-        .update("test.orders", created.id, 999, &update_payload, &ctx)
+        .update("test.orders", created.id, 999, &update_payload, &ctx, None)
         .await
         .unwrap()
     {
@@ -754,7 +920,7 @@ async fn full_lifecycle_create_get_update_transition_delete() {
 
     // update with correct version -> succeeds, version increments
     let updated = match crud
-        .update("test.orders", created.id, created.version, &update_payload, &ctx)
+        .update("test.orders", created.id, created.version, &update_payload, &ctx, None)
         .await
         .unwrap()
     {
@@ -771,7 +937,7 @@ async fn full_lifecycle_create_get_update_transition_delete() {
 
     // transition guard now passes (amount == 100)
     let transitioned = match crud
-        .transition("test.orders", created.id, "approve", updated.version, None, &ctx)
+        .transition("test.orders", created.id, "approve", updated.version, None, &ctx, None)
         .await
         .unwrap()
     {
@@ -784,7 +950,7 @@ async fn full_lifecycle_create_get_update_transition_delete() {
 
     // transition again from a now-invalid from-state -> invalid_transition
     match crud
-        .transition("test.orders", created.id, "approve", transitioned.version, None, &ctx)
+        .transition("test.orders", created.id, "approve", transitioned.version, None, &ctx, None)
         .await
         .unwrap()
     {
@@ -797,7 +963,7 @@ async fn full_lifecycle_create_get_update_transition_delete() {
 
     // delete (soft)
     let deleted = match crud
-        .delete("test.orders", created.id, transitioned.version, &ctx)
+        .delete("test.orders", created.id, transitioned.version, &ctx, None)
         .await
         .unwrap()
     {
@@ -935,7 +1101,7 @@ async fn get_many_batches_reads_masks_denied_records_out_and_preserves_caller_or
         let mut payload = JsonObject::new();
         payload.insert("name".to_string(), json!(format!("order-{amount}")));
         payload.insert("amount".to_string(), json!(amount));
-        let created = match crud.create("test.orders", &payload, &admin_ctx).await.unwrap() {
+        let created = match crud.create("test.orders", &payload, &admin_ctx, None).await.unwrap() {
             ServiceResult::Ok { data, .. } => data,
             other => panic!("expected create to succeed, got {other:?}"),
         };
@@ -1000,12 +1166,12 @@ async fn transition_payload_is_validated_and_set_fields_are_applied() {
     let mut payload = JsonObject::new();
     payload.insert("name".to_string(), json!("Order to close"));
     payload.insert("amount".to_string(), json!(100));
-    let created = match crud.create("test.orders", &payload, &ctx).await.unwrap() {
+    let created = match crud.create("test.orders", &payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
     let approved = match crud
-        .transition("test.orders", created.id, "approve", created.version, None, &ctx)
+        .transition("test.orders", created.id, "approve", created.version, None, &ctx, None)
         .await
         .unwrap()
     {
@@ -1015,7 +1181,7 @@ async fn transition_payload_is_validated_and_set_fields_are_applied() {
 
     // close without a `resolution` in the payload -> validator rejects it
     match crud
-        .transition("test.orders", created.id, "close", approved.version, None, &ctx)
+        .transition("test.orders", created.id, "close", approved.version, None, &ctx, None)
         .await
         .unwrap()
     {
@@ -1037,6 +1203,7 @@ async fn transition_payload_is_validated_and_set_fields_are_applied() {
             approved.version,
             Some(&close_payload),
             &ctx,
+            None
         )
         .await
         .unwrap()
@@ -1070,7 +1237,7 @@ async fn list_returns_created_records_scoped_to_tenant() {
     for name in ["a", "b", "c"] {
         let mut payload = JsonObject::new();
         payload.insert("name".to_string(), json!(name));
-        crud.create("test.orders", &payload, &ctx).await.unwrap();
+        crud.create("test.orders", &payload, &ctx, None).await.unwrap();
     }
 
     let input = ListInput {
@@ -1157,7 +1324,7 @@ async fn non_admin_field_write_policy_is_enforced_through_create() {
     payload.insert("name".to_string(), json!("blocked"));
     payload.insert("amount".to_string(), json!(1));
 
-    match crud.create("test.orders", &payload, &ctx).await.unwrap() {
+    match crud.create("test.orders", &payload, &ctx, None).await.unwrap() {
         ServiceResult::Err {
             status, field_errors, ..
         } => {
@@ -1189,14 +1356,14 @@ async fn unique_field_violation_is_a_clean_409_not_a_500() {
 
     let mut payload = JsonObject::new();
     payload.insert("sku".to_string(), json!("ABC-1"));
-    let first = match crud.create("test.unique_orders", &payload, &ctx).await.unwrap() {
+    let first = match crud.create("test.unique_orders", &payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected first create to succeed, got {other:?}"),
     };
 
     // second create with the same sku -> 409 unique_violation, field_errors names "sku",
     // not an unhandled 500 from the raw DB error propagating through `?`.
-    match crud.create("test.unique_orders", &payload, &ctx).await.unwrap() {
+    match crud.create("test.unique_orders", &payload, &ctx, None).await.unwrap() {
         ServiceResult::Err {
             status,
             error,
@@ -1213,12 +1380,12 @@ async fn unique_field_violation_is_a_clean_409_not_a_500() {
     // a second, distinct record, then updated to collide with the first -> same 409 on update.
     let mut other_payload = JsonObject::new();
     other_payload.insert("sku".to_string(), json!("ABC-2"));
-    let second = match crud.create("test.unique_orders", &other_payload, &ctx).await.unwrap() {
+    let second = match crud.create("test.unique_orders", &other_payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected second create to succeed, got {other:?}"),
     };
     match crud
-        .update("test.unique_orders", second.id, second.version, &payload, &ctx)
+        .update("test.unique_orders", second.id, second.version, &payload, &ctx, None)
         .await
         .unwrap()
     {
@@ -1274,9 +1441,9 @@ async fn unique_field_violation_on_a_dedicated_table_still_names_the_field() {
 
     let mut payload = JsonObject::new();
     payload.insert("sku".to_string(), json!("WID-1"));
-    crud.create("test.unique_widgets", &payload, &ctx).await.unwrap();
+    crud.create("test.unique_widgets", &payload, &ctx, None).await.unwrap();
 
-    match crud.create("test.unique_widgets", &payload, &ctx).await.unwrap() {
+    match crud.create("test.unique_widgets", &payload, &ctx, None).await.unwrap() {
         ServiceResult::Err {
             status,
             error,
@@ -1317,14 +1484,14 @@ async fn composite_unique_field_violation_names_every_field_in_the_constraint() 
     let mut payload = JsonObject::new();
     payload.insert("type".to_string(), json!("blacklist"));
     payload.insert("value".to_string(), json!("1.2.3.4"));
-    crud.create("test.unique_list_entries", &payload, &ctx).await.unwrap();
+    crud.create("test.unique_list_entries", &payload, &ctx, None).await.unwrap();
 
     // Same value, different type — the pair isn't a duplicate, must succeed.
     let mut other_type = JsonObject::new();
     other_type.insert("type".to_string(), json!("whitelist"));
     other_type.insert("value".to_string(), json!("1.2.3.4"));
     match crud
-        .create("test.unique_list_entries", &other_type, &ctx)
+        .create("test.unique_list_entries", &other_type, &ctx, None)
         .await
         .unwrap()
     {
@@ -1333,7 +1500,7 @@ async fn composite_unique_field_violation_names_every_field_in_the_constraint() 
     }
 
     // The exact same (type, value) pair again — must be rejected, naming both fields.
-    match crud.create("test.unique_list_entries", &payload, &ctx).await.unwrap() {
+    match crud.create("test.unique_list_entries", &payload, &ctx, None).await.unwrap() {
         ServiceResult::Err {
             status,
             error,
@@ -1371,17 +1538,17 @@ async fn delete_is_rejected_when_another_record_still_references_it() {
 
     let mut parent_payload = JsonObject::new();
     parent_payload.insert("name".to_string(), json!("Parent A"));
-    let parent = match crud.create("test.parents", &parent_payload, &ctx).await.unwrap() {
+    let parent = match crud.create("test.parents", &parent_payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
 
     let mut child_payload = JsonObject::new();
     child_payload.insert("parentId".to_string(), json!(parent.id));
-    crud.create("test.children", &child_payload, &ctx).await.unwrap();
+    crud.create("test.children", &child_payload, &ctx, None).await.unwrap();
 
     match crud
-        .delete("test.parents", parent.id, parent.version, &ctx)
+        .delete("test.parents", parent.id, parent.version, &ctx, None)
         .await
         .unwrap()
     {
@@ -1420,26 +1587,26 @@ async fn delete_succeeds_once_the_referencing_record_is_gone() {
 
     let mut parent_payload = JsonObject::new();
     parent_payload.insert("name".to_string(), json!("Parent B"));
-    let parent = match crud.create("test.parents", &parent_payload, &ctx).await.unwrap() {
+    let parent = match crud.create("test.parents", &parent_payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
 
     let mut child_payload = JsonObject::new();
     child_payload.insert("parentId".to_string(), json!(parent.id));
-    let child = match crud.create("test.children", &child_payload, &ctx).await.unwrap() {
+    let child = match crud.create("test.children", &child_payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
 
     // delete the referencing child first
-    crud.delete("test.children", child.id, child.version, &ctx)
+    crud.delete("test.children", child.id, child.version, &ctx, None)
         .await
         .unwrap();
 
     // parent delete now succeeds — no live reference left
     match crud
-        .delete("test.parents", parent.id, parent.version, &ctx)
+        .delete("test.parents", parent.id, parent.version, &ctx, None)
         .await
         .unwrap()
     {
@@ -1474,28 +1641,28 @@ async fn list_hydrates_related_display_for_reference_fields_with_display_field()
 
     let mut a_payload = JsonObject::new();
     a_payload.insert("name".to_string(), json!("Parent A"));
-    let parent_a = match crud.create("test.parents", &a_payload, &ctx).await.unwrap() {
+    let parent_a = match crud.create("test.parents", &a_payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
     let mut b_payload = JsonObject::new();
     b_payload.insert("name".to_string(), json!("Parent B"));
-    let parent_b = match crud.create("test.parents", &b_payload, &ctx).await.unwrap() {
+    let parent_b = match crud.create("test.parents", &b_payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
 
     let mut child_of_a1 = JsonObject::new();
     child_of_a1.insert("parentId".to_string(), json!(parent_a.id));
-    crud.create("test.children", &child_of_a1, &ctx).await.unwrap();
+    crud.create("test.children", &child_of_a1, &ctx, None).await.unwrap();
     let mut child_of_a2 = JsonObject::new();
     child_of_a2.insert("parentId".to_string(), json!(parent_a.id));
-    crud.create("test.children", &child_of_a2, &ctx).await.unwrap();
+    crud.create("test.children", &child_of_a2, &ctx, None).await.unwrap();
     let mut child_of_b = JsonObject::new();
     child_of_b.insert("parentId".to_string(), json!(parent_b.id));
-    crud.create("test.children", &child_of_b, &ctx).await.unwrap();
+    crud.create("test.children", &child_of_b, &ctx, None).await.unwrap();
     // no parentId at all — the field isn't required
-    crud.create("test.children", &JsonObject::new(), &ctx).await.unwrap();
+    crud.create("test.children", &JsonObject::new(), &ctx, None).await.unwrap();
 
     let input = ListInput {
         limit: 50,
@@ -1558,7 +1725,7 @@ async fn delete_succeeds_for_a_record_whose_self_reference_points_at_itself() {
         std::sync::Arc::new(permissions),
     );
 
-    let node = match crud.create("test.nodes", &JsonObject::new(), &ctx).await.unwrap() {
+    let node = match crud.create("test.nodes", &JsonObject::new(), &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
@@ -1566,7 +1733,7 @@ async fn delete_succeeds_for_a_record_whose_self_reference_points_at_itself() {
     let mut self_ref_payload = JsonObject::new();
     self_ref_payload.insert("parentNodeId".to_string(), json!(node.id));
     let node = match crud
-        .update("test.nodes", node.id, node.version, &self_ref_payload, &ctx)
+        .update("test.nodes", node.id, node.version, &self_ref_payload, &ctx, None)
         .await
         .unwrap()
     {
@@ -1574,7 +1741,7 @@ async fn delete_succeeds_for_a_record_whose_self_reference_points_at_itself() {
         other => panic!("expected update to succeed, got {other:?}"),
     };
 
-    match crud.delete("test.nodes", node.id, node.version, &ctx).await.unwrap() {
+    match crud.delete("test.nodes", node.id, node.version, &ctx, None).await.unwrap() {
         ServiceResult::Ok { .. } => {}
         other => panic!("expected delete to succeed for a record whose self-reference points at itself, got {other:?}"),
     }
@@ -1606,7 +1773,7 @@ async fn delete_is_rejected_when_referenced_by_any_of_multiple_referencing_entit
 
     let mut parent_payload = JsonObject::new();
     parent_payload.insert("name".to_string(), json!("Parent A"));
-    let parent = match crud.create("test.parents", &parent_payload, &ctx).await.unwrap() {
+    let parent = match crud.create("test.parents", &parent_payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
@@ -1614,12 +1781,12 @@ async fn delete_is_rejected_when_referenced_by_any_of_multiple_referencing_entit
     // only the grandchild references the parent — no child does.
     let mut grandchild_payload = JsonObject::new();
     grandchild_payload.insert("grandparentId".to_string(), json!(parent.id));
-    crud.create("test.grandchildren", &grandchild_payload, &ctx)
+    crud.create("test.grandchildren", &grandchild_payload, &ctx, None)
         .await
         .unwrap();
 
     match crud
-        .delete("test.parents", parent.id, parent.version, &ctx)
+        .delete("test.parents", parent.id, parent.version, &ctx, None)
         .await
         .unwrap()
     {
@@ -1667,7 +1834,7 @@ async fn delete_rejected_lists_every_blocking_record_not_just_the_first() {
 
     let mut parent_payload = JsonObject::new();
     parent_payload.insert("name".to_string(), json!("Parent A"));
-    let parent = match crud.create("test.parents", &parent_payload, &ctx).await.unwrap() {
+    let parent = match crud.create("test.parents", &parent_payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
@@ -1677,7 +1844,7 @@ async fn delete_rejected_lists_every_blocking_record_not_just_the_first() {
     for _ in 0..2 {
         let mut child_payload = JsonObject::new();
         child_payload.insert("parentId".to_string(), json!(parent.id));
-        let child = match crud.create("test.children", &child_payload, &ctx).await.unwrap() {
+        let child = match crud.create("test.children", &child_payload, &ctx, None).await.unwrap() {
             ServiceResult::Ok { data, .. } => data,
             other => panic!("expected create to succeed, got {other:?}"),
         };
@@ -1688,7 +1855,7 @@ async fn delete_rejected_lists_every_blocking_record_not_just_the_first() {
     let mut grandchild_payload = JsonObject::new();
     grandchild_payload.insert("grandparentId".to_string(), json!(parent.id));
     let grandchild = match crud
-        .create("test.grandchildren", &grandchild_payload, &ctx)
+        .create("test.grandchildren", &grandchild_payload, &ctx, None)
         .await
         .unwrap()
     {
@@ -1697,7 +1864,7 @@ async fn delete_rejected_lists_every_blocking_record_not_just_the_first() {
     };
 
     match crud
-        .delete("test.parents", parent.id, parent.version, &ctx)
+        .delete("test.parents", parent.id, parent.version, &ctx, None)
         .await
         .unwrap()
     {
@@ -1836,6 +2003,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
             list_views: vec![],
             workflow: None,
             unique_constraints: vec![],
+            audit: None,
         })
         .unwrap();
     registry
@@ -1851,6 +2019,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
             list_views: vec![],
             workflow: None,
             unique_constraints: vec![],
+            audit: None,
         })
         .unwrap();
     registry
@@ -1899,6 +2068,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
             }],
             workflow: None,
             unique_constraints: vec![],
+            audit: None,
         })
         .unwrap();
 
@@ -2064,6 +2234,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
             list_views: vec![],
             workflow: None,
             unique_constraints: vec![],
+            audit: None,
         })
         .unwrap();
     registry
@@ -2079,6 +2250,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
             list_views: vec![],
             workflow: None,
             unique_constraints: vec![],
+            audit: None,
         })
         .unwrap();
     registry
@@ -2129,6 +2301,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
             }],
             workflow: None,
             unique_constraints: vec![],
+            audit: None,
         })
         .unwrap();
 
@@ -2220,7 +2393,7 @@ async fn concurrent_cross_tenant_list_calls_never_return_another_tenants_records
         for i in 0..5 {
             let mut payload = JsonObject::new();
             payload.insert("name".to_string(), json!(format!("{prefix}-{i}")));
-            crud.create("test.orders", &payload, &ctx).await.unwrap();
+            crud.create("test.orders", &payload, &ctx, None).await.unwrap();
         }
     }
 
@@ -2328,7 +2501,7 @@ async fn sustained_concurrent_create_update_transition_delete_cycle() {
                 payload.insert("name".to_string(), json!(format!("load-{worker}-{i}")));
                 // amount == 100 so the "approve" transition's guard passes on the first try.
                 payload.insert("amount".to_string(), json!(100));
-                let created = match crud.create("test.orders", &payload, &ctx).await? {
+                let created = match crud.create("test.orders", &payload, &ctx, None).await? {
                     ServiceResult::Ok { data, .. } => data,
                     other => anyhow::bail!("create failed: {other:?}"),
                 };
@@ -2336,7 +2509,7 @@ async fn sustained_concurrent_create_update_transition_delete_cycle() {
                 let mut update_payload = JsonObject::new();
                 update_payload.insert("name".to_string(), json!(format!("load-{worker}-{i}-updated")));
                 let updated = match crud
-                    .update("test.orders", created.id, created.version, &update_payload, &ctx)
+                    .update("test.orders", created.id, created.version, &update_payload, &ctx, None)
                     .await?
                 {
                     ServiceResult::Ok { data, .. } => data,
@@ -2344,7 +2517,7 @@ async fn sustained_concurrent_create_update_transition_delete_cycle() {
                 };
 
                 let transitioned = match crud
-                    .transition("test.orders", created.id, "approve", updated.version, None, &ctx)
+                    .transition("test.orders", created.id, "approve", updated.version, None, &ctx, None)
                     .await?
                 {
                     ServiceResult::Ok { data, .. } => data,
@@ -2352,7 +2525,7 @@ async fn sustained_concurrent_create_update_transition_delete_cycle() {
                 };
 
                 match crud
-                    .delete("test.orders", created.id, transitioned.version, &ctx)
+                    .delete("test.orders", created.id, transitioned.version, &ctx, None)
                     .await?
                 {
                     ServiceResult::Ok { .. } => Ok(()),
@@ -2391,7 +2564,7 @@ async fn computed_field_is_recalculated_on_create_and_update() {
     // A client-sent value for the computed field itself must be ignored — the server always
     // overwrites it, never trusts client input for it (see `recompute_fields`'s doc comment).
     payload.insert("displayName".to_string(), json!("ignore me"));
-    let created = match crud.create("test.people", &payload, &ctx).await.unwrap() {
+    let created = match crud.create("test.people", &payload, &ctx, None).await.unwrap() {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected create to succeed, got {other:?}"),
     };
@@ -2400,7 +2573,7 @@ async fn computed_field_is_recalculated_on_create_and_update() {
     let mut update_payload = JsonObject::new();
     update_payload.insert("firstName".to_string(), json!("Grace"));
     let updated = match crud
-        .update("test.people", created.id, created.version, &update_payload, &ctx)
+        .update("test.people", created.id, created.version, &update_payload, &ctx, None)
         .await
         .unwrap()
     {

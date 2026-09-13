@@ -133,6 +133,17 @@ pub async fn list_tenant_users<'e>(executor: impl PgExecutor<'e>, tenant_id: Uui
 /// the caller supplies a `tenantId` — required for a `DedicatedDb`-strategy tenant, whose
 /// `users` table lives only in that tenant's own database, never in the shared control-plane
 /// pool this used to be pinned to.
+///
+/// **Looks up `email` globally, not `(tenant_id, email)` (audit 04 finding A#2, confirmed
+/// intentional 2026-09-13, not a gap to close).** `crates/migrations/0009_users.sql`'s
+/// `users_email_unique` index is a plain global unique index for the same reason: `POST
+/// /auth/login` has no tenant picker — a user types only email+password, and this lookup is what
+/// resolves which tenant they belong to. Scoping the index (and this query) to
+/// `(tenant_id, email)` would let the same email exist in two tenants, which sounds like a
+/// feature until this login flow is asked "which tenant do you mean" with no UI that currently
+/// asks it — that would be a real product change (a tenant-picker step, or a per-tenant login
+/// subdomain), not a query tweak. Revisit if/when that UI exists; until then, one email means one
+/// account platform-wide, by design.
 pub async fn verify_credentials<'e>(
     executor: impl PgExecutor<'e>,
     email: &str,
@@ -168,6 +179,7 @@ struct Claims {
     exp: usize,
     iss: String,
     aud: String,
+    jti: String,
 }
 
 /// Mints an RS256 JWT with the exact claim shape `crates/metap-http/src/auth.rs`'s
@@ -176,6 +188,15 @@ struct Claims {
 /// pre-parsed key, so callers (both of which mint infrequently — an interactive CLI command
 /// and a login request) don't need to hold a `jsonwebtoken::EncodingKey` in state just for
 /// this.
+///
+/// **`jti` (audit 04 finding A#8, added 2026-09-13):** a random per-token id, cheap and
+/// forward-compatible, added ahead of any consumer of it — there is no revocation-checking
+/// infrastructure in this platform today (no denylist table, no lookup on decode), and building
+/// one speculatively without a real "log out this device"/"revoke this session" feature driving
+/// its shape would be exactly the premature abstraction this codebase avoids elsewhere. Having
+/// every token already carry a stable identity for that lookup means a future revocation feature
+/// is a purely additive change (a new table plus one check in `decode_access_token`), not a
+/// breaking claim-shape migration touching every already-issued token.
 pub fn mint_jwt(private_key_pem: &str, tenant_id: Uuid, user_id: Uuid, ttl_seconds: u64) -> anyhow::Result<String> {
     let key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes())?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
@@ -185,6 +206,7 @@ pub fn mint_jwt(private_key_pem: &str, tenant_id: Uuid, user_id: Uuid, ttl_secon
         exp: (now.as_secs() + ttl_seconds) as usize,
         iss: JWT_ISSUER.to_string(),
         aud: JWT_AUDIENCE.to_string(),
+        jti: Uuid::new_v4().to_string(),
     };
     Ok(encode(&Header::new(Algorithm::RS256), &claims, &key)?)
 }
@@ -193,7 +215,12 @@ pub fn mint_jwt(private_key_pem: &str, tenant_id: Uuid, user_id: Uuid, ttl_secon
 /// — `jsonwebtoken::decode` validates those against the raw token payload internally (see
 /// `jsonwebtoken::validation::validate`), independent of which fields the target `Deserialize`
 /// struct declares, so there is no need to carry them through to callers that never read them
-/// again after a successful decode.
+/// again after a successful decode. `jti` is kept (unlike those 3) since a future revocation
+/// check — the reason `mint_jwt` added it, see that function's doc comment — would need to read
+/// it back out on every decode; no caller consults it today. `Option` (not `String`, unlike
+/// `mint_jwt`'s always-set side) so a token minted before `jti` existed still decodes — this
+/// platform has no forced-reauth step, so an already-issued, still-unexpired token must keep
+/// working across this deploy.
 #[derive(Debug, Deserialize)]
 pub struct AccessClaims {
     pub sub: String,
@@ -201,6 +228,7 @@ pub struct AccessClaims {
     pub tenant_id: String,
     #[serde(rename = "functionId")]
     pub function_id: Option<String>,
+    pub jti: Option<String>,
 }
 
 /// Verifies a Bearer access token minted by `mint_jwt`: RS256, audience/issuer pinned to

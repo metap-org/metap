@@ -114,7 +114,7 @@ impl RecordService for GrpcRecordService {
 
         let result = self
             .crud
-            .create(&req.entity_name, &data, &context)
+            .create(&req.entity_name, &data, &context, req.reason.as_deref())
             .await
             .map_err(internal)?;
         let record = service_result_to_status(result)?;
@@ -135,7 +135,14 @@ impl RecordService for GrpcRecordService {
 
         let result = self
             .crud
-            .update(&req.entity_name, id, req.expected_version, &data, &context)
+            .update(
+                &req.entity_name,
+                id,
+                req.expected_version,
+                &data,
+                &context,
+                req.reason.as_deref(),
+            )
             .await
             .map_err(internal)?;
         let record = service_result_to_status(result)?;
@@ -160,6 +167,7 @@ impl RecordService for GrpcRecordService {
                 req.expected_version,
                 data.as_ref(),
                 &context,
+                req.reason.as_deref(),
             )
             .await
             .map_err(internal)?;
@@ -177,7 +185,7 @@ impl RecordService for GrpcRecordService {
 
         let result = self
             .crud
-            .delete(&req.entity_name, id, req.expected_version, &context)
+            .delete(&req.entity_name, id, req.expected_version, &context, req.reason.as_deref())
             .await
             .map_err(internal)?;
         let record = service_result_to_status(result)?;

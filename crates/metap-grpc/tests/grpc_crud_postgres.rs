@@ -149,6 +149,7 @@ fn test_entity() -> EntityDefinition {
             }],
         }),
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -235,6 +236,7 @@ async fn full_grpc_lifecycle_over_a_real_server_and_a_real_jwt() {
             CreateRequest {
                 entity_name: "test.grpc_orders".to_string(),
                 data: Some(metap_grpc::convert::json_to_struct(json!({ "name": "First" }))),
+                reason: None,
             },
             &token,
         ))
@@ -269,6 +271,7 @@ async fn full_grpc_lifecycle_over_a_real_server_and_a_real_jwt() {
                 action: "activate".to_string(),
                 expected_version: version,
                 data: None,
+                reason: None,
             },
             &token,
         ))
@@ -287,6 +290,7 @@ async fn full_grpc_lifecycle_over_a_real_server_and_a_real_jwt() {
                 id: id.clone(),
                 expected_version: version - 1,
                 data: Some(metap_grpc::convert::json_to_struct(json!({ "name": "Stale" }))),
+                reason: None,
             },
             &token,
         ))
@@ -301,6 +305,7 @@ async fn full_grpc_lifecycle_over_a_real_server_and_a_real_jwt() {
                 id: id.clone(),
                 expected_version: version,
                 data: Some(metap_grpc::convert::json_to_struct(json!({ "name": "Renamed" }))),
+                reason: None,
             },
             &token,
         ))
@@ -335,6 +340,7 @@ async fn full_grpc_lifecycle_over_a_real_server_and_a_real_jwt() {
                 entity_name: "test.grpc_orders".to_string(),
                 id: id.clone(),
                 expected_version: version,
+                reason: None,
             },
             &token,
         ))

@@ -443,6 +443,7 @@ mod tests {
             }],
             workflow: None,
             unique_constraints: vec![],
+            audit: None,
         }
     }
 

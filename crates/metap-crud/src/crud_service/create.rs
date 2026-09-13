@@ -18,6 +18,7 @@ impl CrudService {
         entity_name: &str,
         raw_data: &JsonObject,
         context: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let Some(entity) = self.get_entity(entity_name) else {
             tracing::debug!(entity = entity_name, "create rejected: entity not found");
@@ -125,6 +126,26 @@ impl CrudService {
         emit_created(&mut *tx, &entity, tenant_id, record.id, &data).await?;
         tx.commit().await?;
         tracing::info!(entity = entity.name, record_id = %record.id, "record created");
+
+        self.record_audit(
+            &entity,
+            metap_audit::AuditEntry {
+                tenant_id,
+                entity: entity.name.clone(),
+                record_id: record.id,
+                action: metap_audit::AuditAction::Create,
+                transition_action: None,
+                actor_user_id: user_id,
+                reason: reason.map(str::to_string),
+                // No real "before" state for a create — diffed against an empty object so every
+                // field reads as `{"before": null, "after": value}` (see `AuditEntry`'s own doc
+                // comment).
+                diff: metap_audit::diff_json_objects(&metap_audit::JsonObject::new(), &data),
+                version_after: Some(record.version),
+                occurred_at: chrono::Utc::now(),
+            },
+        )
+        .await;
 
         Ok(ServiceResult::ok(mask_record_for_read(
             &entity, context, &snapshot, record,

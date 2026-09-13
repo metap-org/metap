@@ -63,6 +63,7 @@ fn entity(name: &str, fields: Vec<EntityField>) -> EntityDefinition {
         }],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 

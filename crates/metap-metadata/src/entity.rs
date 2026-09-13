@@ -13,6 +13,18 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// **`Reference` serializes differently over REST vs. GraphQL (audit 04 finding B6, confirmed
+/// intentional 2026-09-13, not a bug to fix).** Over REST (`crates/metap-http`/`metap-crud`), a
+/// `Reference` field (e.g. `assigneeId`) comes back as the plain stored value — a UUID string,
+/// same as any other scalar in the `data jsonb` blob. Over GraphQL
+/// (`crates/metap-graphql/src/type_map.rs::scalar_type_ref`), the same field is typed as the
+/// target entity's own object type and resolved (via `RecordLoader`'s DataLoader batching) into
+/// the full referenced record. Each is the idiomatic shape for its own transport — GraphQL's
+/// whole value proposition over a `Reference` field is fetching the related record in the same
+/// query instead of a second round trip, while REST has no equivalent nested-fetch convention to
+/// match it to — a REST caller that needs the referenced record makes its own separate request.
+/// Making REST also return a nested object would be a breaking wire-format change for every
+/// existing REST caller, for a consistency goal transport-per-transport idioms don't share anyway.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FieldKind {
@@ -384,6 +396,18 @@ pub struct FieldDisplayHint {
     pub enum_tones: Option<HashMap<String, String>>,
 }
 
+/// Opt-in per-entity switch for the general audit trail (`metap-audit`,
+/// `../../metap-docs/docs/audits/05-crud-audit-trail-gap.md`) — deliberately just an enable flag,
+/// not a per-entity backend/table choice. Which `AuditTrailStore` a deployment writes to (Postgres
+/// vs. another storage, vs. a wholly different database) is a deployment-wide concern wired once
+/// at a binary's own composition root (`CrudService::with_audit`), not a per-entity one; this
+/// field only controls *whether* `CrudService` calls that store at all for this entity's writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityAuditConfig {
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityDefinition {
@@ -404,6 +428,10 @@ pub struct EntityDefinition {
     /// `fields`/`listViews` above so existing hand-authored/low-code entity JSON needs no change.
     #[serde(default)]
     pub unique_constraints: Vec<EntityUniqueConstraint>,
+    /// See `EntityAuditConfig`'s own doc comment. `None` (the default, same convention as
+    /// `workflow`) means no audit trail is written for this entity's writes at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit: Option<EntityAuditConfig>,
 }
 
 #[cfg(test)]

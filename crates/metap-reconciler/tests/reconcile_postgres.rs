@@ -62,6 +62,7 @@ fn entity(name: &str, fields: Vec<EntityField>) -> EntityDefinition {
         }],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -519,4 +520,66 @@ async fn composite_unique_constraint_allows_same_value_under_a_different_type_bu
     assert!(dup.is_err(), "the exact same (type, value) pair twice must be rejected");
 
     drop_table_if_exists(&pool, "test_reconciler_list_entries").await;
+}
+
+/// Regression for a real incident (`../metap-demo-waf/CLAUDE.md`'s 8th bug, 2026-09-12):
+/// `waf.ddos_policies.zoneId`'s sync trigger was found dropped from `pg_catalog` by something
+/// outside the reconciler's own lifecycle (never root-caused there), while
+/// `reconciler_backfill_progress` still had it marked `completed = true` — so every reconcile
+/// after that kept reporting `ops_applied: 0` forever, never re-creating the trigger, letting a
+/// `unique: true` `Reference` field's real column silently stay `NULL` on every new write (its
+/// own unique index enforces nothing against `NULL`). Simulates exactly that: reconcile once
+/// (creates the trigger + backfills), hand-drop the trigger and its function the same way the
+/// live incident found them gone, then reconcile again and confirm it's actually re-created
+/// (`ops_applied > 0`, trigger present in `pg_catalog` again) instead of trusting the stale
+/// `completed = true` row.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn reconcile_recreates_a_sync_trigger_dropped_outside_its_own_lifecycle() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let entity_name = "test.reconciler_dropped_trigger";
+    drop_table_if_exists(&pool, "test_reconciler_dropped_trigger").await;
+
+    let mut promoted = plain_field("trackingRef", FieldKind::String);
+    promoted.storage = Some(FieldStorage::Column);
+    let def = entity(entity_name, vec![promoted]);
+
+    let first = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
+    assert!(first.ops_applied > 0, "first reconcile must create the column + trigger");
+
+    let trigger_exists = |pool: PgPool| async move {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_sync_test_reconciler_dropped_trigger_trackingRef' AND NOT tgisinternal)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    assert!(trigger_exists(pool.clone()).await, "trigger must exist right after the first reconcile");
+
+    // Simulate the live incident: something outside the reconciler drops the trigger and its
+    // backing function, but `reconciler_backfill_progress` is left untouched (still says
+    // `completed = true` from the first reconcile above).
+    sqlx::query("DROP TRIGGER IF EXISTS \"trg_sync_test_reconciler_dropped_trigger_trackingRef\" ON entities.test_reconciler_dropped_trigger")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP FUNCTION IF EXISTS \"sync_test_reconciler_dropped_trigger_trackingRef\"()")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!trigger_exists(pool.clone()).await, "trigger must genuinely be gone before the second reconcile");
+
+    let second = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
+    assert!(
+        second.ops_applied > 0,
+        "must re-create the trigger, not trust the stale `completed = true` ledger row and report 0"
+    );
+    assert!(trigger_exists(pool.clone()).await, "trigger must be back in pg_catalog after the second reconcile");
+
+    let third = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
+    assert_eq!(third.ops_applied, 0, "must converge to zero ops once the trigger is genuinely back");
+
+    drop_table_if_exists(&pool, "test_reconciler_dropped_trigger").await;
 }

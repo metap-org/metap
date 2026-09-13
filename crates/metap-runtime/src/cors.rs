@@ -31,7 +31,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_origins_uses_permissive_default() {
+    fn empty_origins_uses_restrictive_default() {
+        // `CorsLayer::new()` (no `allow_origin`/`allow_credentials` set) denies every
+        // cross-origin request by default — audit 04 finding A#9: this test used to be named
+        // `empty_origins_uses_permissive_default`, the opposite of what actually happens, and
+        // asserted nothing beyond "doesn't panic". Kept as a smoke test (there is no public way
+        // to introspect a `CorsLayer`'s configured origins to assert on directly), renamed to
+        // match reality.
         let _ = build(&[], &[Method::GET], &[header::AUTHORIZATION]);
     }
 
