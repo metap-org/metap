@@ -1,0 +1,16 @@
+name: "CodeQL config"
+
+# Excludes test/bench code from CodeQL's *alerting* (not from the build — `codeql.yml`'s
+# `cargo build --workspace --all-targets` still compiles everything, `paths-ignore` only filters
+# which extracted files get reported on). Added because ~80 open, undismissed
+# `rust/cleartext-logging` alerts had accumulated across `crates/*/tests/*.rs` before this file
+# existed — every one a false positive from the same idiom: a test asserting a call succeeded via
+# `match ... { Ok(x) => x, other => panic!("expected ... to succeed, got {other:?}") }`, where
+# `{other:?}` Debug-prints a `ServiceResult`/similar enum CodeQL's taint tracking traces back to a
+# `parse_user_id`-shaped helper and flags as "cleartext logging of sensitive information" — a
+# `panic!` message in test code that only ever runs against throwaway data in CI/local dev, never
+# a real "log sink" in the security sense this query means to catch. `benches/` gets the same
+# treatment for the same reason (perf-only code, not part of the shipped surface).
+paths-ignore:
+  - "**/tests/**"
+  - "**/benches/**"
