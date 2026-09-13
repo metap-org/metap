@@ -95,19 +95,14 @@ pub async fn provision_dedicated_db_tenant(
     admin_email: &str,
     admin_password: &str,
 ) -> anyhow::Result<ProvisionedTenant> {
-    let dedicated_pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(dedicated_database_url)
-        .await?;
+    // `connect_for_migrate` (see its own doc comment) already opens this connection with
+    // `search_path = public, metadata, control` set from the start — no separate `SET
+    // search_path` needed here once migrations have run: unlike relying on
+    // `0028_metadata_schema.sql`'s `ALTER DATABASE ... SET search_path` (which only takes effect
+    // for *future* connections, never this already-open one), the connection-level option is
+    // already correct for the entire lifetime of `dedicated_pool`.
+    let dedicated_pool = metap_infra::connect_for_migrate(dedicated_database_url).await?;
     sqlx::migrate!("../migrations").run(&dedicated_pool).await?;
-    // `0028_metadata_schema.sql` (run just above) sets the database's own default
-    // `search_path` for *new* connections — this pool's one connection (`max_connections(1)`)
-    // was already open before that ran, so it keeps whatever `search_path` it started with
-    // unless told otherwise here. A plain `SET` (not `SET LOCAL`) is fine — this pool is
-    // private to this one provisioning call, never returned to a shared application pool.
-    sqlx::query("SET search_path TO public, metadata, control")
-        .execute(&dedicated_pool)
-        .await?;
     // `control.tenants` (`0012_control_tenants.sql`) is genuinely global platform data — the
     // one registry every tenant is looked up through — never tenant-scoped data itself
     // (real feedback: this used to leave an empty, unused `control` schema baked into every

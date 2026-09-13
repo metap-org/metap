@@ -23,10 +23,7 @@ async fn main() -> anyhow::Result<()> {
     let database_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
 
     tracing::info!("connecting to postgres...");
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await?;
+    let pool = metap_infra::connect_for_migrate(&database_url).await?;
 
     tracing::info!("applying migrations from crates/migrations/...");
     sqlx::migrate!("../migrations").run(&pool).await?;
