@@ -482,7 +482,7 @@ async fn put_tenant_secret(args: &[String]) -> anyhow::Result<()> {
     let secret_ref = metap_control::tenant_secret_ref(tenant_id, key);
 
     let config = metap_infra::config::load_config()?;
-    let store = metap_control::build_secret_store(&config).await?;
+    let store = metap_control::build_secret_store(&metap_control::SecretStoreConfig::from(&config)).await?;
     match store.put_secret(&secret_ref, value).await {
         Ok(()) => {
             // Tenant and key only. The reference is not printed on success because nothing acts on
@@ -588,6 +588,7 @@ async fn migrate_to_dedicated_table(args: &[String]) -> anyhow::Result<()> {
         list_views: vec![],
         workflow: parsed.data.workflow,
         unique_constraints: parsed.data.unique_constraints,
+        audit: None,
     };
 
     let router = router_for(shared_pool).await;
@@ -655,6 +656,7 @@ async fn reconcile_plan(args: &[String]) -> anyhow::Result<()> {
         list_views: vec![],
         workflow: parsed.data.workflow,
         unique_constraints: parsed.data.unique_constraints,
+        audit: None,
     };
 
     let router = router_for(shared_pool).await;

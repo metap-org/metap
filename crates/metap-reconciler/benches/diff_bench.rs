@@ -62,6 +62,7 @@ fn bench_entity() -> EntityDefinition {
         }],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 

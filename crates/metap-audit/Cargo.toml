@@ -1,18 +1,12 @@
 [package]
-name = "metap-crud"
+name = "metap-audit"
 version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-metap-audit = { path = "../metap-audit" }
-metap-control = { path = "../metap-control" }
-metap-metadata = { path = "../metap-metadata" }
-metap-permission = { path = "../metap-permission" }
-metap-query = { path = "../metap-query" }
-metap-workflow = { path = "../metap-workflow" }
 anyhow.workspace = true
-arc-swap.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, features = [
@@ -23,9 +17,8 @@ sqlx = { workspace = true, features = [
   "chrono",
   "json",
 ] }
-uuid.workspace = true
-chrono.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

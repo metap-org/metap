@@ -20,6 +20,7 @@ impl CrudService {
         id: Uuid,
         expected_version: i32,
         context: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let Some(entity) = self.get_entity(entity_name) else {
             tracing::debug!(entity = entity_name, "delete rejected: entity not found");
@@ -156,6 +157,26 @@ impl CrudService {
         emit_deleted(&mut *tx, &entity, tenant_id, record.id).await?;
         tx.commit().await?;
         tracing::info!(entity = entity.name, record_id = %record.id, "record deleted");
+
+        self.record_audit(
+            &entity,
+            metap_audit::AuditEntry {
+                tenant_id,
+                entity: entity.name.clone(),
+                record_id: record.id,
+                action: metap_audit::AuditAction::Delete,
+                transition_action: None,
+                actor_user_id: user_id,
+                reason: reason.map(str::to_string),
+                // Action-based, not diff-based — `RecordDto` never exposes the `deleted` column
+                // (see `AuditEntry`'s own doc comment for why a data diff would show nothing and
+                // look like a false no-op).
+                diff: metap_audit::JsonObject::new(),
+                version_after: Some(record.version),
+                occurred_at: chrono::Utc::now(),
+            },
+        )
+        .await;
 
         Ok(ServiceResult::ok(mask_record_for_read(
             &entity, context, &snapshot, record,

@@ -216,9 +216,21 @@ fn entity_summary_json_schema() -> Value {
             "workflow": entity_workflow_json_schema(),
             "relatedViews": { "type": "array", "items": related_view_json_schema() },
             "fieldDisplayHints": { "type": "array", "items": field_display_hint_json_schema() },
+            "audit": entity_audit_config_json_schema(),
             "version": { "type": "string" },
         },
         "required": ["name", "label", "fields", "listViews", "version"],
+    })
+}
+
+/// See `metap_metadata::EntityAuditConfig`'s own doc comment — deliberately just an enable flag.
+fn entity_audit_config_json_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "enabled": { "type": "boolean" },
+        },
+        "required": ["enabled"],
     })
 }
 
@@ -435,6 +447,7 @@ mod tests {
             list_views: vec![],
             workflow: None,
             unique_constraints: vec![],
+            audit: None,
         };
         let summary = EntitySummary {
             name: entity.name.clone(),
@@ -445,6 +458,7 @@ mod tests {
             related_views: Vec::new(),
             field_display_hints: Vec::new(),
             unique_constraints: Vec::new(),
+            audit: None,
             version: compiler::hash(&entity).unwrap(),
         };
         let doc = generate_openapi_document(&[summary]);

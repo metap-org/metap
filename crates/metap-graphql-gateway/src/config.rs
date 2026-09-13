@@ -33,7 +33,21 @@ pub struct UpstreamConfig {
     /// isn't per-caller and how it's kept fresh.
     pub login_url: String,
     pub service_email: String,
-    pub service_password: String,
+    /// The literal, never-rotated password — still the default and the only thing most
+    /// deployments need. At least one of this and `service_password_secret_ref` must be set;
+    /// `from_env`/`parse_upstreams_yaml` both enforce it.
+    #[serde(default)]
+    pub service_password: Option<String>,
+    /// Opt-in credential-rotation path (audit 04 finding B7, 2026-09-13) — when set,
+    /// `service_password` above is never read; the real password is resolved fresh from this
+    /// platform's `SecretStore` (Vault/AWS/GCP/env — same `VAULT_ADDR`/`AWS_SECRETS_*`/
+    /// `GCP_SECRETS_*` env vars every other binary in this codebase already reads, via
+    /// `metap_control::SecretStoreConfig::from_env`) on every upstream refresh cycle, not just
+    /// once at boot — so rotating the credential in the backend takes effect within one TTL
+    /// window, no redeploy. Purely additive: a deployment that only ever sets
+    /// `service_password` is completely unaffected.
+    #[serde(default)]
+    pub service_password_secret_ref: Option<String>,
 }
 
 /// Top-level shape of `UPSTREAM_CONFIG_FILE`'s YAML — just a list, wrapped in a named key rather
@@ -52,6 +66,14 @@ fn parse_upstreams_yaml(source: &str) -> anyhow::Result<Vec<UpstreamConfig>> {
         serde_norway::from_str(source).map_err(|e| anyhow::anyhow!("invalid UPSTREAM_CONFIG_FILE YAML: {e}"))?;
     if file.upstreams.is_empty() {
         anyhow::bail!("UPSTREAM_CONFIG_FILE was set but its \"upstreams\" list is empty");
+    }
+    for upstream in &file.upstreams {
+        if upstream.service_password.is_none() && upstream.service_password_secret_ref.is_none() {
+            anyhow::bail!(
+                "upstream '{}' needs servicePassword or servicePasswordSecretRef",
+                upstream.name
+            );
+        }
     }
     Ok(file.upstreams)
 }
@@ -94,7 +116,7 @@ pub struct GatewayConfig {
     pub is_production: bool,
 }
 
-use metap_runtime::env::{env_or, flag_enabled, require_env};
+use metap_runtime::env::{env_or, flag_enabled, optional, require_env};
 
 impl GatewayConfig {
     pub fn from_env() -> anyhow::Result<Self> {
@@ -146,7 +168,14 @@ impl GatewayConfig {
                     let metadata_url = require_env(&format!("UPSTREAM_{i}_METADATA_URL"))?;
                     let login_url = require_env(&format!("UPSTREAM_{i}_LOGIN_URL"))?;
                     let service_email = require_env(&format!("UPSTREAM_{i}_SERVICE_EMAIL"))?;
-                    let service_password = require_env(&format!("UPSTREAM_{i}_SERVICE_PASSWORD"))?;
+                    let service_password = optional(&format!("UPSTREAM_{i}_SERVICE_PASSWORD"));
+                    let service_password_secret_ref = optional(&format!("UPSTREAM_{i}_SERVICE_PASSWORD_SECRET_REF"));
+                    if service_password.is_none() && service_password_secret_ref.is_none() {
+                        anyhow::bail!(
+                            "upstream {i} ('{name}') needs UPSTREAM_{i}_SERVICE_PASSWORD or \
+                             UPSTREAM_{i}_SERVICE_PASSWORD_SECRET_REF (audit 04 B7 — see .env.example)"
+                        );
+                    }
                     upstreams.push(UpstreamConfig {
                         name,
                         grpc_addr,
@@ -154,6 +183,7 @@ impl GatewayConfig {
                         login_url,
                         service_email,
                         service_password,
+                        service_password_secret_ref,
                     });
                     i += 1;
                 }
@@ -223,5 +253,48 @@ upstreams:
     fn rejects_malformed_yaml_with_a_readable_error() {
         let err = parse_upstreams_yaml("not: [valid").unwrap_err();
         assert!(err.to_string().contains("invalid UPSTREAM_CONFIG_FILE YAML"));
+    }
+
+    /// Audit 04 finding B7's rotation path: `servicePasswordSecretRef` alone (no literal
+    /// `servicePassword` at all) must be accepted.
+    #[test]
+    fn accepts_a_service_password_secret_ref_with_no_literal_password() {
+        let upstreams = parse_upstreams_yaml(
+            r#"
+upstreams:
+  - name: crm
+    grpcAddr: "http://localhost:5100"
+    metadataUrl: "http://localhost:3100/metadata/entities"
+    loginUrl: "http://localhost:3100/auth/login"
+    serviceEmail: "gateway@crm.local"
+    servicePasswordSecretRef: "METAP_UPSTREAM_CRM_PASSWORD"
+"#,
+        )
+        .unwrap();
+        assert_eq!(upstreams[0].service_password, None);
+        assert_eq!(
+            upstreams[0].service_password_secret_ref.as_deref(),
+            Some("METAP_UPSTREAM_CRM_PASSWORD")
+        );
+    }
+
+    /// Neither credential source set at all — must fail clearly rather than silently minting an
+    /// upstream this gateway can never actually log into.
+    #[test]
+    fn rejects_an_upstream_with_neither_service_password_nor_secret_ref() {
+        let err = parse_upstreams_yaml(
+            r#"
+upstreams:
+  - name: crm
+    grpcAddr: "http://localhost:5100"
+    metadataUrl: "http://localhost:3100/metadata/entities"
+    loginUrl: "http://localhost:3100/auth/login"
+    serviceEmail: "gateway@crm.local"
+"#,
+        )
+        .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("crm"), "{message}");
+        assert!(message.contains("servicePassword"), "{message}");
     }
 }

@@ -41,22 +41,21 @@ use axum::extract::State;
 use axum::http::{header, HeaderMap, Method};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use axum::Json;
 use axum::Router;
 use axum_extra::extract::cookie::CookieJar;
 use jsonwebtoken::DecodingKey;
-use metap_crud::RecordBackend;
-use metap_graphql::{with_request_data, Schema};
+use metap_graphql::with_request_data;
 use metap_jwks::{decode_with_verifier, TokenVerifier};
 use metap_permission::RequestContext;
 use metap_runtime::cookie_auth::{csrf_matches, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 
 use crate::config::GatewayConfig;
-use crate::schema_builder::BuiltSchema;
+use crate::schema_builder::GatewaySchemaCache;
 
 #[derive(Clone)]
 struct GatewayState {
-    schema: Arc<Schema>,
-    backend: Arc<dyn RecordBackend>,
+    cache: Arc<GatewaySchemaCache>,
     verifier: Arc<TokenVerifier>,
     /// See `GatewayConfig::cookie_auth_enabled`'s doc comment. `false` for every deployment that
     /// hasn't opted in — `authenticate` then behaves exactly as it always did (Bearer-only).
@@ -145,29 +144,46 @@ async fn graphql_handler(State(state): State<GatewayState>, headers: HeaderMap, 
         Ok(context) => context,
         Err(response) => return *response,
     };
+    // `.current()` is cheap on every call but the first within its TTL window — see
+    // `GatewaySchemaCache`'s own doc comment. This is what makes the schema hot-swap (a newly
+    // published low-code entity, an upstream recovering after being down) without a restart —
+    // audit 04 finding B1.
+    let composite = state.cache.current().await;
     let batch_request = match req.into_inner() {
         BatchRequest::Single(request) => {
-            BatchRequest::Single(with_request_data(request, state.backend.clone(), context))
+            BatchRequest::Single(with_request_data(request, composite.backend.clone(), context))
         }
         BatchRequest::Batch(requests) => BatchRequest::Batch(
             requests
                 .into_iter()
-                .map(|request| with_request_data(request, state.backend.clone(), context.clone()))
+                .map(|request| with_request_data(request, composite.backend.clone(), context.clone()))
                 .collect(),
         ),
     };
-    GraphQLResponse::from(state.schema.execute_batch(batch_request).await).into_response()
+    GraphQLResponse::from(composite.schema.execute_batch(batch_request).await).into_response()
 }
 
-async fn health() -> &'static str {
-    "ok"
+/// `{"status": "ok"|"degraded", "checks": {"upstreams": [{"name", "reachable"}]}}` — matching
+/// `metap-http`'s own `GET /health` shape. Unauthenticated (like the rest of this route), so no
+/// error text is included here — the GraphQL `_gatewayHealth` field (behind this gateway's own
+/// auth) carries the full detail instead.
+async fn health(State(state): State<GatewayState>) -> Json<serde_json::Value> {
+    let composite = state.cache.current().await;
+    let status = if composite.health.degraded() { "degraded" } else { "ok" };
+    let upstreams: Vec<_> = composite
+        .health
+        .upstreams
+        .iter()
+        .map(|u| serde_json::json!({ "name": u.name, "reachable": u.reachable }))
+        .collect();
+    Json(serde_json::json!({ "status": status, "checks": { "upstreams": upstreams } }))
 }
 
 async fn schema_sdl(State(state): State<GatewayState>) -> String {
-    state.schema.sdl()
+    state.cache.current().await.schema.sdl()
 }
 
-pub async fn serve(config: GatewayConfig, built: BuiltSchema) -> anyhow::Result<()> {
+pub async fn serve(config: GatewayConfig, cache: GatewaySchemaCache) -> anyhow::Result<()> {
     // Exactly one of the 2 is `Some` — `GatewayConfig::from_env`'s own doc comment on
     // `jwks_url`/`auth_public_key_pem` enforces this at parse time.
     let verifier = match (&config.jwks_url, &config.auth_public_key_pem) {
@@ -189,8 +205,7 @@ pub async fn serve(config: GatewayConfig, built: BuiltSchema) -> anyhow::Result<
         (None, None) => anyhow::bail!("neither JWKS_URL nor AUTH_JWT_PUBLIC_KEY_PATH configured"),
     };
     let state = GatewayState {
-        schema: built.schema,
-        backend: built.backend,
+        cache: Arc::new(cache),
         verifier: Arc::new(verifier),
         cookie_auth_enabled: config.cookie_auth_enabled,
     };

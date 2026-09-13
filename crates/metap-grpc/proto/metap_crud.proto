@@ -56,6 +56,10 @@ message GetResponse {
 message CreateRequest {
   string entity_name = 1;
   google.protobuf.Struct data = 2;
+  // Audit-trail reason (`metap-audit`, audit 04 finding 05) — `optional` (proto3 explicit
+  // presence, not empty-string-as-absent) so a caller that never sets it decodes as `None`,
+  // identical to every existing caller today.
+  optional string reason = 3;
 }
 
 message UpdateRequest {
@@ -63,6 +67,7 @@ message UpdateRequest {
   string id = 2;
   int32 expected_version = 3;
   google.protobuf.Struct data = 4;
+  optional string reason = 5;
 }
 
 message TransitionRequest {
@@ -71,12 +76,14 @@ message TransitionRequest {
   string action = 3;
   int32 expected_version = 4;
   google.protobuf.Struct data = 5;
+  optional string reason = 6;
 }
 
 message DeleteRequest {
   string entity_name = 1;
   string id = 2;
   int32 expected_version = 3;
+  optional string reason = 4;
 }
 
 message RecordResponse {

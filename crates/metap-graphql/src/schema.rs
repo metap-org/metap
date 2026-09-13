@@ -383,8 +383,9 @@ fn add_mutation_fields(mut mutation: Object, entity_name: &str, type_name: &str,
                     let context = request_context_from_ctx(&ctx)?;
                     let data =
                         json_object_arg(&ctx, "data")?.ok_or_else(|| GqlError::new("`data` must be an object"))?;
+                    let reason = string_arg(&ctx, "reason")?;
                     let result = backend
-                        .create(&entity_name, &data, context)
+                        .create(&entity_name, &data, context, reason.as_deref())
                         .await
                         .map_err(|e| GqlError::new(e.to_string()))?;
                     let dto = service_result_to_gql(result)?;
@@ -392,7 +393,8 @@ fn add_mutation_fields(mut mutation: Object, entity_name: &str, type_name: &str,
                 })
             },
         )
-        .argument(InputValue::new("data", TypeRef::named_nn(JSON_SCALAR))),
+        .argument(InputValue::new("data", TypeRef::named_nn(JSON_SCALAR)))
+        .argument(InputValue::new("reason", TypeRef::named(TypeRef::STRING))),
     );
 
     let update_entity_name = entity_name.to_string();
@@ -410,8 +412,9 @@ fn add_mutation_fields(mut mutation: Object, entity_name: &str, type_name: &str,
                     let expected_version = ctx.args.try_get("expectedVersion")?.i64()? as i32;
                     let data =
                         json_object_arg(&ctx, "data")?.ok_or_else(|| GqlError::new("`data` must be an object"))?;
+                    let reason = string_arg(&ctx, "reason")?;
                     let result = backend
-                        .update(&entity_name, id, expected_version, &data, context)
+                        .update(&entity_name, id, expected_version, &data, context, reason.as_deref())
                         .await
                         .map_err(|e| GqlError::new(e.to_string()))?;
                     let dto = service_result_to_gql(result)?;
@@ -421,7 +424,8 @@ fn add_mutation_fields(mut mutation: Object, entity_name: &str, type_name: &str,
         )
         .argument(InputValue::new("id", TypeRef::named_nn(TypeRef::ID)))
         .argument(InputValue::new("expectedVersion", TypeRef::named_nn(TypeRef::INT)))
-        .argument(InputValue::new("data", TypeRef::named_nn(JSON_SCALAR))),
+        .argument(InputValue::new("data", TypeRef::named_nn(JSON_SCALAR)))
+        .argument(InputValue::new("reason", TypeRef::named(TypeRef::STRING))),
     );
 
     let delete_entity_name = entity_name.to_string();
@@ -437,8 +441,9 @@ fn add_mutation_fields(mut mutation: Object, entity_name: &str, type_name: &str,
                     let id =
                         Uuid::parse_str(ctx.args.try_get("id")?.string()?).map_err(|e| GqlError::new(e.to_string()))?;
                     let expected_version = ctx.args.try_get("expectedVersion")?.i64()? as i32;
+                    let reason = string_arg(&ctx, "reason")?;
                     let result = backend
-                        .delete(&entity_name, id, expected_version, context)
+                        .delete(&entity_name, id, expected_version, context, reason.as_deref())
                         .await
                         .map_err(|e| GqlError::new(e.to_string()))?;
                     let dto = service_result_to_gql(result)?;
@@ -447,7 +452,8 @@ fn add_mutation_fields(mut mutation: Object, entity_name: &str, type_name: &str,
             },
         )
         .argument(InputValue::new("id", TypeRef::named_nn(TypeRef::ID)))
-        .argument(InputValue::new("expectedVersion", TypeRef::named_nn(TypeRef::INT))),
+        .argument(InputValue::new("expectedVersion", TypeRef::named_nn(TypeRef::INT)))
+        .argument(InputValue::new("reason", TypeRef::named(TypeRef::STRING))),
     );
 
     if has_workflow {
@@ -466,8 +472,17 @@ fn add_mutation_fields(mut mutation: Object, entity_name: &str, type_name: &str,
                         let action = ctx.args.try_get("action")?.string()?.to_string();
                         let expected_version = ctx.args.try_get("expectedVersion")?.i64()? as i32;
                         let data = json_object_arg(&ctx, "data")?;
+                        let reason = string_arg(&ctx, "reason")?;
                         let result = backend
-                            .transition(&entity_name, id, &action, expected_version, data.as_ref(), context)
+                            .transition(
+                                &entity_name,
+                                id,
+                                &action,
+                                expected_version,
+                                data.as_ref(),
+                                context,
+                                reason.as_deref(),
+                            )
                             .await
                             .map_err(|e| GqlError::new(e.to_string()))?;
                         let dto = service_result_to_gql(result)?;
@@ -478,7 +493,8 @@ fn add_mutation_fields(mut mutation: Object, entity_name: &str, type_name: &str,
             .argument(InputValue::new("id", TypeRef::named_nn(TypeRef::ID)))
             .argument(InputValue::new("action", TypeRef::named_nn(TypeRef::STRING)))
             .argument(InputValue::new("expectedVersion", TypeRef::named_nn(TypeRef::INT)))
-            .argument(InputValue::new("data", TypeRef::named(JSON_SCALAR))),
+            .argument(InputValue::new("data", TypeRef::named(JSON_SCALAR)))
+            .argument(InputValue::new("reason", TypeRef::named(TypeRef::STRING))),
         );
     }
 
@@ -499,6 +515,16 @@ fn json_object_arg(ctx: &ResolverContext<'_>, name: &str) -> Result<Option<metap
                 .map_err(|e| GqlError::new(e.to_string()))?;
             Ok(json.as_object().cloned())
         }
+        _ => Ok(None),
+    }
+}
+
+/// Reads an optional `String` scalar argument — every mutation's `reason` argument
+/// (`metap-audit`, audit 05 finding). `None` for an absent/null argument, identical to every
+/// existing caller today that never sends it.
+fn string_arg(ctx: &ResolverContext<'_>, name: &str) -> Result<Option<String>, GqlError> {
+    match ctx.args.get(name) {
+        Some(v) if !v.is_null() => Ok(Some(v.string()?.to_string())),
         _ => Ok(None),
     }
 }

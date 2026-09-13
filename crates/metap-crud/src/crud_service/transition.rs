@@ -14,6 +14,7 @@ use super::helpers::{
 use super::CrudService;
 
 impl CrudService {
+    #[allow(clippy::too_many_arguments)]
     pub async fn transition(
         &self,
         entity_name: &str,
@@ -22,6 +23,7 @@ impl CrudService {
         expected_version: i32,
         payload: Option<&JsonObject>,
         context: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let Some(entity) = self.get_entity(entity_name) else {
             tracing::debug!(entity = entity_name, "transition rejected: entity not found");
@@ -225,6 +227,25 @@ impl CrudService {
             to = to_state,
             "record transitioned"
         );
+
+        self.record_audit(
+            &entity,
+            metap_audit::AuditEntry {
+                tenant_id,
+                entity: entity.name.clone(),
+                record_id: record.id,
+                action: metap_audit::AuditAction::Transition,
+                transition_action: Some(action.to_string()),
+                actor_user_id: user_id,
+                reason: reason.map(str::to_string),
+                // `record.data` (read back from the row this query just wrote), not the local
+                // `next_data` — that was already moved into the query bind above.
+                diff: metap_audit::diff_json_objects(&existing.data, &record.data),
+                version_after: Some(record.version),
+                occurred_at: chrono::Utc::now(),
+            },
+        )
+        .await;
 
         Ok(ServiceResult::ok(mask_record_for_read(
             &entity, context, &snapshot, record,

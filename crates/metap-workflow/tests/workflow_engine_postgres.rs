@@ -19,6 +19,7 @@ fn entity() -> EntityDefinition {
         list_views: vec![],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 

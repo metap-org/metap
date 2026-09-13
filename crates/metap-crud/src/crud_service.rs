@@ -51,6 +51,11 @@ pub struct CrudService {
     router: Router,
     metadata: Arc<ArcSwap<MetadataRegistry>>,
     permissions: Arc<PermissionService>,
+    /// Opt-in general-purpose audit trail (`metap-audit`,
+    /// `../../metap-docs/docs/audits/05-crud-audit-trail-gap.md`) — `None` (via `new`) preserves
+    /// every existing deployment's behavior exactly; `with_audit` is the second, additive
+    /// constructor a binary opts into, mirroring `PermissionService::with_cache`'s own shape.
+    audit: Option<Arc<dyn metap_audit::AuditTrailStore>>,
 }
 
 impl CrudService {
@@ -59,11 +64,49 @@ impl CrudService {
             router,
             metadata,
             permissions,
+            audit: None,
+        }
+    }
+
+    /// Same as `new`, plus an audit trail sink every `create`/`update`/`delete`/`transition`
+    /// records to — but only for an entity whose own `EntityAuditConfig.enabled` is `true`; an
+    /// entity with no `audit` config at all still produces zero audit rows even with a store
+    /// configured here.
+    pub fn with_audit(
+        router: Router,
+        metadata: Arc<ArcSwap<MetadataRegistry>>,
+        permissions: Arc<PermissionService>,
+        audit: Arc<dyn metap_audit::AuditTrailStore>,
+    ) -> Self {
+        Self {
+            router,
+            metadata,
+            permissions,
+            audit: Some(audit),
         }
     }
 
     fn get_entity(&self, entity_name: &str) -> Option<EntityDefinition> {
         self.metadata.load().get_entity(entity_name).cloned()
+    }
+
+    /// Records one audit-trail entry if (a) an `AuditTrailStore` is configured on this service at
+    /// all, and (b) `entity.audit` opts this specific entity in. No-ops instantly otherwise — the
+    /// common case for a deployment that hasn't adopted this feature pays nothing beyond the
+    /// two field reads. Called *after* the caller's own business write has already committed
+    /// (see `metap_audit::AuditTrailStore`'s doc comment for why this can't be inside that same
+    /// transaction) — a store error is only logged, never surfaced to the caller, since an
+    /// audit-write failure must not turn an already-successful business write into a failed
+    /// response.
+    async fn record_audit(&self, entity: &EntityDefinition, entry: metap_audit::AuditEntry) {
+        let Some(store) = &self.audit else { return };
+        if !entity.audit.as_ref().is_some_and(|c| c.enabled) {
+            return;
+        }
+        let tenant_id = entry.tenant_id;
+        if let Err(e) = store.record(tenant_id, entry).await {
+            tracing::error!(entity = %entity.name, error = %e, "failed to record audit trail entry");
+        }
     }
 
     /// Cross-record permission conditions (`docs/roadmap.md`'s permission-review findings,

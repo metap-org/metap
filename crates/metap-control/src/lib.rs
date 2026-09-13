@@ -30,7 +30,7 @@ pub use provisioning::{provision_dedicated_db_tenant, provision_schema_tenant, P
 pub use registry::{PostgresTenantRegistry, TenantRegistry, TenantSummary};
 pub use router::{validate_schema_name, Router, RouterError};
 pub use secret_store::{tenant_secret_ref, DbCreds, EnvStore, SecretStore};
-pub use secret_store_factory::build_secret_store;
+pub use secret_store_factory::{build_secret_store, SecretStoreConfig};
 pub use tenant::{TenantId, TenantRouting, TenantStatus, TenantStrategy, PLATFORM_TENANT_ID};
 pub use tenant_schema::create_tenant_schema;
 pub use vault_store::VaultStore;

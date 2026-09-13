@@ -150,6 +150,7 @@ fn test_entity() -> EntityDefinition {
             }],
         }),
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -250,6 +251,7 @@ async fn grpc_backend_full_lifecycle_matches_direct_crud_service_behavior() {
                 "test.grpc_backend_orders",
                 &json!({ "name": "First" }).as_object().unwrap().clone(),
                 &ctx,
+                None,
             )
             .await
             .unwrap(),
@@ -283,7 +285,7 @@ async fn grpc_backend_full_lifecycle_matches_direct_crud_service_behavior() {
     // transition
     let transitioned = unwrap_ok(
         backend
-            .transition("test.grpc_backend_orders", id, "activate", version, None, &ctx)
+            .transition("test.grpc_backend_orders", id, "activate", version, None, &ctx, None)
             .await
             .unwrap(),
     );
@@ -298,6 +300,7 @@ async fn grpc_backend_full_lifecycle_matches_direct_crud_service_behavior() {
             version - 1,
             &json!({ "name": "Stale" }).as_object().unwrap().clone(),
             &ctx,
+            None,
         )
         .await
         .unwrap();
@@ -315,6 +318,7 @@ async fn grpc_backend_full_lifecycle_matches_direct_crud_service_behavior() {
                 version,
                 &json!({ "name": "Renamed" }).as_object().unwrap().clone(),
                 &ctx,
+                None,
             )
             .await
             .unwrap(),
@@ -345,7 +349,7 @@ async fn grpc_backend_full_lifecycle_matches_direct_crud_service_behavior() {
     // delete
     unwrap_ok(
         backend
-            .delete("test.grpc_backend_orders", id, version, &ctx)
+            .delete("test.grpc_backend_orders", id, version, &ctx, None)
             .await
             .unwrap(),
     );

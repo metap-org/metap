@@ -140,6 +140,7 @@ fn test_entity() -> EntityDefinition {
             }],
         }),
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -563,6 +564,7 @@ fn plain_string_entity(name: &str, field_names: &[&str]) -> EntityDefinition {
         list_views: vec![],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 

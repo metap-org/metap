@@ -88,7 +88,14 @@ impl GrpcBackend {
 fn pick_token<'a>(ctx: &'a RequestContext, service_token: &ServiceTokenSource) -> Cow<'a, str> {
     match ctx.forwarded_bearer_token.as_deref() {
         Some(forwarded) => Cow::Borrowed(forwarded),
-        None => Cow::Owned((*service_token.current()).clone()),
+        None => {
+            // Audit 04 finding A#5: this fallback used to be silent — a caller with no forwarded
+            // identity (a boot-time schema-discovery call, or a real bug upstream that dropped
+            // the header) authenticated as the shared service account with no trace of it having
+            // happened at all.
+            tracing::debug!(tenant_id = %ctx.tenant_id, "no forwarded bearer token, falling back to service account token");
+            Cow::Owned((*service_token.current()).clone())
+        }
     }
 }
 
@@ -258,11 +265,13 @@ impl RecordBackend for GrpcBackend {
         entity: &str,
         data: &JsonObject,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let request = self.signed_request(
             CreateRequest {
                 entity_name: entity.to_string(),
                 data: Some(json_to_struct(JsonValue::Object(data.clone()))),
+                reason: reason.map(str::to_string),
             },
             ctx,
         )?;
@@ -286,6 +295,7 @@ impl RecordBackend for GrpcBackend {
         expected_version: i32,
         data: &JsonObject,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let request = self.signed_request(
             UpdateRequest {
@@ -293,6 +303,7 @@ impl RecordBackend for GrpcBackend {
                 id: id.to_string(),
                 expected_version,
                 data: Some(json_to_struct(JsonValue::Object(data.clone()))),
+                reason: reason.map(str::to_string),
             },
             ctx,
         )?;
@@ -317,6 +328,7 @@ impl RecordBackend for GrpcBackend {
         expected_version: i32,
         data: Option<&JsonObject>,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let request = self.signed_request(
             TransitionRequest {
@@ -325,6 +337,7 @@ impl RecordBackend for GrpcBackend {
                 action: action.to_string(),
                 expected_version,
                 data: data.map(|d| json_to_struct(JsonValue::Object(d.clone()))),
+                reason: reason.map(str::to_string),
             },
             ctx,
         )?;
@@ -347,12 +360,14 @@ impl RecordBackend for GrpcBackend {
         id: Uuid,
         expected_version: i32,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
         let request = self.signed_request(
             DeleteRequest {
                 entity_name: entity.to_string(),
                 id: id.to_string(),
                 expected_version,
+                reason: reason.map(str::to_string),
             },
             ctx,
         )?;

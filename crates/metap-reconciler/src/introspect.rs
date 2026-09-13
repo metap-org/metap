@@ -49,7 +49,19 @@ pub async fn introspect(
         let origin = if framework_names.contains(name.as_str()) {
             ColumnOrigin::Framework
         } else {
-            let backfilled = is_backfill_completed(pool, tenant_id, entity_name, &backfill_op_id(table, &name)).await?;
+            // `reconciler_backfill_progress.completed` alone isn't enough — found live
+            // (metap-demo-waf, `waf.ddos_policies.zoneId`, 2026-09-12): the sync trigger
+            // `diff()` creates alongside a `Generated` column's backfill can be dropped by
+            // something outside the reconciler's own lifecycle (never root-caused there) while
+            // the ledger still says "completed", and nothing before this re-checked
+            // `pg_catalog` to notice. A `Generated` column only reads back as truly
+            // `backfilled: true` when the ledger says so *and* its sync trigger is actually
+            // present — either half being false means `diff()`'s existing
+            // `push_sync_and_backfill` re-assertion path (already idempotent, `CREATE OR
+            // REPLACE`) fires again on the very next reconcile, which is exactly the "always
+            // resumes from actual state" promise this crate makes elsewhere.
+            let backfilled = is_backfill_completed(pool, tenant_id, entity_name, &backfill_op_id(table, &name)).await?
+                && sync_trigger_exists(pool, schema, bare_table, &name).await?;
             ColumnOrigin::Generated {
                 source_field: name.clone(),
                 backfilled,
@@ -166,6 +178,32 @@ pub async fn introspect(
 
 pub fn backfill_op_id(table: &str, column: &str) -> String {
     format!("backfill:{table}:{column}")
+}
+
+/// Whether the `BEFORE INSERT OR UPDATE` sync trigger `executor::build_sync_trigger_sql` creates
+/// for a `Generated` column actually exists in `pg_catalog` right now — the check
+/// `reconciler_backfill_progress.completed` alone can't make (see the call site's doc comment for
+/// why this matters). Trigger name (`trg_sync_{bare_table}_{field}`, unquoted) must match
+/// `build_sync_trigger_sql`'s naming exactly, or this and the DDL that creates the trigger would
+/// silently drift apart — this crate has no shared naming function to call instead since
+/// `executor.rs`'s version is private and returns full `CREATE TRIGGER` SQL, not just the name;
+/// duplicated here as a plain string format, same as `backfill_op_id`'s own convention just above.
+async fn sync_trigger_exists(pool: &PgPool, schema: &str, bare_table: &str, field: &str) -> anyhow::Result<bool> {
+    let trigger_name = format!("trg_sync_{bare_table}_{field}");
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM pg_trigger t
+             JOIN pg_class c ON c.oid = t.tgrelid
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal
+         )",
+    )
+    .bind(schema)
+    .bind(bare_table)
+    .bind(&trigger_name)
+    .fetch_one(pool)
+    .await?;
+    Ok(exists)
 }
 
 async fn is_backfill_completed(

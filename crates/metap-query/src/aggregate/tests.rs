@@ -139,6 +139,7 @@ fn shared_entity() -> EntityDefinition {
         }],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -184,6 +185,7 @@ fn dedicated_entity() -> EntityDefinition {
             }],
         }),
         unique_constraints: vec![],
+        audit: None,
     }
 }
 

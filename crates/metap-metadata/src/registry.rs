@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 use crate::compiler::{self, MetadataValidationError};
 use crate::entity::{
-    EntityDefinition, EntityField, EntityListView, EntityUniqueConstraint, EntityWorkflow, FieldDisplayHint, FieldKind,
-    RelatedView,
+    EntityAuditConfig, EntityDefinition, EntityField, EntityListView, EntityUniqueConstraint, EntityWorkflow,
+    FieldDisplayHint, FieldKind, RelatedView,
 };
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -25,6 +25,8 @@ pub struct EntitySummary {
     pub field_display_hints: Vec<FieldDisplayHint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unique_constraints: Vec<EntityUniqueConstraint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit: Option<EntityAuditConfig>,
     pub version: String,
 }
 
@@ -272,6 +274,7 @@ impl MetadataRegistry {
             related_views: self.get_related_views(&entity.name).to_vec(),
             field_display_hints: self.get_field_display_hints(&entity.name).to_vec(),
             unique_constraints: entity.unique_constraints.clone(),
+            audit: entity.audit,
             // Hashing a plain struct of String/bool/Vec fields cannot fail in practice
             // (unlike JS's NaN/undefined edge cases) — panic rather than silently emit a
             // wrong/empty version if that assumption is ever violated.
@@ -317,6 +320,7 @@ mod tests {
             list_views: vec![],
             workflow: None,
             unique_constraints: vec![],
+            audit: None,
         }
     }
 

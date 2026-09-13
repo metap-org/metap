@@ -9,6 +9,7 @@ async-trait.workspace = true
 chrono.workspace = true
 metap-infra = { path = "../metap-infra" }
 metap-peripherals = { path = "../metap-peripherals" }
+metap-runtime = { path = "../metap-runtime" }
 metap-permission = { path = "../metap-permission" }
 moka.workspace = true
 secrecy.workspace = true

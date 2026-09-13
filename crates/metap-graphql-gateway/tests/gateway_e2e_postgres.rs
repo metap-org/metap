@@ -105,6 +105,7 @@ fn simple_entity(name: &str, label: &str) -> EntityDefinition {
         }],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
@@ -223,7 +224,8 @@ async fn spin_up_harness(pool: PgPool, name: &str, entity: EntityDefinition) -> 
             metadata_url: format!("http://{rest_addr}/metadata/entities"),
             login_url: format!("http://{rest_addr}/auth/login"),
             service_email,
-            service_password: service_password.to_string(),
+            service_password: Some(service_password.to_string()),
+            service_password_secret_ref: None,
         },
         crud,
         tenant_id,
@@ -252,6 +254,7 @@ async fn one_graphql_query_aggregates_real_data_from_two_independent_services() 
                 .unwrap()
                 .clone(),
             &jira_ctx,
+            None,
         )
         .await
         .unwrap();
@@ -265,18 +268,21 @@ async fn one_graphql_query_aggregates_real_data_from_two_independent_services() 
                 .unwrap()
                 .clone(),
             &crm_ctx,
+            None,
         )
         .await
         .unwrap();
 
-    // This is the actual boot-sequence call the real `graphql-gateway` binary makes — discovers
-    // both upstreams' schemas over real HTTP and connects a real `GrpcBackend` to each.
-    let built = schema_builder::build(
+    // This is the actual boot-sequence call the real `graphql-gateway` binary makes — builds the
+    // TTL-cached schema (no I/O yet), then `.current()` does the real discovery over real HTTP
+    // and connects a real `GrpcBackend` to each upstream.
+    let cache = schema_builder::build(
         &[jira_like.upstream, crm_like.upstream],
         metap_graphql::SchemaLimits::default(),
     )
     .await
     .unwrap();
+    let built = cache.current().await;
     assert_eq!(
         built.entity_count, 2,
         "both upstreams' entities must be registered into one schema"
@@ -340,6 +346,146 @@ async fn one_graphql_query_aggregates_real_data_from_two_independent_services() 
     sqlx::query("DELETE FROM records WHERE tenant_id IN ($1, $2)")
         .bind(jira_like.tenant_id)
         .bind(crm_like.tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+}
+
+/// A config pointing at nothing real — binds a local port and immediately drops the listener
+/// (guaranteed connection-refused) rather than a hardcoded port number, so this can never
+/// collide with something else actually listening on the test machine.
+async fn unreachable_upstream(name: &str) -> UpstreamConfig {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+    UpstreamConfig {
+        name: name.to_string(),
+        grpc_addr: format!("http://{addr}"),
+        metadata_url: format!("http://{addr}/metadata/entities"),
+        login_url: format!("http://{addr}/auth/login"),
+        service_email: "nobody@test.local".to_string(),
+        service_password: Some("unused".to_string()),
+        service_password_secret_ref: None,
+    }
+}
+
+/// Audit 04 finding B1's headline claim, proven end to end: one upstream that has never once
+/// been reachable must not block any *other* upstream's entities from being served, and the
+/// gateway must report the failure through its own health surfaces rather than failing to boot
+/// (this test proves the "no more fail-closed boot" half; a live-refresh-after-boot case would
+/// need a harness that can shut a server down mid-test, not built here — the field-dropping/
+/// backend-routing logic exercised here is identical either way).
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn one_dead_upstream_does_not_block_the_others_entities() {
+    let pool = connect_db().await;
+
+    let jira_like = spin_up_harness(pool.clone(), "jira", simple_entity("test.gw_dead_projects", "Project")).await;
+    let dead = unreachable_upstream("dead").await;
+
+    let cache = schema_builder::build(&[jira_like.upstream, dead], metap_graphql::SchemaLimits::default())
+        .await
+        .unwrap();
+    let built = cache.current().await;
+
+    assert_eq!(
+        built.entity_count, 1,
+        "only the reachable upstream's entity should be registered"
+    );
+    assert!(
+        built.health.degraded(),
+        "health must report degraded when any upstream is unreachable"
+    );
+    let statuses: std::collections::HashMap<_, _> = built
+        .health
+        .upstreams
+        .iter()
+        .map(|u| (u.name.as_str(), u.reachable))
+        .collect();
+    assert_eq!(statuses.get("jira"), Some(&true));
+    assert_eq!(statuses.get("dead"), Some(&false));
+
+    // The same health data must also be reachable through the actual GraphQL surface
+    // (`_gatewayHealth`), not just the Rust struct this test otherwise inspects directly — this
+    // is what a real client (or `GET /health`) sees.
+    let health_request = metap_graphql::with_request_data(
+        async_graphql::Request::new("{ _gatewayHealth }"),
+        built.backend.clone(),
+        RequestContext {
+            tenant_id: Uuid::new_v4().to_string(),
+            user_id: None,
+            roles: None,
+            function_id: None,
+            context_attributes: None,
+            forwarded_bearer_token: None,
+        },
+    );
+    let health_response = built.schema.execute(health_request).await;
+    assert!(
+        health_response.errors.is_empty(),
+        "unexpected GraphQL errors querying _gatewayHealth: {:?}",
+        health_response.errors
+    );
+    let health_json = health_response.data.into_json().unwrap();
+    let gql_statuses: std::collections::HashMap<_, _> = health_json["_gatewayHealth"]["upstreams"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| {
+            (
+                u["name"].as_str().unwrap().to_string(),
+                u["reachable"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(gql_statuses.get("jira"), Some(&true));
+    assert_eq!(gql_statuses.get("dead"), Some(&false));
+
+    // The reachable upstream's own entity must still work end to end through the composite
+    // backend — this is the actual "didn't block the others" proof, not just a registry count.
+    let ctx = admin_context(jira_like.tenant_id, jira_like.user_id);
+    jira_like
+        .crud
+        .create(
+            "test.gw_dead_projects",
+            &serde_json::json!({ "name": "Still Works" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            &ctx,
+            None,
+        )
+        .await
+        .unwrap();
+    let request = metap_graphql::with_request_data(
+        async_graphql::Request::new("{ testGwDeadProjectsList { records { name } } }"),
+        built.backend.clone(),
+        RequestContext {
+            tenant_id: Uuid::new_v4().to_string(),
+            user_id: None,
+            roles: None,
+            function_id: None,
+            context_attributes: None,
+            forwarded_bearer_token: None,
+        },
+    );
+    let response = built.schema.execute(request).await;
+    assert!(
+        response.errors.is_empty(),
+        "unexpected GraphQL errors: {:?}",
+        response.errors
+    );
+    let data = response.data.into_json().unwrap();
+    let names: Vec<_> = data["testGwDeadProjectsList"]["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].clone())
+        .collect();
+    assert!(names.contains(&serde_json::json!("Still Works")));
+
+    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
+        .bind(jira_like.tenant_id)
         .execute(&pool)
         .await
         .ok();

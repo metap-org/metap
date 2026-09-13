@@ -291,6 +291,7 @@ mod tests {
                 }],
             }),
             unique_constraints: vec![],
+            audit: None,
         }
     }
 

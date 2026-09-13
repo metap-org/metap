@@ -12,6 +12,9 @@
 //! `../metap-demo-jira` have zero dependency on this crate. See `schema.rs`'s doc comment for the
 //! three mandatory pieces a GraphQL layer on this platform needs (DataLoader batching, query
 //! complexity/depth limits, field-level permission masking) and how each is satisfied.
+//!
+//! **Records + aggregate only — not REST's full surface**: same accepted BFF-scope tradeoff as
+//! `metap-grpc`, see that crate's module doc (audit 04 finding B3) for the reasoning.
 
 mod composite_backend;
 mod list_input;

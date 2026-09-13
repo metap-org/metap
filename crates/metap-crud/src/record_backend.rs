@@ -49,13 +49,16 @@ pub trait RecordBackend: Send + Sync {
         ctx: &RequestContext,
     ) -> anyhow::Result<ServiceResult<Vec<(Uuid, RecordDto, RecordCapabilities)>>>;
 
+    #[allow(clippy::too_many_arguments)]
     async fn create(
         &self,
         entity: &str,
         data: &JsonObject,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>>;
 
+    #[allow(clippy::too_many_arguments)]
     async fn update(
         &self,
         entity: &str,
@@ -63,6 +66,7 @@ pub trait RecordBackend: Send + Sync {
         expected_version: i32,
         data: &JsonObject,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>>;
 
     #[allow(clippy::too_many_arguments)]
@@ -74,14 +78,17 @@ pub trait RecordBackend: Send + Sync {
         expected_version: i32,
         data: Option<&JsonObject>,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>>;
 
+    #[allow(clippy::too_many_arguments)]
     async fn delete(
         &self,
         entity: &str,
         id: Uuid,
         expected_version: i32,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>>;
 
     /// The `GROUP BY`/`COUNT`/`SUM` counterpart to `list` — see `CrudService::aggregate`'s own
@@ -132,8 +139,9 @@ impl RecordBackend for CrudService {
         entity: &str,
         data: &JsonObject,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
-        self.create(entity, data, ctx).await
+        self.create(entity, data, ctx, reason).await
     }
 
     async fn update(
@@ -143,8 +151,9 @@ impl RecordBackend for CrudService {
         expected_version: i32,
         data: &JsonObject,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
-        self.update(entity, id, expected_version, data, ctx).await
+        self.update(entity, id, expected_version, data, ctx, reason).await
     }
 
     async fn transition(
@@ -155,8 +164,10 @@ impl RecordBackend for CrudService {
         expected_version: i32,
         data: Option<&JsonObject>,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
-        self.transition(entity, id, action, expected_version, data, ctx).await
+        self.transition(entity, id, action, expected_version, data, ctx, reason)
+            .await
     }
 
     async fn delete(
@@ -165,8 +176,9 @@ impl RecordBackend for CrudService {
         id: Uuid,
         expected_version: i32,
         ctx: &RequestContext,
+        reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
-        self.delete(entity, id, expected_version, ctx).await
+        self.delete(entity, id, expected_version, ctx, reason).await
     }
 
     /// A malformed `spec` (bad metric/bucket string) surfaces as a `400`-shaped `ServiceResult`,
