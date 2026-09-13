@@ -10,7 +10,11 @@ use uuid::Uuid;
 
 async fn connect() -> PgPool {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-    PgPoolOptions::new().max_connections(2).connect(&database_url).await.unwrap()
+    PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&database_url)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]

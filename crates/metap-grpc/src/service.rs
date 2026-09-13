@@ -185,7 +185,13 @@ impl RecordService for GrpcRecordService {
 
         let result = self
             .crud
-            .delete(&req.entity_name, id, req.expected_version, &context, req.reason.as_deref())
+            .delete(
+                &req.entity_name,
+                id,
+                req.expected_version,
+                &context,
+                req.reason.as_deref(),
+            )
             .await
             .map_err(internal)?;
         let record = service_result_to_status(result)?;

@@ -546,7 +546,10 @@ async fn reconcile_recreates_a_sync_trigger_dropped_outside_its_own_lifecycle() 
     let def = entity(entity_name, vec![promoted]);
 
     let first = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
-    assert!(first.ops_applied > 0, "first reconcile must create the column + trigger");
+    assert!(
+        first.ops_applied > 0,
+        "first reconcile must create the column + trigger"
+    );
 
     let trigger_exists = |pool: PgPool| async move {
         sqlx::query_scalar::<_, bool>(
@@ -556,7 +559,10 @@ async fn reconcile_recreates_a_sync_trigger_dropped_outside_its_own_lifecycle() 
         .await
         .unwrap()
     };
-    assert!(trigger_exists(pool.clone()).await, "trigger must exist right after the first reconcile");
+    assert!(
+        trigger_exists(pool.clone()).await,
+        "trigger must exist right after the first reconcile"
+    );
 
     // Simulate the live incident: something outside the reconciler drops the trigger and its
     // backing function, but `reconciler_backfill_progress` is left untouched (still says
@@ -569,17 +575,26 @@ async fn reconcile_recreates_a_sync_trigger_dropped_outside_its_own_lifecycle() 
         .execute(&pool)
         .await
         .unwrap();
-    assert!(!trigger_exists(pool.clone()).await, "trigger must genuinely be gone before the second reconcile");
+    assert!(
+        !trigger_exists(pool.clone()).await,
+        "trigger must genuinely be gone before the second reconcile"
+    );
 
     let second = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
     assert!(
         second.ops_applied > 0,
         "must re-create the trigger, not trust the stale `completed = true` ledger row and report 0"
     );
-    assert!(trigger_exists(pool.clone()).await, "trigger must be back in pg_catalog after the second reconcile");
+    assert!(
+        trigger_exists(pool.clone()).await,
+        "trigger must be back in pg_catalog after the second reconcile"
+    );
 
     let third = reconcile(&pool, tenant_id, &def, &[]).await.unwrap();
-    assert_eq!(third.ops_applied, 0, "must converge to zero ops once the trigger is genuinely back");
+    assert_eq!(
+        third.ops_applied, 0,
+        "must converge to zero ops once the trigger is genuinely back"
+    );
 
     drop_table_if_exists(&pool, "test_reconciler_dropped_trigger").await;
 }

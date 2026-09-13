@@ -383,12 +383,9 @@ async fn one_dead_upstream_does_not_block_the_others_entities() {
     let jira_like = spin_up_harness(pool.clone(), "jira", simple_entity("test.gw_dead_projects", "Project")).await;
     let dead = unreachable_upstream("dead").await;
 
-    let cache = schema_builder::build(
-        &[jira_like.upstream, dead],
-        metap_graphql::SchemaLimits::default(),
-    )
-    .await
-    .unwrap();
+    let cache = schema_builder::build(&[jira_like.upstream, dead], metap_graphql::SchemaLimits::default())
+        .await
+        .unwrap();
     let built = cache.current().await;
 
     assert_eq!(
@@ -399,8 +396,12 @@ async fn one_dead_upstream_does_not_block_the_others_entities() {
         built.health.degraded(),
         "health must report degraded when any upstream is unreachable"
     );
-    let statuses: std::collections::HashMap<_, _> =
-        built.health.upstreams.iter().map(|u| (u.name.as_str(), u.reachable)).collect();
+    let statuses: std::collections::HashMap<_, _> = built
+        .health
+        .upstreams
+        .iter()
+        .map(|u| (u.name.as_str(), u.reachable))
+        .collect();
     assert_eq!(statuses.get("jira"), Some(&true));
     assert_eq!(statuses.get("dead"), Some(&false));
 
@@ -430,7 +431,12 @@ async fn one_dead_upstream_does_not_block_the_others_entities() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|u| (u["name"].as_str().unwrap().to_string(), u["reachable"].as_bool().unwrap()))
+        .map(|u| {
+            (
+                u["name"].as_str().unwrap().to_string(),
+                u["reachable"].as_bool().unwrap(),
+            )
+        })
         .collect();
     assert_eq!(gql_statuses.get("jira"), Some(&true));
     assert_eq!(gql_statuses.get("dead"), Some(&false));
@@ -442,7 +448,10 @@ async fn one_dead_upstream_does_not_block_the_others_entities() {
         .crud
         .create(
             "test.gw_dead_projects",
-            &serde_json::json!({ "name": "Still Works" }).as_object().unwrap().clone(),
+            &serde_json::json!({ "name": "Still Works" })
+                .as_object()
+                .unwrap()
+                .clone(),
             &ctx,
             None,
         )
@@ -461,7 +470,11 @@ async fn one_dead_upstream_does_not_block_the_others_entities() {
         },
     );
     let response = built.schema.execute(request).await;
-    assert!(response.errors.is_empty(), "unexpected GraphQL errors: {:?}", response.errors);
+    assert!(
+        response.errors.is_empty(),
+        "unexpected GraphQL errors: {:?}",
+        response.errors
+    );
     let data = response.data.into_json().unwrap();
     let names: Vec<_> = data["testGwDeadProjectsList"]["records"]
         .as_array()

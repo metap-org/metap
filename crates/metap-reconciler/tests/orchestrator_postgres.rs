@@ -360,15 +360,24 @@ async fn get_deployment_status_reflects_every_row_state() {
 
     // No row at all: never enqueued (still on `records`, or migrated synchronously) — nothing to
     // wait on.
-    assert!(get_deployment_status(&pool, tenant_id, entity_name).await.unwrap().is_none());
+    assert!(get_deployment_status(&pool, tenant_id, entity_name)
+        .await
+        .unwrap()
+        .is_none());
 
     seed_pending(&pool, entity_name, &[tenant_id], 1).await;
-    let pending = get_deployment_status(&pool, tenant_id, entity_name).await.unwrap().unwrap();
+    let pending = get_deployment_status(&pool, tenant_id, entity_name)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(pending.status, "pending");
     assert!(!pending.ready());
 
     record_success(&pool, tenant_id, entity_name, 1).await.unwrap();
-    let done = get_deployment_status(&pool, tenant_id, entity_name).await.unwrap().unwrap();
+    let done = get_deployment_status(&pool, tenant_id, entity_name)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(done.status, "done");
     assert_eq!(done.applied_version, Some(1));
     assert!(done.ready());
@@ -383,15 +392,26 @@ async fn get_deployment_status_reflects_every_row_state() {
     .execute(&pool)
     .await
     .unwrap();
-    let stale = get_deployment_status(&pool, tenant_id, entity_name).await.unwrap().unwrap();
+    let stale = get_deployment_status(&pool, tenant_id, entity_name)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(stale.status, "done");
     assert_eq!(stale.desired_version, 2);
     assert_eq!(stale.applied_version, Some(1));
-    assert!(!stale.ready(), "applied_version behind desired_version must not read as ready");
+    assert!(
+        !stale.ready(),
+        "applied_version behind desired_version must not read as ready"
+    );
 
     let fake_error = anyhow::anyhow!("boom");
-    record_failure(&pool, tenant_id, entity_name, &fake_error).await.unwrap();
-    let failed = get_deployment_status(&pool, tenant_id, entity_name).await.unwrap().unwrap();
+    record_failure(&pool, tenant_id, entity_name, &fake_error)
+        .await
+        .unwrap();
+    let failed = get_deployment_status(&pool, tenant_id, entity_name)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(failed.status, "blocked");
     assert!(!failed.ready());
     assert!(failed.last_error.unwrap().contains("boom"));

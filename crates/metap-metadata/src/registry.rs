@@ -7,8 +7,7 @@ use std::collections::HashMap;
 use crate::compiler::{self, MetadataValidationError};
 use crate::entity::{
     EntityAuditConfig, EntityDefinition, EntityField, EntityListView, EntityUniqueConstraint, EntityWorkflow,
-    FieldDisplayHint, FieldKind,
-    RelatedView,
+    FieldDisplayHint, FieldKind, RelatedView,
 };
 
 #[derive(Debug, Clone, serde::Serialize)]

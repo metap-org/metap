@@ -141,7 +141,10 @@ mod tests {
 
         for _ in 0..3 {
             let response = svc.call(request_from(ip)).await.unwrap();
-            assert!(response.extensions().get::<Status>().is_none(), "burst calls should reach Echo");
+            assert!(
+                response.extensions().get::<Status>().is_none(),
+                "burst calls should reach Echo"
+            );
         }
 
         let rejected = svc.call(request_from(ip)).await.unwrap();
@@ -158,9 +161,21 @@ mod tests {
         let a = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
         let b = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 
-        assert!(svc.call(request_from(a)).await.unwrap().extensions().get::<Status>().is_none());
+        assert!(svc
+            .call(request_from(a))
+            .await
+            .unwrap()
+            .extensions()
+            .get::<Status>()
+            .is_none());
         // `a` is now exhausted, but `b` has never been charged — must not share `a`'s bucket.
-        assert!(svc.call(request_from(b)).await.unwrap().extensions().get::<Status>().is_none());
+        assert!(svc
+            .call(request_from(b))
+            .await
+            .unwrap()
+            .extensions()
+            .get::<Status>()
+            .is_none());
         let rejected = svc.call(request_from(a)).await.unwrap();
         assert_eq!(
             rejected.extensions().get::<Status>().unwrap().code(),

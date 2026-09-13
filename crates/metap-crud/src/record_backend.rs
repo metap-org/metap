@@ -166,7 +166,8 @@ impl RecordBackend for CrudService {
         ctx: &RequestContext,
         reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
-        self.transition(entity, id, action, expected_version, data, ctx, reason).await
+        self.transition(entity, id, action, expected_version, data, ctx, reason)
+            .await
     }
 
     async fn delete(

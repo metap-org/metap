@@ -727,7 +727,9 @@ async fn audited_entity_writes_are_recorded_and_unaudited_entity_writes_are_not(
     let mut unaudited_payload = JsonObject::new();
     unaudited_payload.insert("name".to_string(), json!("Not audited"));
     unaudited_payload.insert("amount".to_string(), json!(1));
-    crud.create("test.orders", &unaudited_payload, &ctx, None).await.unwrap();
+    crud.create("test.orders", &unaudited_payload, &ctx, None)
+        .await
+        .unwrap();
 
     let mut payload = JsonObject::new();
     payload.insert("name".to_string(), json!("Audited order"));
@@ -742,7 +744,14 @@ async fn audited_entity_writes_are_recorded_and_unaudited_entity_writes_are_not(
     let mut update_payload = JsonObject::new();
     update_payload.insert("name".to_string(), json!("Audited order (renamed)"));
     let updated = match crud
-        .update("test.audited_orders", created.id, created.version, &update_payload, &ctx, None)
+        .update(
+            "test.audited_orders",
+            created.id,
+            created.version,
+            &update_payload,
+            &ctx,
+            None,
+        )
         .await
         .unwrap()
     {
@@ -751,7 +760,15 @@ async fn audited_entity_writes_are_recorded_and_unaudited_entity_writes_are_not(
     };
 
     let transitioned = match crud
-        .transition("test.audited_orders", created.id, "approve", updated.version, None, &ctx, None)
+        .transition(
+            "test.audited_orders",
+            created.id,
+            "approve",
+            updated.version,
+            None,
+            &ctx,
+            None,
+        )
         .await
         .unwrap()
     {
@@ -825,7 +842,10 @@ async fn audited_entity_writes_are_recorded_and_unaudited_entity_writes_are_not(
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(unaudited_count, 0, "an entity with no audit config must produce zero rows");
+    assert_eq!(
+        unaudited_count, 0,
+        "an entity with no audit config must produce zero rows"
+    );
 
     // The pre-existing mechanisms this feature is explicitly additive to, not a replacement
     // for, must be completely unaffected.
@@ -836,7 +856,10 @@ async fn audited_entity_writes_are_recorded_and_unaudited_entity_writes_are_not(
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(workflow_events_count, 2, "workflow_events must still get its own 2 rows (approve, close)");
+    assert_eq!(
+        workflow_events_count, 2,
+        "workflow_events must still get its own 2 rows (approve, close)"
+    );
 
     cleanup(&pool, tenant_id).await;
 }
@@ -950,7 +973,15 @@ async fn full_lifecycle_create_get_update_transition_delete() {
 
     // transition again from a now-invalid from-state -> invalid_transition
     match crud
-        .transition("test.orders", created.id, "approve", transitioned.version, None, &ctx, None)
+        .transition(
+            "test.orders",
+            created.id,
+            "approve",
+            transitioned.version,
+            None,
+            &ctx,
+            None,
+        )
         .await
         .unwrap()
     {
@@ -1203,7 +1234,7 @@ async fn transition_payload_is_validated_and_set_fields_are_applied() {
             approved.version,
             Some(&close_payload),
             &ctx,
-            None
+            None,
         )
         .await
         .unwrap()
@@ -1380,7 +1411,11 @@ async fn unique_field_violation_is_a_clean_409_not_a_500() {
     // a second, distinct record, then updated to collide with the first -> same 409 on update.
     let mut other_payload = JsonObject::new();
     other_payload.insert("sku".to_string(), json!("ABC-2"));
-    let second = match crud.create("test.unique_orders", &other_payload, &ctx, None).await.unwrap() {
+    let second = match crud
+        .create("test.unique_orders", &other_payload, &ctx, None)
+        .await
+        .unwrap()
+    {
         ServiceResult::Ok { data, .. } => data,
         other => panic!("expected second create to succeed, got {other:?}"),
     };
@@ -1484,7 +1519,9 @@ async fn composite_unique_field_violation_names_every_field_in_the_constraint() 
     let mut payload = JsonObject::new();
     payload.insert("type".to_string(), json!("blacklist"));
     payload.insert("value".to_string(), json!("1.2.3.4"));
-    crud.create("test.unique_list_entries", &payload, &ctx, None).await.unwrap();
+    crud.create("test.unique_list_entries", &payload, &ctx, None)
+        .await
+        .unwrap();
 
     // Same value, different type — the pair isn't a duplicate, must succeed.
     let mut other_type = JsonObject::new();
@@ -1500,7 +1537,11 @@ async fn composite_unique_field_violation_names_every_field_in_the_constraint() 
     }
 
     // The exact same (type, value) pair again — must be rejected, naming both fields.
-    match crud.create("test.unique_list_entries", &payload, &ctx, None).await.unwrap() {
+    match crud
+        .create("test.unique_list_entries", &payload, &ctx, None)
+        .await
+        .unwrap()
+    {
         ServiceResult::Err {
             status,
             error,
@@ -1662,7 +1703,9 @@ async fn list_hydrates_related_display_for_reference_fields_with_display_field()
     child_of_b.insert("parentId".to_string(), json!(parent_b.id));
     crud.create("test.children", &child_of_b, &ctx, None).await.unwrap();
     // no parentId at all — the field isn't required
-    crud.create("test.children", &JsonObject::new(), &ctx, None).await.unwrap();
+    crud.create("test.children", &JsonObject::new(), &ctx, None)
+        .await
+        .unwrap();
 
     let input = ListInput {
         limit: 50,
@@ -1741,7 +1784,11 @@ async fn delete_succeeds_for_a_record_whose_self_reference_points_at_itself() {
         other => panic!("expected update to succeed, got {other:?}"),
     };
 
-    match crud.delete("test.nodes", node.id, node.version, &ctx, None).await.unwrap() {
+    match crud
+        .delete("test.nodes", node.id, node.version, &ctx, None)
+        .await
+        .unwrap()
+    {
         ServiceResult::Ok { .. } => {}
         other => panic!("expected delete to succeed for a record whose self-reference points at itself, got {other:?}"),
     }

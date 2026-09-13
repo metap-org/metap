@@ -25,7 +25,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use async_graphql::dynamic::{Field, FieldFuture, Object};
 use metap_crud::RecordBackend;
 use metap_graphql::{
-    build_schema_parts, CompositeBackend, GqlError, GqlValue, FieldValue, Schema, SchemaLimits, TypeRef, JSON_SCALAR,
+    build_schema_parts, CompositeBackend, FieldValue, GqlError, GqlValue, Schema, SchemaLimits, TypeRef, JSON_SCALAR,
 };
 use metap_grpc::GrpcBackend;
 use metap_metadata::{EntityDefinition, EntityField, EntityWorkflow, FieldKind, MetadataRegistry};
@@ -200,7 +200,13 @@ async fn connect_one_upstream(
     let grpc_backend: Arc<dyn RecordBackend> = Arc::new(
         GrpcBackend::connect(config.grpc_addr.clone(), service_token)
             .await
-            .map_err(|e| anyhow::anyhow!("connecting to upstream '{}' gRPC at {}: {e}", config.name, config.grpc_addr))?,
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "connecting to upstream '{}' gRPC at {}: {e}",
+                    config.name,
+                    config.grpc_addr
+                )
+            })?,
     );
 
     let entities = response
@@ -321,13 +327,17 @@ impl UpstreamCache {
 /// diagnostic field has no real per-field GraphQL typing to gain from hand-building nested
 /// dynamic `Object`/`List` types for it.
 fn add_gateway_health_field(mut query: Object, health: GatewayHealth) -> Object {
-    query = query.field(Field::new("_gatewayHealth", TypeRef::named_nn(JSON_SCALAR), move |_ctx| {
-        let health = health.clone();
-        FieldFuture::new(async move {
-            let json = serde_json::to_value(&health).map_err(|e| GqlError::new(e.to_string()))?;
-            Ok(GqlValue::from_json(json).ok().map(FieldValue::value))
-        })
-    }));
+    query = query.field(Field::new(
+        "_gatewayHealth",
+        TypeRef::named_nn(JSON_SCALAR),
+        move |_ctx| {
+            let health = health.clone();
+            FieldFuture::new(async move {
+                let json = serde_json::to_value(&health).map_err(|e| GqlError::new(e.to_string()))?;
+                Ok(GqlValue::from_json(json).ok().map(FieldValue::value))
+            })
+        },
+    ));
     query
 }
 
@@ -557,7 +567,9 @@ mod tests {
             service_password: Some("literal-password".to_string()),
             ..base_config()
         };
-        let password = resolve_service_password(&config, &metap_control::EnvStore).await.unwrap();
+        let password = resolve_service_password(&config, &metap_control::EnvStore)
+            .await
+            .unwrap();
         assert_eq!(password, "literal-password");
     }
 
@@ -573,7 +585,9 @@ mod tests {
             service_password_secret_ref: Some("METAP_GRAPHQL_GATEWAY_TEST_PASSWORD".to_string()),
             ..base_config()
         };
-        let password = resolve_service_password(&config, &metap_control::EnvStore).await.unwrap();
+        let password = resolve_service_password(&config, &metap_control::EnvStore)
+            .await
+            .unwrap();
         assert_eq!(password, "rotated-password");
         std::env::remove_var("METAP_GRAPHQL_GATEWAY_TEST_PASSWORD");
     }
@@ -581,7 +595,9 @@ mod tests {
     #[tokio::test]
     async fn errors_clearly_when_neither_password_source_is_configured() {
         let config = base_config();
-        let err = resolve_service_password(&config, &metap_control::EnvStore).await.unwrap_err();
+        let err = resolve_service_password(&config, &metap_control::EnvStore)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("test"), "{err}");
     }
 }

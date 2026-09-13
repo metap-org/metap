@@ -319,16 +319,25 @@ async fn get_product_reflects_set_product_and_defaults_to_none() {
         .await
         .expect("provision");
 
-    assert_eq!(registry.get_product(tenant_id).await.expect("get_product before set"), None);
+    assert_eq!(
+        registry.get_product(tenant_id).await.expect("get_product before set"),
+        None
+    );
 
-    let updated = registry.set_product(tenant_id, "my_saas_app").await.expect("set_product");
+    let updated = registry
+        .set_product(tenant_id, "my_saas_app")
+        .await
+        .expect("set_product");
     assert!(updated);
     assert_eq!(
         registry.get_product(tenant_id).await.expect("get_product after set"),
         Some("my_saas_app".to_string())
     );
 
-    let unknown_id_updated = registry.set_product(Uuid::new_v4(), "x").await.expect("set_product unknown id");
+    let unknown_id_updated = registry
+        .set_product(Uuid::new_v4(), "x")
+        .await
+        .expect("set_product unknown id");
     assert!(!unknown_id_updated);
 
     cleanup(&pool, tenant_id).await;

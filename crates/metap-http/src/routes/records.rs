@@ -124,7 +124,11 @@ async fn create_record(
     Json(body): Json<RecordBody>,
 ) -> Response {
     let data: metap_crud::JsonObject = body.data.into_iter().collect();
-    match state.crud.create(&entity, &data, &context, body.reason.as_deref()).await {
+    match state
+        .crud
+        .create(&entity, &data, &context, body.reason.as_deref())
+        .await
+    {
         Ok(ServiceResult::Ok { data, .. }) => (StatusCode::CREATED, Json(json!({ "data": data }))).into_response(),
         Ok(ServiceResult::Err {
             status,
