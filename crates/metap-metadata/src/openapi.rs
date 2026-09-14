@@ -423,7 +423,7 @@ mod tests {
         let entity = EntityDefinition {
             name: "crm.customers".to_string(),
             label: "Customer".to_string(),
-            table_name: "records".to_string(),
+            table_name: "crm.customers".to_string(),
             fields: vec![EntityField {
                 name: "name".to_string(),
                 label: "Name".to_string(),

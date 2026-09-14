@@ -1,0 +1,18 @@
+-- Removes the shared generic `records` table entirely. Every entity in this org now lives on
+-- its own dedicated, schema-qualified table (Phase 21/36/79 — jira, crm.customers, all 9 WAF
+-- entities; low-code entities have defaulted to a fresh dedicated table on first publish since
+-- 2026-09-07) — `metap-metadata`'s compiler no longer accepts `table_name == "records"` for any
+-- entity at all (see `crates/metap-metadata/src/compiler.rs`'s `table_name_ok` check), so this
+-- table has had no valid write path since that change landed.
+--
+-- DESTRUCTIVE. Before applying this migration against any environment that might still hold
+-- real data in `records` (a low-code entity published before the table-per-entity default,
+-- never migrated off it): run `dev-tools migrate-to-dedicated-table <entityName>` — built on
+-- `metap_reconciler::migrate_generic_to_dedicated`, still present and unaffected by this
+-- migration — for every such entity first. `SELECT DISTINCT entity FROM metadata.records` is
+-- the direct way to check whether any rows are left before applying this in a real deployment.
+--
+-- `DROP TABLE` cascades its own primary key and indexes automatically; no other table has a
+-- foreign key into `records` (JSONB `data`, no real cross-table constraints), confirmed via
+-- `grep -rl "REFERENCES.*records" crates/migrations/*.sql` before writing this migration.
+DROP TABLE IF EXISTS metadata.records;

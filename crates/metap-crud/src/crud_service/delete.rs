@@ -8,8 +8,8 @@ use crate::result::ServiceResult;
 use std::collections::HashMap;
 
 use super::helpers::{
-    fetch_existing, find_referencing_records, forbidden, is_dedicated, mask_record_for_read, parse_user_id,
-    referencing_fields, router_unavailable, row_to_dto, row_to_dto_dedicated, RECORD_COLUMNS, RECORD_COLUMNS_DEDICATED,
+    fetch_existing, find_referencing_records, forbidden, mask_record_for_read, parse_user_id, referencing_fields,
+    router_unavailable, row_to_dto, RECORD_COLUMNS,
 };
 use super::CrudService;
 
@@ -117,26 +117,19 @@ impl CrudService {
             ));
         }
 
-        let dedicated = is_dedicated(&entity);
         let table = &entity.table_name;
-        let delete_sql = if dedicated {
-            format!(
-                "UPDATE {table} SET deleted = true, version = version + 1, updated_at = now(), updated_by = $1 \
-                 WHERE id = $2 AND tenant_id = $3 AND version = $4 AND deleted = false \
-                 RETURNING {RECORD_COLUMNS_DEDICATED}"
-            )
-        } else {
-            format!(
-                "UPDATE {table} SET deleted = true, version = version + 1, updated_at = now(), updated_by = $1 \
-                 WHERE id = $2 AND tenant_id = $3 AND entity = $4 AND version = $5 AND deleted = false \
-                 RETURNING {RECORD_COLUMNS}"
-            )
-        };
-        let mut query = sqlx::query(&delete_sql).bind(user_id).bind(id).bind(tenant_id);
-        if !dedicated {
-            query = query.bind(&entity.name);
-        }
-        let row = query.bind(expected_version).fetch_optional(&mut *tx).await?;
+        let delete_sql = format!(
+            "UPDATE {table} SET deleted = true, version = version + 1, updated_at = now(), updated_by = $1 \
+             WHERE id = $2 AND tenant_id = $3 AND version = $4 AND deleted = false \
+             RETURNING {RECORD_COLUMNS}"
+        );
+        let row = sqlx::query(&delete_sql)
+            .bind(user_id)
+            .bind(id)
+            .bind(tenant_id)
+            .bind(expected_version)
+            .fetch_optional(&mut *tx)
+            .await?;
 
         let Some(row) = row else {
             tx.rollback().await.ok();
@@ -148,11 +141,7 @@ impl CrudService {
             );
             return Ok(ServiceResult::err(409, "version_conflict"));
         };
-        let record = if dedicated {
-            row_to_dto_dedicated(row, &entity.name)?
-        } else {
-            row_to_dto(row)?
-        };
+        let record = row_to_dto(row, &entity.name)?;
 
         emit_deleted(&mut *tx, &entity, tenant_id, record.id).await?;
         tx.commit().await?;

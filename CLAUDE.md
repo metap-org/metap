@@ -144,6 +144,40 @@ By default, business records live in one generic `records` table (`crates/migrat
 
 The roadmap (`docs/roadmap.md`, Data Model Strategy in `docs/architectures/05-building-blocks/00-index.md`) explicitly plans to peel off dedicated typed tables for high-volume or accounting-critical modules later — the generic JSONB table is a deliberate starting point, not an oversight.
 
+**The shared generic `records` table has been removed entirely (2026-09-14,
+`../metap-docs/docs/roadmap/86-remove-generic-records-table.md`)** — the 2 paragraphs above
+describe the state before this change; every entity is now required to be on its own dedicated,
+schema-qualified table, no exceptions. `metap-metadata::compiler`'s `table_name_ok` check no
+longer accepts the literal `"records"` (or any bare, non-schema-qualified name) for any entity's
+`table_name` — a validation-level door-close that was possible only because every real entity
+this org has ever registered was already on a dedicated table by the time this change was made
+(`../metap-demo-jira` Phase 21, `crm.customers` Phase 36, all 9 WAF entities Phase 79, every
+low-code entity by default since 2026-09-07). The "shared vs dedicated table" branching this used
+to require throughout `metap-crud`/`metap-query` (an `entity` discriminator column, two different
+`RECORD_COLUMNS` shapes, `is_dedicated()`/`dedicated_table` checks at every call site) has been
+deleted, not just made unreachable — `crud_service/helpers.rs`'s `row_to_dto`/`RECORD_COLUMNS`,
+`query_planner.rs`'s `sort_field_expression`, `aggregate.rs`'s `value_expression`, and
+`jql/codegen.rs`'s `resolve_field` all now assume a dedicated table unconditionally.
+`crates/migrations/0033_drop_records_table.sql` drops the physical `metadata.records` table
+itself — destructive, so any environment with a legacy low-code entity still on it needs
+`dev-tools migrate-to-dedicated-table` run first (see that migration file's own header comment).
+`metap_reconciler::migrate_generic_to_dedicated` and the `dev-tools migrate-to-dedicated-table`
+CLI subcommand are deliberately still here, unremoved — the one remaining legitimate reason to
+reference the old table, as a one-time pre-upgrade escape hatch. **Known gap, not fixed in this
+pass**: the e2e test suites (`cargo test --workspace -- --ignored`) across `metap-crud`,
+`metap-graphql`/`metap-graphql-http`/`metap-graphql-gateway`, `metap-grpc`, `metap-http`, and
+`metap-workflow` still construct fixture entities with `table_name: "records".to_string()` and
+(in `metap-crud/tests/crud_service_postgres.rs` especially) raw SQL against the physical
+`records` table, including a whole test section built around multiple entities sharing one
+physical table via the `entity` discriminator column — behavior this change removed entirely.
+These are not part of CI (`ci.yml` only runs plain `cargo test --workspace`, never `--ignored`),
+so this doesn't block anything today, but the e2e suite will start failing the next time someone
+actually runs it against a live Postgres with migration 0033 applied. Needs a dedicated follow-up
+pass (each fixture's `table_name` repointed at its own `CREATE TABLE IF NOT EXISTS` dedicated
+table, matching the pattern `metap-query/tests/query_planner_postgres.rs` already uses, and the
+shared-table-specific test section in `crud_service_postgres.rs` deleted rather than ported, since
+what it tests can no longer happen).
+
 ### Core services and their fixed boundaries
 
 - **`MetadataRegistry`** (`metap-metadata`) — owns entity definitions (fields, list views, workflow). Read-only after boot, populated once by whichever binary registers entities.

@@ -28,7 +28,7 @@ fn minimal_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.thing".to_string(),
         label: "Thing".to_string(),
-        table_name: "records".to_string(),
+        table_name: "entities.test_thing".to_string(),
         fields: vec![field("name", FieldKind::String)],
         list_views: vec![],
         workflow: None,
@@ -40,6 +40,26 @@ fn minimal_entity() -> EntityDefinition {
 #[test]
 fn valid_entity_passes() {
     assert!(validate(&minimal_entity()).is_ok());
+}
+
+#[test]
+fn generic_records_table_is_no_longer_a_valid_table_name() {
+    // Regression test for the shared generic `records` table's removal
+    // (`crates/migrations/0033_drop_records_table.sql`) — every entity must now be on its own
+    // schema-qualified dedicated table; `"records"` used to be accepted as a special-cased
+    // literal and no longer is.
+    let mut entity = minimal_entity();
+    entity.table_name = "records".to_string();
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("tableName")));
+}
+
+#[test]
+fn a_bare_table_name_with_no_schema_is_rejected() {
+    let mut entity = minimal_entity();
+    entity.table_name = "test_thing".to_string();
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("tableName")));
 }
 
 #[test]

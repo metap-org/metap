@@ -21,11 +21,15 @@ use crate::router::validate_schema_name;
 /// deliberately excluded like `control.tenant_hostnames`/`metadata.outbox_events` below), not
 /// silently grow or shrink this list unreviewed.
 ///
-/// Excluded, both deliberately: `control.tenant_hostnames` has a `tenant_id` column but is
+/// Excluded, all deliberately: `control.tenant_hostnames` has a `tenant_id` column but is
 /// itself genuinely global platform config (which hostname maps to which tenant) — same category
 /// as `control.tenants` itself, never copied per-tenant. `metadata.outbox_events` has no
 /// `tenant_id` column at all — one shared table, drained by one `outbox-publisher` regardless of
-/// tenant, correct as-is.
+/// tenant, correct as-is. `metadata.records` no longer exists at all (the shared generic table
+/// every entity used before table-per-entity — see
+/// `crates/migrations/0033_drop_records_table.sql`), so it was removed from this list rather
+/// than left to fail `create_tenant_schema`'s `CREATE TABLE (LIKE ...)` against a table that no
+/// longer exists.
 const TENANT_SCOPED_TABLES: &[(&str, &str)] = &[
     ("metadata", "dashboard_configs"),
     ("metadata", "policies"),
@@ -39,7 +43,6 @@ const TENANT_SCOPED_TABLES: &[(&str, &str)] = &[
     ("metadata", "users"),
     ("metadata", "workflow_events"),
     ("metadata", "attachments"),
-    ("metadata", "records"),
     // These 3 have FKs to each other (below) — created last, in dependency order, so
     // `create_tenant_schema` can add the FK constraints in one pass right after this loop
     // without needing a second topological sort at runtime.

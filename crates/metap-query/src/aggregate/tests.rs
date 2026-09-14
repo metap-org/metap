@@ -106,13 +106,15 @@ fn field(
     }
 }
 
-/// Shared-table entity (`table_name: "records"`) — the common case. `status`/`action`/`bytes`
-/// cover the enum/indexed-string/numeric cases the tests below exercise.
+/// An entity whose fields all have `storage: None` (no field promoted to a real physical
+/// column) — the common case, exercised by most tests below. `status`/`action`/`bytes` cover the
+/// enum/indexed-string/numeric cases the tests below exercise; every one falls back to the
+/// `data` JSONB path (`value_expression`) regardless of table.
 fn shared_entity() -> EntityDefinition {
     EntityDefinition {
         name: "waf.security_events".to_string(),
         label: "Security Event".to_string(),
-        table_name: "records".to_string(),
+        table_name: "entities.waf_security_events".to_string(),
         fields: vec![
             field("zoneId", FieldKind::String, true, false, false, None),
             field(
@@ -143,8 +145,7 @@ fn shared_entity() -> EntityDefinition {
     }
 }
 
-/// A dedicated-table (table-per-entity) entity with a workflow, so `status`'s always-groupable
-/// carve-out and the dedicated-table column path both have coverage.
+/// An entity with a workflow, so `status`'s always-groupable carve-out has coverage.
 fn dedicated_entity() -> EntityDefinition {
     EntityDefinition {
         name: "waf.scan_jobs".to_string(),
@@ -209,16 +210,15 @@ fn plain_count_scopes_tenant_and_excludes_deleted() {
 
     assert!(planned.sql.contains("count(*)"), "sql: {}", planned.sql);
     assert!(planned.sql.contains("tenant_id = $1"), "sql: {}", planned.sql);
-    assert!(planned.sql.contains("entity = $2"), "sql: {}", planned.sql);
     assert!(planned.sql.contains("deleted = false"), "sql: {}", planned.sql);
     assert!(planned.sql.starts_with("SELECT to_jsonb(agg) AS row FROM (SELECT"));
-    // tenant_id (Uuid) + entity name (Text) — no group-by, no filters, no metric field.
-    assert_eq!(planned.params.len(), 2);
+    // Only tenant_id — no group-by, no filters, no metric field.
+    assert_eq!(planned.params.len(), 1);
     assert!(matches!(planned.params[0], BindValue::Uuid(id) if id == tenant_id));
 }
 
 #[test]
-fn dedicated_table_has_no_entity_discriminator_column() {
+fn every_entity_table_has_no_entity_discriminator_column() {
     let registry = registry_with(vec![dedicated_entity()]);
     let permissions = permissions();
     let ctx = context(Uuid::new_v4());
@@ -228,7 +228,7 @@ fn dedicated_table_has_no_entity_discriminator_column() {
 
     assert!(planned.sql.contains("entities.waf_scan_jobs"), "sql: {}", planned.sql);
     assert!(!planned.sql.contains("entity = "), "sql: {}", planned.sql);
-    // Only tenant_id — a dedicated table needs no `entity` filter.
+    // Only tenant_id — every entity's own table needs no `entity` filter.
     assert_eq!(planned.params.len(), 1);
 }
 

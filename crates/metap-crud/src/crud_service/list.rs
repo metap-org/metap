@@ -8,8 +8,7 @@ use crate::dto::RecordDto;
 use crate::result::{PageInfo, ServiceResult};
 
 use super::helpers::{
-    forbidden, is_dedicated, mask_record_for_read, router_unavailable, row_to_dto, row_to_dto_dedicated,
-    sort_field_value, RECORD_COLUMNS, RECORD_COLUMNS_DEDICATED,
+    forbidden, mask_record_for_read, router_unavailable, row_to_dto, sort_field_value, RECORD_COLUMNS,
 };
 use super::CrudService;
 
@@ -73,15 +72,9 @@ impl CrudService {
             }
         };
 
-        let dedicated = is_dedicated(&entity);
         let table = &entity.table_name;
-        let columns = if dedicated {
-            RECORD_COLUMNS_DEDICATED
-        } else {
-            RECORD_COLUMNS
-        };
         let sql = format!(
-            "SELECT {columns} FROM {table} WHERE {} ORDER BY {} LIMIT {}",
+            "SELECT {RECORD_COLUMNS} FROM {table} WHERE {} ORDER BY {} LIMIT {}",
             planned.where_sql,
             planned.order_by_sql,
             planned.limit + 1
@@ -106,13 +99,7 @@ impl CrudService {
         };
         let page_dtos: Vec<RecordDto> = page_rows
             .into_iter()
-            .map(|row| {
-                if dedicated {
-                    row_to_dto_dedicated(row, &entity.name)
-                } else {
-                    row_to_dto(row)
-                }
-            })
+            .map(|row| row_to_dto(row, &entity.name))
             .collect::<anyhow::Result<_>>()?;
 
         let next_cursor = if has_more {

@@ -13,7 +13,7 @@ fn def(name: &str, fields: Vec<EntityField>) -> EntityDefinition {
     EntityDefinition {
         name: name.to_string(),
         label: name.to_string(),
-        table_name: "records".to_string(),
+        table_name: format!("entities.{}", name.replace('.', "_")),
         fields,
         list_views: vec![],
         workflow: None,

@@ -216,11 +216,11 @@ async fn connect_one_upstream(
             name: entity.name,
             label: entity.label,
             // Never actually read: this gateway has no `CrudService`/`metap-reconciler` to
-            // consult `table_name` against a real database. "records" is the one literal
-            // `MetadataCompiler::validate` always accepts regardless of what physical table
-            // (if any) the name would otherwise imply — confirmed via `compiler.rs`'s
-            // `table_name_ok` check — so it's a safe placeholder here.
-            table_name: "records".to_string(),
+            // consult `table_name` against a real database. Just needs to pass
+            // `MetadataCompiler::validate`'s `table_name_ok` shape check
+            // (`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`) — the upstream's own real table already
+            // backs this entity, this gateway never queries it directly.
+            table_name: "metadata.gateway_unused_placeholder".to_string(),
             fields: entity.fields,
             list_views: vec![],
             workflow: entity.workflow,
