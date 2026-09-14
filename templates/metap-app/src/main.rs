@@ -1,118 +1,29 @@
-//! Boot sequence for {{project-name}}: register entities, validate references, drift check,
-//! index reconcile, serve. Everything here comes from `metap::prelude` — see
-//! `example_entity.rs` for a starting point to replace with your own entity, and
-//! `metap`'s own doc comment (`crates/metap/src/lib.rs` in the metap repo) for what else
-//! is reachable through its namespaced modules (`metap::query`, `metap::workflow`, etc.).
+//! Boot sequence for {{project-name}}: `MetapApp` connects to Postgres, registers/reconciles
+//! entities, and serves — see `example_entity.rs` for a starting point to replace with your own
+//! entity, and `metap`'s own doc comment (`crates/metap/src/lib.rs` in the metap repo) for what
+//! else is reachable through its namespaced modules (`metap::query`, `metap::workflow`, etc.).
 //!
 //! Reads config from the environment (or a `.env` file in the current directory — see
 //! `.env.example`). Run from this directory so that resolves the way you expect.
 
 mod example_entity;
 
-use std::sync::Arc;
-
-use arc_swap::ArcSwap;
-use axum::Router;
 use metap::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = load_config()?;
-
-    // `bootstrap_platform` (`metap-app`) connects to Postgres, builds the tenant `Router` (with
-    // whichever `SecretStore` backend is configured), `PermissionService`, and the JWT keypair —
-    // see that crate's own doc comment for the full recipe, and for how to write a custom
-    // route/handler beyond entity declaration (tenant-scoped DB access, permission-aware
-    // handlers, publish/subscribe events).
-    let PlatformParts {
-        pool,
-        router,
-        permissions,
-        decoding_key,
-        private_key_pem,
-    } = bootstrap_platform(&config).await?;
-
-    // Auto-discovered via `submit_entity!` — `example_entity.rs` registers itself with its own
-    // `submit_entity!(example_entity)` call; a new entity module does the same instead of
-    // getting listed here by hand.
-    let mut registry = MetadataRegistry::new();
-    registry.register_all_submitted()?;
-    registry.validate_references()?;
-    let metadata_base = Arc::new(registry);
-
-    // Every code-authored entity here is on a dedicated table in its own schema (the standard
-    // pattern — see `example_entity.rs`'s own comment), so it needs a real DDL reconcile at
-    // boot, same as `../metap-demo-waf`/`../metap-demo-crm`/`../metap-demo-jira`. Listed by the
-    // entity-constructor function directly (not via the registry's `list_entities()`, which
-    // returns the lighter `EntitySummary` shape `check_metadata_drift`/`reconcile_indexes` below
-    // use, not the full `EntityDefinition` this needs) — a second entity referencing this one via
-    // `Reference` must be added *after* it here, since order is load-bearing (its FK is compiled
-    // straight into the referencing table's DDL). Creates the schema/table on first boot,
-    // no-ops (`ops_applied: 0`) on every boot after. `PLATFORM_TENANT_ID` is a sentinel here, not
-    // a real tenant — this DDL isn't itself tenant-scoped (only the rows written into the
-    // resulting table are, via `tenant_id`).
-    for entity in [example_entity::example_entity()] {
-        let outcome =
-            metap::reconciler::reconcile(&pool, metap::control::PLATFORM_TENANT_ID, &entity, &[]).await?;
-        eprintln!(
-            "[{{project-name}}] reconciled {} -> {} (ops_applied={})",
-            entity.name, outcome.table, outcome.ops_applied
-        );
-    }
-
-    let entities = metadata_base.list_entities();
-    check_metadata_drift(&pool, &entities).await;
-    reconcile_indexes(&pool, &entities).await;
-
-    let metadata = Arc::new(ArcSwap::new(metadata_base.clone()));
-
-    let state = AppState::new(
-        pool,
-        metadata_base,
-        metadata,
-        permissions,
-        decoding_key,
-        private_key_pem,
-        router,
-    );
-    // `Router::new()` — this template doesn't wire in `metap-lowcode-http`'s DB-authored
-    // entity control plane by default; a single code-authored `example_entity` is the
-    // starting point. `metap-lowcode-http` lives in the separate `../metap-lowcode` repo, not
-    // behind the `metap` facade (see that facade's own doc comment for why) — add it as its own
-    // `path = "../metap-lowcode/crates/metap-lowcode-http"` dependency (same convention
-    // `../metap-demo-crm/Cargo.toml` uses) and pass `metap_lowcode_http::router()` here instead
-    // if you want that surface.
-    //
-    // Same opt-in shape for two more optional transports on top of REST, neither wired by
-    // default here:
-    // - GraphQL: add `metap-graphql-http` as a dependency and merge
-    //   `metap::graphql_http::router(&state, metap::graphql::SchemaLimits::default())?` into
-    //   the `extra_routes` argument below (same as `lowcode_http::router()` above) — mounts
-    //   `POST /graphql`, a schema generated from this binary's own `MetadataRegistry`.
-    // - gRPC: add `metap-grpc` as a dependency and spawn `metap::grpc::serve(grpc_addr,
-    //   metap::grpc::GrpcRecordService::new(state.crud.clone(), auth_config), tls_config)` in
-    //   its own `tokio::spawn` alongside the `metap::runtime::serve::run` call below — a second
-    //   port, not merged into this router (see that crate's `serve` doc comment for why).
-    // Load fleet-wide tunables (GraphQL limits, rate limit, session TTL) from `platform_configs`
-    // before building the router, since the rate-limit layer reads them once here. Skipping this
-    // is safe — every key falls back to the same default the platform used before the table
-    // existed — but then `PUT /platform/config` has no effect on this process.
-    state.config.reload().await?;
-
-    let router = build_router(state, &config.cors_origins, Router::new());
-
-    let addr = format!("{}:{}", config.host, config.port);
-    eprintln!("[{{project-name}}] listening on http://{addr}");
-
-    // `metap::runtime::serve::run` binds the listener, serves, and waits for Ctrl+C/SIGTERM —
-    // `build_router`'s rate-limit layer keys on peer IP via `ConnectInfo<SocketAddr>`, so plain
-    // `into_make_service()` wouldn't populate that extension and every request would fail
-    // rate-limit key extraction.
-    metap::runtime::serve::run(
-        &addr,
-        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await?;
-
-    Ok(())
+    // `MetapApp` (`metap-app` crate) replaces what used to be ~100 lines of hand-wired
+    // boilerplate here: `bootstrap_platform` (Postgres pool, tenant `Router`, `PermissionService`,
+    // JWT keypair), entity registration + reconcile (in the given order — load-bearing whenever a
+    // second entity references this one via `Reference`) + metadata-drift/index-reconcile checks,
+    // `AppState::new`'s 7 positional parameters, and bind+serve. See `MetapApp`'s own doc comment
+    // for the opt-in pieces this template doesn't use (`.with_audit()`, `.with_jwks[_publish]()`,
+    // `.with_grpc(port)`, `.with_extra_routes(...)` for mounting `metap-lowcode-http`/
+    // `metap-graphql-http`/a custom router, `.with_state_middleware(...)`).
+    MetapApp::bootstrap(load_config()?)
+        .await?
+        .with_entities(vec![example_entity::example_entity()])
+        .await?
+        .serve()
+        .await
 }

@@ -1,11 +1,17 @@
 //! Starting point — replace this with your own entity. For a fuller real-world example
 //! (more field kinds, a guarded transition, list-view filters), see
 //! `../metap-demo-crm/src/entities/customer_entity.rs` in the metap repo.
+//!
+//! `main.rs` passes `example_entity()` straight into `MetapApp::with_entities(vec![...])` — no
+//! `submit_entity!` auto-discovery here, since `with_entities` needs an explicit, ordered `Vec`
+//! anyway (reconcile order is load-bearing once a second entity references this one via
+//! `Reference`) and a second registration mechanism on top would just be two sources of truth for
+//! the same list. A service with no FK-order to preserve can use `submit_entity!` +
+//! `MetapApp::with_submitted_entities()` instead — see that method's own doc comment.
 
 use metap::permission::{ConditionOp, PolicyValue};
 use metap::prelude::{
-    submit_entity, EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, PolicyCondition,
-    WorkflowTransition,
+    EntityDefinition, EntityField, EntityListView, EntityWorkflow, FieldKind, PolicyCondition, WorkflowTransition,
 };
 
 fn field(name: &str, label: &str, kind: FieldKind) -> EntityField {
@@ -78,14 +84,15 @@ pub fn example_entity() -> EntityDefinition {
                 guard: Some(PolicyCondition::Attribute {
                     attribute: "title".to_string(),
                     op: ConditionOp::Neq,
-                    value: PolicyValue::Literal { literal: serde_json::json!("") },
+                    value: PolicyValue::Literal {
+                        literal: serde_json::json!(""),
+                    },
                 }),
                 validator: None,
                 set_fields: None,
             }],
         }),
         unique_constraints: vec![],
+        audit: None,
     }
 }
-
-submit_entity!(example_entity);

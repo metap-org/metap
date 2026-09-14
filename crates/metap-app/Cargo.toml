@@ -4,15 +4,27 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+metap-audit = { path = "../metap-audit" }
 metap-cache = { path = "../metap-cache", features = ["redis-backend"] }
 metap-control = { path = "../metap-control" }
+metap-crud = { path = "../metap-crud" }
+metap-grpc = { path = "../metap-grpc" }
+metap-http = { path = "../metap-http" }
 metap-infra = { path = "../metap-infra" }
+metap-jwks = { path = "../metap-jwks" }
+metap-jwks-http = { path = "../metap-jwks-http" }
 metap-metadata = { path = "../metap-metadata" }
+metap-peripherals = { path = "../metap-peripherals" }
 metap-permission = { path = "../metap-permission" }
+metap-reconciler = { path = "../metap-reconciler" }
+metap-runtime = { path = "../metap-runtime" }
 anyhow.workspace = true
+arc-swap.workspace = true
+axum.workspace = true
 jsonwebtoken.workspace = true
 serde_norway.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing.workspace = true
 
 [dev-dependencies]

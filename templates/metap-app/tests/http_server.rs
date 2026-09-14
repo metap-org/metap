@@ -40,7 +40,10 @@ fn openssl_genrsa(dir: &std::path::Path) -> (String, String) {
         .expect("openssl rsa -pubout must run for this e2e test");
     assert!(status.success());
 
-    (std::fs::read_to_string(private_path).unwrap(), std::fs::read_to_string(public_path).unwrap())
+    (
+        std::fs::read_to_string(private_path).unwrap(),
+        std::fs::read_to_string(public_path).unwrap(),
+    )
 }
 
 #[derive(Serialize)]
@@ -65,7 +68,10 @@ fn test_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.tasks".to_string(),
         label: "Task".to_string(),
-        table_name: "records".to_string(),
+        // Dedicated table, same convention as `src/example_entity.rs` — the shared `records`
+        // table this used to point at no longer exists at all (`crates/migrations/
+        // 0033_drop_records_table.sql` in the metap repo).
+        table_name: metap::reconciler::qualified_table_name_in("test.tasks", "metap_app_test"),
         fields: vec![EntityField {
             name: "title".to_string(),
             label: "Title".to_string(),
@@ -79,12 +85,12 @@ fn test_entity() -> EntityDefinition {
             searchable: None,
             search_mode: None,
             sortable: Some(true),
-        min: None,
-        max: None,
-        min_length: None,
-        max_length: None,
-        storage: None,
-        computed: None,
+            min: None,
+            max: None,
+            min_length: None,
+            max_length: None,
+            storage: None,
+            computed: None,
         }],
         list_views: vec![EntityListView {
             name: "default".to_string(),
@@ -97,12 +103,17 @@ fn test_entity() -> EntityDefinition {
         }],
         workflow: None,
         unique_constraints: vec![],
+        audit: None,
     }
 }
 
 async fn connect() -> PgPool {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-    PgPoolOptions::new().max_connections(5).connect(&database_url).await.unwrap()
+    PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -117,8 +128,13 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     let (private_pem, public_pem) = openssl_genrsa(&keydir);
     let token = mint_token(&private_pem, tenant_id, user_id);
 
+    let entity = test_entity();
+    metap::reconciler::reconcile(&pool, metap::control::PLATFORM_TENANT_ID, &entity, &[])
+        .await
+        .unwrap();
+
     let mut registry = MetadataRegistry::new();
-    registry.register(test_entity()).unwrap();
+    registry.register(entity).unwrap();
     let registry = Arc::new(registry);
     let tenant_registry = Arc::new(metap::control::PostgresTenantRegistry::new(pool.clone()));
     let test_router = metap::control::Router::new(
@@ -143,9 +159,12 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         // The rate-limit layer inside `build_router` needs `ConnectInfo<SocketAddr>`.
-        axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>())
-            .await
-            .unwrap();
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let base = format!("http://{addr}");
     let client = reqwest::Client::new();
@@ -167,10 +186,21 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     let created: serde_json::Value = create_res.json().await.unwrap();
     let id = created["data"]["id"].as_str().unwrap().to_string();
 
-    let get_res =
-        client.get(format!("{base}/api/test.tasks/{id}")).bearer_auth(&token).send().await.unwrap();
+    let get_res = client
+        .get(format!("{base}/api/test.tasks/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(get_res.status(), 200);
 
-    sqlx::query("DELETE FROM records WHERE tenant_id = $1").bind(tenant_id).execute(&pool).await.ok();
+    sqlx::query(&format!(
+        "DELETE FROM {} WHERE tenant_id = $1",
+        test_entity().table_name
+    ))
+    .bind(tenant_id)
+    .execute(&pool)
+    .await
+    .ok();
     std::fs::remove_dir_all(&keydir).ok();
 }

@@ -1,4 +1,4 @@
-use metap_infra::{load_config, RabbitEventBus};
+use metap_infra::load_config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -11,12 +11,8 @@ async fn main() -> anyhow::Result<()> {
         "ready, listening"
     );
 
-    let url = config.rabbitmq_url.clone();
     notification_worker::run(
-        move || {
-            let url = url.clone();
-            async move { RabbitEventBus::connect(&url).await }
-        },
+        metap_infra::rabbitmq_connector(config.rabbitmq_url.clone()),
         metap_runtime::shutdown::signal(),
     )
     .await?;

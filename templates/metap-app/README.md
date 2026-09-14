@@ -39,13 +39,15 @@ public, no token needed.
 `src/example_entity.rs`'s pattern is the standard one: a dedicated table in its own schema
 (`metap::reconciler::qualified_table_name_in("your.entity", "your_app_schema")`, not the shared
 `records` table), reconciled at boot. **A dedicated table doesn't create itself** — `src/main.rs`
-has a loop (`for entity in [example_entity::example_entity()]`) that calls `reconcile()` for every
-such entity before the server starts serving; add your new entity's constructor to that same
-array, in the array (not a separate loop) so ordering stays explicit. Order matters when one
-entity's `Reference` field points at another — the referenced entity must come first, since its
-FK is compiled straight into the referencing table's DDL at reconcile time. Forgetting to add an
-entity here doesn't fail loudly: the entity registers fine and shows up in `/metadata/openapi.json`,
-but every request against it 500s because the table was never created.
+passes every entity into `MetapApp::with_entities(vec![example_entity::example_entity(), ...])`,
+which registers and reconciles them in that same order before the server starts serving; add your
+new entity's constructor to that same `vec![...]`, in the vec (not a separate call) so ordering
+stays explicit. Order matters when one entity's `Reference` field points at another — the
+referenced entity must come first, since its FK is compiled straight into the referencing table's
+DDL at reconcile time. Forgetting to add an entity here doesn't fail loudly: the entity never
+registers at all, and every request against it 404s (unknown entity) rather than 500ing — see
+`MetapApp::with_entities`'s own doc comment for why this differs from `with_submitted_entities()`
+(`submit_entity!` auto-discovery, correct only when reconcile order doesn't matter).
 
 ## Test
 
@@ -69,16 +71,21 @@ No secrets are baked into the image — see the `Dockerfile`'s own comments.
 
 ## Writing a custom route/handler beyond entity declaration
 
-Not every feature fits the metadata-driven entity model. `src/main.rs`'s `PlatformParts` (from
-`metap::app::bootstrap_platform`, re-exported at `metap::prelude`) gives you a tenant-aware
-`Router` and `PermissionService` you can build a real hand-written handler on:
-- Mount a custom `axum::Router<AppState>` via `build_router`'s `extra_routes` argument.
+Not every feature fits the metadata-driven entity model. `MetapApp::with_extra_routes(routes)`
+(`metap::prelude::MetapApp`, built on top of `metap::app::bootstrap_platform`'s `PlatformParts` —
+call that directly instead of `MetapApp` if you want the tenant-aware `Router`/`PermissionService`
+without the rest of the builder) merges a hand-written `axum::Router<AppState>` into the one
+`serve()` builds:
+- Mount a custom `axum::Router<AppState>` via `.with_extra_routes(routes::router())`.
 - Resolve the caller's tenant-scoped `PgPool` with `state.router.pool_for(tenant_id)` — never a
   bare pool.
 - Extract `metap::http::{AuthContext, AdminContext}` in the handler signature for a
   permission-aware route — no separate middleware needed.
 - Publish an event with `metap::infra::outbox::enqueue(executor, &event)` in the same
   transaction as your write; `metap::infra::EventBus::subscribe` reads them back.
+- Need a real `AppState` value inside a middleware layer (not just a handler extractor)? Use
+  `.with_state_middleware(|router, state| router.layer(...))` instead — see that method's own doc
+  comment.
 
 See `metap-lowcode-http` in the `metap` repo's sibling `metap-lowcode` repo for a full working
 example of this exact pattern, not just a hypothetical.

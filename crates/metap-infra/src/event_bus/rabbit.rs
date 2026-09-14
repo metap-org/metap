@@ -43,6 +43,23 @@ impl RabbitEventBus {
     }
 }
 
+/// The `move || { let url = url.clone(); async move { RabbitEventBus::connect(&url).await } }`
+/// closure, found copy-pasted near-identically 4 times (`outbox-publisher`, `notification-worker`,
+/// `cron-scheduler` x2) — every one of `outbox_publisher::run`/`notification_worker::run`/
+/// `cron_scheduler`'s own consumer loops takes a `Fn() -> Fut` reconnect closure rather than an
+/// already-connected bus, specifically so a RabbitMQ blip mid-run can reconnect with backoff
+/// instead of dying. Boxes the future rather than returning a second `impl Trait` layer, since
+/// this only ever runs on a reconnect-with-backoff path (at most once every few seconds), not a
+/// hot path where the extra allocation would matter.
+pub fn rabbitmq_connector(
+    url: String,
+) -> impl Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<RabbitEventBus>> + Send>> + Clone {
+    move || {
+        let url = url.clone();
+        Box::pin(async move { RabbitEventBus::connect(&url).await })
+    }
+}
+
 #[async_trait]
 impl EventBus for RabbitEventBus {
     async fn publish(&self, topic: &str, payload: &serde_json::Value) -> anyhow::Result<()> {
