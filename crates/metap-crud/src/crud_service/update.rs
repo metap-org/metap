@@ -8,9 +8,8 @@ use crate::result::ServiceResult;
 use crate::validation::validate_payload;
 
 use super::helpers::{
-    fetch_existing, forbidden, forbidden_with_field, is_dedicated, mask_record_for_read, parse_user_id,
-    recompute_fields, router_unavailable, row_to_dto, row_to_dto_dedicated, unique_violation, RECORD_COLUMNS,
-    RECORD_COLUMNS_DEDICATED,
+    fetch_existing, forbidden, forbidden_with_field, mask_record_for_read, parse_user_id, recompute_fields,
+    router_unavailable, row_to_dto, unique_violation, RECORD_COLUMNS,
 };
 use super::CrudService;
 
@@ -107,31 +106,22 @@ impl CrudService {
                 return Err(e);
             }
         };
-        let dedicated = is_dedicated(&entity);
         let table = &entity.table_name;
-        let update_sql = if dedicated {
-            format!(
-                "UPDATE {table} SET data = $1, code = $2, version = version + 1, updated_at = now(), updated_by = $3 \
-                 WHERE id = $4 AND tenant_id = $5 AND version = $6 AND deleted = false \
-                 RETURNING {RECORD_COLUMNS_DEDICATED}"
-            )
-        } else {
-            format!(
-                "UPDATE {table} SET data = $1, code = $2, version = version + 1, updated_at = now(), updated_by = $3 \
-                 WHERE id = $4 AND tenant_id = $5 AND entity = $6 AND version = $7 AND deleted = false \
-                 RETURNING {RECORD_COLUMNS}"
-            )
-        };
-        let mut query = sqlx::query(&update_sql)
+        let update_sql = format!(
+            "UPDATE {table} SET data = $1, code = $2, version = version + 1, updated_at = now(), updated_by = $3 \
+             WHERE id = $4 AND tenant_id = $5 AND version = $6 AND deleted = false \
+             RETURNING {RECORD_COLUMNS}"
+        );
+        let row = match sqlx::query(&update_sql)
             .bind(Value::Object(data.clone()))
             .bind(&code)
             .bind(user_id)
             .bind(id)
-            .bind(tenant_id);
-        if !dedicated {
-            query = query.bind(&entity.name);
-        }
-        let row = match query.bind(expected_version).fetch_optional(&mut *tx).await {
+            .bind(tenant_id)
+            .bind(expected_version)
+            .fetch_optional(&mut *tx)
+            .await
+        {
             Ok(row) => row,
             Err(e) => {
                 if let Some(result) = unique_violation(&entity, &e) {
@@ -153,11 +143,7 @@ impl CrudService {
             );
             return Ok(ServiceResult::err(409, "version_conflict"));
         };
-        let record = if dedicated {
-            row_to_dto_dedicated(row, &entity.name)?
-        } else {
-            row_to_dto(row)?
-        };
+        let record = row_to_dto(row, &entity.name)?;
 
         emit_updated(&mut *tx, &entity, tenant_id, record.id, &data, record.version).await?;
         tx.commit().await?;

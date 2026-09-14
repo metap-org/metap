@@ -111,16 +111,15 @@ impl SortColType {
     }
 }
 
-/// `field_def`/`dedicated_table` let a table-per-entity field with a real physical column
-/// (`field_has_real_column`, `crates/metap-metadata/src/entity.rs`) resolve to that column
-/// directly instead of the `jsonb_extract_path_text(data, ...)` fallback every field on the
-/// shared `records` table uses. Only `Reference`/`Id` fields (the only kinds with a real column,
-/// per `compile.rs`) get `SortColType::Uuid` — everything else promoted to a real column is
-/// still a text-typed column, same cast behavior as the JSONB fallback.
+/// `field_def` lets a field with a real physical column (`field_has_real_column`,
+/// `crates/metap-metadata/src/entity.rs`) resolve to that column directly instead of the
+/// `jsonb_extract_path_text(data, ...)` fallback every other field uses. Only `Reference`/`Id`
+/// fields (the only kinds with a real column, per `compile.rs`) get `SortColType::Uuid` —
+/// everything else promoted to a real column is still a text-typed column, same cast behavior as
+/// the JSONB fallback.
 fn sort_field_expression(
     field_name: &str,
     field_def: Option<&EntityField>,
-    dedicated_table: bool,
     params: &mut ParamBuilder,
 ) -> (String, SortColType) {
     match field_name {
@@ -128,19 +127,17 @@ fn sort_field_expression(
         "updatedAt" => return ("updated_at".to_string(), SortColType::Timestamptz),
         _ => {}
     }
-    if dedicated_table {
-        if let Some(field) = field_def {
-            if field_has_real_column(field) {
-                let col_type = if matches!(
-                    field.kind,
-                    metap_metadata::FieldKind::Reference | metap_metadata::FieldKind::Id
-                ) {
-                    SortColType::Uuid
-                } else {
-                    SortColType::Text
-                };
-                return (format!("\"{}\"", field.name), col_type);
-            }
+    if let Some(field) = field_def {
+        if field_has_real_column(field) {
+            let col_type = if matches!(
+                field.kind,
+                metap_metadata::FieldKind::Reference | metap_metadata::FieldKind::Id
+            ) {
+                SortColType::Uuid
+            } else {
+                SortColType::Text
+            };
+            return (format!("\"{}\"", field.name), col_type);
         }
     }
     let ph = params.push(BindValue::Text(field_name.to_string()));
@@ -232,17 +229,7 @@ pub fn plan_list(
     let mut params = ParamBuilder::new();
     let mut conditions: Vec<String> = Vec::new();
 
-    let dedicated_table = entity.table_name != "records";
-
     conditions.push(format!("tenant_id = {}", params.push(BindValue::Uuid(tenant_id))));
-    if !dedicated_table {
-        // A dedicated per-entity table (`table_name != "records"`) has no `entity` discriminator
-        // column — one table already means one entity, nothing to filter by.
-        conditions.push(format!(
-            "entity = {}",
-            params.push(BindValue::Text(entity.name.clone()))
-        ));
-    }
     conditions.push("deleted = false".to_string());
 
     if let Some(record_condition) = record_policy_where_clause(record_read_policies, context, &mut params)? {
@@ -266,8 +253,7 @@ pub fn plan_list(
         }
 
         let field_def = fields_by_name.get(field.as_str());
-        let (field_expr, field_col_type) =
-            sort_field_expression(field, field_def.copied(), dedicated_table, &mut params);
+        let (field_expr, field_col_type) = sort_field_expression(field, field_def.copied(), &mut params);
 
         let is_fts =
             field_def.is_some_and(|f| f.searchable.unwrap_or(false) && f.search_mode.as_deref() == Some("fts"));
@@ -307,7 +293,7 @@ pub fn plan_list(
     }
 
     let jql_order = if let Some(jql) = input.jql.as_deref() {
-        let (where_sql, order) = crate::jql::parse_and_compile_jql(jql, entity, dedicated_table, &mut params)?;
+        let (where_sql, order) = crate::jql::parse_and_compile_jql(jql, entity, &mut params)?;
         if let Some(where_sql) = where_sql {
             conditions.push(where_sql);
         }
@@ -349,12 +335,7 @@ pub fn plan_list(
         });
 
     let sort_field_def = fields_by_name.get(resolved_sort.field.as_str());
-    let (sort_expr, sort_col_type) = sort_field_expression(
-        &resolved_sort.field,
-        sort_field_def.copied(),
-        dedicated_table,
-        &mut params,
-    );
+    let (sort_expr, sort_col_type) = sort_field_expression(&resolved_sort.field, sort_field_def.copied(), &mut params);
 
     if let Some(raw_cursor) = &input.cursor {
         let cursor = decode_cursor(raw_cursor).ok_or_else(|| {

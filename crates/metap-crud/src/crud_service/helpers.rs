@@ -17,15 +17,10 @@ use uuid::Uuid;
 use crate::dto::{JsonObject, RecordCapabilities, RecordDto, TransitionAvailability};
 use crate::result::ServiceResult;
 
-pub(crate) const RECORD_COLUMNS: &str = "id, entity, code, status, data, version, created_at, updated_at";
-/// Same shape minus `entity` — a table-per-entity table (`table_name != "records"`) has no
-/// discriminator column, one table already means one entity. `row_to_dto_dedicated` fills
-/// `RecordDto.entity` in from the already-known entity name instead.
-pub(crate) const RECORD_COLUMNS_DEDICATED: &str = "id, code, status, data, version, created_at, updated_at";
-
-pub(crate) fn is_dedicated(entity: &EntityDefinition) -> bool {
-    entity.table_name != "records"
-}
+/// Every entity is a dedicated table-per-entity table — one table already means one entity, so
+/// there is no `entity` discriminator column to select. `row_to_dto` fills `RecordDto.entity` in
+/// from the already-known entity name instead.
+pub(crate) const RECORD_COLUMNS: &str = "id, code, status, data, version, created_at, updated_at";
 
 /// Fills in every `computed` field's value from the rest of `data` — see
 /// `docs/features/13-computed-derived-field.md`. Called from `create`/`update` after
@@ -84,18 +79,17 @@ pub(crate) fn forbidden_with_field<T>(decision: PermissionDecision) -> ServiceRe
 /// fallback still applies.
 ///
 /// The field-name extraction has to reverse-engineer the violated constraint's identity from
-/// its bare DB name, which comes from two different naming schemes depending on where the field
-/// lives (`is_dedicated`): the shared `records` table's `uniq_records_<entity>_<field>`
-/// (`metap-peripherals::index_reconciler::ensure_index`) or a dedicated table's
-/// `uniq_<table>_<field>`/`uniq_<table>_<field1>_<field2>_...` (`metap_reconciler::compile()`'s
-/// single- and composite-field naming — no `records_` in the middle). Found live, 2026-09-07: a
-/// `waf.ddos_policies` create returned only `{"code":"unique_violation"}` to the browser, no
-/// field/table at all, because this function only ever tried the `records` prefix — every
-/// dedicated-table entity's violation silently fell through to the generic branch. Takes the
-/// full `EntityDefinition` (not just the name) to pick the right prefix via `is_dedicated`, and
-/// to try `entity.unique_constraints` by exact recomputed name *before* falling back to a plain
-/// `strip_prefix` (which alone can't tell a composite constraint's joined field names apart from
-/// one field literally named that way).
+/// its bare DB name: every entity's dedicated table names its unique index/constraint
+/// `uniq_<table>_<field>`/`uniq_<table>_<field1>_<field2>_...`
+/// (`metap_reconciler::compile()`'s single- and composite-field naming). Found live, 2026-09-07,
+/// back when a shared generic `records` table still existed alongside dedicated ones (since
+/// removed — see `crates/migrations/0033_drop_records_table.sql`): a `waf.ddos_policies` create
+/// returned only `{"code":"unique_violation"}` to the browser, no field/table at all, because
+/// this function only ever tried the `records`-shaped prefix — every dedicated-table entity's
+/// violation silently fell through to the generic branch. Takes the full `EntityDefinition` (not
+/// just the name) to try `entity.unique_constraints` by exact recomputed name *before* falling
+/// back to a plain `strip_prefix` (which alone can't tell a composite constraint's joined field
+/// names apart from one field literally named that way).
 fn unnamed_unique_violation<T>(entity: &EntityDefinition) -> ServiceResult<T> {
     ServiceResult::err_with_message(
         409,
@@ -104,8 +98,7 @@ fn unnamed_unique_violation<T>(entity: &EntityDefinition) -> ServiceResult<T> {
     )
 }
 
-/// `prefix` is already `uniq_records_<entity>_`/`uniq_<table>_` (the caller's own
-/// `is_dedicated`-picked one) — this just joins the constraint's field names onto it, matching
+/// `prefix` is already `uniq_<table>_` — this just joins the constraint's field names onto it, matching
 /// `metap_reconciler::compile::composite_unique_index_name`'s naming exactly for any name that
 /// didn't need that function's 63-byte truncate-with-hash fallback (see `unique_violation`'s doc
 /// comment for why that fallback isn't reproduced here too).
@@ -125,11 +118,7 @@ pub(crate) fn unique_violation<T>(entity: &EntityDefinition, error: &sqlx::Error
     };
 
     let mangled = entity.name.replace('.', "_");
-    let prefix = if is_dedicated(entity) {
-        format!("uniq_{mangled}_")
-    } else {
-        format!("uniq_records_{mangled}_")
-    };
+    let prefix = format!("uniq_{mangled}_");
 
     // Composite constraints first — exact-name match against what `compile()` would have built
     // (`metap_reconciler::compile::composite_unique_index_name`, duplicated here rather than
@@ -210,8 +199,9 @@ pub(crate) fn referencing_fields(metadata: &MetadataRegistry, target_entity: &st
             if field.kind == FieldKind::Reference && field.ref_entity.as_deref() == Some(target_entity) {
                 let ref_table = metadata
                     .get_entity(&summary.name)
-                    .map(|e| e.table_name.clone())
-                    .unwrap_or_else(|| "records".to_string());
+                    .expect("list_entities()'s own summaries always resolve back via get_entity()")
+                    .table_name
+                    .clone();
                 result.push(ReferencingField {
                     ref_entity: summary.name.clone(),
                     ref_field: field.name.clone(),
@@ -252,12 +242,11 @@ const MAX_REFERENCING_HITS: i64 = 50;
 /// of discovering blockers one delete attempt at a time (found live, 2026-09-08, after a user
 /// hit this on the WAF portal and asked for more context than a single field name).
 ///
-/// A dedicated table holds exactly one entity's rows, so every `ReferencingField` grouped under
-/// it shares the same `ref_entity` — no `entity` column to read back, unlike the `records` group.
-/// If the same entity has two different fields both pointing at the target (rare), every matching
-/// row in that table is attributed to the group's first field — same tolerance the original
-/// single-hit version already had for the analogous case, now applied per row instead of
-/// per query.
+/// Every entity's own dedicated table holds exactly one entity's rows, so every `ReferencingField`
+/// grouped under it shares the same `ref_entity` — no `entity` column to read back. If the same
+/// entity has two different fields both pointing at the target (rare), every matching row in that
+/// table is attributed to the group's first field — same tolerance the original single-hit
+/// version already had for the analogous case, now applied per row instead of per query.
 pub(crate) async fn find_referencing_records(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     tenant_id: Uuid,
@@ -280,62 +269,29 @@ pub(crate) async fn find_referencing_records(
         }
         let remaining = MAX_REFERENCING_HITS - hits.len() as i64;
 
-        if table == "records" {
-            let mut sql = String::from(
-                "SELECT id, entity FROM records WHERE tenant_id = $1 AND deleted = false AND id != $2 AND (",
-            );
-            let mut clauses = Vec::with_capacity(group.len());
-            let mut param_idx = 3;
-            for _ in &group {
-                clauses.push(format!(
-                    "(entity = ${} AND data ->> ${} = ${})",
-                    param_idx,
-                    param_idx + 1,
-                    param_idx + 2
-                ));
-                param_idx += 3;
+        let mut clauses = Vec::with_capacity(group.len());
+        for (i, r) in group.iter().enumerate() {
+            let param_idx = i + 3;
+            if r.has_real_column {
+                clauses.push(format!("\"{}\" = ${}::uuid", r.ref_field, param_idx));
+            } else {
+                clauses.push(format!("data ->> '{}' = ${}", r.ref_field, param_idx));
             }
-            sql.push_str(&clauses.join(" OR "));
-            sql.push_str(&format!(") LIMIT {remaining}"));
-
-            let mut query = sqlx::query_as::<_, (Uuid, String)>(&sql).bind(tenant_id).bind(id);
-            for r in &group {
-                query = query.bind(&r.ref_entity).bind(&r.ref_field).bind(id.to_string());
-            }
-            for (row_id, row_entity) in query.fetch_all(&mut **tx).await? {
-                if let Some(r) = group.iter().find(|r| r.ref_entity == row_entity) {
-                    hits.push(ReferencingRecordHit {
-                        entity: r.ref_entity.clone(),
-                        field: r.ref_field.clone(),
-                        id: row_id,
-                    });
-                }
-            }
-        } else {
-            let mut clauses = Vec::with_capacity(group.len());
-            for (i, r) in group.iter().enumerate() {
-                let param_idx = i + 3;
-                if r.has_real_column {
-                    clauses.push(format!("\"{}\" = ${}::uuid", r.ref_field, param_idx));
-                } else {
-                    clauses.push(format!("data ->> '{}' = ${}", r.ref_field, param_idx));
-                }
-            }
-            let sql = format!(
-                "SELECT id FROM {table} WHERE tenant_id = $1 AND deleted = false AND id != $2 AND ({}) LIMIT {remaining}",
-                clauses.join(" OR ")
-            );
-            let mut query = sqlx::query_scalar::<_, Uuid>(&sql).bind(tenant_id).bind(id);
-            for _ in &group {
-                query = query.bind(id.to_string());
-            }
-            for row_id in query.fetch_all(&mut **tx).await? {
-                hits.push(ReferencingRecordHit {
-                    entity: group[0].ref_entity.clone(),
-                    field: group[0].ref_field.clone(),
-                    id: row_id,
-                });
-            }
+        }
+        let sql = format!(
+            "SELECT id FROM {table} WHERE tenant_id = $1 AND deleted = false AND id != $2 AND ({}) LIMIT {remaining}",
+            clauses.join(" OR ")
+        );
+        let mut query = sqlx::query_scalar::<_, Uuid>(&sql).bind(tenant_id).bind(id);
+        for _ in &group {
+            query = query.bind(id.to_string());
+        }
+        for row_id in query.fetch_all(&mut **tx).await? {
+            hits.push(ReferencingRecordHit {
+                entity: group[0].ref_entity.clone(),
+                field: group[0].ref_field.clone(),
+                id: row_id,
+            });
         }
     }
     Ok(hits)
@@ -347,35 +303,15 @@ pub(crate) async fn fetch_existing<'e, E: PgExecutor<'e>>(
     tenant_id: Uuid,
     entity: &EntityDefinition,
 ) -> anyhow::Result<Option<RecordDto>> {
-    let dedicated = is_dedicated(entity);
     let table = &entity.table_name;
-    let row = if dedicated {
-        sqlx::query(&format!(
-            "SELECT {RECORD_COLUMNS_DEDICATED} FROM {table} WHERE id = $1 AND tenant_id = $2 AND deleted = false"
-        ))
-        .bind(id)
-        .bind(tenant_id)
-        .fetch_optional(executor)
-        .await?
-    } else {
-        sqlx::query(&format!(
-            "SELECT {RECORD_COLUMNS} FROM {table} \
-             WHERE id = $1 AND tenant_id = $2 AND entity = $3 AND deleted = false"
-        ))
-        .bind(id)
-        .bind(tenant_id)
-        .bind(&entity.name)
-        .fetch_optional(executor)
-        .await?
-    };
-    row.map(|r| {
-        if dedicated {
-            row_to_dto_dedicated(r, &entity.name)
-        } else {
-            row_to_dto(r)
-        }
-    })
-    .transpose()
+    let row = sqlx::query(&format!(
+        "SELECT {RECORD_COLUMNS} FROM {table} WHERE id = $1 AND tenant_id = $2 AND deleted = false"
+    ))
+    .bind(id)
+    .bind(tenant_id)
+    .fetch_optional(executor)
+    .await?;
+    row.map(|r| row_to_dto(r, &entity.name)).transpose()
 }
 
 /// Batched counterpart to `fetch_existing`, for `CrudService::get_many` — one query for every id
@@ -390,36 +326,15 @@ pub(crate) async fn fetch_existing_batch<'e, E: PgExecutor<'e>>(
     tenant_id: Uuid,
     entity: &EntityDefinition,
 ) -> anyhow::Result<Vec<RecordDto>> {
-    let dedicated = is_dedicated(entity);
     let table = &entity.table_name;
-    let rows = if dedicated {
-        sqlx::query(&format!(
-            "SELECT {RECORD_COLUMNS_DEDICATED} FROM {table} WHERE id = ANY($1) AND tenant_id = $2 AND deleted = false"
-        ))
-        .bind(ids)
-        .bind(tenant_id)
-        .fetch_all(executor)
-        .await?
-    } else {
-        sqlx::query(&format!(
-            "SELECT {RECORD_COLUMNS} FROM {table} \
-             WHERE id = ANY($1) AND tenant_id = $2 AND entity = $3 AND deleted = false"
-        ))
-        .bind(ids)
-        .bind(tenant_id)
-        .bind(&entity.name)
-        .fetch_all(executor)
-        .await?
-    };
-    rows.into_iter()
-        .map(|r| {
-            if dedicated {
-                row_to_dto_dedicated(r, &entity.name)
-            } else {
-                row_to_dto(r)
-            }
-        })
-        .collect()
+    let rows = sqlx::query(&format!(
+        "SELECT {RECORD_COLUMNS} FROM {table} WHERE id = ANY($1) AND tenant_id = $2 AND deleted = false"
+    ))
+    .bind(ids)
+    .bind(tenant_id)
+    .fetch_all(executor)
+    .await?;
+    rows.into_iter().map(|r| row_to_dto(r, &entity.name)).collect()
 }
 
 /// Raw `data` fetch for one hop of cross-record permission enrichment (see
@@ -434,24 +349,13 @@ pub(crate) async fn fetch_related_data<'e, E: PgExecutor<'e>>(
     ref_entity: &EntityDefinition,
 ) -> anyhow::Result<Option<JsonObject>> {
     let table = &ref_entity.table_name;
-    let row = if is_dedicated(ref_entity) {
-        sqlx::query(&format!(
-            "SELECT data FROM {table} WHERE id = $1 AND tenant_id = $2 AND deleted = false"
-        ))
-        .bind(id)
-        .bind(tenant_id)
-        .fetch_optional(executor)
-        .await?
-    } else {
-        sqlx::query(&format!(
-            "SELECT data FROM {table} WHERE id = $1 AND tenant_id = $2 AND entity = $3 AND deleted = false"
-        ))
-        .bind(id)
-        .bind(tenant_id)
-        .bind(&ref_entity.name)
-        .fetch_optional(executor)
-        .await?
-    };
+    let row = sqlx::query(&format!(
+        "SELECT data FROM {table} WHERE id = $1 AND tenant_id = $2 AND deleted = false"
+    ))
+    .bind(id)
+    .bind(tenant_id)
+    .fetch_optional(executor)
+    .await?;
     let Some(row) = row else {
         return Ok(None);
     };
@@ -473,24 +377,13 @@ pub(crate) async fn fetch_related_records_batch<'e, E: PgExecutor<'e>>(
     ref_entity: &EntityDefinition,
 ) -> anyhow::Result<HashMap<Uuid, JsonObject>> {
     let table = &ref_entity.table_name;
-    let rows = if is_dedicated(ref_entity) {
-        sqlx::query(&format!(
-            "SELECT id, data FROM {table} WHERE id = ANY($1) AND tenant_id = $2 AND deleted = false"
-        ))
-        .bind(ids)
-        .bind(tenant_id)
-        .fetch_all(executor)
-        .await?
-    } else {
-        sqlx::query(&format!(
-            "SELECT id, data FROM {table} WHERE id = ANY($1) AND tenant_id = $2 AND entity = $3 AND deleted = false"
-        ))
-        .bind(ids)
-        .bind(tenant_id)
-        .bind(&ref_entity.name)
-        .fetch_all(executor)
-        .await?
-    };
+    let rows = sqlx::query(&format!(
+        "SELECT id, data FROM {table} WHERE id = ANY($1) AND tenant_id = $2 AND deleted = false"
+    ))
+    .bind(ids)
+    .bind(tenant_id)
+    .fetch_all(executor)
+    .await?;
     let mut result = HashMap::new();
     for row in rows {
         let id: Uuid = row.try_get("id")?;
@@ -502,34 +395,15 @@ pub(crate) async fn fetch_related_records_batch<'e, E: PgExecutor<'e>>(
     Ok(result)
 }
 
-pub(crate) fn row_to_dto(row: sqlx::postgres::PgRow) -> anyhow::Result<RecordDto> {
+/// `entity_name` supplied by the caller (never read back from a discriminator column — every
+/// entity's own dedicated table holds exactly one entity's rows, so there is none) — always
+/// already known, since every call site already resolved the `EntityDefinition` being queried.
+pub(crate) fn row_to_dto(row: sqlx::postgres::PgRow, entity_name: &str) -> anyhow::Result<RecordDto> {
     let data_value: Value = row.try_get("data")?;
     let data = data_value
         .as_object()
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("records.data was not a JSON object"))?;
-    Ok(RecordDto {
-        id: row.try_get("id")?,
-        entity: row.try_get("entity")?,
-        code: row.try_get("code")?,
-        status: row.try_get("status")?,
-        data,
-        version: row.try_get("version")?,
-        created_at: row.try_get("created_at")?,
-        updated_at: row.try_get("updated_at")?,
-        related_display: None,
-    })
-}
-
-/// `row_to_dto`'s counterpart for a table-per-entity table (`RECORD_COLUMNS_DEDICATED` — no
-/// `entity` column to read back), `entity_name` supplied by the caller instead (always already
-/// known — every call site already resolved the `EntityDefinition` being queried).
-pub(crate) fn row_to_dto_dedicated(row: sqlx::postgres::PgRow, entity_name: &str) -> anyhow::Result<RecordDto> {
-    let data_value: Value = row.try_get("data")?;
-    let data = data_value
-        .as_object()
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("dedicated table's data was not a JSON object"))?;
+        .ok_or_else(|| anyhow::anyhow!("{entity_name}'s data was not a JSON object"))?;
     Ok(RecordDto {
         id: row.try_get("id")?,
         entity: entity_name.to_string(),

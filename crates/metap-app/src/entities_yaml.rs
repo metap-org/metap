@@ -74,7 +74,7 @@ mod tests {
             r#"
 name: crm.customers
 label: Customers
-tableName: records
+tableName: crm.customers
 fields:
   - name: fullName
     label: Full name
@@ -85,7 +85,7 @@ listViews: []
         )
         .unwrap();
         assert_eq!(entity.name, "crm.customers");
-        assert_eq!(entity.table_name, "records");
+        assert_eq!(entity.table_name, "crm.customers");
         assert_eq!(entity.fields.len(), 1);
         assert_eq!(entity.fields[0].name, "fullName");
     }

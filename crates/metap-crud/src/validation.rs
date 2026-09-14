@@ -167,7 +167,7 @@ mod tests {
         EntityDefinition {
             name: "test.widgets".to_string(),
             label: "Widget".to_string(),
-            table_name: "records".to_string(),
+            table_name: "entities.test_widgets".to_string(),
             fields,
             list_views: vec![],
             workflow: None,

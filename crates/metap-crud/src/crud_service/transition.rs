@@ -8,8 +8,8 @@ use crate::result::ServiceResult;
 use crate::validation::validate_payload;
 
 use super::helpers::{
-    fetch_existing, forbidden, forbidden_with_field, is_dedicated, mask_record_for_read, parse_user_id,
-    router_unavailable, row_to_dto, row_to_dto_dedicated, RECORD_COLUMNS, RECORD_COLUMNS_DEDICATED,
+    fetch_existing, forbidden, forbidden_with_field, mask_record_for_read, parse_user_id, router_unavailable,
+    row_to_dto, RECORD_COLUMNS,
 };
 use super::CrudService;
 
@@ -164,31 +164,21 @@ impl CrudService {
                 return Err(e);
             }
         };
-        let dedicated = is_dedicated(&entity);
         let table = &entity.table_name;
-        let transition_sql = if dedicated {
-            format!(
-                "UPDATE {table} SET data = $1, status = $2, version = version + 1, updated_at = now(), updated_by = $3 \
-                 WHERE id = $4 AND tenant_id = $5 AND version = $6 AND deleted = false \
-                 RETURNING {RECORD_COLUMNS_DEDICATED}"
-            )
-        } else {
-            format!(
-                "UPDATE {table} SET data = $1, status = $2, version = version + 1, updated_at = now(), updated_by = $3 \
-                 WHERE id = $4 AND tenant_id = $5 AND entity = $6 AND version = $7 AND deleted = false \
-                 RETURNING {RECORD_COLUMNS}"
-            )
-        };
-        let mut query = sqlx::query(&transition_sql)
+        let transition_sql = format!(
+            "UPDATE {table} SET data = $1, status = $2, version = version + 1, updated_at = now(), updated_by = $3 \
+             WHERE id = $4 AND tenant_id = $5 AND version = $6 AND deleted = false \
+             RETURNING {RECORD_COLUMNS}"
+        );
+        let row = sqlx::query(&transition_sql)
             .bind(Value::Object(next_data))
             .bind(&to_state)
             .bind(user_id)
             .bind(id)
-            .bind(tenant_id);
-        if !dedicated {
-            query = query.bind(&entity.name);
-        }
-        let row = query.bind(expected_version).fetch_optional(&mut *tx).await?;
+            .bind(tenant_id)
+            .bind(expected_version)
+            .fetch_optional(&mut *tx)
+            .await?;
 
         let Some(row) = row else {
             tx.rollback().await.ok();
@@ -200,11 +190,7 @@ impl CrudService {
             );
             return Ok(ServiceResult::err(409, "version_conflict"));
         };
-        let record = if dedicated {
-            row_to_dto_dedicated(row, &entity.name)?
-        } else {
-            row_to_dto(row)?
-        };
+        let record = row_to_dto(row, &entity.name)?;
 
         record_event(&mut *tx, &entity, record.id, action, &from_state, &to_state, context).await?;
         emit_transitioned(

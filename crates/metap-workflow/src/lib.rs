@@ -254,7 +254,7 @@ mod tests {
         EntityDefinition {
             name: "crm.customers".to_string(),
             label: "Customer".to_string(),
-            table_name: "records".to_string(),
+            table_name: "crm.customers".to_string(),
             fields: vec![metap_metadata::EntityField {
                 name: "status".to_string(),
                 label: "Status".to_string(),

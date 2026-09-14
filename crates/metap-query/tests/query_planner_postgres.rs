@@ -90,11 +90,20 @@ fn field(name: &str, kind: FieldKind, sortable: bool, searchable: bool) -> Entit
     }
 }
 
+/// A dedicated table this test file creates itself (`setup()`, `CREATE TABLE IF NOT EXISTS`,
+/// left in place afterward like any other dedicated table — only the rows `insert_fixture`
+/// writes get cleaned up, via `Harness::cleanup`) — this crate has no dependency on
+/// `metap-reconciler`, so the DDL is hand-written here rather than going through `reconcile()`,
+/// matching the shape every entity's own dedicated table has (see
+/// `crates/migrations/0000_green_jean_grey.sql`'s original `records` table, minus the `entity`
+/// discriminator column a dedicated table never has).
+const TEST_TABLE: &str = "entities.test_widgets";
+
 fn test_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.widgets".to_string(),
         label: "Widget".to_string(),
-        table_name: "records".to_string(),
+        table_name: TEST_TABLE.to_string(),
         fields: vec![
             field("name", FieldKind::String, true, true),
             field("status", FieldKind::String, false, false),
@@ -132,10 +141,9 @@ fn test_entity() -> EntityDefinition {
 
 async fn insert_fixture(pool: &PgPool, tenant_id: Uuid, name: &str, status: &str, score: i64, deleted: bool) -> Uuid {
     let id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO records (id, tenant_id, entity, data, deleted) \
-         VALUES ($1, $2, 'test.widgets', $3, $4)",
-    )
+    sqlx::query(&format!(
+        "INSERT INTO {TEST_TABLE} (id, tenant_id, data, deleted) VALUES ($1, $2, $3, $4)"
+    ))
     .bind(id)
     .bind(tenant_id)
     .bind(serde_json::json!({ "name": name, "status": status, "score": score }))
@@ -151,10 +159,9 @@ async fn insert_fixture(pool: &PgPool, tenant_id: Uuid, name: &str, status: &str
 /// field genuinely never set (rather than explicitly nulled) looks on a real record.
 async fn insert_fixture_no_score(pool: &PgPool, tenant_id: Uuid, name: &str) -> Uuid {
     let id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO records (id, tenant_id, entity, data, deleted) \
-         VALUES ($1, $2, 'test.widgets', $3, false)",
-    )
+    sqlx::query(&format!(
+        "INSERT INTO {TEST_TABLE} (id, tenant_id, data, deleted) VALUES ($1, $2, $3, false)"
+    ))
     .bind(id)
     .bind(tenant_id)
     .bind(serde_json::json!({ "name": name, "status": "active" }))
@@ -166,7 +173,7 @@ async fn insert_fixture_no_score(pool: &PgPool, tenant_id: Uuid, name: &str) -> 
 
 async fn run_plan(pool: &PgPool, planned: &metap_query::PlannedListQuery) -> Vec<Uuid> {
     let sql = format!(
-        "SELECT id FROM records WHERE {} ORDER BY {} LIMIT {}",
+        "SELECT id FROM {TEST_TABLE} WHERE {} ORDER BY {} LIMIT {}",
         planned.where_sql, planned.order_by_sql, planned.limit
     );
     let query = sqlx::query(&sql);
@@ -194,6 +201,28 @@ async fn setup() -> Harness {
         .connect(&database_url)
         .await
         .unwrap();
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!(
+        "CREATE TABLE IF NOT EXISTS {TEST_TABLE} (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+            tenant_id uuid NOT NULL,
+            code varchar(120),
+            status varchar(80),
+            data jsonb DEFAULT '{{}}'::jsonb NOT NULL,
+            version integer DEFAULT 1 NOT NULL,
+            deleted boolean DEFAULT false NOT NULL,
+            created_at timestamp with time zone DEFAULT now() NOT NULL,
+            updated_at timestamp with time zone DEFAULT now() NOT NULL,
+            created_by uuid,
+            updated_by uuid
+        )"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
     let permissions = PermissionService::new(Box::new(UnusedPolicyStore));
@@ -219,7 +248,7 @@ impl Harness {
 
     async fn cleanup(&self, ids: &[Uuid]) {
         for id in ids {
-            sqlx::query("DELETE FROM records WHERE id = $1")
+            sqlx::query(&format!("DELETE FROM {TEST_TABLE} WHERE id = $1"))
                 .bind(id)
                 .execute(&self.pool)
                 .await
@@ -301,8 +330,9 @@ async fn exact_filter_on_non_searchable_field() {
 /// harmless for a plain text field but a real 500 for a `uuid`-cast one
 /// (`invalid input syntax for type uuid: ""`, `sort_field_expression`'s `cast_suffix()`). Fixed
 /// by treating an empty value as `IS NULL` for every field, not just uuid-typed ones — this test
-/// covers the generic-table JSONB path (`data->>'field'`, no cast involved), the uuid-cast path
-/// is exercised live against `../metap-demo-jira`'s real `Reference` column.
+/// covers the plain JSONB path (`data->>'field'`, no cast involved, the fallback for any field
+/// with no real physical column), the uuid-cast path is exercised live against
+/// `../metap-demo-jira`'s real `Reference` column.
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn empty_filter_value_matches_unset_field() {
@@ -310,9 +340,9 @@ async fn empty_filter_value_matches_unset_field() {
 
     let with_status = insert_fixture(&h.pool, h.tenant_id, "one", "active", 1, false).await;
     let without_status = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO records (id, tenant_id, entity, data, deleted) VALUES ($1, $2, 'test.widgets', $3, false)",
-    )
+    sqlx::query(&format!(
+        "INSERT INTO {TEST_TABLE} (id, tenant_id, data, deleted) VALUES ($1, $2, $3, false)"
+    ))
     .bind(without_status)
     .bind(h.tenant_id)
     .bind(serde_json::json!({ "name": "two", "score": 2 }))
@@ -439,12 +469,13 @@ async fn keyset_pagination_produces_disjoint_consecutive_pages() {
     // Build a cursor from the last row of page 1, matching CrudService's real job
     // (Migration Order step 7) — reconstructed here directly since that's not built yet.
     let last_id = page1[1];
-    let created_at: chrono::DateTime<chrono::Utc> = sqlx::query("SELECT created_at FROM records WHERE id = $1")
-        .bind(last_id)
-        .fetch_one(&h.pool)
-        .await
-        .unwrap()
-        .get("created_at");
+    let created_at: chrono::DateTime<chrono::Utc> =
+        sqlx::query(&format!("SELECT created_at FROM {TEST_TABLE} WHERE id = $1"))
+            .bind(last_id)
+            .fetch_one(&h.pool)
+            .await
+            .unwrap()
+            .get("created_at");
     let cursor = metap_query::Cursor {
         field: "createdAt".to_string(),
         value: Some(created_at.to_rfc3339()),
@@ -507,7 +538,7 @@ async fn keyset_pagination_does_not_lose_rows_with_a_null_sort_value() {
         };
         let planned = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]).unwrap();
         let sql = format!(
-            "SELECT id, jsonb_extract_path_text(data, 'score') AS score FROM records WHERE {} ORDER BY {} LIMIT {}",
+            "SELECT id, jsonb_extract_path_text(data, 'score') AS score FROM {TEST_TABLE} WHERE {} ORDER BY {} LIMIT {}",
             planned.where_sql, planned.order_by_sql, planned.limit
         );
         let query = apply_params(sqlx::query(&sql), &planned.params);
@@ -568,7 +599,7 @@ async fn keyset_pagination_does_not_lose_rows_with_a_null_sort_value_descending(
         };
         let planned = plan_list(&h.registry, &h.permissions, "test.widgets", &input, &h.context(), &[]).unwrap();
         let sql = format!(
-            "SELECT id, jsonb_extract_path_text(data, 'score') AS score FROM records WHERE {} ORDER BY {} LIMIT {}",
+            "SELECT id, jsonb_extract_path_text(data, 'score') AS score FROM {TEST_TABLE} WHERE {} ORDER BY {} LIMIT {}",
             planned.where_sql, planned.order_by_sql, planned.limit
         );
         let query = apply_params(sqlx::query(&sql), &planned.params);

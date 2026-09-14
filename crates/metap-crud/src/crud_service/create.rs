@@ -7,8 +7,8 @@ use crate::result::ServiceResult;
 use crate::validation::validate_payload;
 
 use super::helpers::{
-    forbidden, forbidden_with_field, is_dedicated, mask_record_for_read, parse_user_id, recompute_fields,
-    router_unavailable, row_to_dto, row_to_dto_dedicated, unique_violation, RECORD_COLUMNS, RECORD_COLUMNS_DEDICATED,
+    forbidden, forbidden_with_field, mask_record_for_read, parse_user_id, recompute_fields, router_unavailable,
+    row_to_dto, unique_violation, RECORD_COLUMNS,
 };
 use super::CrudService;
 
@@ -81,24 +81,13 @@ impl CrudService {
                 return Err(e);
             }
         };
-        let dedicated = is_dedicated(&entity);
         let table = &entity.table_name;
-        let insert_sql = if dedicated {
-            format!(
-                "INSERT INTO {table} (tenant_id, code, status, data, created_by, updated_by) \
-                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING {RECORD_COLUMNS_DEDICATED}"
-            )
-        } else {
-            format!(
-                "INSERT INTO {table} (tenant_id, entity, code, status, data, created_by, updated_by) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {RECORD_COLUMNS}"
-            )
-        };
-        let mut query = sqlx::query(&insert_sql).bind(tenant_id);
-        if !dedicated {
-            query = query.bind(&entity.name);
-        }
-        let row = match query
+        let insert_sql = format!(
+            "INSERT INTO {table} (tenant_id, code, status, data, created_by, updated_by) \
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING {RECORD_COLUMNS}"
+        );
+        let row = match sqlx::query(&insert_sql)
+            .bind(tenant_id)
             .bind(&code)
             .bind(&status)
             .bind(Value::Object(data.clone()))
@@ -117,11 +106,7 @@ impl CrudService {
                 return Err(e.into());
             }
         };
-        let record = if dedicated {
-            row_to_dto_dedicated(row, &entity.name)?
-        } else {
-            row_to_dto(row)?
-        };
+        let record = row_to_dto(row, &entity.name)?;
 
         emit_created(&mut *tx, &entity, tenant_id, record.id, &data).await?;
         tx.commit().await?;

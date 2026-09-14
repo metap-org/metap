@@ -268,33 +268,32 @@ pub struct PlannedAggregateQuery {
     pub params: Vec<BindValue>,
 }
 
-/// Resolves one field name to the SQL expression holding its value, for either storage shape
-/// (a dedicated table's real column, or the shared `records` table's JSONB path). Mirrors
+/// Resolves one field name to the SQL expression holding its value — a real physical column when
+/// the field has one (`field_has_real_column`), else the entity's own `data` JSONB path. Mirrors
 /// `query_planner::sort_field_expression`; kept separate rather than shared because that one
 /// also decides a cast type for keyset comparison, which means nothing here.
-fn value_expression(field: &EntityField, dedicated_table: bool, params: &mut ParamBuilder) -> String {
-    if dedicated_table && field_has_real_column(field) {
+fn value_expression(field: &EntityField, params: &mut ParamBuilder) -> String {
+    if field_has_real_column(field) {
         return format!("\"{}\"", field.name);
     }
     let ph = params.push(BindValue::Text(field.name.clone()));
     format!("jsonb_extract_path_text(data, {ph})")
 }
 
-/// Numeric expression for `sum`/`avg`/`min`/`max`. `NULLIF(..., '')` first: on the shared table a
-/// missing/blank JSON value comes back as `''`, and `''::numeric` is a hard error at the database
-/// rather than the `NULL` (i.e. "not counted") every aggregate function already handles correctly.
-fn numeric_expression(field: &EntityField, dedicated_table: bool, params: &mut ParamBuilder) -> String {
-    let raw = value_expression(field, dedicated_table, params);
+/// Numeric expression for `sum`/`avg`/`min`/`max`. `NULLIF(..., '')` first: a missing/blank JSON
+/// value comes back as `''`, and `''::numeric` is a hard error at the database rather than the
+/// `NULL` (i.e. "not counted") every aggregate function already handles correctly.
+fn numeric_expression(field: &EntityField, params: &mut ParamBuilder) -> String {
+    let raw = value_expression(field, params);
     format!("NULLIF({raw}, '')::numeric")
 }
 
-/// Timestamp expression for the bucket/window. `createdAt`/`updatedAt` are real columns on both
-/// storage shapes (platform columns, not metadata fields), so they never need a metadata lookup —
-/// which is also why they are accepted as a `time_field` even though no entity declares them.
+/// Timestamp expression for the bucket/window. `createdAt`/`updatedAt` are real columns on every
+/// table (platform columns, not metadata fields), so they never need a metadata lookup — which
+/// is also why they are accepted as a `time_field` even though no entity declares them.
 fn timestamp_expression(
     field_name: &str,
     entity: &EntityDefinition,
-    dedicated_table: bool,
     params: &mut ParamBuilder,
 ) -> anyhow::Result<String> {
     match field_name {
@@ -312,7 +311,7 @@ fn timestamp_expression(
             "`{field_name}` is not a date field and cannot be used as a time axis."
         )));
     }
-    let raw = value_expression(field, dedicated_table, params);
+    let raw = value_expression(field, params);
     Ok(format!("NULLIF({raw}, '')::timestamptz"))
 }
 
@@ -362,7 +361,6 @@ pub fn plan_aggregate(
     }
 
     let tenant_id = permissions.scoped_tenant(context)?;
-    let dedicated_table = entity.table_name != "records";
     let fields_by_name: std::collections::HashMap<&str, &EntityField> =
         entity.fields.iter().map(|f| (f.name.as_str(), f)).collect();
 
@@ -370,12 +368,6 @@ pub fn plan_aggregate(
     let mut conditions: Vec<String> = Vec::new();
 
     conditions.push(format!("tenant_id = {}", params.push(BindValue::Uuid(tenant_id))));
-    if !dedicated_table {
-        conditions.push(format!(
-            "entity = {}",
-            params.push(BindValue::Text(entity.name.clone()))
-        ));
-    }
     conditions.push("deleted = false".to_string());
 
     // Record-level (ABAC) read policies, applied to the rows being counted — not to the result.
@@ -405,15 +397,12 @@ pub fn plan_aggregate(
         let Some(field) = fields_by_name.get(field_name.as_str()) else {
             continue;
         };
-        let expr = value_expression(field, dedicated_table, &mut params);
+        let expr = value_expression(field, &mut params);
         if value.is_empty() {
             conditions.push(format!("{expr} IS NULL"));
         } else {
             let ph = params.push(BindValue::Text(value.clone()));
-            let cast = if dedicated_table
-                && field_has_real_column(field)
-                && matches!(field.kind, FieldKind::Reference | FieldKind::Id)
-            {
+            let cast = if field_has_real_column(field) && matches!(field.kind, FieldKind::Reference | FieldKind::Id) {
                 "::uuid"
             } else {
                 ""
@@ -426,7 +415,7 @@ pub fn plan_aggregate(
     // Built once and reused by the bucket and the window — two `date_trunc`s over two separately
     // built expressions would push the same field's placeholder twice for no reason.
     let time_expr = if input.bucket.is_some() || input.since.is_some() || input.until.is_some() {
-        Some(timestamp_expression(time_field, entity, dedicated_table, &mut params)?)
+        Some(timestamp_expression(time_field, entity, &mut params)?)
     } else {
         None
     };
@@ -461,7 +450,7 @@ pub fn plan_aggregate(
             .copied()
             .ok_or_else(|| invalid(format!("Unknown field: {group_by}")))?;
         assert_groupable(field, entity)?;
-        let expr = value_expression(field, dedicated_table, &mut params);
+        let expr = value_expression(field, &mut params);
         // Cast to text unconditionally: a dedicated table's `Reference` column is a real `uuid`,
         // and the JSONB path already yields text — one shape out means the caller gets the same
         // JSON type for a group key whichever table the entity happens to live on.
@@ -481,7 +470,7 @@ pub fn plan_aggregate(
                 if *func == AggregateFn::Count {
                     // `count:<field>` means "rows where this field is set" — the one aggregate
                     // that is meaningful over a non-numeric field, so it skips the numeric check.
-                    format!("count({})", value_expression(field, dedicated_table, &mut params))
+                    format!("count({})", value_expression(field, &mut params))
                 } else {
                     if !matches!(field.kind, FieldKind::Number | FieldKind::Money) {
                         return Err(invalid(format!(
@@ -490,11 +479,7 @@ pub fn plan_aggregate(
                             func.sql_name()
                         )));
                     }
-                    format!(
-                        "{}({})",
-                        func.sql_name(),
-                        numeric_expression(field, dedicated_table, &mut params)
-                    )
+                    format!("{}({})", func.sql_name(), numeric_expression(field, &mut params))
                 }
             }
             (func, None) => {

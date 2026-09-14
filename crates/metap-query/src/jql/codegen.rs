@@ -34,15 +34,14 @@ fn cast_suffix(t: JqlFieldType) -> &'static str {
 }
 
 /// Field name -> (SQL expression yielding that field's value, its comparison type). `createdAt`/
-/// `updatedAt` are real columns on every table (generic or dedicated) so they resolve first,
-/// same special case `query_planner::sort_field_expression` carries. Everything else must be a
+/// `updatedAt` are real columns on every table so they resolve first, same special case
+/// `query_planner::sort_field_expression` carries. Everything else must be a
 /// real entry in `entity.fields` — an unknown name is the one thing this whole module treats as
 /// a hard error instead of the "silently ignore" convention `plan_list`'s plain query-param
 /// filters use, since a JQL typo the caller can't see any other way deserves a visible error.
 fn resolve_field(
     field_name: &str,
     entity: &EntityDefinition,
-    dedicated_table: bool,
     params: &mut ParamBuilder,
 ) -> Result<(String, JqlFieldType), InvalidJqlError> {
     match field_name {
@@ -62,7 +61,7 @@ fn resolve_field(
         FieldKind::Datetime => JqlFieldType::Datetime,
         FieldKind::Reference | FieldKind::Id => JqlFieldType::Uuid,
     };
-    if dedicated_table && field_has_real_column(field) {
+    if field_has_real_column(field) {
         return Ok((format!("\"{field_name}\""), ftype));
     }
     let ph = params.push(BindValue::Text(field_name.to_string()));
@@ -114,30 +113,23 @@ fn ilike_pattern(value: &str) -> String {
 fn compile_expr(
     expr: &JqlExpr,
     entity: &EntityDefinition,
-    dedicated_table: bool,
     params: &mut ParamBuilder,
 ) -> Result<String, InvalidJqlError> {
     match expr {
         JqlExpr::And(parts) => {
-            let sql: Result<Vec<String>, _> = parts
-                .iter()
-                .map(|e| compile_expr(e, entity, dedicated_table, params))
-                .collect();
+            let sql: Result<Vec<String>, _> = parts.iter().map(|e| compile_expr(e, entity, params)).collect();
             Ok(format!("({})", sql?.join(" AND ")))
         }
         JqlExpr::Or(parts) => {
-            let sql: Result<Vec<String>, _> = parts
-                .iter()
-                .map(|e| compile_expr(e, entity, dedicated_table, params))
-                .collect();
+            let sql: Result<Vec<String>, _> = parts.iter().map(|e| compile_expr(e, entity, params)).collect();
             Ok(format!("({})", sql?.join(" OR ")))
         }
         JqlExpr::Not(inner) => {
-            let sql = compile_expr(inner, entity, dedicated_table, params)?;
+            let sql = compile_expr(inner, entity, params)?;
             Ok(format!("(NOT {sql})"))
         }
         JqlExpr::IsEmpty { field, negate } => {
-            let (base, ftype) = resolve_field(field, entity, dedicated_table, params)?;
+            let (base, ftype) = resolve_field(field, entity, params)?;
             let lhs = format!("({base}){}", cast_suffix(ftype));
             Ok(if *negate {
                 format!("({lhs} IS NOT NULL)")
@@ -146,7 +138,7 @@ fn compile_expr(
             })
         }
         JqlExpr::Compare { field, op, value } => {
-            let (base, ftype) = resolve_field(field, entity, dedicated_table, params)?;
+            let (base, ftype) = resolve_field(field, entity, params)?;
             validate_op(*op, ftype, field)?;
             let lhs = format!("({base}){}", cast_suffix(ftype));
             if matches!(op, CompareOp::Contains | CompareOp::NotContains) {
@@ -178,7 +170,7 @@ fn compile_expr(
             if values.is_empty() {
                 return err(format!("`IN`/`NOT IN` needs at least one value for field `{field}`"));
             }
-            let (base, ftype) = resolve_field(field, entity, dedicated_table, params)?;
+            let (base, ftype) = resolve_field(field, entity, params)?;
             let lhs = format!("({base}){}", cast_suffix(ftype));
             let cast = cast_suffix(ftype);
             let mut placeholders = Vec::with_capacity(values.len());
@@ -210,12 +202,7 @@ pub type JqlCompileResult = Result<(Option<String>, Option<(String, bool)>), Inv
 /// descending)` pair for its `ORDER BY` clause, in the same shape `plan_list`'s own `-field`
 /// sort-string convention already uses, so the caller can fold it into the existing single-sort
 /// resolution instead of this module reimplementing sort/cursor handling.
-pub fn parse_and_compile_jql(
-    jql: &str,
-    entity: &EntityDefinition,
-    dedicated_table: bool,
-    params: &mut ParamBuilder,
-) -> JqlCompileResult {
+pub fn parse_and_compile_jql(jql: &str, entity: &EntityDefinition, params: &mut ParamBuilder) -> JqlCompileResult {
     let tokens = tokenize(jql)?;
     let mut parser = Parser::new(tokens);
     let parsed = parser.parse_query()?;
@@ -223,7 +210,7 @@ pub fn parse_and_compile_jql(
     let where_sql = parsed
         .expr
         .as_ref()
-        .map(|e| compile_expr(e, entity, dedicated_table, params))
+        .map(|e| compile_expr(e, entity, params))
         .transpose()?;
 
     let order_by = match parsed.order_by {

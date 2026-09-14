@@ -350,10 +350,14 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
 
     // `table_name` is interpolated directly into SQL (`crates/metap-crud`, `crates/metap-query`)
     // since Postgres can't parameterize an identifier — validate it here, at the trust boundary
-    // where entities are registered, rather than trusting it blindly at query time. A dedicated
-    // table-per-entity table is schema-qualified (`metap_reconciler::qualified_table_name_for`,
-    // e.g. `"entities.jira_issues"` — never `public`, see that function's doc comment for why),
-    // so each `.`-separated segment is checked against the same identifier charset separately.
+    // where entities are registered, rather than trusting it blindly at query time. Every entity
+    // is a dedicated table-per-entity table, schema-qualified
+    // (`metap_reconciler::qualified_table_name_for`/`qualified_table_name_in`, e.g.
+    // `"entities.jira_issues"` — never `public`, see that function's doc comment for why), so
+    // each `.`-separated segment is checked against the same identifier charset separately. The
+    // old shared generic `"records"` table (every entity's default before table-per-entity
+    // existed) was removed from `metap` core entirely — see `crates/migrations/
+    // 0033_drop_records_table.sql` — so it's no longer a valid `table_name` for any entity.
     fn is_safe_ident_segment(segment: &str) -> bool {
         !segment.is_empty()
             && segment.chars().next().is_some_and(|c| c.is_ascii_lowercase())
@@ -361,11 +365,10 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
     }
-    let table_name_ok = entity.table_name == "records"
-        || entity.table_name.split('.').all(is_safe_ident_segment) && entity.table_name.contains('.');
+    let table_name_ok = entity.table_name.split('.').all(is_safe_ident_segment) && entity.table_name.contains('.');
     if !table_name_ok {
         issues.push(format!(
-            "tableName \"{}\" must be \"records\" or a schema-qualified ^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$ name",
+            "tableName \"{}\" must be a schema-qualified ^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$ name",
             entity.table_name
         ));
     }

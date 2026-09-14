@@ -46,7 +46,7 @@ mod tests {
         EntityDefinition {
             name: "jira.issues".to_string(),
             label: "Issue".to_string(),
-            table_name: "records".to_string(),
+            table_name: "entities.jira_issues".to_string(),
             fields: vec![
                 EntityField {
                     name: "priority".to_string(),
@@ -119,14 +119,14 @@ mod tests {
     fn compile(jql: &str) -> JqlCompileResult {
         let entity = test_entity();
         let mut params = ParamBuilder::new();
-        parse_and_compile_jql(jql, &entity, false, &mut params)
+        parse_and_compile_jql(jql, &entity, &mut params)
     }
 
     #[test]
     fn simple_equality_compiles_and_binds_one_param() {
         let entity = test_entity();
         let mut params = ParamBuilder::new();
-        let (sql, order) = parse_and_compile_jql("priority = \"high\"", &entity, false, &mut params).unwrap();
+        let (sql, order) = parse_and_compile_jql("priority = \"high\"", &entity, &mut params).unwrap();
         assert!(!sql.unwrap().contains("ILIKE"));
         assert!(order.is_none());
         assert_eq!(params.params.len(), 2); // jsonb key placeholder + value placeholder
