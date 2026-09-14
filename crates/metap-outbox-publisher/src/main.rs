@@ -1,4 +1,4 @@
-use metap_infra::{connect_db, load_config, RabbitEventBus};
+use metap_infra::{connect_db, load_config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -13,12 +13,14 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(poll_ms, batch_size, "ready, polling");
 
-    let rabbitmq_url = config.rabbitmq_url.clone();
-    let connect = move || {
-        let url = rabbitmq_url.clone();
-        async move { RabbitEventBus::connect(&url).await }
-    };
-    outbox_publisher::run(&pool, connect, poll_ms, batch_size, metap_runtime::shutdown::signal()).await?;
+    outbox_publisher::run(
+        &pool,
+        metap_infra::rabbitmq_connector(config.rabbitmq_url.clone()),
+        poll_ms,
+        batch_size,
+        metap_runtime::shutdown::signal(),
+    )
+    .await?;
 
     pool.close().await;
 

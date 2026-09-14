@@ -53,7 +53,7 @@ pub mod prelude {
     //! them as separate items and refuses to glob-import both under one name) — only one
     //! wins the unqualified name here; reach the others through their namespaced module
     //! (`metap::permission::JsonObject`, `metap::workflow::JsonObject`).
-    pub use metap_app::{bootstrap_platform, load_entity_definitions_from_dir, PlatformParts};
+    pub use metap_app::{bootstrap_platform, load_entity_definitions_from_dir, MetapApp, PlatformParts};
     pub use metap_audit::{AuditTrailStore, PostgresAuditTrailStore};
     pub use metap_control::PostgresPolicyStore;
     pub use metap_crud::{CrudService, JsonObject, RecordCapabilities, RecordDto};

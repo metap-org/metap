@@ -60,7 +60,10 @@ use metap_infra::AppConfig;
 use metap_permission::PermissionService;
 use sqlx::PgPool;
 
+pub mod builder;
 pub mod entities_yaml;
+
+pub use builder::MetapApp;
 pub use entities_yaml::{load_entity_definitions_from_dir, parse_entity_yaml};
 
 pub struct PlatformParts {

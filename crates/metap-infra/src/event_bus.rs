@@ -21,7 +21,7 @@ mod resilient;
 mod types;
 
 pub use handler_registry::HandlerRegistry;
-pub use rabbit::RabbitEventBus;
+pub use rabbit::{rabbitmq_connector, RabbitEventBus};
 pub use resilient::{backoff_delay, run_resilient_consumer, sleep_or_shutdown};
 pub use types::{ConsumedEvent, EventBus, RetryPolicy};
 
