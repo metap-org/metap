@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 metap-attachments = { path = "../metap-attachments" }
+metap-audit = { path = "../metap-audit" }
 metap-auth = { path = "../metap-auth" }
 metap-runtime = { path = "../metap-runtime" }
 metap-control = { path = "../metap-control" }

@@ -1,6 +1,6 @@
 //! OpenAPI `paths`/`components.schemas` for this crate's own static (non-entity) routes —
 //! `routes::health`/`preferences`/`users`/`auth`/`admin`/`cron`/`dashboards`/`attachments`/
-//! `workflow_events`/`platform_config`/`tenant_config`. Derived from each of those modules'
+//! `workflow_events`/`audit_events`/`platform_config`/`tenant_config`. Derived from each of those modules'
 //! `#[utoipa::path(...)]` annotations (2026-09-06, `../metap-lowcode/docs/features/
 //! 02-utoipa-migration.md`), not hand-written JSON anymore — see that doc for the migration's
 //! full history (this was the third and final crate converted, after `metap-control-http`/
@@ -30,6 +30,7 @@ fn core_openapi() -> utoipa::openapi::OpenApi {
         crate::routes::users::openapi(),
         crate::routes::preferences::openapi(),
         crate::routes::workflow_events::openapi(),
+        crate::routes::audit_events::openapi(),
         crate::routes::attachments::openapi(),
         crate::routes::auth::openapi(),
         crate::routes::admin::openapi(),

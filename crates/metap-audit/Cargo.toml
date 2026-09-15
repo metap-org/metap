@@ -18,6 +18,7 @@ sqlx = { workspace = true, features = [
   "json",
 ] }
 tracing.workspace = true
+utoipa = { version = "5", features = ["uuid", "chrono"] }
 uuid.workspace = true
 
 [dev-dependencies]
