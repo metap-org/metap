@@ -57,7 +57,10 @@ pub mod prelude {
     pub use metap_audit::{AuditTrailStore, PostgresAuditTrailStore};
     pub use metap_control::PostgresPolicyStore;
     pub use metap_crud::{CrudService, JsonObject, RecordCapabilities, RecordDto};
-    pub use metap_http::{build_router, AdminContext, AppState, AuthContext, PlatformAdminContext};
+    pub use metap_http::{
+        build_router, build_router_with_groups, AdminContext, AppState, AuthContext, PlatformAdminContext,
+        RouteGroups,
+    };
     pub use metap_infra::{connect_db, load_config, AppConfig};
     pub use metap_metadata::{
         submit_entity, submit_field_display_hints, submit_related_views, EntityAuditConfig, EntityDefinition,

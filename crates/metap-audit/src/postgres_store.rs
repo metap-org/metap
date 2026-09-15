@@ -2,8 +2,13 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::entry::AuditEntry;
+use crate::entry::{AuditEntry, AuditTrailEntryRow};
 use crate::store::AuditTrailStore;
+
+/// Same cap `metap_query::plan_list` enforces per entity list view and
+/// `list_recent_audit_events` (`../metap-lowcode`) enforces on its own feed — a record with an
+/// unusually long edit history must not turn one HTTP response into an unbounded payload.
+const MAX_ENTRIES_PER_RECORD: i64 = 200;
 
 /// The default `AuditTrailStore` — one shared table (`metadata.audit_trail_entries`, see
 /// `crates/migrations/0032_audit_trail_entries.sql`), matching this codebase's own convention for
@@ -51,5 +56,27 @@ impl AuditTrailStore for PostgresAuditTrailStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    async fn list_for_record(
+        &self,
+        tenant_id: Uuid,
+        entity: &str,
+        record_id: Uuid,
+    ) -> anyhow::Result<Vec<AuditTrailEntryRow>> {
+        let rows = sqlx::query_as::<_, AuditTrailEntryRow>(
+            "SELECT id, tenant_id, entity, record_id, action, transition_action, actor_user_id, \
+             reason, diff, version_after, occurred_at \
+             FROM metadata.audit_trail_entries \
+             WHERE tenant_id = $1 AND entity = $2 AND record_id = $3 \
+             ORDER BY occurred_at DESC LIMIT $4",
+        )
+        .bind(tenant_id)
+        .bind(entity)
+        .bind(record_id)
+        .bind(MAX_ENTRIES_PER_RECORD)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 }

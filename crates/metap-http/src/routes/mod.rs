@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod attachments;
+pub mod audit_events;
 pub mod auth;
 pub mod cron;
 pub mod dashboards;
