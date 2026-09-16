@@ -47,22 +47,62 @@ async fn connect() -> PgPool {
         .unwrap()
 }
 
+/// Dedicated tables this file creates itself (`ensure_tables`, `CREATE TABLE IF NOT EXISTS`) —
+/// the shared `records` table these used to point at no longer exists at all
+/// (`crates/migrations/0033_drop_records_table.sql`).
+const PARENT_TABLE: &str = "entities.test_gql_parents";
+const CHILD_TABLE: &str = "entities.test_gql_children";
+const ORDERS_TABLE: &str = "entities.test_gql_orders";
+
+async fn ensure_tables(pool: &PgPool) {
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities")
+        .execute(pool)
+        .await
+        .unwrap();
+    for table in [PARENT_TABLE, CHILD_TABLE, ORDERS_TABLE] {
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS {table} (
+                id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+                tenant_id uuid NOT NULL,
+                code varchar(120),
+                status varchar(80),
+                data jsonb DEFAULT '{{}}'::jsonb NOT NULL,
+                version integer DEFAULT 1 NOT NULL,
+                deleted boolean DEFAULT false NOT NULL,
+                created_at timestamp with time zone DEFAULT now() NOT NULL,
+                updated_at timestamp with time zone DEFAULT now() NOT NULL,
+                created_by uuid,
+                updated_by uuid
+            )"
+        ))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
 async fn cleanup(pool: &PgPool, tenant_id: Uuid) {
-    sqlx::query("DELETE FROM outbox_events WHERE aggregate_id IN (SELECT id FROM records WHERE tenant_id = $1)")
+    for table in [PARENT_TABLE, CHILD_TABLE, ORDERS_TABLE] {
+        sqlx::query(&format!(
+            "DELETE FROM outbox_events WHERE aggregate_id IN (SELECT id FROM {table} WHERE tenant_id = $1)"
+        ))
         .bind(tenant_id)
         .execute(pool)
         .await
         .ok();
+    }
     sqlx::query("DELETE FROM workflow_events WHERE tenant_id = $1")
         .bind(tenant_id)
         .execute(pool)
         .await
         .ok();
-    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .ok();
+    for table in [PARENT_TABLE, CHILD_TABLE, ORDERS_TABLE] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE tenant_id = $1"))
+            .bind(tenant_id)
+            .execute(pool)
+            .await
+            .ok();
+    }
     sqlx::query("DELETE FROM policies WHERE tenant_id = $1")
         .bind(tenant_id)
         .execute(pool)
@@ -97,7 +137,7 @@ fn parent_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.gql_parents".to_string(),
         label: "Parent".to_string(),
-        table_name: "records".to_string(),
+        table_name: PARENT_TABLE.to_string(),
         fields: vec![string_field("name"), string_field("secret")],
         list_views: vec![EntityListView {
             name: "default".to_string(),
@@ -118,7 +158,7 @@ fn child_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.gql_children".to_string(),
         label: "Child".to_string(),
-        table_name: "records".to_string(),
+        table_name: CHILD_TABLE.to_string(),
         fields: vec![EntityField {
             name: "parentId".to_string(),
             label: "Parent".to_string(),
@@ -158,7 +198,7 @@ fn workflow_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.gql_orders".to_string(),
         label: "Order".to_string(),
-        table_name: "records".to_string(),
+        table_name: ORDERS_TABLE.to_string(),
         fields: vec![
             string_field("name"),
             EntityField {
@@ -215,6 +255,7 @@ fn workflow_entity() -> EntityDefinition {
 async fn full_graphql_lifecycle_reference_expansion_and_field_masking() {
     let pool = connect().await;
     let tenant_id = Uuid::new_v4();
+    ensure_tables(&pool).await;
 
     let mut registry = MetadataRegistry::new();
     registry.register(parent_entity()).unwrap();
@@ -394,6 +435,7 @@ async fn full_graphql_lifecycle_reference_expansion_and_field_masking() {
 async fn overly_deep_query_is_rejected_by_the_depth_limit() {
     let pool = connect().await;
     let tenant_id = Uuid::new_v4();
+    ensure_tables(&pool).await;
 
     let mut registry = MetadataRegistry::new();
     registry.register(parent_entity()).unwrap();

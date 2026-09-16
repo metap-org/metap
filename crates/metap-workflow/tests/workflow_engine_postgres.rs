@@ -14,7 +14,11 @@ fn entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.widgets".to_string(),
         label: "Widget".to_string(),
-        table_name: "records".to_string(),
+        // Never actually queried — `record_event`/`emit_transitioned`/`emit_created` only ever
+        // read `entity.name`, never `entity.table_name` (this file writes to `workflow_events`/
+        // `outbox_events` only) — schema-qualified purely so a reader doesn't mistake this for a
+        // still-valid bare name.
+        table_name: "entities.test_widgets".to_string(),
         fields: vec![],
         list_views: vec![],
         workflow: None,

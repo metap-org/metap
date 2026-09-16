@@ -98,7 +98,11 @@ fn bench_entity() -> EntityDefinition {
     EntityDefinition {
         name: "bench.issues".to_string(),
         label: "Bench Issue".to_string(),
-        table_name: "records".to_string(),
+        // Never actually queried — `plan_list` only builds SQL strings here, no DB round trip
+        // (see this file's own doc comment) — so this just needs to satisfy `table_name_ok`'s
+        // schema-qualified-name validation in `MetadataRegistry::register` below, not point at a
+        // real table.
+        table_name: "bench.issues".to_string(),
         fields: vec![
             field("title", FieldKind::String, false, false, true),
             field("status", FieldKind::Enum, true, true, false),

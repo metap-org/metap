@@ -20,11 +20,34 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+/// Dedicated tables the two `sustained_concurrent_list_*` manual benchmarks below register
+/// against — the shared `records` table these used to point at (deliberately, to benchmark
+/// exactly the "many entities on one shared table @ millions of rows" scenario
+/// `docs/architectures/09-adr.md`'s table-per-entity trigger is about) no longer exists at all
+/// (`crates/migrations/0033_drop_records_table.sql`). **The out-of-band seed script these two
+/// tests depend on (not part of this repo — see each test's own doc comment) still needs
+/// updating to seed these 3 dedicated tables instead of one shared one; that hasn't been done
+/// here** — this change only keeps the test file itself compiling and its `MetadataRegistry
+/// ::register` calls valid (`table_name_ok` now rejects a bare `"records"` name outright), not
+/// the seed data these benchmarks read.
+const BENCH_DEPARTMENTS_TABLE: &str = "entities.bench_hr_departments";
+const BENCH_EMPLOYEES_TABLE: &str = "entities.bench_hr_employees";
+const BENCH_TICKETS_TABLE: &str = "entities.bench_helpdesk_tickets";
+
+/// Dedicated tables the fixtures below register against — the shared `records` table these used
+/// to point at no longer exists at all (`crates/migrations/0033_drop_records_table.sql`).
+const ORDERS_TABLE: &str = "entities.test_orders";
+const PARENTS_TABLE: &str = "entities.test_parents";
+const CHILDREN_TABLE: &str = "entities.test_children";
+const GRANDCHILDREN_TABLE: &str = "entities.test_grandchildren";
+const NODES_TABLE: &str = "entities.test_nodes";
+const PEOPLE_TABLE: &str = "entities.test_people";
+
 fn test_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.orders".to_string(),
         label: "Order".to_string(),
-        table_name: "records".to_string(),
+        table_name: ORDERS_TABLE.to_string(),
         fields: vec![
             EntityField {
                 name: "name".to_string(),
@@ -184,43 +207,6 @@ fn test_entity() -> EntityDefinition {
     }
 }
 
-/// A second entity, distinct from `test_entity()`, with a `sku` field declared
-/// `unique: true`. Mirrors `EntityField.unique`'s enforcement: purely a Postgres unique
-/// index (`crates/metap-peripherals/src/index_reconciler.rs`), reconciled at boot/hot-reload
-/// in production but never by `CrudService` itself — so this test creates the same index by
-/// hand rather than pulling in `metap-peripherals` as a dev-dependency just for this.
-fn unique_field_entity() -> EntityDefinition {
-    EntityDefinition {
-        name: "test.unique_orders".to_string(),
-        label: "Unique Order".to_string(),
-        table_name: "records".to_string(),
-        fields: vec![EntityField {
-            name: "sku".to_string(),
-            label: "SKU".to_string(),
-            kind: FieldKind::String,
-            required: Some(true),
-            indexed: None,
-            unique: Some(true),
-            enum_values: None,
-            ref_entity: None,
-            ref_display_field: None,
-            searchable: None,
-            search_mode: None,
-            sortable: None,
-            storage: None,
-            min: None,
-            max: None,
-            min_length: None,
-            max_length: None,
-            computed: None,
-        }],
-        list_views: vec![],
-        workflow: None,
-        unique_constraints: vec![],
-        audit: None,
-    }
-}
-
 /// A referenced-by-another-entity pair for the reference-integrity guard tests
 /// (`docs/architectures/11-risks.md`): `test.children.parentId` is a `Reference` field pointing
 /// at `test.parents`.
@@ -228,7 +214,7 @@ fn parent_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.parents".to_string(),
         label: "Parent".to_string(),
-        table_name: "records".to_string(),
+        table_name: PARENTS_TABLE.to_string(),
         fields: vec![EntityField {
             name: "name".to_string(),
             label: "Name".to_string(),
@@ -260,7 +246,7 @@ fn child_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.children".to_string(),
         label: "Child".to_string(),
-        table_name: "records".to_string(),
+        table_name: CHILDREN_TABLE.to_string(),
         fields: vec![EntityField {
             name: "parentId".to_string(),
             label: "Parent".to_string(),
@@ -298,7 +284,7 @@ fn grandchild_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.grandchildren".to_string(),
         label: "Grandchild".to_string(),
-        table_name: "records".to_string(),
+        table_name: GRANDCHILDREN_TABLE.to_string(),
         fields: vec![EntityField {
             name: "grandparentId".to_string(),
             label: "Grandparent".to_string(),
@@ -333,7 +319,7 @@ fn self_ref_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.nodes".to_string(),
         label: "Node".to_string(),
-        table_name: "records".to_string(),
+        table_name: NODES_TABLE.to_string(),
         fields: vec![EntityField {
             name: "parentNodeId".to_string(),
             label: "Parent Node".to_string(),
@@ -367,7 +353,7 @@ fn computed_field_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.people".to_string(),
         label: "Person".to_string(),
-        table_name: "records".to_string(),
+        table_name: PEOPLE_TABLE.to_string(),
         fields: vec![
             EntityField {
                 name: "firstName".to_string(),
@@ -440,23 +426,14 @@ fn computed_field_entity() -> EntityDefinition {
     }
 }
 
-async fn ensure_sku_unique_index(pool: &PgPool) {
-    sqlx::query(
-        "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uniq_records_test_unique_orders_sku \
-         ON records (tenant_id, (jsonb_extract_path_text(data, 'sku'))) \
-         WHERE entity = 'test.unique_orders' AND deleted = false",
-    )
-    .execute(pool)
-    .await
-    .unwrap();
-}
-
-/// A dedicated-table counterpart to `unique_field_entity()` — same `unique: true` shape, but
-/// `table_name` is a real table-per-entity table, not `records`. `metap_reconciler::compile()`
-/// names this table's unique index `uniq_test_unique_widgets_sku` (no `records_` in the middle,
-/// unlike the generic-table case above) — hand-rolled here rather than pulling in
-/// `metap-reconciler` as a dev-dependency, same reasoning `unique_field_entity()`'s own doc
-/// comment gives for `metap-peripherals`.
+/// `unique: true` shape, enforced via a real Postgres unique index
+/// (`crates/metap-peripherals/src/index_reconciler.rs`), reconciled at boot/hot-reload in
+/// production but never by `CrudService` itself — so this test creates the same index by hand
+/// rather than pulling in `metap-peripherals` as a dev-dependency just for this.
+/// `metap_reconciler::compile()` names a dedicated table's unique index `uniq_<table>_<field>`
+/// (`ensure_dedicated_unique_widgets_table` below hand-rolls that same name) — this used to also
+/// have a shared-`records`-table counterpart, `uniq_records_<entity>_<field>`, deleted along
+/// with the shared table itself (`crates/migrations/0033_drop_records_table.sql`).
 fn dedicated_table_unique_field_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.unique_widgets".to_string(),
@@ -629,13 +606,100 @@ async fn drop_dedicated_unique_list_entries_table(pool: &PgPool) {
         .ok();
 }
 
+/// `CREATE TABLE IF NOT EXISTS` for every dedicated table this file's fixtures below
+/// (`test_entity`/`audited_entity`/`parent_entity`/`child_entity`/`grandchild_entity`/
+/// `self_ref_entity`/`computed_field_entity`) point at — idempotent, so calling this once per
+/// test via `connect()` is cheap and means no individual test needs to know which of these
+/// tables it actually touches. `dedicated_table_unique_field_entity`/
+/// `dedicated_table_composite_unique_entity` above already manage their own tables
+/// (`ensure_dedicated_*_table`, dropped and recreated per test for the unique-index scenario
+/// specifically) and aren't included here.
+/// `metap_metadata::field_has_real_column` says any `Reference` field with `ref_entity` set
+/// always gets a real physical column, unconditionally (not just for a `unique`/`indexed` field,
+/// and no longer gated on "is this a dedicated table" — that branch was deleted along with the
+/// shared `records` table, `crates/migrations/0033_drop_records_table.sql`). In production,
+/// `metap_reconciler::compile()`/`execute()` creates that column plus a
+/// `BEFORE INSERT OR UPDATE` sync trigger (`executor::build_sync_trigger_sql`) that copies
+/// `data ->> '<field>'` into it — `CrudService::create`/`update` only ever write `data`, never
+/// the real column directly. Hand-rolled here (not pulling in `metap-reconciler` as a
+/// dev-dependency, same reasoning `ensure_sku_unique_index`'s own doc comment gives) with the
+/// exact same function/trigger shape, so `test.children.parentId`/`test.grandchildren
+/// .grandparentId`/`test.nodes.parentNodeId` behave like a real reconciled dedicated table would
+/// — without this, `find_referencing_records`'s `"parentId" = $N::uuid` query would silently
+/// match nothing (an always-NULL column), the same "reference guard doesn't actually guard
+/// anything" failure shape `metap-demo-waf/CLAUDE.md`'s 8th finding describes.
+async fn ensure_reference_sync_trigger(pool: &PgPool, table: &str, field: &str) {
+    let bare_table = table.rsplit('.').next().unwrap_or(table);
+    sqlx::query(&format!(
+        "ALTER TABLE {table} ADD COLUMN IF NOT EXISTS \"{field}\" uuid"
+    ))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "CREATE OR REPLACE FUNCTION sync_{bare_table}_{field}() RETURNS trigger AS $$ \
+         BEGIN NEW.\"{field}\" := (NEW.data ->> '{field}')::uuid; RETURN NEW; END; \
+         $$ LANGUAGE plpgsql"
+    ))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "CREATE OR REPLACE TRIGGER trg_sync_{bare_table}_{field} BEFORE INSERT OR UPDATE ON {table} \
+         FOR EACH ROW EXECUTE FUNCTION sync_{bare_table}_{field}()"
+    ))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn ensure_core_test_tables(pool: &PgPool) {
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities")
+        .execute(pool)
+        .await
+        .unwrap();
+    for table in [
+        ORDERS_TABLE,
+        AUDITED_ORDERS_TABLE,
+        PARENTS_TABLE,
+        CHILDREN_TABLE,
+        GRANDCHILDREN_TABLE,
+        NODES_TABLE,
+        PEOPLE_TABLE,
+    ] {
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS {table} (
+                id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+                tenant_id uuid NOT NULL,
+                code varchar(120),
+                status varchar(80),
+                data jsonb DEFAULT '{{}}'::jsonb NOT NULL,
+                version integer DEFAULT 1 NOT NULL,
+                deleted boolean DEFAULT false NOT NULL,
+                created_at timestamp with time zone DEFAULT now() NOT NULL,
+                updated_at timestamp with time zone DEFAULT now() NOT NULL,
+                created_by uuid,
+                updated_by uuid
+            )"
+        ))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    ensure_reference_sync_trigger(pool, CHILDREN_TABLE, "parentId").await;
+    ensure_reference_sync_trigger(pool, GRANDCHILDREN_TABLE, "grandparentId").await;
+    ensure_reference_sync_trigger(pool, NODES_TABLE, "parentNodeId").await;
+}
+
 async fn connect() -> PgPool {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
-    PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
         .await
-        .unwrap()
+        .unwrap();
+    ensure_core_test_tables(&pool).await;
+    pool
 }
 
 /// No `control.tenants` row is ever inserted by these tests, so `Router::begin` always takes
@@ -661,12 +725,28 @@ fn admin_context(tenant_id: Uuid) -> RequestContext {
     }
 }
 
+/// Every core dedicated table this file's fixtures point at — see `ensure_core_test_tables`'s
+/// own doc comment.
+const CORE_TEST_TABLES: [&str; 7] = [
+    ORDERS_TABLE,
+    AUDITED_ORDERS_TABLE,
+    PARENTS_TABLE,
+    CHILDREN_TABLE,
+    GRANDCHILDREN_TABLE,
+    NODES_TABLE,
+    PEOPLE_TABLE,
+];
+
 async fn cleanup(pool: &PgPool, tenant_id: Uuid) {
-    sqlx::query("DELETE FROM outbox_events WHERE aggregate_id IN (SELECT id FROM records WHERE tenant_id = $1)")
+    for table in CORE_TEST_TABLES {
+        sqlx::query(&format!(
+            "DELETE FROM outbox_events WHERE aggregate_id IN (SELECT id FROM {table} WHERE tenant_id = $1)"
+        ))
         .bind(tenant_id)
         .execute(pool)
         .await
         .ok();
+    }
     sqlx::query("DELETE FROM workflow_events WHERE tenant_id = $1")
         .bind(tenant_id)
         .execute(pool)
@@ -677,17 +757,27 @@ async fn cleanup(pool: &PgPool, tenant_id: Uuid) {
         .execute(pool)
         .await
         .ok();
-    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .ok();
+    for table in CORE_TEST_TABLES {
+        sqlx::query(&format!("DELETE FROM {table} WHERE tenant_id = $1"))
+            .bind(tenant_id)
+            .execute(pool)
+            .await
+            .ok();
+    }
     sqlx::query("DELETE FROM policies WHERE tenant_id = $1")
         .bind(tenant_id)
         .execute(pool)
         .await
         .ok();
 }
+
+/// Dedicated table for `audited_entity()` below — must be distinct from `ORDERS_TABLE`
+/// (`test_entity()`'s own table): both get registered together in
+/// `audited_entity_writes_are_recorded_and_unaudited_entity_writes_are_not` below, and unlike
+/// the old shared `records` table (which told the two apart via an `entity` discriminator
+/// column), a dedicated table holds exactly one entity's rows — sharing one here would silently
+/// mix `test.orders` and `test.audited_orders` records together.
+const AUDITED_ORDERS_TABLE: &str = "entities.test_audited_orders";
 
 /// Same shape as `test_entity()`, but opted into the audit trail
 /// (`EntityAuditConfig { enabled: true }`) — kept as a separate entity (not just a variant of
@@ -697,6 +787,7 @@ async fn cleanup(pool: &PgPool, tenant_id: Uuid) {
 fn audited_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.audited_orders".to_string(),
+        table_name: AUDITED_ORDERS_TABLE.to_string(),
         audit: Some(metap_metadata::EntityAuditConfig { enabled: true }),
         ..test_entity()
     }
@@ -1368,94 +1459,17 @@ async fn non_admin_field_write_policy_is_enforced_through_create() {
     cleanup(&pool, tenant_id).await;
 }
 
-#[tokio::test]
-#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
-async fn unique_field_violation_is_a_clean_409_not_a_500() {
-    let pool = connect().await;
-    ensure_sku_unique_index(&pool).await;
-    let tenant_id = Uuid::new_v4();
-    let ctx = admin_context(tenant_id);
-
-    let mut registry = MetadataRegistry::new();
-    registry.register(unique_field_entity()).unwrap();
-    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
-    let crud = CrudService::new(
-        test_router(pool.clone()),
-        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
-        std::sync::Arc::new(permissions),
-    );
-
-    let mut payload = JsonObject::new();
-    payload.insert("sku".to_string(), json!("ABC-1"));
-    let first = match crud.create("test.unique_orders", &payload, &ctx, None).await.unwrap() {
-        ServiceResult::Ok { data, .. } => data,
-        other => panic!("expected first create to succeed, got {other:?}"),
-    };
-
-    // second create with the same sku -> 409 unique_violation, field_errors names "sku",
-    // not an unhandled 500 from the raw DB error propagating through `?`.
-    match crud.create("test.unique_orders", &payload, &ctx, None).await.unwrap() {
-        ServiceResult::Err {
-            status,
-            error,
-            field_errors,
-            ..
-        } => {
-            assert_eq!(status, 409);
-            assert_eq!(error, "unique_violation");
-            assert!(field_errors.unwrap().contains_key("sku"));
-        }
-        other => panic!("expected unique_violation on duplicate create, got {other:?}"),
-    }
-
-    // a second, distinct record, then updated to collide with the first -> same 409 on update.
-    let mut other_payload = JsonObject::new();
-    other_payload.insert("sku".to_string(), json!("ABC-2"));
-    let second = match crud
-        .create("test.unique_orders", &other_payload, &ctx, None)
-        .await
-        .unwrap()
-    {
-        ServiceResult::Ok { data, .. } => data,
-        other => panic!("expected second create to succeed, got {other:?}"),
-    };
-    match crud
-        .update("test.unique_orders", second.id, second.version, &payload, &ctx, None)
-        .await
-        .unwrap()
-    {
-        ServiceResult::Err {
-            status,
-            error,
-            field_errors,
-            ..
-        } => {
-            assert_eq!(status, 409);
-            assert_eq!(error, "unique_violation");
-            assert!(field_errors.unwrap().contains_key("sku"));
-        }
-        other => panic!("expected unique_violation on colliding update, got {other:?}"),
-    }
-
-    // update did not bump the record's version (the write never actually happened)
-    let (refetched, _) = match crud.get("test.unique_orders", second.id, &ctx).await.unwrap() {
-        ServiceResult::Ok { data, .. } => data,
-        other => panic!("expected get to succeed, got {other:?}"),
-    };
-    assert_eq!(refetched.version, second.version);
-
-    let _ = first;
-    cleanup(&pool, tenant_id).await;
-}
-
-/// Regression test for a real bug (2026-09-07): `unique_violation`'s field-name extraction only
-/// ever tried the `uniq_records_<entity>_<field>` prefix (the generic shared-table naming), so a
+/// Regression test for a real bug (2026-09-07): `unique_violation`'s field-name extraction used
+/// to only try the `uniq_records_<entity>_<field>` prefix (the generic shared-table naming), so a
 /// `unique: true` field on a *dedicated* table (`uniq_<table>_<field>`, no `records_` in the
 /// middle) always fell through to a bare `409 {"code":"unique_violation"}` with no field name at
 /// all — reported live by a user hitting exactly this on `metap-demo-waf`'s
 /// `waf.ddos_policies.zoneId`, the first `unique: true` field on a dedicated table anywhere in
-/// this codebase's history. The generic-table case above already covered the old prefix; this
-/// covers the one that was silently broken.
+/// this codebase's history. Fixed to pick the right prefix via `is_dedicated`; this test covers
+/// the dedicated-table case that was silently broken. Its former sibling covering the
+/// generic-table naming (`uniq_records_<entity>_<field>`) is gone along with the shared `records`
+/// table itself (`crates/migrations/0033_drop_records_table.sql`) — that naming can no longer be
+/// exercised at all, every table is dedicated now.
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn unique_field_violation_on_a_dedicated_table_still_names_the_field() {
@@ -1984,12 +1998,13 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
         .connect(&database_url)
         .await
         .unwrap();
-    let dept_ids: Vec<Uuid> =
-        sqlx::query_scalar("SELECT id FROM records WHERE entity = 'hr.departments' AND tenant_id = $1 ORDER BY id")
-            .bind(tenant_id)
-            .fetch_all(&pool)
-            .await
-            .expect("hr.departments must already be seeded (out-of-band) before this test runs");
+    let dept_ids: Vec<Uuid> = sqlx::query_scalar(&format!(
+        "SELECT id FROM {BENCH_DEPARTMENTS_TABLE} WHERE tenant_id = $1 ORDER BY id"
+    ))
+    .bind(tenant_id)
+    .fetch_all(&pool)
+    .await
+    .expect("hr.departments must already be seeded (out-of-band) before this test runs");
     assert!(
         !dept_ids.is_empty(),
         "no hr.departments found for the fixed dev tenant — seed first"
@@ -2045,7 +2060,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
         .register(EntityDefinition {
             name: "hr.departments".to_string(),
             label: "Department".to_string(),
-            table_name: "records".to_string(),
+            table_name: BENCH_DEPARTMENTS_TABLE.to_string(),
             fields: vec![plain_field("name", FieldKind::String)],
             list_views: vec![],
             workflow: None,
@@ -2057,7 +2072,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
         .register(EntityDefinition {
             name: "hr.employees".to_string(),
             label: "Employee".to_string(),
-            table_name: "records".to_string(),
+            table_name: BENCH_EMPLOYEES_TABLE.to_string(),
             fields: vec![
                 plain_field("userId", FieldKind::String),
                 plain_field("name", FieldKind::String),
@@ -2073,7 +2088,7 @@ async fn sustained_concurrent_list_against_a_real_multi_entity_abac_workflow() {
         .register(EntityDefinition {
             name: "helpdesk.tickets".to_string(),
             label: "Ticket".to_string(),
-            table_name: "records".to_string(),
+            table_name: BENCH_TICKETS_TABLE.to_string(),
             fields: vec![
                 plain_field("title", FieldKind::String),
                 plain_field("description", FieldKind::String),
@@ -2208,11 +2223,12 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
     // (tenant_id, department_id) pairs across all 10 seeded tenants — a worker picks one at
     // random each iteration, so traffic is genuinely mixed across tenants, not one tenant_id
     // repeated with different departments.
-    let tenant_dept_pairs: Vec<(Uuid, Uuid)> =
-        sqlx::query_as("SELECT tenant_id, id FROM records WHERE entity = 'hr.departments' ORDER BY tenant_id, id")
-            .fetch_all(&pool)
-            .await
-            .expect("hr.departments must already be seeded (out-of-band, 10 tenants) before this test runs");
+    let tenant_dept_pairs: Vec<(Uuid, Uuid)> = sqlx::query_as(&format!(
+        "SELECT tenant_id, id FROM {BENCH_DEPARTMENTS_TABLE} ORDER BY tenant_id, id"
+    ))
+    .fetch_all(&pool)
+    .await
+    .expect("hr.departments must already be seeded (out-of-band, 10 tenants) before this test runs");
     let distinct_tenants: std::collections::HashSet<Uuid> = tenant_dept_pairs.iter().map(|(t, _)| *t).collect();
     assert!(
         distinct_tenants.len() >= 2,
@@ -2276,7 +2292,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
         .register(EntityDefinition {
             name: "hr.departments".to_string(),
             label: "Department".to_string(),
-            table_name: "records".to_string(),
+            table_name: BENCH_DEPARTMENTS_TABLE.to_string(),
             fields: vec![plain_field("name", FieldKind::String)],
             list_views: vec![],
             workflow: None,
@@ -2288,7 +2304,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
         .register(EntityDefinition {
             name: "hr.employees".to_string(),
             label: "Employee".to_string(),
-            table_name: "records".to_string(),
+            table_name: BENCH_EMPLOYEES_TABLE.to_string(),
             fields: vec![
                 plain_field("userId", FieldKind::String),
                 plain_field("name", FieldKind::String),
@@ -2304,7 +2320,7 @@ async fn sustained_concurrent_list_across_many_tenants_at_ten_million_rows() {
         .register(EntityDefinition {
             name: "helpdesk.tickets".to_string(),
             label: "Ticket".to_string(),
-            table_name: "records".to_string(),
+            table_name: BENCH_TICKETS_TABLE.to_string(),
             fields: vec![
                 plain_field("title", FieldKind::String),
                 plain_field("description", FieldKind::String),

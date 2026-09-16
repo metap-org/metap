@@ -8,10 +8,12 @@ metap-runtime = { path = "../metap-runtime" }
 metap-control = { path = "../metap-control" }
 metap-crud = { path = "../metap-crud" }
 metap-jwks = { path = "../metap-jwks" }
+metap-metadata = { path = "../metap-metadata" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-permission = { path = "../metap-permission" }
 metap-query = { path = "../metap-query" }
 anyhow.workspace = true
+arc-swap.workspace = true
 async-trait.workspace = true
 governor.workspace = true
 http = "1"
@@ -34,8 +36,6 @@ protoc-bin-vendored = "3"
 tonic-prost-build = "0.14"
 
 [dev-dependencies]
-arc-swap.workspace = true
-metap-metadata = { path = "../metap-metadata" }
 metap-peripherals = { path = "../metap-peripherals" }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }

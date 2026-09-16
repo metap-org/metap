@@ -79,11 +79,16 @@ fn openssl_genrsa(dir: &std::path::Path) -> (String, String) {
     )
 }
 
+/// A dedicated table this file creates itself (`CREATE TABLE IF NOT EXISTS`) — the shared
+/// `records` table this used to point at no longer exists at all
+/// (`crates/migrations/0033_drop_records_table.sql`).
+const TEST_TABLE: &str = "entities.test_grpc_backend_orders";
+
 fn test_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.grpc_backend_orders".to_string(),
         label: "Order".to_string(),
-        table_name: "records".to_string(),
+        table_name: TEST_TABLE.to_string(),
         fields: vec![
             EntityField {
                 name: "name".to_string(),
@@ -199,6 +204,29 @@ async fn grpc_backend_full_lifecycle_matches_direct_crud_service_behavior() {
         .await
         .unwrap();
 
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!(
+        "CREATE TABLE IF NOT EXISTS {TEST_TABLE} (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+            tenant_id uuid NOT NULL,
+            code varchar(120),
+            status varchar(80),
+            data jsonb DEFAULT '{{}}'::jsonb NOT NULL,
+            version integer DEFAULT 1 NOT NULL,
+            deleted boolean DEFAULT false NOT NULL,
+            created_at timestamp with time zone DEFAULT now() NOT NULL,
+            updated_at timestamp with time zone DEFAULT now() NOT NULL,
+            created_by uuid,
+            updated_by uuid
+        )"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
     let keydir = tempdir();
     let (private_pem, public_pem) = openssl_genrsa(keydir.path());
     // This test exercises `GrpcBackend`'s dispatch, not `ServiceTokenSource`'s login flow — there
@@ -209,13 +237,13 @@ async fn grpc_backend_full_lifecycle_matches_direct_crud_service_behavior() {
 
     let mut registry = MetadataRegistry::new();
     registry.register(test_entity()).unwrap();
-    let registry = Arc::new(registry);
+    let metadata = Arc::new(ArcSwap::new(Arc::new(registry)));
     let permissions = Arc::new(PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(
         pool.clone(),
     )))));
     let crud = Arc::new(CrudService::new(
         test_router(pool.clone()),
-        Arc::new(ArcSwap::new(registry)),
+        metadata.clone(),
         permissions,
     ));
 
@@ -226,6 +254,7 @@ async fn grpc_backend_full_lifecycle_matches_direct_crud_service_behavior() {
         },
         router: test_router(pool.clone()),
         auth_context_entity: None,
+        metadata,
         context_attributes_cache: metap_control::ContextAttributesCache::new(Duration::from_secs(60)),
     };
     let service = GrpcRecordService::new(crud.clone(), auth);

@@ -21,7 +21,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use axum::Router;
 use jsonwebtoken::DecodingKey;
-use metap_http::cookies::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+use metap_http::cookies::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME, SESSION_STARTED_AT_COOKIE_NAME};
 use metap_http::{build_router, AppState};
 use metap_metadata::{EntityDefinition, EntityField, EntityListView, FieldKind, MetadataRegistry};
 use metap_permission::PermissionService;
@@ -32,6 +32,11 @@ use uuid::Uuid;
 
 const ENTITY: &str = "test.cookie_orders";
 const CSRF_VALUE: &str = "csrf-token-value";
+/// A dedicated table this file creates itself (`boot_server`, `CREATE TABLE IF NOT EXISTS`) —
+/// the shared `records` table this used to point at no longer exists at all
+/// (`crates/migrations/0033_drop_records_table.sql`). Same shape as `query_planner_postgres.rs`'s
+/// own `TEST_TABLE` in `metap-query`.
+const TEST_TABLE: &str = "entities.test_cookie_orders";
 
 fn test_router(pool: PgPool) -> metap_control::Router {
     let registry = Arc::new(metap_control::PostgresTenantRegistry::new(pool.clone()));
@@ -70,7 +75,7 @@ fn test_entity() -> EntityDefinition {
     EntityDefinition {
         name: ENTITY.to_string(),
         label: "Order".to_string(),
-        table_name: "records".to_string(),
+        table_name: TEST_TABLE.to_string(),
         fields: vec![EntityField {
             name: "name".to_string(),
             label: "Name".to_string(),
@@ -143,6 +148,29 @@ async fn boot_server(tenant_id: Uuid, user_id: Uuid) -> TestServer {
         .await
         .unwrap();
 
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!(
+        "CREATE TABLE IF NOT EXISTS {TEST_TABLE} (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+            tenant_id uuid NOT NULL,
+            code varchar(120),
+            status varchar(80),
+            data jsonb DEFAULT '{{}}'::jsonb NOT NULL,
+            version integer DEFAULT 1 NOT NULL,
+            deleted boolean DEFAULT false NOT NULL,
+            created_at timestamp with time zone DEFAULT now() NOT NULL,
+            updated_at timestamp with time zone DEFAULT now() NOT NULL,
+            created_by uuid,
+            updated_by uuid
+        )"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
     let keydir = TempDir::new();
     let (private_pem, public_pem) = openssl_genrsa(keydir.path());
 
@@ -184,7 +212,7 @@ async fn boot_server(tenant_id: Uuid, user_id: Uuid) -> TestServer {
 
 async fn cleanup(pool: &PgPool, tenant_id: Uuid) {
     for sql in [
-        "DELETE FROM records WHERE tenant_id = $1",
+        &format!("DELETE FROM {TEST_TABLE} WHERE tenant_id = $1"),
         "DELETE FROM user_roles WHERE tenant_id = $1",
         "DELETE FROM users WHERE tenant_id = $1",
     ] {
@@ -308,8 +336,12 @@ async fn an_authorization_header_wins_over_a_cookie_and_is_never_csrf_gated() {
     cleanup(&server.pool, tenant_id).await;
 }
 
-/// `POST /auth/logout` must send back both cookies with `Max-Age=0` — and must do so without
-/// requiring auth, so a browser whose session already expired can still clear it.
+/// `POST /auth/logout` must send back all 3 session cookies with `Max-Age=0` — and must do so
+/// without requiring auth, so a browser whose session already expired can still clear it. Was 2
+/// cookies (session + CSRF) when this test was written; `SESSION_STARTED_AT_COOKIE_NAME` (Phase
+/// 64's absolute-session-age tracking) added a 3rd afterward without this assertion being
+/// updated — the server already clears all 3 correctly, only the test's hardcoded count was
+/// stale.
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn logout_clears_both_cookies_without_requiring_auth() {
@@ -330,9 +362,16 @@ async fn logout_clears_both_cookies_without_requiring_auth() {
         .iter()
         .map(|v| v.to_str().unwrap().to_string())
         .collect();
-    assert_eq!(set_cookies.len(), 2, "both cookies must be cleared: {set_cookies:?}");
+    assert_eq!(
+        set_cookies.len(),
+        3,
+        "all 3 session cookies must be cleared: {set_cookies:?}"
+    );
     assert!(set_cookies.iter().any(|c| c.starts_with(SESSION_COOKIE_NAME)));
     assert!(set_cookies.iter().any(|c| c.starts_with(CSRF_COOKIE_NAME)));
+    assert!(set_cookies
+        .iter()
+        .any(|c| c.starts_with(SESSION_STARTED_AT_COOKIE_NAME)));
     for cookie in &set_cookies {
         assert!(cookie.contains("Max-Age=0"), "must expire immediately: {cookie}");
     }

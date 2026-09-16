@@ -16,6 +16,7 @@
 //!         router: state.router.clone(),
 //!         jwt_decoding_key: state.jwt_decoding_key.clone(),
 //!         auth_context_entity: state.auth_context_entity.as_deref().map(str::to_string),
+//!         metadata: state.metadata.clone(),
 //!         context_attributes_cache: state.context_attributes_cache.clone(),
 //!     },
 //! )
@@ -37,8 +38,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use metap_control::{ContextAttributesCache, Router};
 use metap_crud::CrudService;
+use metap_metadata::MetadataRegistry;
 use tonic::transport::{Server, ServerTlsConfig};
 use tower_http::classify::GrpcFailureClass;
 use tower_http::trace::TraceLayer;
@@ -135,6 +138,10 @@ pub struct OptionalServeConfig {
     pub router: Router,
     pub jwt_decoding_key: Arc<jsonwebtoken::DecodingKey>,
     pub auth_context_entity: Option<String>,
+    /// Resolves `auth_context_entity` to a real `table_name` — see [`crate::auth::AuthConfig
+    /// ::metadata`]'s own doc comment. Set this to the same `state.metadata` a binary's
+    /// `AppState`/`MetapApp` already builds.
+    pub metadata: Arc<ArcSwap<MetadataRegistry>>,
     pub context_attributes_cache: ContextAttributesCache,
     /// When `Some`, gRPC verifies against this trust root instead of building
     /// `TokenVerifier::Static` from `jwt_decoding_key` above — set this to a binary's own
@@ -178,6 +185,7 @@ pub async fn optional_serve(
         verifier,
         router: config.router,
         auth_context_entity: config.auth_context_entity,
+        metadata: config.metadata,
         context_attributes_cache: config.context_attributes_cache,
     };
     let service = GrpcRecordService::new(config.crud, auth);

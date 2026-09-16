@@ -322,6 +322,7 @@ impl MetapApp {
                         router: state.router.clone(),
                         jwt_decoding_key: state.jwt_decoding_key.clone(),
                         auth_context_entity: grpc.auth_context_entity.clone(),
+                        metadata: state.metadata.clone(),
                         context_attributes_cache: state.context_attributes_cache.clone(),
                         token_verifier_override: state.token_verifier.clone(),
                     },

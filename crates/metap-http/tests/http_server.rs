@@ -69,11 +69,16 @@ fn mint_token(private_pem: &str, tenant_id: Uuid, user_id: Uuid) -> String {
     metap_peripherals::mint_jwt(private_pem, tenant_id, user_id, 3600).unwrap()
 }
 
+/// A dedicated table this file creates itself (`full_http_lifecycle_over_a_real_server_and_a_real_jwt`,
+/// `CREATE TABLE IF NOT EXISTS`) — the shared `records` table this used to point at no longer
+/// exists at all (`crates/migrations/0033_drop_records_table.sql`).
+const TEST_ORDERS_TABLE: &str = "entities.test_orders";
+
 fn test_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.orders".to_string(),
         label: "Order".to_string(),
-        table_name: "records".to_string(),
+        table_name: TEST_ORDERS_TABLE.to_string(),
         fields: vec![
             EntityField {
                 name: "name".to_string(),
@@ -166,6 +171,29 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
         .execute(&pool)
         .await
         .unwrap();
+
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!(
+        "CREATE TABLE IF NOT EXISTS {TEST_ORDERS_TABLE} (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+            tenant_id uuid NOT NULL,
+            code varchar(120),
+            status varchar(80),
+            data jsonb DEFAULT '{{}}'::jsonb NOT NULL,
+            version integer DEFAULT 1 NOT NULL,
+            deleted boolean DEFAULT false NOT NULL,
+            created_at timestamp with time zone DEFAULT now() NOT NULL,
+            updated_at timestamp with time zone DEFAULT now() NOT NULL,
+            created_by uuid,
+            updated_by uuid
+        )"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let keydir = tempdir();
     let (private_pem, public_pem) = openssl_genrsa(keydir.path());
@@ -333,7 +361,7 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
         .execute(&pool)
         .await
         .ok();
-    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
+    sqlx::query(&format!("DELETE FROM {TEST_ORDERS_TABLE} WHERE tenant_id = $1"))
         .bind(tenant_id)
         .execute(&pool)
         .await
@@ -555,17 +583,52 @@ fn string_field(name: &str) -> EntityField {
     }
 }
 
+/// Dedicated table per entity name (`entities.test_<name-with-dots-as-underscores>`) — a caller
+/// registering more than one entity via this helper (both tests below register `test.profiles`
+/// *and* `test.tasks`) needs each on its own physical table now that the shared `records` table
+/// this used to point at is gone (`crates/migrations/0033_drop_records_table.sql`); the
+/// `entity = '...'` discriminator column that used to separate them within one table no longer
+/// exists either.
+fn dedicated_table_for(entity_name: &str) -> String {
+    format!("entities.test_{}", entity_name.replace(['.', '-'], "_"))
+}
+
 fn plain_string_entity(name: &str, field_names: &[&str]) -> EntityDefinition {
     EntityDefinition {
         name: name.to_string(),
         label: name.to_string(),
-        table_name: "records".to_string(),
+        table_name: dedicated_table_for(name),
         fields: field_names.iter().map(|f| string_field(f)).collect(),
         list_views: vec![],
         workflow: None,
         unique_constraints: vec![],
         audit: None,
     }
+}
+
+async fn create_dedicated_table(pool: &PgPool, table_name: &str) {
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!(
+        "CREATE TABLE IF NOT EXISTS {table_name} (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+            tenant_id uuid NOT NULL,
+            code varchar(120),
+            status varchar(80),
+            data jsonb DEFAULT '{{}}'::jsonb NOT NULL,
+            version integer DEFAULT 1 NOT NULL,
+            deleted boolean DEFAULT false NOT NULL,
+            created_at timestamp with time zone DEFAULT now() NOT NULL,
+            updated_at timestamp with time zone DEFAULT now() NOT NULL,
+            created_by uuid,
+            updated_by uuid
+        )"
+    ))
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 /// Live verification of A4/A4b (`docs/features/03-organization-identity.md`): `AUTH_CONTEXT_ENTITY`
@@ -599,6 +662,11 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
     let (private_pem, public_pem) = openssl_genrsa(keydir.path());
     let admin_token = mint_token(&private_pem, tenant_id, admin_user_id);
     let employee_token = mint_token(&private_pem, tenant_id, employee_user_id);
+
+    let profiles_table = dedicated_table_for("test.profiles");
+    let tasks_table = dedicated_table_for("test.tasks");
+    create_dedicated_table(&pool, &profiles_table).await;
+    create_dedicated_table(&pool, &tasks_table).await;
 
     let mut registry = MetadataRegistry::new();
     registry
@@ -640,12 +708,14 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
     let client = reqwest::Client::new();
 
     // employee's own "profile" record — this is what AUTH_CONTEXT_ENTITY reads.
-    sqlx::query("INSERT INTO records (tenant_id, entity, data, version) VALUES ($1, 'test.profiles', $2, 1)")
-        .bind(tenant_id)
-        .bind(json!({ "userId": employee_user_id.to_string(), "deptId": "eng" }))
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(&format!(
+        "INSERT INTO {profiles_table} (tenant_id, data, version) VALUES ($1, $2, 1)"
+    ))
+    .bind(tenant_id)
+    .bind(json!({ "userId": employee_user_id.to_string(), "deptId": "eng" }))
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // admin bypasses policy checks entirely -> seed two task records in different departments
     let eng_task: serde_json::Value = client
@@ -715,10 +785,10 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
     assert_eq!(res.status(), 403);
 
     // move the employee to "sales" ...
-    sqlx::query(
-        "UPDATE records SET data = jsonb_set(data, '{deptId}', '\"sales\"') \
-         WHERE tenant_id = $1 AND entity = 'test.profiles' AND data ->> 'userId' = $2",
-    )
+    sqlx::query(&format!(
+        "UPDATE {profiles_table} SET data = jsonb_set(data, '{{deptId}}', '\"sales\"') \
+         WHERE tenant_id = $1 AND data ->> 'userId' = $2"
+    ))
     .bind(tenant_id)
     .bind(employee_user_id.to_string())
     .execute(&pool)
@@ -781,7 +851,12 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
         .execute(&pool)
         .await
         .ok();
-    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
+    sqlx::query(&format!("DELETE FROM {tasks_table} WHERE tenant_id = $1"))
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query(&format!("DELETE FROM {profiles_table} WHERE tenant_id = $1"))
         .bind(tenant_id)
         .execute(&pool)
         .await
@@ -826,6 +901,11 @@ async fn updating_the_auth_context_entity_record_via_patch_invalidates_the_cache
     let (private_pem, public_pem) = openssl_genrsa(keydir.path());
     let admin_token = mint_token(&private_pem, tenant_id, admin_user_id);
     let employee_token = mint_token(&private_pem, tenant_id, employee_user_id);
+
+    let profiles_table = dedicated_table_for("test.profiles");
+    let tasks_table = dedicated_table_for("test.tasks");
+    create_dedicated_table(&pool, &profiles_table).await;
+    create_dedicated_table(&pool, &tasks_table).await;
 
     let mut registry = MetadataRegistry::new();
     registry
@@ -977,7 +1057,12 @@ async fn updating_the_auth_context_entity_record_via_patch_invalidates_the_cache
         .execute(&pool)
         .await
         .ok();
-    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
+    sqlx::query(&format!("DELETE FROM {tasks_table} WHERE tenant_id = $1"))
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query(&format!("DELETE FROM {profiles_table} WHERE tenant_id = $1"))
         .bind(tenant_id)
         .execute(&pool)
         .await

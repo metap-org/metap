@@ -58,8 +58,7 @@ pub mod prelude {
     pub use metap_control::PostgresPolicyStore;
     pub use metap_crud::{CrudService, JsonObject, RecordCapabilities, RecordDto};
     pub use metap_http::{
-        build_router, build_router_with_groups, AdminContext, AppState, AuthContext, PlatformAdminContext,
-        RouteGroups,
+        build_router, build_router_with_groups, AdminContext, AppState, AuthContext, PlatformAdminContext, RouteGroups,
     };
     pub use metap_infra::{connect_db, load_config, AppConfig};
     pub use metap_metadata::{

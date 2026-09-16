@@ -16,6 +16,8 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
+use metap_metadata::MetadataRegistry;
 use metap_peripherals::{fetch_context_attributes, get_roles_for_user};
 use metap_permission::RequestContext;
 use moka::future::Cache;
@@ -84,12 +86,20 @@ impl ContextAttributesCache {
 /// failure resolving roles propagates as an error (identity without roles is unusable), while a
 /// failure resolving context attributes only logs and yields `None` (supplementary ABAC context,
 /// never blocks auth).
+///
+/// `auth_context_entity` is still the entity *name* (`AppState.auth_context_entity`/
+/// `AuthConfig.auth_context_entity`'s existing shape, unchanged) — `metadata` resolves it to that
+/// entity's real `table_name` before querying, since `fetch_context_attributes` needs a real
+/// dedicated table now, not the removed shared `records` table + an `entity` discriminator. An
+/// entity name that no longer resolves (renamed/unregistered since boot) degrades to `None`, the
+/// same as any other context-attributes failure.
 pub async fn resolve_request_context(
     router: &Router,
     tenant_id: Uuid,
     user_id: Uuid,
     function_id: Option<String>,
     auth_context_entity: Option<&str>,
+    metadata: &ArcSwap<MetadataRegistry>,
     context_attributes_cache: &ContextAttributesCache,
 ) -> anyhow::Result<RequestContext> {
     // Routed through `Router`, not a bare pool — a `DedicatedDb`-strategy tenant's `user_roles`
@@ -101,14 +111,24 @@ pub async fn resolve_request_context(
     let roles = get_roles_for_user(&mut *tx, tenant_id, user_id).await?;
     tx.commit().await?;
 
-    let context_attributes = match auth_context_entity {
-        Some(entity_name) => {
-            let entity_name = entity_name.to_string();
+    let auth_context_table = auth_context_entity.and_then(|name| {
+        let table_name = metadata.load().get_entity(name).map(|e| e.table_name.clone());
+        if table_name.is_none() {
+            tracing::warn!(
+                entity = name,
+                "AUTH_CONTEXT_ENTITY does not resolve to a registered entity"
+            );
+        }
+        table_name
+    });
+
+    let context_attributes = match auth_context_table {
+        Some(table_name) => {
             let router = router.clone();
             context_attributes_cache
                 .get_with(tenant_id, user_id, move || async move {
                     let mut tx = router.begin(tenant_id.into()).await?;
-                    let result = fetch_context_attributes(&mut *tx, tenant_id, &entity_name, user_id).await?;
+                    let result = fetch_context_attributes(&mut *tx, tenant_id, &table_name, user_id).await?;
                     tx.commit().await?;
                     Ok(result)
                 })

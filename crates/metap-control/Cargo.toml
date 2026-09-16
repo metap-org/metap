@@ -8,9 +8,11 @@ anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 metap-infra = { path = "../metap-infra" }
+metap-metadata = { path = "../metap-metadata" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-runtime = { path = "../metap-runtime" }
 metap-permission = { path = "../metap-permission" }
+arc-swap.workspace = true
 moka.workspace = true
 secrecy.workspace = true
 sqlx = { workspace = true, features = [
