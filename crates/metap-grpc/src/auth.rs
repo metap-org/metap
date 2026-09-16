@@ -22,7 +22,11 @@
 //! request with a valid client cert and no `authorization` metadata is rejected today
 //! (`Status::unauthenticated`) rather than silently treated as some guessed-at service identity.
 
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
 use metap_control::{resolve_request_context, ContextAttributesCache, Router};
+use metap_metadata::MetadataRegistry;
 // Re-exported (not just used) so an existing `use metap_grpc::TokenVerifier` — this crate's own
 // tests, `graphql-gateway/tests/gateway_e2e_postgres.rs` — keeps compiling unchanged now that the
 // enum's definition lives in `metap-jwks` (shared with `metap-http`/`graphql-gateway`, which also
@@ -43,6 +47,13 @@ pub struct AuthConfig {
     pub verifier: TokenVerifier,
     pub router: Router,
     pub auth_context_entity: Option<String>,
+    /// Resolves `auth_context_entity`'s entity name to its real `table_name` — needed since
+    /// every entity is on its own dedicated table now (`crates/migrations/
+    /// 0033_drop_records_table.sql` dropped the shared `records` table `fetch_context_attributes`
+    /// used to query via an `entity` discriminator column instead). The same registry a binary's
+    /// `AppState.metadata` already holds — see `metap_grpc::serve::OptionalServeConfig`'s own
+    /// field for where a caller not going through `MetapApp` gets this from.
+    pub metadata: Arc<ArcSwap<MetadataRegistry>>,
     pub context_attributes_cache: ContextAttributesCache,
 }
 
@@ -74,6 +85,7 @@ pub async fn authenticate(metadata: &MetadataMap, config: &AuthConfig) -> Result
         user_id,
         function_id,
         config.auth_context_entity.as_deref(),
+        &config.metadata,
         &config.context_attributes_cache,
     )
     .await

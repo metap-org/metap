@@ -146,6 +146,7 @@ where
             user_id,
             claims.function_id,
             app_state.auth_context_entity.as_deref(),
+            &app_state.metadata,
             &app_state.context_attributes_cache,
         )
         .await

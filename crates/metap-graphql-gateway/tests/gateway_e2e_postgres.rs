@@ -69,11 +69,18 @@ fn openssl_genrsa(dir: &std::path::Path) -> (String, String) {
     )
 }
 
+/// Dedicated table derived from the entity name (`entities.test_<name-with-dots-as-underscores>`)
+/// — the shared `records` table this used to point at no longer exists at all
+/// (`crates/migrations/0033_drop_records_table.sql`).
+fn dedicated_table_for(entity_name: &str) -> String {
+    format!("entities.test_{}", entity_name.replace(['.', '-'], "_"))
+}
+
 fn simple_entity(name: &str, label: &str) -> EntityDefinition {
     EntityDefinition {
         name: name.to_string(),
         label: label.to_string(),
-        table_name: "records".to_string(),
+        table_name: dedicated_table_for(name),
         fields: vec![EntityField {
             name: "name".to_string(),
             label: "Name".to_string(),
@@ -138,9 +145,34 @@ struct Harness {
     crud: Arc<CrudService>,
     tenant_id: Uuid,
     user_id: Uuid,
+    table_name: String,
 }
 
 async fn spin_up_harness(pool: PgPool, name: &str, entity: EntityDefinition) -> Harness {
+    let table_name = entity.table_name.clone();
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!(
+        "CREATE TABLE IF NOT EXISTS {table_name} (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+            tenant_id uuid NOT NULL,
+            code varchar(120),
+            status varchar(80),
+            data jsonb DEFAULT '{{}}'::jsonb NOT NULL,
+            version integer DEFAULT 1 NOT NULL,
+            deleted boolean DEFAULT false NOT NULL,
+            created_at timestamp with time zone DEFAULT now() NOT NULL,
+            updated_at timestamp with time zone DEFAULT now() NOT NULL,
+            created_by uuid,
+            updated_by uuid
+        )"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
     let tenant_id = Uuid::new_v4();
     // A real user (email+password) rather than a hand-minted JWT — this is what
     // `ServiceTokenSource::start` (called from `schema_builder::build`, exactly like the real
@@ -184,6 +216,7 @@ async fn spin_up_harness(pool: PgPool, name: &str, entity: EntityDefinition) -> 
         },
         router: test_router(pool.clone()),
         auth_context_entity: None,
+        metadata: Arc::new(ArcSwap::new(registry.clone())),
         context_attributes_cache: metap_control::ContextAttributesCache::new(std::time::Duration::from_secs(60)),
     };
     let grpc_service = metap_grpc::GrpcRecordService::new(crud.clone(), grpc_auth);
@@ -230,6 +263,7 @@ async fn spin_up_harness(pool: PgPool, name: &str, entity: EntityDefinition) -> 
         crud,
         tenant_id,
         user_id,
+        table_name,
     }
 }
 
@@ -343,8 +377,12 @@ async fn one_graphql_query_aggregates_real_data_from_two_independent_services() 
         "expected the crm-harness record in the aggregated response, got: {customer_names:?}"
     );
 
-    sqlx::query("DELETE FROM records WHERE tenant_id IN ($1, $2)")
+    sqlx::query(&format!("DELETE FROM {} WHERE tenant_id = $1", jira_like.table_name))
         .bind(jira_like.tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query(&format!("DELETE FROM {} WHERE tenant_id = $1", crm_like.table_name))
         .bind(crm_like.tenant_id)
         .execute(&pool)
         .await
@@ -484,7 +522,7 @@ async fn one_dead_upstream_does_not_block_the_others_entities() {
         .collect();
     assert!(names.contains(&serde_json::json!("Still Works")));
 
-    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
+    sqlx::query(&format!("DELETE FROM {} WHERE tenant_id = $1", jira_like.table_name))
         .bind(jira_like.tenant_id)
         .execute(&pool)
         .await

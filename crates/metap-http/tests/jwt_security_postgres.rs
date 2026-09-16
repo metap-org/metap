@@ -55,11 +55,16 @@ fn mint_token_ttl(private_pem: &str, tenant_id: Uuid, user_id: Uuid, ttl_seconds
     metap_peripherals::mint_jwt(private_pem, tenant_id, user_id, ttl_seconds).unwrap()
 }
 
+/// A dedicated table this file creates itself (`boot_server`, `CREATE TABLE IF NOT EXISTS`) —
+/// the shared `records` table this used to point at no longer exists at all
+/// (`crates/migrations/0033_drop_records_table.sql`).
+const TEST_TABLE: &str = "entities.test_jwt_orders";
+
 fn test_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.jwt_orders".to_string(),
         label: "Order".to_string(),
-        table_name: "records".to_string(),
+        table_name: TEST_TABLE.to_string(),
         fields: vec![EntityField {
             name: "name".to_string(),
             label: "Name".to_string(),
@@ -139,6 +144,29 @@ async fn boot_server(tenant_id: Uuid, user_id: Uuid) -> TestServer {
         .await
         .unwrap();
 
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS entities")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!(
+        "CREATE TABLE IF NOT EXISTS {TEST_TABLE} (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+            tenant_id uuid NOT NULL,
+            code varchar(120),
+            status varchar(80),
+            data jsonb DEFAULT '{{}}'::jsonb NOT NULL,
+            version integer DEFAULT 1 NOT NULL,
+            deleted boolean DEFAULT false NOT NULL,
+            created_at timestamp with time zone DEFAULT now() NOT NULL,
+            updated_at timestamp with time zone DEFAULT now() NOT NULL,
+            created_by uuid,
+            updated_by uuid
+        )"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
     let keydir = TempDir::new();
     let (private_pem, public_pem) = openssl_genrsa(keydir.path());
 
@@ -178,7 +206,7 @@ async fn boot_server(tenant_id: Uuid, user_id: Uuid) -> TestServer {
 }
 
 async fn cleanup(pool: &PgPool, tenant_id: Uuid) {
-    sqlx::query("DELETE FROM records WHERE tenant_id = $1")
+    sqlx::query(&format!("DELETE FROM {TEST_TABLE} WHERE tenant_id = $1"))
         .bind(tenant_id)
         .execute(pool)
         .await
