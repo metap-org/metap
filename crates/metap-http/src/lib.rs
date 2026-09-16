@@ -46,6 +46,46 @@ pub use state::AppState;
 // no external caller referenced `metap_http::request_id`/`metap_http::request_context` before
 // this move (verified by grep).
 
+/// Which of `build_router`'s optional route groups actually get mounted — every field defaults
+/// to `true` (`RouteGroups::all()`, what `build_router` itself still passes unconditionally), so
+/// an existing caller is completely unaffected. Only 4 groups are toggleable at all, chosen from
+/// a real cross-app usage survey (2026-09-15) rather than guessed: `attachments`/`cron`/
+/// `dashboards`/`tenant_config` are each genuinely unused by at least one real downstream app
+/// today (`../metap-demo-waf`'s 3 services use none of `attachments`/`dashboards` — confirmed by
+/// grepping its web app and backend for any caller; `../metap-demo-jira` uses none of
+/// `tenant_config`), while every other group (`health`/`metrics`/`metadata`/`records`/`users`/
+/// `auth`/`preferences`/`workflow_events`/`audit_events`/`admin`/`platform_config`) stays
+/// unconditionally mounted — either genuinely core (auth, metadata, the CRUD surface itself) or
+/// cheap enough, and surprising enough to 404 on, that no real survey found a case worth the
+/// toggle. Mounting a group nobody calls isn't a correctness bug (an unused route is just unused
+/// surface area, same as the doc comment on `AppState`'s unused fields notes elsewhere) — this
+/// exists so a deployment that wants a smaller attack surface / a leaner `/metadata/openapi.json`
+/// can actually get one, not because leaving them all on was ever broken.
+#[derive(Debug, Clone, Copy)]
+pub struct RouteGroups {
+    pub attachments: bool,
+    pub cron: bool,
+    pub dashboards: bool,
+    pub tenant_config: bool,
+}
+
+impl RouteGroups {
+    pub fn all() -> Self {
+        Self {
+            attachments: true,
+            cron: true,
+            dashboards: true,
+            tenant_config: true,
+        }
+    }
+}
+
+impl Default for RouteGroups {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
 /// `extra_routes` is the extension point for optional platform capabilities that are not
 /// core — `metap-lowcode-http`'s admin API is the first (only) one today, merged in by
 /// `../metap-demo-crm/src/main.rs` as `metap_lowcode_http::router()`, never by this crate
@@ -54,7 +94,24 @@ pub use state::AppState;
 /// never compile that crate in. Merged *before* the layers below so `extra_routes` gets the
 /// exact same CORS/rate-limit/tracing/security-header treatment as every core route — a
 /// caller merging it in *after* `build_router` returns would bypass all of that.
+///
+/// Mounts every route group (`RouteGroups::all()`) — the existing, unchanged entry point every
+/// caller in this codebase already uses. A binary that wants to trim `attachments`/`cron`/
+/// `dashboards`/`tenant_config` calls [`build_router_with_groups`] instead; see that function
+/// and [`RouteGroups`]'s own doc comments.
 pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Router<AppState>) -> Router {
+    build_router_with_groups(state, cors_origins, extra_routes, RouteGroups::all())
+}
+
+/// Same as [`build_router`], with `groups` controlling which of the 4 toggleable route groups
+/// (see [`RouteGroups`]'s own doc comment) actually get mounted. `build_router` itself is a thin
+/// wrapper calling this with `RouteGroups::all()` — the two can never drift.
+pub fn build_router_with_groups(
+    state: AppState,
+    cors_origins: &[String],
+    extra_routes: Router<AppState>,
+    groups: RouteGroups,
+) -> Router {
     // `metap_runtime::cors::build`'s doc comment has the `allow_credentials(true)` + wildcard
     // `Any` panic-risk this guards against — same code path `graphql-gateway` uses, only the
     // allowed methods/headers below are specific to this crate's full REST surface (PATCH/DELETE
@@ -86,22 +143,33 @@ pub fn build_router(state: AppState, cors_origins: &[String], extra_routes: Rout
     // response.
     let trace = metap_runtime::trace::build();
 
-    Router::new()
+    let mut router = Router::new()
         .merge(routes::health::router())
         .merge(routes::metrics::router())
         .merge(routes::metadata::public_router())
         .merge(routes::metadata::protected_router())
         .merge(routes::records::router())
-        .merge(routes::attachments::router())
         .merge(routes::users::router())
         .merge(routes::workflow_events::router())
+        .merge(routes::audit_events::router())
         .merge(routes::admin::router())
         .merge(routes::auth::router())
-        .merge(routes::cron::router())
-        .merge(routes::dashboards::router())
         .merge(routes::platform_config::router())
-        .merge(routes::tenant_config::router())
-        .merge(routes::preferences::router())
+        .merge(routes::preferences::router());
+    if groups.attachments {
+        router = router.merge(routes::attachments::router());
+    }
+    if groups.cron {
+        router = router.merge(routes::cron::router());
+    }
+    if groups.dashboards {
+        router = router.merge(routes::dashboards::router());
+    }
+    if groups.tenant_config {
+        router = router.merge(routes::tenant_config::router());
+    }
+
+    router
         .merge(extra_routes)
         .layer(cors)
         .layer(rate_limit)

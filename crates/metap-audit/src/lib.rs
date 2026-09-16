@@ -13,6 +13,6 @@ mod postgres_store;
 mod store;
 
 pub use diff::diff_json_objects;
-pub use entry::{AuditAction, AuditEntry, JsonObject};
+pub use entry::{AuditAction, AuditEntry, AuditTrailEntryRow, JsonObject};
 pub use postgres_store::PostgresAuditTrailStore;
 pub use store::AuditTrailStore;

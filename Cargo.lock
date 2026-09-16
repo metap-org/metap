@@ -3615,6 +3615,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "tracing",
+ "utoipa",
  "uuid",
 ]
 
@@ -3927,6 +3928,7 @@ dependencies = [
  "chrono",
  "jsonwebtoken",
  "metap-attachments",
+ "metap-audit",
  "metap-auth",
  "metap-config",
  "metap-control",

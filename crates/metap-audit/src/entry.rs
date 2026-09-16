@@ -58,3 +58,29 @@ pub struct AuditEntry {
     pub version_after: Option<i32>,
     pub occurred_at: DateTime<Utc>,
 }
+
+/// One row read back from `metadata.audit_trail_entries` — the read side of
+/// `AuditTrailStore::record`'s write. Kept as its own type rather than reusing `AuditEntry`
+/// itself: a write never needs the row's own `id` (Postgres assigns it via `DEFAULT
+/// gen_random_uuid()`, see `postgres_store.rs`'s `INSERT`), so a caller building an `AuditEntry`
+/// to write would have nothing to put there — same split `metap-workflow` already draws between
+/// its own write path (plain function args) and `WorkflowEvent` (its dedicated read-side row
+/// type). `action`/`diff` stay the same wire shape `PostgresAuditTrailStore::record` wrote
+/// (`action` as its lowercase string, `diff` as a raw JSON object) rather than round-tripping
+/// through `AuditAction`, since nothing here needs to branch on the action as a Rust enum.
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditTrailEntryRow {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub entity: String,
+    pub record_id: Uuid,
+    pub action: String,
+    pub transition_action: Option<String>,
+    pub actor_user_id: Option<Uuid>,
+    pub reason: Option<String>,
+    #[schema(value_type = Object)]
+    pub diff: Value,
+    pub version_after: Option<i32>,
+    pub occurred_at: DateTime<Utc>,
+}

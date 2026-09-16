@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use crate::entry::AuditEntry;
+use crate::entry::{AuditEntry, AuditTrailEntryRow};
 
 /// Swappable audit-trail sink — same shape as this codebase's other pluggable backends
 /// (`metap_control::SecretStore`, `metap_storage::ObjectStore`, `metap_cache::Cache`): a trait
@@ -29,4 +29,18 @@ pub trait AuditTrailStore: Send + Sync {
     /// opaque payload) — an impl is expected to assert the two match rather than trust the caller
     /// silently.
     async fn record(&self, tenant_id: Uuid, entry: AuditEntry) -> anyhow::Result<()>;
+
+    /// The read side — every entry recorded for one `(tenant, entity, record)`, newest first,
+    /// capped the same "every list has a max limit" way `QueryPlanner` and `list_recent_audit_events`
+    /// already are (a record with a very long edit history must not turn one HTTP response into an
+    /// unbounded payload). On the same abstraction as `record` rather than a free function like
+    /// `metap_workflow::list_events` — unlike `workflow_events` (always the one fixed table), a
+    /// custom `AuditTrailStore` impl could point at a genuinely different backend, so the read
+    /// needs to go through whatever backend actually holds the data, same as the write does.
+    async fn list_for_record(
+        &self,
+        tenant_id: Uuid,
+        entity: &str,
+        record_id: Uuid,
+    ) -> anyhow::Result<Vec<AuditTrailEntryRow>>;
 }
