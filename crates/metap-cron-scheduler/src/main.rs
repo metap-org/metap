@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use cron_scheduler::{run_executor, run_ticker, run_trigger_listener, ExecutorConfig, SmtpConfig, TickerConfig};
-use metap_infra::{connect_db, load_config, RabbitEventBus};
+use metap_infra::{connect_db, load_config};
 use metap_runtime::service_token::ServiceTokenSource;
 
 #[tokio::main]
@@ -52,7 +52,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("connecting to postgres...");
     let pool = connect_db(config.outbox_database_url()).await?;
 
-    let rabbitmq_url = config.rabbitmq_url.clone();
     let executor_config = ExecutorConfig {
         target_base_url,
         service_token,
@@ -93,20 +92,8 @@ async fn main() -> anyhow::Result<()> {
         "ready, ticking and listening"
     );
 
-    let executor_connect = {
-        let url = rabbitmq_url.clone();
-        move || {
-            let url = url.clone();
-            async move { RabbitEventBus::connect(&url).await }
-        }
-    };
-    let trigger_connect = {
-        let url = rabbitmq_url.clone();
-        move || {
-            let url = url.clone();
-            async move { RabbitEventBus::connect(&url).await }
-        }
-    };
+    let executor_connect = metap_infra::rabbitmq_connector(config.rabbitmq_url.clone());
+    let trigger_connect = metap_infra::rabbitmq_connector(config.rabbitmq_url.clone());
 
     let ticker = run_ticker(
         &pool,
