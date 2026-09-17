@@ -2962,3 +2962,175 @@ async fn audit_events_mask_survives_the_caller_editing_the_field_it_is_condition
 
     cleanup(&pool, tenant_id).await;
 }
+
+/// Same reversibility as `audit_events_mask_survives_the_caller_editing_the_field_it_is_conditioned_on`
+/// above, one level up: **record-level** read access (`check_record_permission`) is also decided
+/// against the record's current state, so a record policy carrying a condition is just as
+/// steerable — and it gates the whole trail, not one field.
+///
+/// Here `test.audited_orders` is readable at record level only while `resolution == "unlocked"`.
+/// The viewer is locked out entirely to begin with (403, no history at all), then edits
+/// `resolution` — which they may, holding entity-level update — and gains access. At that point
+/// the record's whole value history, `amount` and `name` alike, was served: values recorded while
+/// they could not read the record at all. Now the entries are still served (the trail keeps
+/// answering who/when) but carry no field values.
+///
+/// The last two assertions are the control: entries must still come back, and the ordinary read
+/// path must genuinely serve `amount` once unlocked. Without them this passes just as happily if
+/// the viewer were simply forbidden throughout, or the policy matched nothing.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn audit_events_withhold_values_when_record_level_access_is_state_dependent() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(audited_entity()).unwrap();
+    let store = PostgresPolicyStore::new(test_router(pool.clone()));
+
+    for action in ["read", "update"] {
+        store
+            .create_policy(
+                tenant_id,
+                "test.audited_orders",
+                action,
+                Some(vec!["viewer".to_string()]),
+                None,
+                None,
+                None,
+                Some(PolicySubject::Context),
+                PolicyEffect::Allow,
+            )
+            .await
+            .unwrap();
+    }
+    // Record-level (no `field`) read, conditional on the record's own `resolution`.
+    store
+        .create_policy(
+            tenant_id,
+            "test.audited_orders",
+            "read",
+            None,
+            Some(PolicyCondition::Attribute {
+                attribute: "resolution".to_string(),
+                op: ConditionOp::Eq,
+                value: PolicyValue::Literal {
+                    literal: json!("unlocked"),
+                },
+            }),
+            None,
+            None,
+            Some(PolicySubject::Record),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+
+    let permissions = PermissionService::new(Box::new(store));
+    let audit_store = std::sync::Arc::new(metap_audit::PostgresAuditTrailStore::new(pool.clone()));
+    let crud = CrudService::with_audit(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+        audit_store,
+    );
+
+    let admin = admin_context(tenant_id);
+    let mut payload = JsonObject::new();
+    payload.insert("name".to_string(), json!("Sensitive order"));
+    payload.insert("amount".to_string(), json!(4242));
+    payload.insert("resolution".to_string(), json!("locked"));
+    let created = match crud
+        .create("test.audited_orders", &payload, &admin, None)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    let mut upd = JsonObject::new();
+    upd.insert("amount".to_string(), json!(9999));
+    let after_update = match crud
+        .update("test.audited_orders", created.id, created.version, &upd, &admin, None)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected update to succeed, got {other:?}"),
+    };
+
+    let viewer = RequestContext {
+        tenant_id: tenant_id.to_string(),
+        user_id: Some(Uuid::new_v4().to_string()),
+        roles: Some(vec!["viewer".to_string()]),
+        function_id: None,
+        context_attributes: None,
+        forwarded_bearer_token: None,
+    };
+
+    // Locked: record-level read denies outright, so there is no history to serve at all.
+    match crud
+        .list_audit_events("test.audited_orders", created.id, &viewer)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Err { status, .. } => assert_eq!(status, 403),
+        other => panic!("expected the locked record's history to be forbidden, got {other:?}"),
+    }
+
+    // The viewer steers the record into satisfying the record-level condition.
+    let mut unlock = JsonObject::new();
+    unlock.insert("resolution".to_string(), json!("unlocked"));
+    match crud
+        .update(
+            "test.audited_orders",
+            created.id,
+            after_update.version,
+            &unlock,
+            &viewer,
+            None,
+        )
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { .. } => {}
+        other => panic!("viewer should be able to edit `resolution`, got {other:?}"),
+    }
+
+    let events = match crud
+        .list_audit_events("test.audited_orders", created.id, &viewer)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected viewer audit read to succeed once unlocked, got {other:?}"),
+    };
+    for event in &events {
+        let map = event.diff.as_object().expect("diff must stay a JSON object");
+        assert!(
+            map.is_empty(),
+            "unlocking record-level access re-opened the record's value history: {:?}",
+            event.diff
+        );
+    }
+
+    // Control 1: the trail itself is still served — this must not pass by returning nothing.
+    assert!(
+        !events.is_empty(),
+        "control failed: withholding values must not also drop the entries themselves"
+    );
+    // Control 2: the conditional policy really does grant access now, so the assertions above
+    // are about withheld values rather than a caller who was forbidden all along.
+    let (record, _) = match crud.get("test.audited_orders", created.id, &viewer).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected viewer get to succeed once unlocked, got {other:?}"),
+    };
+    assert_eq!(
+        record.data.get("amount"),
+        Some(&json!(9999)),
+        "control failed: the record-level policy never grants access even when unlocked"
+    );
+
+    cleanup(&pool, tenant_id).await;
+}

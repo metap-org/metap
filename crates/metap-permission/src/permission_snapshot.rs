@@ -52,6 +52,32 @@ impl PermissionSnapshot {
         }
     }
 
+    /// Whether this caller's **record-level** decision for `action` depends on the record's own
+    /// current values — at least one record-level policy that passes their role gate carries a
+    /// condition, so the same caller gets a different answer as the record changes.
+    ///
+    /// The same hazard as `record_state_dependent_read_fields` below, one level up and with a
+    /// wider blast radius: record-level access gates the audit trail as a whole, so a caller who
+    /// can steer the record into satisfying that condition gains the record's *entire* history,
+    /// including values recorded while they had no access to it at all. Unlike the field-level
+    /// case this needs no malicious edit to bite — a record that legitimately moves between
+    /// owners/departments over time carries its previous owner's values in that history.
+    ///
+    /// Conservative on purpose, and deliberately over-broad in one case: a caller who also holds
+    /// an unconditional grant is reported state-dependent anyway, even though the unconditional
+    /// grant alone would make their access stable. Narrowing that would mean reasoning about
+    /// Allow/Deny precedence across the conditional and unconditional sets separately — more
+    /// logic to get wrong in a security check, for a narrow gain.
+    pub fn record_access_is_state_dependent(&self, context: &RequestContext, action: EntityAction) -> bool {
+        if context.is_admin() {
+            return false;
+        }
+        self.get_record_policies(action).iter().any(|policy| {
+            policy.condition.is_some()
+                && crate::policy_condition::role_gate_passed(policy.roles.as_deref(), context.roles.as_deref())
+        })
+    }
+
     /// Field names whose `read` decision depends on the **record's own current values** — at
     /// least one of that field's read policies is record-subject *and* carries a condition, so
     /// the same caller gets a different answer as the record changes.

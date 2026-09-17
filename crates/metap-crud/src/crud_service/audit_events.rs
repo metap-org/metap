@@ -49,16 +49,28 @@ impl CrudService {
         let tenant_id = self.permissions.scoped_tenant(context)?;
         let mut events = store.list_for_record(tenant_id, entity_name, record_id).await?;
 
-        let readable = self.readable_field_names(entity_name, record_id, context).await?;
+        let visibility = self.audit_diff_visibility(entity_name, record_id, context).await?;
         for event in &mut events {
-            mask_diff(&mut event.diff, &readable);
+            mask_diff(&mut event.diff, &visibility);
         }
         Ok(ServiceResult::ok(events))
     }
 
-    /// Which of `entity_name`'s fields this caller may read, for masking audit diffs. Delegates
-    /// the actual decision to `PermissionSnapshot::filter_readable_fields` — the exact function
-    /// the ordinary read path (`helpers::row_to_dto_masked`) already runs — rather than
+    /// How much of this record's audit diffs the caller may see. Two levels, both closing the
+    /// same hazard at different heights: authorization that depends on **mutable record state**
+    /// cannot be used to decide access to values describing states the record no longer has.
+    ///
+    /// The record level comes first and is all-or-nothing: if the caller's record-level read
+    /// access itself carries a condition (`record_access_is_state_dependent`), no field values
+    /// are served at all. Record-level access gates the whole trail, so a caller who steers the
+    /// record into satisfying that condition gains its entire history — including values written
+    /// while they had no access. This one bites without any malicious edit too: a record that
+    /// legitimately changes owner or department over time carries the previous owner's values.
+    /// The entries themselves (action, actor, timestamp, version, reason) are still served, so
+    /// the trail keeps answering who changed this record and when.
+    ///
+    /// The field level then delegates to `PermissionSnapshot::filter_readable_fields` — the exact
+    /// function the ordinary read path (`helpers::row_to_dto_masked`) already runs — rather than
     /// reimplementing field-policy evaluation here, since a second implementation is precisely
     /// how the two drift apart.
     ///
@@ -84,14 +96,14 @@ impl CrudService {
     /// conditional one is excluded too, even though the unconditional grant alone would justify
     /// showing it. Over-masking history is the safe direction; under-masking is the bug above.
     /// Admins keep the unconditional bypass `filter_readable_fields` already gives them.
-    async fn readable_field_names(
+    async fn audit_diff_visibility(
         &self,
         entity_name: &str,
         record_id: Uuid,
         context: &RequestContext,
-    ) -> anyhow::Result<std::collections::HashSet<String>> {
+    ) -> anyhow::Result<DiffVisibility> {
         let Some(entity) = self.get_entity(entity_name) else {
-            return Ok(std::collections::HashSet::new());
+            return Ok(DiffVisibility::Nothing);
         };
         let tenant_id = self.permissions.scoped_tenant(context)?;
 
@@ -105,24 +117,55 @@ impl CrudService {
         }
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
+
+        // Record-level access itself hinges on mutable record state — no field values at all.
+        if snapshot.record_access_is_state_dependent(context, EntityAction::Read) {
+            return Ok(DiffVisibility::Nothing);
+        }
+
         let state_dependent = if context.is_admin() {
             std::collections::HashSet::new()
         } else {
             snapshot.record_state_dependent_read_fields()
         };
-        Ok(snapshot
-            .filter_readable_fields(context, &probe)
-            .into_iter()
-            .map(|(field, _)| field)
-            .filter(|field| !state_dependent.contains(field))
-            .collect())
+        Ok(DiffVisibility::Fields(
+            snapshot
+                .filter_readable_fields(context, &probe)
+                .into_iter()
+                .map(|(field, _)| field)
+                .filter(|field| !state_dependent.contains(field))
+                .collect(),
+        ))
     }
 }
 
-/// Drops every key of an audit entry's `{field: {before, after}}` diff that `readable` doesn't
-/// name. A non-object `diff` (nothing writes one today, but the column is plain `jsonb`) is left
-/// alone — there are no field keys in it to mask.
-fn mask_diff(diff: &mut serde_json::Value, readable: &std::collections::HashSet<String>) {
-    let Some(map) = diff.as_object_mut() else { return };
+/// How much of an audit entry's `diff` this caller may see.
+///
+/// `Nothing` is not the same as "no rows": the entry itself (action, actor, timestamp, version,
+/// transition, reason) is still served, only the before/after *values* are withheld. That split
+/// is the point — the compliance question an audit trail exists to answer is who changed what
+/// record and when, and that survives intact for a caller whose access is too state-dependent to
+/// let them read historical values safely.
+enum DiffVisibility {
+    Nothing,
+    Fields(std::collections::HashSet<String>),
+}
+
+/// Drops every key of an audit entry's `{field: {before, after}}` diff the caller may not see.
+/// A non-object `diff` (nothing writes one today, but the column is plain `jsonb`) is replaced
+/// wholesale rather than left alone — "there are no field keys to mask" is not a reason to serve
+/// an unknown shape to a caller who may see no values at all.
+fn mask_diff(diff: &mut serde_json::Value, visibility: &DiffVisibility) {
+    let readable = match visibility {
+        DiffVisibility::Nothing => {
+            *diff = serde_json::Value::Object(serde_json::Map::new());
+            return;
+        }
+        DiffVisibility::Fields(readable) => readable,
+    };
+    let Some(map) = diff.as_object_mut() else {
+        *diff = serde_json::Value::Object(serde_json::Map::new());
+        return;
+    };
     map.retain(|field, _| readable.contains(field));
 }
