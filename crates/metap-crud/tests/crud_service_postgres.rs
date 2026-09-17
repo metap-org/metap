@@ -3134,3 +3134,130 @@ async fn audit_events_withhold_values_when_record_level_access_is_state_dependen
 
     cleanup(&pool, tenant_id).await;
 }
+
+/// The other direction of the two tests above, and the reason
+/// `verdict_is_record_dependent` reasons about Allow/Deny instead of just asking whether a
+/// condition exists: masking must not fire for a caller whose access a *separate, unconditional*
+/// grant already settles.
+///
+/// Here `amount` carries both an unconditional role grant for "viewer" and a record-conditional
+/// one. The conditional policy is redundant — the role grant allows `amount` in every record
+/// state — so nothing about this caller's access is steerable and the history stays readable,
+/// even while the record is locked. The earlier approximation ("a record-subject condition exists
+/// for this field") withheld it anyway, which cost real history for no security gain.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn audit_events_still_show_fields_an_unconditional_grant_already_settles() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(audited_entity()).unwrap();
+    let store = PostgresPolicyStore::new(test_router(pool.clone()));
+
+    store
+        .create_policy(
+            tenant_id,
+            "test.audited_orders",
+            "read",
+            Some(vec!["viewer".to_string()]),
+            None,
+            None,
+            None,
+            Some(PolicySubject::Context),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+    // Unconditional field grant: "viewer" may read `amount`, whatever the record holds.
+    store
+        .create_policy(
+            tenant_id,
+            "test.audited_orders",
+            "read",
+            Some(vec!["viewer".to_string()]),
+            None,
+            None,
+            Some("amount"),
+            Some(PolicySubject::Context),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+    // ...alongside a record-conditional grant for the same field, which is therefore redundant.
+    store
+        .create_policy(
+            tenant_id,
+            "test.audited_orders",
+            "read",
+            None,
+            Some(PolicyCondition::Attribute {
+                attribute: "resolution".to_string(),
+                op: ConditionOp::Eq,
+                value: PolicyValue::Literal {
+                    literal: json!("unlocked"),
+                },
+            }),
+            None,
+            Some("amount"),
+            Some(PolicySubject::Record),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+
+    let permissions = PermissionService::new(Box::new(store));
+    let audit_store = std::sync::Arc::new(metap_audit::PostgresAuditTrailStore::new(pool.clone()));
+    let crud = CrudService::with_audit(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+        audit_store,
+    );
+
+    let admin = admin_context(tenant_id);
+    let mut payload = JsonObject::new();
+    payload.insert("name".to_string(), json!("Sensitive order"));
+    payload.insert("amount".to_string(), json!(4242));
+    payload.insert("resolution".to_string(), json!("locked"));
+    let created = match crud
+        .create("test.audited_orders", &payload, &admin, None)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    let mut upd = JsonObject::new();
+    upd.insert("amount".to_string(), json!(9999));
+    crud.update("test.audited_orders", created.id, created.version, &upd, &admin, None)
+        .await
+        .unwrap();
+
+    let viewer = RequestContext {
+        tenant_id: tenant_id.to_string(),
+        user_id: Some(Uuid::new_v4().to_string()),
+        roles: Some(vec!["viewer".to_string()]),
+        function_id: None,
+        context_attributes: None,
+        forwarded_bearer_token: None,
+    };
+
+    let events = match crud
+        .list_audit_events("test.audited_orders", created.id, &viewer)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected viewer audit read to succeed, got {other:?}"),
+    };
+    assert!(
+        events.iter().any(|e| e.diff.get("amount").is_some()),
+        "the unconditional role grant settles `amount` in every record state, so its history must \
+         not be withheld: {:?}",
+        events.iter().map(|e| &e.diff).collect::<Vec<_>>()
+    );
+
+    cleanup(&pool, tenant_id).await;
+}

@@ -123,11 +123,7 @@ impl CrudService {
             return Ok(DiffVisibility::Nothing);
         }
 
-        let state_dependent = if context.is_admin() {
-            std::collections::HashSet::new()
-        } else {
-            snapshot.record_state_dependent_read_fields()
-        };
+        let state_dependent = snapshot.record_state_dependent_read_fields(context);
         Ok(DiffVisibility::Fields(
             snapshot
                 .filter_readable_fields(context, &probe)
