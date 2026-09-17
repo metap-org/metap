@@ -11,7 +11,7 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::backfill;
+use crate::backfill::{self, BackfillScope};
 use crate::diff::DdlOp;
 use crate::schema::{Cost, ExecutionMode, FkSpec, IndexSpec, PhysicalSchema, UniqueSpec};
 use crate::sqlfmt::{quote_ident, quote_literal, quote_qualified_ident};
@@ -46,12 +46,30 @@ async fn ensure_schema_exists(pool: &PgPool, schema: &str) -> anyhow::Result<()>
     }
 }
 
+/// Historical signature, unchanged — every existing caller (including `../metap-demo-jira`/
+/// `../metap-demo-crm`, out of this session's repo access to update in step) gets
+/// `BackfillScope::SingleTenant`, correct for a genuinely per-tenant reconcile (`DedicatedDb`, or
+/// any call already scoped to one real tenant). A caller reconciling a `Schema`-strategy shared
+/// table with a sentinel `tenant_id` needs [`execute_with_scope`] instead.
 pub async fn execute(
     pool: &PgPool,
     tenant_id: Uuid,
     entity_name: &str,
     desired: &PhysicalSchema,
     ops: &[DdlOp],
+) -> anyhow::Result<()> {
+    execute_with_scope(pool, tenant_id, entity_name, desired, ops, BackfillScope::SingleTenant).await
+}
+
+/// See [`BackfillScope`]'s own doc comment for what `scope` changes and why it exists —
+/// everything else about this function is identical to [`execute`].
+pub async fn execute_with_scope(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    entity_name: &str,
+    desired: &PhysicalSchema,
+    ops: &[DdlOp],
+    scope: BackfillScope,
 ) -> anyhow::Result<()> {
     if ops.is_empty() {
         return Ok(());
@@ -69,11 +87,12 @@ pub async fn execute(
     if !status::try_advisory_lock(&mut lock_conn, tenant_id, entity_name).await? {
         anyhow::bail!("another reconcile is already running for {entity_name}");
     }
-    let result = execute_locked(pool, tenant_id, entity_name, desired, ops, lock_owner).await;
+    let result = execute_locked(pool, tenant_id, entity_name, desired, ops, lock_owner, scope).await;
     status::advisory_unlock(&mut lock_conn, tenant_id, entity_name).await?;
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_locked(
     pool: &PgPool,
     tenant_id: Uuid,
@@ -81,6 +100,7 @@ async fn execute_locked(
     desired: &PhysicalSchema,
     ops: &[DdlOp],
     lock_owner: Uuid,
+    scope: BackfillScope,
 ) -> anyhow::Result<()> {
     let has_heavy = ops.iter().any(|op| op.cost() == Cost::Heavy);
     if has_heavy {
@@ -96,7 +116,7 @@ async fn execute_locked(
     }
 
     for op in ops {
-        let outcome = run_one(pool, tenant_id, entity_name, desired, op).await;
+        let outcome = run_one(pool, tenant_id, entity_name, desired, op, scope).await;
         if let Err(err) = outcome {
             status::record_error(pool, tenant_id, entity_name, &format!("{err:#}")).await?;
             return Err(err);
@@ -123,6 +143,7 @@ async fn run_one(
     entity_name: &str,
     desired: &PhysicalSchema,
     op: &DdlOp,
+    scope: BackfillScope,
 ) -> anyhow::Result<()> {
     match op.execution_mode() {
         ExecutionMode::Transactional => {
@@ -161,6 +182,7 @@ async fn run_one(
                 column,
                 source_field,
                 sql_type,
+                scope,
             )
             .await
         }

@@ -201,6 +201,10 @@ pub async fn run_migration(
 
     let op_id = format!("migration:{table}:{migration_id}");
     if let Some((set_clause, where_extra)) = apply_sql(op, policy)? {
+        // `SingleTenant`: every current caller of `run_migration` already reconciles one real
+        // tenant at a time (never `metap_control::PLATFORM_TENANT_ID`'s sentinel shape) — see
+        // `backfill::BackfillScope`'s own doc comment for the failure this distinction exists to
+        // prevent.
         backfill::run_batched_update(
             pool,
             tenant_id,
@@ -209,6 +213,7 @@ pub async fn run_migration(
             &op_id,
             &set_clause,
             where_extra.as_deref(),
+            backfill::BackfillScope::SingleTenant,
         )
         .await?;
     }

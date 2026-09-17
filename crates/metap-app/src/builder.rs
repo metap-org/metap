@@ -126,13 +126,24 @@ impl MetapApp {
     /// Registers `entities` in the given order (load-bearing — a `Reference` field's FK target
     /// must already be registered, so an entity referencing another must come after it),
     /// validates cross-entity references, reconciles each entity's own dedicated table
-    /// (`metap_reconciler::reconcile`, tenant-agnostic DDL against [`PLATFORM_TENANT_ID`] — see
-    /// that constant's own doc comment for why that sentinel is correct here), then runs the
-    /// metadata-drift and index-reconcile checks against the resulting registry. Use this, not
-    /// [`Self::with_submitted_entities`], whenever reconcile order matters — which is every
-    /// service with more than one entity, since `submit_entity!`'s auto-discovery order is link
-    /// order, not declaration order (see `MetadataRegistry::register_all_submitted`'s own doc
-    /// comment).
+    /// (`metap_reconciler::reconcile_with_scope`, tenant-agnostic DDL against
+    /// [`PLATFORM_TENANT_ID`] — see that constant's own doc comment for why that sentinel is
+    /// correct here), then runs the metadata-drift and index-reconcile checks against the
+    /// resulting registry. Use this, not [`Self::with_submitted_entities`], whenever reconcile
+    /// order matters — which is every service with more than one entity, since
+    /// `submit_entity!`'s auto-discovery order is link order, not declaration order (see
+    /// `MetadataRegistry::register_all_submitted`'s own doc comment).
+    ///
+    /// **`BackfillScope::AllTenants`** (not `SingleTenant`, `metap-reconciler`'s default) —
+    /// `self.pool` here is always the single shared platform pool `bootstrap_platform` resolves,
+    /// so every entity this method ever reconciles lives on one physical table shared across
+    /// every real tenant, never a `DedicatedDb` tenant's own exclusively-owned copy (a
+    /// `DedicatedDb` app reconciles per tenant against that tenant's own resolved pool instead,
+    /// outside this builder). Found live (`../metap-demo-waf/CLAUDE.md`'s 9th finding,
+    /// `../metap-docs/docs/roadmap/84-*.md` item 3): with the old default, a `storage: column`
+    /// field promoted on an already-populated entity would report a backfill that touched zero
+    /// real rows — the sentinel `tenant_id` this method passes matches nothing in the table it
+    /// actually scans.
     pub async fn with_entities(mut self, entities: Vec<EntityDefinition>) -> anyhow::Result<Self> {
         let mut registry = MetadataRegistry::new();
         for entity in &entities {
@@ -142,7 +153,14 @@ impl MetapApp {
         let metadata_base = Arc::new(registry);
 
         for entity in &entities {
-            let outcome = metap_reconciler::reconcile(&self.pool, PLATFORM_TENANT_ID, entity, &[]).await?;
+            let outcome = metap_reconciler::reconcile_with_scope(
+                &self.pool,
+                PLATFORM_TENANT_ID,
+                entity,
+                &[],
+                metap_reconciler::BackfillScope::AllTenants,
+            )
+            .await?;
             tracing::info!(
                 entity = entity.name,
                 table = outcome.table,

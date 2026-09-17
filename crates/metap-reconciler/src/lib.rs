@@ -25,15 +25,17 @@ mod sqlfmt;
 pub mod status;
 pub mod watchdog;
 
+pub use backfill::BackfillScope;
 pub use compile::{
     check_table_name_length, compile, qualified_table_name_for, qualified_table_name_in, table_name_for, ENTITY_SCHEMA,
 };
 pub use diff::{diff, DdlOp};
+pub use executor::execute_with_scope;
 pub use introspect::introspect;
 pub use migrate::{copy_generic_records, migrate_generic_to_dedicated, CopySummary, MigrateOutcome, MIGRATE_OP_ID};
 pub use migration::{run_migration, MigrationOp, MigrationOutcome, PreflightReport, QuarantinePolicy};
 pub use plan::{plan, PlannedOp};
-pub use reconcile::{reconcile, ReconcileOutcome};
+pub use reconcile::{reconcile, reconcile_with_scope, ReconcileOutcome};
 pub use schema::{
     ColumnOrigin, ColumnSpec, Cost, ExecutionMode, FkSpec, IndexSpec, OnDelete, PhysicalSchema, UniqueSpec,
 };
