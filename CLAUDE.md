@@ -163,20 +163,25 @@ itself — destructive, so any environment with a legacy low-code entity still o
 `dev-tools migrate-to-dedicated-table` run first (see that migration file's own header comment).
 `metap_reconciler::migrate_generic_to_dedicated` and the `dev-tools migrate-to-dedicated-table`
 CLI subcommand are deliberately still here, unremoved — the one remaining legitimate reason to
-reference the old table, as a one-time pre-upgrade escape hatch. **Known gap, not fixed in this
-pass**: the e2e test suites (`cargo test --workspace -- --ignored`) across `metap-crud`,
-`metap-graphql`/`metap-graphql-http`/`metap-graphql-gateway`, `metap-grpc`, `metap-http`, and
-`metap-workflow` still construct fixture entities with `table_name: "records".to_string()` and
-(in `metap-crud/tests/crud_service_postgres.rs` especially) raw SQL against the physical
-`records` table, including a whole test section built around multiple entities sharing one
-physical table via the `entity` discriminator column — behavior this change removed entirely.
-These are not part of CI (`ci.yml` only runs plain `cargo test --workspace`, never `--ignored`),
-so this doesn't block anything today, but the e2e suite will start failing the next time someone
-actually runs it against a live Postgres with migration 0033 applied. Needs a dedicated follow-up
-pass (each fixture's `table_name` repointed at its own `CREATE TABLE IF NOT EXISTS` dedicated
-table, matching the pattern `metap-query/tests/query_planner_postgres.rs` already uses, and the
-shared-table-specific test section in `crud_service_postgres.rs` deleted rather than ported, since
-what it tests can no longer happen).
+reference the old table, as a one-time pre-upgrade escape hatch. **The e2e fixture gap this
+paragraph used to describe as unfixed was closed 2026-09-16**
+(`../metap-docs/docs/roadmap/87-e2e-fixture-fix-and-two-real-bugs-it-exposed.md`) — every
+`table_name: "records".to_string()` fixture across `metap-crud`/`metap-graphql`/
+`metap-graphql-http`/`metap-graphql-gateway`/`metap-grpc`/`metap-http`/`metap-workflow` now points
+at its own `CREATE TABLE IF NOT EXISTS` dedicated table (same pattern
+`metap-query/tests/query_planner_postgres.rs` already used), and `crud_service_postgres.rs`'s
+shared-table-via-`entity`-discriminator test section was deleted rather than ported (that scenario
+can no longer happen). Verified live against a real Postgres, not just compiled — every touched
+crate's `--ignored` e2e suite passes end to end. Running that verification pass surfaced 2 more
+real, pre-existing bugs (unrelated to the fixture rename itself, just never exercised by a live
+e2e run since this table was dropped), both fixed at the root the same pass: `AUTH_CONTEXT_ENTITY`
+(`metap-peripherals::fetch_context_attributes`, `metap-control::resolve_request_context`,
+`metap-grpc::AuthConfig`) was still querying the removed `records` table via its `entity`
+discriminator for every caller, REST and gRPC alike — currently dormant everywhere it's wired, so
+not a live outage, but would have broken the instant anyone turned it on; and a `Reference` field's
+fixture needs a real physical column + sync trigger to match what `metap_reconciler::compile()`/
+`execute()` build in production (`field_has_real_column` requires one unconditionally now), without
+which `find_referencing_records`'s delete guard would silently not guard anything.
 
 ### Core services and their fixed boundaries
 
