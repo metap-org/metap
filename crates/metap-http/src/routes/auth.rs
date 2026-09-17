@@ -548,6 +548,190 @@ async fn oidc_callback(
     attach_cookies(response, [session_cookie, csrf_cookie, started_at_cookie])
 }
 
+async fn oauth2_login_config_or_404(
+    state: &AppState,
+    tenant_id: Uuid,
+) -> Result<(metap_auth::OAuth2LoginConfig, String), Box<Response>> {
+    let mut tx = state
+        .router
+        .begin(tenant_id.into())
+        .await
+        .map_err(|e| Box::new(router_unavailable_response(e)))?;
+    let config = metap_auth::oauth2_login_config(&mut *tx, tenant_id)
+        .await
+        .map_err(|e| Box::new(internal_error_response(e)))?
+        .ok_or_else(|| {
+            Box::new(service_error_response(
+                404,
+                "oauth2_login_not_configured",
+                Some("OAuth2 login is not enabled for this tenant."),
+                None,
+            ))
+        })?;
+    let _ = tx.commit().await;
+    let client_secret = metap_auth::resolve_client_secret_env(&config.client_secret_ref)
+        .map_err(|e| Box::new(internal_error_response(e)))?;
+    Ok((config, client_secret))
+}
+
+/// The plain-OAuth2 counterpart to `oidc_login` above — see `metap_auth::oauth2_login`'s doc
+/// comment for exactly how it differs (no discovery, no `nonce`). Reuses `state.oidc_flow_cache`
+/// for the redirect/callback handoff rather than a second cache: the cached CSRF-token keys are
+/// cryptographically random regardless of which provider generated them, so one cache safely
+/// serves both, and `OidcFlowEntry.nonce` is simply left empty for this flow (never read by the
+/// OAuth2 callback below).
+#[utoipa::path(
+    get,
+    path = "/auth/oauth2/{tenant_id}/login",
+    params(("tenant_id" = Uuid, Path)),
+    responses(
+        (status = 303, description = "Redirect to the IdP (axum's Redirect::to is 303 See Other, not 302)"),
+        (status = 404, description = "OAuth2 login not configured for this tenant"),
+    ),
+)]
+async fn oauth2_login(State(state): State<AppState>, Path(tenant_id): Path<Uuid>) -> Response {
+    let (config, client_secret) = match oauth2_login_config_or_404(&state, tenant_id).await {
+        Ok(v) => v,
+        Err(resp) => return *resp,
+    };
+    let (auth_url, csrf_token, pkce_verifier) = match metap_auth::oauth2_login_authorize_url(&config, &client_secret) {
+        Ok(v) => v,
+        Err(e) => return internal_error_response(e),
+    };
+    state
+        .oidc_flow_cache
+        .insert(
+            csrf_token,
+            OidcFlowEntry {
+                tenant_id,
+                nonce: String::new(),
+                pkce_verifier,
+            },
+        )
+        .await;
+    Redirect::to(&auth_url).into_response()
+}
+
+#[derive(Deserialize, ToSchema)]
+struct OAuth2CallbackQuery {
+    code: String,
+    state: String,
+}
+
+/// Exchanges the callback's `code`, calls the configured userinfo endpoint, JIT-provisions (or
+/// reuses) the local `users` row, and mints/redirects exactly like `oidc_callback` — see that
+/// handler's doc comment for the cookie-handoff reasoning, unchanged here.
+#[utoipa::path(
+    get,
+    path = "/auth/oauth2/{tenant_id}/callback",
+    params(
+        ("tenant_id" = Uuid, Path),
+        ("code" = String, Query),
+        ("state" = String, Query),
+    ),
+    responses(
+        (status = 303, description = "Redirect back to the tenant's frontend (303 See Other, matching Redirect::to)"),
+        (status = 400, description = "Invalid/expired OAuth2 flow state"),
+        (status = 401, description = "OAuth2 verification failed"),
+    ),
+)]
+async fn oauth2_callback(
+    State(state): State<AppState>,
+    Path(tenant_id): Path<Uuid>,
+    Query(query): Query<OAuth2CallbackQuery>,
+) -> Response {
+    let Some(flow) = state.oidc_flow_cache.take(&query.state).await else {
+        return service_error_response(
+            400,
+            "invalid_oauth2_state",
+            Some("OAuth2 login session expired or invalid."),
+            None,
+        );
+    };
+    if flow.tenant_id != tenant_id {
+        return service_error_response(
+            400,
+            "invalid_oauth2_state",
+            Some("OAuth2 login session expired or invalid."),
+            None,
+        );
+    }
+
+    let (config, client_secret) = match oauth2_login_config_or_404(&state, tenant_id).await {
+        Ok(v) => v,
+        Err(resp) => return *resp,
+    };
+    let identity =
+        match metap_auth::oauth2_login_verify_callback(&config, &client_secret, &query.code, &flow.pkce_verifier).await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(%tenant_id, error = %e, "oauth2 login callback verification failed");
+                return service_error_response(
+                    401,
+                    "oauth2_verification_failed",
+                    Some("Failed to verify OAuth2 login."),
+                    None,
+                );
+            }
+        };
+
+    let mut tx = match state.router.begin(tenant_id.into()).await {
+        Ok(tx) => tx,
+        Err(e) => return router_unavailable_response(e),
+    };
+    let existing = match metap_auth::find_external_user(&mut *tx, tenant_id, "oauth2", &identity.external_subject).await
+    {
+        Ok(v) => v,
+        Err(e) => return internal_error_response(e),
+    };
+    let user = match existing {
+        Some(user) => user,
+        None => {
+            match metap_auth::jit_provision_external_user(
+                &mut *tx,
+                tenant_id,
+                "oauth2",
+                &identity.email,
+                &identity.external_subject,
+            )
+            .await
+            {
+                Ok(user) => user,
+                Err(e) => return internal_error_response(e),
+            }
+        }
+    };
+    if let Err(e) = tx.commit().await {
+        return internal_error_response(e.into());
+    }
+
+    let token = match state.mint_token(
+        user.tenant_id,
+        user.id,
+        None,
+        session_ttl_seconds(&state, user.tenant_id).await,
+    ) {
+        Ok(token) => token,
+        Err(e) => return internal_error_response(e),
+    };
+    let csrf_value = Uuid::new_v4().to_string();
+    let (session_cookie, csrf_cookie) = session_cookies(
+        &token,
+        &csrf_value,
+        session_ttl_seconds(&state, user.tenant_id).await as i64,
+        state.cookie_secure,
+    );
+    let absolute_max = state
+        .effective_config(user.tenant_id)
+        .await
+        .get_u64(metap_config::keys::AUTH_SESSION_ABSOLUTE_MAX_SECONDS);
+    let started_at_cookie =
+        crate::cookies::session_started_at_cookie(unix_now_secs(), absolute_max as i64, state.cookie_secure);
+    let response = Redirect::to(&config.post_login_redirect).into_response();
+    attach_cookies(response, [session_cookie, csrf_cookie, started_at_cookie])
+}
+
 // `logout`/`issue_token` are deliberately undocumented (not in scope of this crate's utoipa
 // migration, matching what the old hand-written `openapi_paths::auth_paths` covered) — plain
 // `.route()` calls, not `routes!`, so they don't need a `#[utoipa::path]` annotation.
@@ -560,6 +744,8 @@ fn build_router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_providers))
         .routes(routes!(oidc_login))
         .routes(routes!(oidc_callback))
+        .routes(routes!(oauth2_login))
+        .routes(routes!(oauth2_callback))
 }
 
 pub fn router() -> Router<AppState> {

@@ -7,6 +7,7 @@ pub mod dashboards;
 pub mod health;
 pub mod metadata;
 pub mod metrics;
+pub mod oauth2;
 pub mod platform_config;
 pub mod preferences;
 pub mod records;

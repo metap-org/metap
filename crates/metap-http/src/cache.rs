@@ -51,6 +51,12 @@ impl TenantAuthCache {
 /// the IdP redirects back with that same CSRF token as its `state` param. Not a `moka` TTL alone:
 /// `take` removes the entry on first read (one-time use, same reason an OAuth `state`/nonce must
 /// never be replayable) — TTL is only a backstop for an abandoned flow that never completes.
+///
+/// **Also backs `GET /auth/oauth2/{tenant_id}/login`/`callback`** (the plain-OAuth2 login
+/// provider, `metap_auth::oauth2_login`) — one cache instance, not two, since a cached CSRF
+/// token's key is cryptographically random regardless of which provider generated it and can't
+/// collide in practice. That flow has no `nonce` (no `id_token` to replay-check), so
+/// `OidcFlowEntry.nonce` is simply left empty (`String::new()`) for it and never read back.
 #[derive(Clone)]
 pub struct OidcFlowCache {
     cache: Cache<String, Arc<OidcFlowEntry>>,

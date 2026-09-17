@@ -7,6 +7,11 @@ edition.workspace = true
 anyhow.workspace = true
 metap-peripherals = { path = "../metap-peripherals" }
 openidconnect = { version = "4", default-features = false, features = ["reqwest"] }
+# The plain-OAuth2 login provider (`oauth2_login.rs`) — distinct direction from OIDC above (see
+# that module's doc comment): no discovery, no id_token, just an authorize/token/userinfo dance.
+# `openidconnect` is itself built on this crate (see its own `Cargo.lock` entry), so it costs
+# nothing new in the dependency tree, only a direct edge where one was transitive before.
+oauth2 = { version = "5", default-features = false, features = ["reqwest"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

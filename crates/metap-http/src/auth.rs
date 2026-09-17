@@ -140,7 +140,7 @@ where
         let user_id =
             Uuid::parse_str(&claims.sub).map_err(|_| AuthError::unauthorized("Token is missing required claims."))?;
 
-        let context = resolve_request_context(
+        let mut context = resolve_request_context(
             &app_state.router,
             tenant_id,
             user_id,
@@ -151,6 +151,29 @@ where
         )
         .await
         .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
+
+        // A token minted by `crate::routes::oauth2`'s token endpoint carries a granted OAuth2
+        // scope/client — surfaced here, not enforced here. `metap-oauth-server`'s own doc comment
+        // has the full reasoning: RBAC/ABAC still governs what this identity can do exactly as it
+        // would for the user's own login session; this only makes the grant *visible* to a policy
+        // condition (`fromContext.oauthScope`) a tenant chooses to write, and to any route that
+        // wants to check it explicitly. An ordinary session token has no `scope` claim, so this is
+        // a no-op for every login path that existed before OAuth2 support did.
+        if let Some(scope) = claims.scope {
+            let attributes = context.context_attributes.get_or_insert_with(Default::default);
+            attributes.insert(
+                "oauthScope".to_string(),
+                serde_json::Value::Array(
+                    metap_oauth_server::scope_tokens(&scope)
+                        .into_iter()
+                        .map(|s| serde_json::Value::String(s.to_string()))
+                        .collect(),
+                ),
+            );
+            if let Some(client_id) = claims.client_id {
+                attributes.insert("oauthClientId".to_string(), serde_json::Value::String(client_id));
+            }
+        }
 
         Ok(AuthContext(context))
     }
