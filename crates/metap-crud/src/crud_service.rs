@@ -99,11 +99,17 @@ impl CrudService {
     /// transaction) — a store error is only logged, never surfaced to the caller, since an
     /// audit-write failure must not turn an already-successful business write into a failed
     /// response.
-    async fn record_audit(&self, entity: &EntityDefinition, entry: metap_audit::AuditEntry) {
+    async fn record_audit(&self, entity: &EntityDefinition, mut entry: metap_audit::AuditEntry) {
         let Some(store) = &self.audit else { return };
-        if !entity.audit.as_ref().is_some_and(|c| c.enabled) {
+        let Some(config) = entity.audit.as_ref().filter(|c| c.enabled) else {
             return;
-        }
+        };
+        // Write-side redaction, applied here rather than at each of the 4 call sites precisely
+        // because this is the one choke point all of them pass through — a new write path cannot
+        // persist a redacted field's value by forgetting a step. See
+        // `EntityAuditConfig::redacted_fields` for why this is a separate mechanism from the
+        // per-caller masking the read path applies.
+        metap_audit::redact_diff_fields(&mut entry.diff, &config.redacted_fields);
         let tenant_id = entry.tenant_id;
         if let Err(e) = store.record(tenant_id, entry).await {
             tracing::error!(entity = %entity.name, error = %e, "failed to record audit trail entry");

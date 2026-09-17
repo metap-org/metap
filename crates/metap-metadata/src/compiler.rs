@@ -416,9 +416,21 @@ pub fn validate(entity: &EntityDefinition) -> Result<(), MetadataValidationError
         }
     }
 
-    // `entity.audit` (`EntityAuditConfig`) needs no validation here — `enabled: bool` has no
-    // invalid states. Considered deliberately, not an oversight: unlike `unique_constraints`
-    // above, there's no cross-field reference or uniqueness rule to check.
+    // `entity.audit.redacted_fields` names real fields, checked against the same `field_names`
+    // set the per-field loop above built — a typo here fails open (the field keeps being written
+    // into the trail in full), and since `audit_trail_entries` is never pruned that is not a
+    // mistake anyone gets to notice later and undo. `enabled` itself still has no invalid state.
+    if let Some(audit) = &entity.audit {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for name in &audit.redacted_fields {
+            if !field_names.contains(name.as_str()) {
+                issues.push(format!("audit.redactedFields references unknown field \"{name}\""));
+            }
+            if !seen.insert(name.as_str()) {
+                issues.push(format!("audit.redactedFields lists field \"{name}\" more than once"));
+            }
+        }
+    }
 
     // `entity.name` had no charset check at all until this validation existed — same gap
     // `field.name` had (see that check's doc comment above), just harder to hit accidentally

@@ -84,3 +84,70 @@ pub struct AuditTrailEntryRow {
     pub version_after: Option<i32>,
     pub occurred_at: DateTime<Utc>,
 }
+
+/// Key of the marker that stands in for a redacted field's `{"before", "after"}` pair.
+pub const REDACTED_MARKER: &str = "redacted";
+
+/// Replaces every `fields` entry **already present** in `diff` with `{"redacted": true}`,
+/// dropping the values while keeping the fact that the field changed.
+///
+/// Only rewrites keys the diff already has, never adds one. A field the write did not touch must
+/// stay absent — the same rule `AuditEntry`'s own doc comment states for `delete` ("never
+/// fabricate a synthetic key here"), and for the same reason: an audit trail that invents changes
+/// is worse than one that omits values. It also means the marker carries real information — this
+/// field changed at this point — rather than appearing on every entry regardless.
+///
+/// Applied by `metap-crud`'s `record_audit`, the single choke point all four writes pass through,
+/// so no write path can persist a redacted field's value by forgetting to call this.
+pub fn redact_diff_fields(diff: &mut JsonObject, fields: &[String]) {
+    for field in fields {
+        if let Some(slot) = diff.get_mut(field.as_str()) {
+            *slot = Value::Object(Map::from_iter([(REDACTED_MARKER.to_string(), Value::Bool(true))]));
+        }
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn diff() -> JsonObject {
+        json!({
+            "amount": {"before": 4242, "after": 9999},
+            "name": {"before": "old", "after": "new"},
+        })
+        .as_object()
+        .unwrap()
+        .clone()
+    }
+
+    #[test]
+    fn a_redacted_field_keeps_the_fact_it_changed_but_loses_both_values() {
+        let mut d = diff();
+        redact_diff_fields(&mut d, &["amount".to_string()]);
+        assert_eq!(d["amount"], json!({ REDACTED_MARKER: true }));
+        // The plaintext must be gone from the entry entirely, not merely relabelled.
+        assert!(!serde_json::to_string(&d).unwrap().contains("4242"));
+        // ...and an unlisted field is untouched.
+        assert_eq!(d["name"], json!({"before": "old", "after": "new"}));
+    }
+
+    /// A field the write never touched stays absent — same rule `AuditEntry`'s doc comment sets
+    /// for `delete`. Marking it would invent a change that did not happen, and would also make
+    /// the marker meaningless by putting it on every entry regardless.
+    #[test]
+    fn a_field_absent_from_the_diff_is_not_invented() {
+        let mut d = diff();
+        redact_diff_fields(&mut d, &["resolution".to_string()]);
+        assert!(!d.contains_key("resolution"));
+        assert_eq!(d.len(), 2);
+    }
+
+    #[test]
+    fn redacting_nothing_leaves_the_diff_alone() {
+        let mut d = diff();
+        redact_diff_fields(&mut d, &[]);
+        assert_eq!(d, diff());
+    }
+}

@@ -230,3 +230,76 @@ async fn dedicated_db_tenant_with_missing_secret_fails_clearly() {
         .await
         .ok();
 }
+
+/// Regression test for audit 06 finding #1: `pool_for` used to validate a `Schema` tenant's
+/// `schema_name` and then return the shared pool anyway, on the (by then false) premise that
+/// `schema_name` is always `"public"`. Once `provision_schema_tenant` started generating
+/// `t_<uuid>` names, that meant `begin()` and `pool_for()` resolved **different physical
+/// schemas for the same tenant** — `CrudService` wrote one, every `pool_for` caller
+/// (`../metap-lowcode`'s `presenter::resolve_pool` runs on every one of its HTTP handlers, and
+/// its `reconciler-orchestrator` runs tenant DDL) read and wrote the other.
+///
+/// Writes through `begin()` and reads back, unqualified, through `pool_for()`: the two must
+/// agree. Also asserts the shared pool still does *not* see the row, so this is proving real
+/// schema scoping rather than everything having quietly landed in one shared table.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn pool_for_resolves_the_same_schema_begin_does() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let schema = format!("t_poolfor{}", &tenant_id.simple().to_string()[..8]);
+    insert_tenant(&pool, tenant_id, "schema", Some(&schema), "active").await;
+    sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS \"{schema}\""))
+        .execute(&pool)
+        .await
+        .expect("create schema");
+    sqlx::query(&format!(
+        "CREATE TABLE \"{schema}\".policies (LIKE metadata.policies INCLUDING DEFAULTS INCLUDING CONSTRAINTS)"
+    ))
+    .execute(&pool)
+    .await
+    .expect("clone policies into the tenant schema");
+
+    let router = router(pool.clone());
+
+    let mut tx = router.begin(TenantId(tenant_id)).await.expect("begin");
+    sqlx::query(
+        "INSERT INTO policies (id, tenant_id, entity, action, effect) \
+         VALUES (gen_random_uuid(), $1, 'audit06', 'read', 'allow')",
+    )
+    .bind(tenant_id)
+    .execute(&mut *tx)
+    .await
+    .expect("insert through begin()");
+    tx.commit().await.expect("commit");
+
+    let tenant_pool = router.pool_for(TenantId(tenant_id)).await.expect("pool_for");
+    let seen: i64 = sqlx::query_scalar("SELECT count(*) FROM policies WHERE entity = 'audit06'")
+        .fetch_one(&tenant_pool)
+        .await
+        .expect("count through pool_for()");
+    assert_eq!(
+        seen, 1,
+        "pool_for must resolve the same schema begin() wrote to — got 0, meaning it is still \
+         handing back the shared pool with the default search_path"
+    );
+
+    let shared_seen: i64 = sqlx::query_scalar("SELECT count(*) FROM policies WHERE entity = 'audit06'")
+        .fetch_one(&pool)
+        .await
+        .expect("count through the shared pool");
+    assert_eq!(
+        shared_seen, 0,
+        "the row must live in the tenant's own schema, not the shared metadata.policies"
+    );
+
+    sqlx::query(&format!("DROP SCHEMA \"{schema}\" CASCADE"))
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM control.tenants WHERE id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+}
