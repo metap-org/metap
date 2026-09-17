@@ -274,7 +274,7 @@ impl MetadataRegistry {
             related_views: self.get_related_views(&entity.name).to_vec(),
             field_display_hints: self.get_field_display_hints(&entity.name).to_vec(),
             unique_constraints: entity.unique_constraints.clone(),
-            audit: entity.audit,
+            audit: entity.audit.clone(),
             // Hashing a plain struct of String/bool/Vec fields cannot fail in practice
             // (unlike JS's NaN/undefined edge cases) — panic rather than silently emit a
             // wrong/empty version if that assumption is ever violated.

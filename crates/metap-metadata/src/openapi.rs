@@ -223,12 +223,15 @@ fn entity_summary_json_schema() -> Value {
     })
 }
 
-/// See `metap_metadata::EntityAuditConfig`'s own doc comment — deliberately just an enable flag.
+/// See `metap_metadata::EntityAuditConfig`'s own doc comment. Hand-maintained like the rest of
+/// this file, so it has to be kept in step with that struct by hand — `redactedFields` is
+/// optional here because it is `#[serde(default)]` there.
 fn entity_audit_config_json_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
             "enabled": { "type": "boolean" },
+            "redactedFields": { "type": "array", "items": { "type": "string" } },
         },
         "required": ["enabled"],
     })

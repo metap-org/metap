@@ -788,7 +788,10 @@ fn audited_entity() -> EntityDefinition {
     EntityDefinition {
         name: "test.audited_orders".to_string(),
         table_name: AUDITED_ORDERS_TABLE.to_string(),
-        audit: Some(metap_metadata::EntityAuditConfig { enabled: true }),
+        audit: Some(metap_metadata::EntityAuditConfig {
+            enabled: true,
+            redacted_fields: vec![],
+        }),
         ..test_entity()
     }
 }
@@ -3257,6 +3260,93 @@ async fn audit_events_still_show_fields_an_unconditional_grant_already_settles()
         "the unconditional role grant settles `amount` in every record state, so its history must \
          not be withheld: {:?}",
         events.iter().map(|e| &e.diff).collect::<Vec<_>>()
+    );
+
+    cleanup(&pool, tenant_id).await;
+}
+
+/// Write-side redaction (`EntityAuditConfig::redacted_fields`): a declared field's values must
+/// never reach `metadata.audit_trail_entries` at all.
+///
+/// This is a different guarantee from the read-path masking the tests above cover, and the only
+/// one that actually helps against the table's own design: it is deliberately never pruned (a
+/// compliance requirement), so a credential written into it stays there for good, no matter what
+/// any later policy says. Read-path masking cannot fix that — an operator can always loosen a
+/// policy, and a platform admin bypasses field masking entirely.
+///
+/// So the assertion is made against the **raw stored row**, not against what `list_audit_events`
+/// chooses to return: reading through the service would pass just as well if the value were still
+/// sitting in the table and merely filtered on the way out, which is exactly the property this
+/// test exists to rule out. Asserted as a substring over the whole stored JSON rather than by
+/// looking up the `amount` key, so a value that leaked into some other position would still fail.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn a_redacted_field_never_reaches_the_audit_table() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+
+    let mut entity = audited_entity();
+    entity.audit = Some(metap_metadata::EntityAuditConfig {
+        enabled: true,
+        redacted_fields: vec!["amount".to_string()],
+    });
+    let mut registry = MetadataRegistry::new();
+    registry.register(entity).unwrap();
+
+    let store = PostgresPolicyStore::new(test_router(pool.clone()));
+    let permissions = PermissionService::new(Box::new(store));
+    let audit_store = std::sync::Arc::new(metap_audit::PostgresAuditTrailStore::new(pool.clone()));
+    let crud = CrudService::with_audit(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+        audit_store,
+    );
+
+    let admin = admin_context(tenant_id);
+    let mut payload = JsonObject::new();
+    payload.insert("name".to_string(), json!("Sensitive order"));
+    payload.insert("amount".to_string(), json!(4242));
+    let created = match crud
+        .create("test.audited_orders", &payload, &admin, None)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    let mut upd = JsonObject::new();
+    upd.insert("amount".to_string(), json!(9999));
+    crud.update("test.audited_orders", created.id, created.version, &upd, &admin, None)
+        .await
+        .unwrap();
+
+    let stored: Vec<String> = sqlx::query_scalar(
+        "SELECT diff::text FROM metadata.audit_trail_entries WHERE tenant_id = $1 AND record_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(created.id)
+    .fetch_all(&pool)
+    .await
+    .expect("read audit rows back");
+
+    assert!(!stored.is_empty(), "precondition: audit rows must exist to be checked");
+    for diff in &stored {
+        assert!(
+            !diff.contains("4242") && !diff.contains("9999"),
+            "a redacted field's value reached the audit table: {diff}"
+        );
+    }
+    // The fact of the change is still recorded — redaction drops values, not history.
+    assert!(
+        stored.iter().any(|d| d.contains("\"redacted\"")),
+        "the redaction marker is missing, so the change itself was not recorded either: {stored:?}"
+    );
+    // ...and an undeclared field is written in full, so this cannot pass by redacting everything.
+    assert!(
+        stored.iter().any(|d| d.contains("Sensitive order")),
+        "control failed: a field not listed in redactedFields must still be recorded in full"
     );
 
     cleanup(&pool, tenant_id).await;

@@ -402,10 +402,34 @@ pub struct FieldDisplayHint {
 /// vs. another storage, vs. a wholly different database) is a deployment-wide concern wired once
 /// at a binary's own composition root (`CrudService::with_audit`), not a per-entity one; this
 /// field only controls *whether* `CrudService` calls that store at all for this entity's writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityAuditConfig {
     pub enabled: bool,
+    /// Fields whose *values* must never be written into the audit trail at all. The entry still
+    /// records that the field changed (`{"redacted": true}` in place of its
+    /// `{"before", "after"}` pair), so who-changed-what-and-when survives; only the values are
+    /// never persisted.
+    ///
+    /// This is the **write** side, and it is deliberately not the same mechanism as the field
+    /// masking `crud_service::audit_events` applies when serving the trail. That one is
+    /// per-caller and reversible by an operator (loosen the policy and the history is there
+    /// again); this one is a property of the entity, applies to every reader including a
+    /// platform admin, and is irreversible for anything already written — the value simply never
+    /// enters the table. That is the point: `metadata.audit_trail_entries` is deliberately never
+    /// pruned (a compliance requirement, see `metap-audit`), so a credential or other secret
+    /// recorded into it stays there for good.
+    ///
+    /// Declared per entity rather than as an `EntityField` flag on purpose: "never persist this
+    /// field's values into *this* entity's trail" is an audit-config decision, and putting it
+    /// here also keeps it out of `EntityField`, which has 140-odd struct-literal construction
+    /// sites across this workspace and the downstream repos — the cascade
+    /// `unique_constraints` already caused once (see `metap-crud`'s `delete()` notes).
+    ///
+    /// Empty by default, so an entity that opts into auditing without naming anything behaves
+    /// exactly as it did before this existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub redacted_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

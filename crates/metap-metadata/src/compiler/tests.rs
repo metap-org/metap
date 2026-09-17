@@ -464,3 +464,39 @@ fn duplicate_composite_unique_constraint_field_set_is_rejected_regardless_of_ord
     let err = validate(&entity).unwrap_err();
     assert!(err.issues.iter().any(|i| i.contains("same field set")));
 }
+
+/// `audit.redactedFields` naming a field that does not exist fails **open** — the field keeps
+/// being written into the trail in full — and `audit_trail_entries` is deliberately never
+/// pruned, so it is not a mistake anyone gets to notice later and undo. Hence a validation
+/// error rather than a silent no-op.
+#[test]
+fn audit_redacted_fields_over_existing_fields_passes() {
+    let mut entity = entity_with_type_kind_value();
+    entity.audit = Some(crate::EntityAuditConfig {
+        enabled: true,
+        redacted_fields: vec!["type".to_string()],
+    });
+    assert!(validate(&entity).is_ok());
+}
+
+#[test]
+fn audit_redacted_fields_referencing_an_unknown_field_is_rejected() {
+    let mut entity = entity_with_type_kind_value();
+    entity.audit = Some(crate::EntityAuditConfig {
+        enabled: true,
+        redacted_fields: vec!["nope".to_string()],
+    });
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("unknown field \"nope\"")));
+}
+
+#[test]
+fn audit_redacted_fields_listing_the_same_field_twice_is_rejected() {
+    let mut entity = entity_with_type_kind_value();
+    entity.audit = Some(crate::EntityAuditConfig {
+        enabled: true,
+        redacted_fields: vec!["type".to_string(), "type".to_string()],
+    });
+    let err = validate(&entity).unwrap_err();
+    assert!(err.issues.iter().any(|i| i.contains("more than once")));
+}
