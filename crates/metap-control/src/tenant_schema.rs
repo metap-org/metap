@@ -2,11 +2,17 @@
 //! (`../metap-docs/docs/features/35-per-tenant-schema-isolation.md`). `Router::begin`'s `SET
 //! LOCAL search_path TO {schema_name}, metadata, control` already fully supports a genuine
 //! per-tenant `schema_name` — this module is the write side that was missing: creating the
-//! physical schema and cloning every table a tenant-scoped transaction can reach into it, so an
-//! unqualified query inside that transaction actually finds something. Without this, a tenant
-//! whose `schema_name` isn't `"public"` has no `records`/`policies`/`users`/... in its own search
-//! path at all (`public` isn't in it), so nothing would resolve — this isn't purely isolation
-//! polish, it's a functional prerequisite for a non-`"public"` `Schema` tenant to work at all.
+//! physical schema and cloning the per-tenant tables into it.
+//!
+//! Scope correction (audit 06 finding #2): this header used to say a non-`"public"` tenant would
+//! otherwise find "no `records`/`policies`/`users`/… in its own search path at all", making the
+//! clone a functional prerequisite. That was wrong — `Router::begin` sets `SET LOCAL search_path
+//! TO {schema_name}, metadata, control`, so `metadata` is always reachable from a tenant
+//! transaction and an uncloned table resolves to the shared one exactly as it did before
+//! per-tenant schemas existed. The clone buys **physical isolation** for per-tenant data, which
+//! is worth having, but it is not what makes such a tenant work — and for the identity tables it
+//! was actively harmful (see `TENANT_SCOPED_TABLES`'s own doc comment for the login breakage that
+//! caused).
 
 use sqlx::PgPool;
 
@@ -30,6 +36,29 @@ use crate::router::validate_schema_name;
 /// `crates/migrations/0033_drop_records_table.sql`), so it was removed from this list rather
 /// than left to fail `create_tenant_schema`'s `CREATE TABLE (LIKE ...)` against a table that no
 /// longer exists.
+///
+/// **`metadata.users`/`metadata.user_roles` are excluded too, and this one is load-bearing**
+/// (audit 06 finding #2, `../metap-docs/docs/audits/06-*.md`): identity in this platform is
+/// deliberately **global**, not per-tenant. `POST /auth/login` resolves which tenant a caller
+/// belongs to *from the user row it finds* (`metap_peripherals::verify_credentials` —
+/// `SELECT ... FROM users WHERE email = $1`, no tenant predicate, because there is no tenant
+/// picker in the UI to supply one), which is exactly why `users_email_unique` is global rather
+/// than `(tenant_id, email)` — confirmed deliberate in audit 04 A#2. Cloning `users` broke both
+/// halves of that at once: `provision_schema_tenant` wrote the new tenant's admin into
+/// `t_<uuid>.users` where the tenant-less login path (which runs on the shared pool, default
+/// `search_path`) could never see it, so the tenant could not log in at all; and
+/// `INCLUDING INDEXES` copied `users_email_unique` into each tenant schema as a *per-table*
+/// index, so the global uniqueness the login path depends on silently stopped holding.
+/// `user_roles` follows `users` for the same reason — splitting a user's identity and their role
+/// assignments across two different schemas has no upside and one obvious failure mode.
+///
+/// Leaving them shared costs nothing functionally: `Router::begin` puts `metadata` in every
+/// tenant transaction's `search_path` (`SET LOCAL search_path TO {schema_name}, metadata,
+/// control`), so an unqualified `users`/`user_roles` in a tenant-scoped query resolves to the
+/// shared table exactly as it did before per-tenant schemas existed, still filtered by the
+/// `tenant_id` column each row carries. (This module's own header used to claim a non-`"public"`
+/// tenant would find "no `users`/… in its own search path at all" — that was wrong for precisely
+/// this reason, and is corrected there now.)
 const TENANT_SCOPED_TABLES: &[(&str, &str)] = &[
     ("metadata", "dashboard_configs"),
     ("metadata", "policies"),
@@ -39,8 +68,6 @@ const TENANT_SCOPED_TABLES: &[(&str, &str)] = &[
     ("metadata", "tenant_auth_configs"),
     ("metadata", "tenant_configs"),
     ("metadata", "user_preferences"),
-    ("metadata", "user_roles"),
-    ("metadata", "users"),
     ("metadata", "workflow_events"),
     ("metadata", "attachments"),
     // These 3 have FKs to each other (below) — created last, in dependency order, so

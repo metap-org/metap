@@ -86,6 +86,7 @@ pub struct Router {
     registry: RegistryCache,
     secret_store: Arc<dyn SecretStore>,
     dedicated_pools: moka::future::Cache<String, Arc<PgPool>>,
+    schema_pools: moka::future::Cache<String, Arc<PgPool>>,
 }
 
 impl Router {
@@ -93,11 +94,15 @@ impl Router {
         let dedicated_pools = moka::future::Cache::builder()
             .time_to_idle(DEDICATED_POOL_IDLE_TTL)
             .build();
+        let schema_pools = moka::future::Cache::builder()
+            .time_to_idle(DEDICATED_POOL_IDLE_TTL)
+            .build();
         Self {
             shared_pool,
             registry,
             secret_store,
             dedicated_pools,
+            schema_pools,
         }
     }
 
@@ -129,6 +134,51 @@ impl Router {
             })
             .await
             .map_err(|e| anyhow::anyhow!("failed to open dedicated pool for {dsn_secret_ref}: {e}"))
+    }
+
+    /// Looks up (or opens and caches) a `PgPool` whose every connection has `search_path` set to
+    /// `schema_name` — the pool-level equivalent of what `begin()` does per transaction with
+    /// `SET LOCAL`, for the callers that genuinely can't use a transaction (DDL).
+    ///
+    /// `"public"` short-circuits to the shared pool untouched: that is what the database's own
+    /// default `search_path` already resolves to (`0028_metadata_schema.sql`), so every tenant
+    /// provisioned before per-tenant schemas existed keeps the exact pool it has today, with no
+    /// extra connections and no behavior change at all.
+    ///
+    /// A **session-level** `SET search_path` is correct here, even though `begin()`'s own doc
+    /// comment warns that a session-level set on the shared pool would leak one tenant's schema
+    /// to the next request handed that connection (Bẫy #1). The difference is the pool: every
+    /// connection in *this* pool only ever serves this one schema, so there is no next tenant to
+    /// leak to. Built from the shared pool's own `connect_options()` so it inherits the same host
+    /// /credentials/TLS settings without `Router::new` needing a DSN parameter it never took.
+    async fn schema_pool(&self, schema_name: &str) -> anyhow::Result<PgPool> {
+        if schema_name == "public" {
+            return Ok(self.shared_pool.clone());
+        }
+        validate_schema_name(schema_name)?;
+
+        let options = (*self.shared_pool.connect_options()).clone();
+        let schema = schema_name.to_string();
+        let pool = self
+            .schema_pools
+            .try_get_with(schema.clone(), async move {
+                let search_path = format!("SET search_path TO \"{schema}\", metadata, control");
+                let pool = PgPoolOptions::new()
+                    .max_connections(5)
+                    .after_connect(move |conn, _meta| {
+                        let search_path = search_path.clone();
+                        Box::pin(async move {
+                            sqlx::query(&search_path).execute(conn).await?;
+                            Ok(())
+                        })
+                    })
+                    .connect_with(options)
+                    .await?;
+                anyhow::Ok(Arc::new(pool))
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to open schema pool for {schema_name}: {e}"))?;
+        Ok((*pool).clone())
     }
 
     /// Shared status/strategy resolution for `begin()`/`pool_for()` — same tenant lookup,
@@ -214,22 +264,25 @@ impl Router {
     /// normal tenant-scoped query does) against the right tenant's data, instead of always the
     /// platform's own shared pool. First real consumer: `../metap-demo-jira`'s boot sequence.
     ///
-    /// `Schema` strategy returns the shared pool directly, no per-connection `SET` — real
-    /// per-tenant schema isolation isn't built yet (`crates/metap-control/src/provisioning.rs`'s
-    /// doc comment: `schema_name` is always `"public"` in practice), so the shared pool's
-    /// default `search_path` already resolves there the same way `begin()`'s `SET LOCAL
-    /// search_path TO public, metadata, control` would for `public`. Framework/lowcode tables
-    /// resolve too without a per-connection `SET` here specifically because
-    /// `0028_metadata_schema.sql` sets `metadata`/`control` into the *database's own* default
-    /// search path, not because of anything this function does — a caller of this function
-    /// still can't see a different tenant's `public`-schema business data than the shared pool's
-    /// own default already exposes. `DedicatedDb` returns the same cached pool `begin()` uses.
+    /// `Schema` strategy goes through [`Self::schema_pool`], so the returned pool's `search_path`
+    /// actually points at that tenant's schema. A `"public"` tenant — i.e. every tenant
+    /// provisioned before `provision_schema_tenant` started generating `t_<uuid>` names
+    /// (`crates/metap-control/src/provisioning.rs`) — still gets the shared pool unchanged.
+    /// `DedicatedDb` returns the same cached pool `begin()` uses.
+    ///
+    /// This used to return the shared pool for *every* `Schema` tenant, validating `schema_name`
+    /// and then discarding it, on the reasoning that `schema_name` was always `"public"` in
+    /// practice. Per-tenant schema isolation invalidated that premise without this function being
+    /// updated (audit 06 finding #1, `../metap-docs/docs/audits/06-*.md`): a `t_<uuid>` tenant was
+    /// served the shared pool, whose default `search_path` resolves `public, metadata, control`,
+    /// so `CrudService` (through `begin()`, correctly scoped) and every `pool_for` caller were
+    /// reading and writing *different physical schemas for the same tenant*. That was not
+    /// hypothetical reach: besides `dev-tools`, `../metap-lowcode`'s `presenter::resolve_pool`
+    /// puts this function on the path of every one of its HTTP handlers, and its
+    /// `reconciler-orchestrator` runs tenant DDL through it.
     pub async fn pool_for(&self, tenant: TenantId) -> anyhow::Result<PgPool> {
         match self.resolve(tenant).await? {
-            TenantStrategy::Schema { schema_name } => {
-                validate_schema_name(&schema_name)?;
-                Ok(self.shared_pool.clone())
-            }
+            TenantStrategy::Schema { schema_name } => self.schema_pool(&schema_name).await,
             TenantStrategy::DedicatedDb { dsn_secret_ref } => {
                 let pool = self.dedicated_pool(&dsn_secret_ref).await?;
                 Ok((*pool).clone())

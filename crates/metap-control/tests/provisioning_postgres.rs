@@ -130,19 +130,36 @@ async fn provision_schema_tenant_writes_registry_row_and_admin_user() {
         routing.strategy
     );
 
-    // The admin user's role now lives in this tenant's own cloned `user_roles`, not the shared
-    // `metadata.user_roles` — query it schema-qualified rather than through the bare pool's
-    // default search_path (which would silently find `metadata.user_roles` instead and miss
-    // this entirely, since `public` isn't even the fallback here — a real per-tenant schema is).
-    let roles: Vec<String> = sqlx::query_scalar(&format!(
-        "SELECT role FROM \"{expected_schema}\".user_roles WHERE tenant_id = $1 AND user_id = $2"
-    ))
-    .bind(tenant_id)
-    .bind(provisioned.admin_user_id)
-    .fetch_all(&pool)
-    .await
-    .expect("fetch roles");
+    // Identity stays in the shared `metadata` tables, deliberately — `users`/`user_roles` are
+    // excluded from `create_tenant_schema`'s clone list (audit 06 finding #2). This assertion is
+    // the inverse of what it used to be: it previously required the role to live in the tenant's
+    // own cloned `user_roles`, which is exactly the behavior that broke login.
+    let roles: Vec<String> = sqlx::query_scalar("SELECT role FROM user_roles WHERE tenant_id = $1 AND user_id = $2")
+        .bind(tenant_id)
+        .bind(provisioned.admin_user_id)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch roles");
     assert_eq!(roles, vec!["admin"]);
+
+    // Regression test for audit 06 finding #2, the reason for the above: `POST /auth/login` with
+    // no `tenantId` in the body resolves the user on the **shared pool** with the database's
+    // default `search_path` (`public, metadata, control`) — it cannot know a tenant's schema
+    // before it has found the user, because finding the user is how it learns the tenant. While
+    // `users` was cloned, `provision_schema_tenant` wrote the admin into `t_<uuid>.users`, which
+    // that query can never see, so a freshly provisioned tenant could not log in at all.
+    // Querying unqualified through the bare pool here reproduces that exact lookup.
+    let found_tenant: Option<Uuid> = sqlx::query_scalar("SELECT tenant_id FROM users WHERE email = $1")
+        .bind(format!("admin-{}@test.local", tenant_id.simple()))
+        .fetch_optional(&pool)
+        .await
+        .expect("look up the admin the way tenant-less login does");
+    assert_eq!(
+        found_tenant,
+        Some(tenant_id),
+        "a freshly provisioned tenant's admin must be resolvable by email alone — that is how \
+         tenant-less login works, and it is why `users_email_unique` is global (audit 04 A#2)"
+    );
 
     cleanup(&pool, tenant_id).await;
 }

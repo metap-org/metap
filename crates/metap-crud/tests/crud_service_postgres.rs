@@ -2647,3 +2647,141 @@ async fn computed_field_is_recalculated_on_create_and_update() {
 
     cleanup(&pool, tenant_id).await;
 }
+
+/// Regression test for audit 06 finding #3 (a real field-permission bypass, found 2026-09-17):
+/// `list_audit_events` checked record-level (ABAC) read permission and then returned every audit
+/// row's `diff` verbatim — with no `filter_readable_fields` pass, which the ordinary read path
+/// (`row_to_dto_masked`) has always applied. So a caller masked out of a field on
+/// `GET /api/{entity}/{id}` could still read that field's entire before/after history through
+/// `GET /api/{entity}/{id}/audit-events`, for every entity with `audit.enabled = true`.
+///
+/// Asserts both halves, because masking that also hides readable fields would "pass" a test that
+/// only checked the denied one: `amount` (denied to this caller) must be absent from every diff,
+/// and `name` (readable) must still be present — the history stays useful, it just stops leaking.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn audit_events_mask_fields_the_caller_cannot_read() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(audited_entity()).unwrap();
+    let store = PostgresPolicyStore::new(test_router(pool.clone()));
+
+    // Entity-level read open to "viewer" — otherwise deny-by-default rejects the caller before
+    // any field-level masking is reached, and this test would prove nothing.
+    store
+        .create_policy(
+            tenant_id,
+            "test.audited_orders",
+            "read",
+            Some(vec!["viewer".to_string()]),
+            None,
+            None,
+            None,
+            Some(PolicySubject::Context),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+    // Field-level read on "amount" allowed only to "finance" — "viewer" is masked out of it.
+    store
+        .create_policy(
+            tenant_id,
+            "test.audited_orders",
+            "read",
+            Some(vec!["finance".to_string()]),
+            None,
+            None,
+            Some("amount"),
+            Some(PolicySubject::Context),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+
+    let permissions = PermissionService::new(Box::new(store));
+    let audit_store = std::sync::Arc::new(metap_audit::PostgresAuditTrailStore::new(pool.clone()));
+    let crud = CrudService::with_audit(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+        audit_store,
+    );
+
+    // Write as admin so the audit rows genuinely contain `amount` — the bypass is only
+    // interesting if the stored diff has the sensitive value in it to begin with.
+    let admin = admin_context(tenant_id);
+    let mut payload = JsonObject::new();
+    payload.insert("name".to_string(), json!("Sensitive order"));
+    payload.insert("amount".to_string(), json!(4242));
+    let created = match crud
+        .create("test.audited_orders", &payload, &admin, None)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    let mut update_payload = JsonObject::new();
+    update_payload.insert("name".to_string(), json!("Sensitive order (renamed)"));
+    update_payload.insert("amount".to_string(), json!(9999));
+    crud.update(
+        "test.audited_orders",
+        created.id,
+        created.version,
+        &update_payload,
+        &admin,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Sanity check: as admin, the raw history really does carry `amount` — otherwise the
+    // assertion below would pass for the wrong reason (nothing to leak in the first place).
+    let admin_events = match crud
+        .list_audit_events("test.audited_orders", created.id, &admin)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected admin audit read to succeed, got {other:?}"),
+    };
+    assert!(
+        admin_events.iter().any(|e| e.diff.get("amount").is_some()),
+        "precondition failed: no audit row carries `amount`, so this test cannot detect a leak"
+    );
+
+    let viewer = RequestContext {
+        tenant_id: tenant_id.to_string(),
+        user_id: Some(Uuid::new_v4().to_string()),
+        roles: Some(vec!["viewer".to_string()]), // not "finance" — masked out of `amount`
+        function_id: None,
+        context_attributes: None,
+        forwarded_bearer_token: None,
+    };
+
+    let events = match crud
+        .list_audit_events("test.audited_orders", created.id, &viewer)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected viewer audit read to succeed, got {other:?}"),
+    };
+    assert!(!events.is_empty(), "viewer should still see the history itself");
+    for event in &events {
+        assert!(
+            event.diff.get("amount").is_none(),
+            "audit-events leaked a field this caller cannot read: {:?}",
+            event.diff
+        );
+    }
+    assert!(
+        events.iter().any(|e| e.diff.get("name").is_some()),
+        "masking must not also hide fields the caller *can* read"
+    );
+
+    cleanup(&pool, tenant_id).await;
+}
