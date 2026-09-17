@@ -2785,3 +2785,180 @@ async fn audit_events_mask_fields_the_caller_cannot_read() {
 
     cleanup(&pool, tenant_id).await;
 }
+
+/// The audit-events mask must not be reversible by the caller (2026-09-17, follow-up to
+/// `audit_events_mask_fields_the_caller_cannot_read` above — reported by the project owner:
+/// "có mask, tuy nhiên giải mã được mask").
+///
+/// The first fix decided field readability against the record's **current** state. That check's
+/// subject is something the caller can move: here `amount` is readable only while the record's
+/// own `resolution` is `"unlocked"`, and `resolution` is a field the viewer may legitimately
+/// write. Editing it therefore re-opened the entire `amount` history — including `4242`, a past
+/// value the ordinary read path never returns (it only ever serves the current one). Confirmed
+/// live before the fix: `0` rows carried `amount` while locked, `2` immediately after the viewer
+/// unlocked it (`{"before":4242,"after":9999}` and `{"before":null,"after":4242}`).
+///
+/// The third assertion is the control, and it is the point of the test: it proves the policy
+/// really does grant `amount` on the ordinary read path once unlocked. Without it this test
+/// passes just as happily when the conditional policy matches nothing at all — which is exactly
+/// how the first version of this probe passed while proving nothing (it used
+/// `PolicySubject::Context`, so the record condition was never evaluated against the record).
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn audit_events_mask_survives_the_caller_editing_the_field_it_is_conditioned_on() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(audited_entity()).unwrap();
+    let store = PostgresPolicyStore::new(test_router(pool.clone()));
+
+    for action in ["read", "update"] {
+        store
+            .create_policy(
+                tenant_id,
+                "test.audited_orders",
+                action,
+                Some(vec!["viewer".to_string()]),
+                None,
+                None,
+                None,
+                Some(PolicySubject::Context),
+                PolicyEffect::Allow,
+            )
+            .await
+            .unwrap();
+    }
+    // `amount` is readable ONLY while the record's own `resolution` == "unlocked" — a
+    // record-subject condition, i.e. one whose answer the record itself determines.
+    store
+        .create_policy(
+            tenant_id,
+            "test.audited_orders",
+            "read",
+            None,
+            Some(PolicyCondition::Attribute {
+                attribute: "resolution".to_string(),
+                op: ConditionOp::Eq,
+                value: PolicyValue::Literal {
+                    literal: json!("unlocked"),
+                },
+            }),
+            None,
+            Some("amount"),
+            Some(PolicySubject::Record),
+            PolicyEffect::Allow,
+        )
+        .await
+        .unwrap();
+
+    let permissions = PermissionService::new(Box::new(store));
+    let audit_store = std::sync::Arc::new(metap_audit::PostgresAuditTrailStore::new(pool.clone()));
+    let crud = CrudService::with_audit(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+        audit_store,
+    );
+
+    let admin = admin_context(tenant_id);
+    let mut payload = JsonObject::new();
+    payload.insert("name".to_string(), json!("Sensitive order"));
+    payload.insert("amount".to_string(), json!(4242));
+    payload.insert("resolution".to_string(), json!("locked"));
+    let created = match crud
+        .create("test.audited_orders", &payload, &admin, None)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    // A second write, so `amount` has a genuine before/after history to leak, not just its
+    // creation value.
+    let mut upd = JsonObject::new();
+    upd.insert("amount".to_string(), json!(9999));
+    let after_update = match crud
+        .update("test.audited_orders", created.id, created.version, &upd, &admin, None)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected update to succeed, got {other:?}"),
+    };
+
+    let viewer = RequestContext {
+        tenant_id: tenant_id.to_string(),
+        user_id: Some(Uuid::new_v4().to_string()),
+        roles: Some(vec!["viewer".to_string()]),
+        function_id: None,
+        context_attributes: None,
+        forwarded_bearer_token: None,
+    };
+
+    let locked_events = match crud
+        .list_audit_events("test.audited_orders", created.id, &viewer)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected viewer audit read to succeed, got {other:?}"),
+    };
+    assert!(
+        locked_events.iter().all(|e| e.diff.get("amount").is_none()),
+        "`amount` must be masked while the record is locked"
+    );
+
+    // The viewer edits the field the policy conditions on. This is allowed — it is not `amount`,
+    // and they hold entity-level update.
+    let mut unlock = JsonObject::new();
+    unlock.insert("resolution".to_string(), json!("unlocked"));
+    match crud
+        .update(
+            "test.audited_orders",
+            created.id,
+            after_update.version,
+            &unlock,
+            &viewer,
+            None,
+        )
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { .. } => {}
+        other => panic!("viewer should be able to edit `resolution`, got {other:?}"),
+    }
+
+    let unlocked_events = match crud
+        .list_audit_events("test.audited_orders", created.id, &viewer)
+        .await
+        .unwrap()
+    {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected viewer audit read to succeed, got {other:?}"),
+    };
+    for event in &unlocked_events {
+        assert!(
+            event.diff.get("amount").is_none(),
+            "unlocking the conditioning field re-opened `amount`'s history: {:?}",
+            event.diff
+        );
+    }
+
+    // Control: the conditional policy is real and now grants `amount` on the ordinary read path.
+    // Without this, every assertion above would pass just as happily if the policy matched
+    // nothing at all and `amount` were simply never readable by anyone.
+    let (record, _) = match crud.get("test.audited_orders", created.id, &viewer).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected viewer get to succeed, got {other:?}"),
+    };
+    assert_eq!(
+        record.data.get("amount"),
+        Some(&json!(9999)),
+        "control failed: the conditional policy never grants `amount` even when unlocked, so this \
+         test would pass for the wrong reason"
+    );
+
+    cleanup(&pool, tenant_id).await;
+}

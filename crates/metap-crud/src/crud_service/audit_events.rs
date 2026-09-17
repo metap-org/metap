@@ -70,10 +70,20 @@ impl CrudService {
     /// - Field policies may be conditional on the record's own values, so the probe has to carry
     ///   the real current values, not an empty object.
     ///
-    /// Readability is decided against the record's **current** state, deliberately, not against
-    /// each historical entry's own before/after: what a caller may see in the history is exactly
-    /// what they may see on the record today. Deciding per-entry would let a field readable only
-    /// in some past state leak through the history after it stopped being readable.
+    /// A field whose read policy is conditional on the record's own values is excluded outright
+    /// (`record_state_dependent_read_fields`), not merely evaluated against the current state.
+    /// Evaluating it was the original fix and it was **reversible**: the check's subject is a
+    /// record the caller can edit, so flipping the field the policy conditions on — a field they
+    /// may legitimately write — retroactively unmasked the whole history, handing back past
+    /// values the ordinary read path never returns (it only ever returns the current one).
+    /// Confirmed live, see this module's regression test. The precise alternative, evaluating
+    /// each entry against its own historical state, is not available: the audit table stores
+    /// only per-entry diffs, never full state snapshots.
+    ///
+    /// The cost is deliberate over-masking: a field carrying both an unconditional grant and a
+    /// conditional one is excluded too, even though the unconditional grant alone would justify
+    /// showing it. Over-masking history is the safe direction; under-masking is the bug above.
+    /// Admins keep the unconditional bypass `filter_readable_fields` already gives them.
     async fn readable_field_names(
         &self,
         entity_name: &str,
@@ -95,10 +105,16 @@ impl CrudService {
         }
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
+        let state_dependent = if context.is_admin() {
+            std::collections::HashSet::new()
+        } else {
+            snapshot.record_state_dependent_read_fields()
+        };
         Ok(snapshot
             .filter_readable_fields(context, &probe)
             .into_iter()
             .map(|(field, _)| field)
+            .filter(|field| !state_dependent.contains(field))
             .collect())
     }
 }

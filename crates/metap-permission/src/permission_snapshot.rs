@@ -52,6 +52,32 @@ impl PermissionSnapshot {
         }
     }
 
+    /// Field names whose `read` decision depends on the **record's own current values** — at
+    /// least one of that field's read policies is record-subject *and* carries a condition, so
+    /// the same caller gets a different answer as the record changes.
+    ///
+    /// `filter_readable_fields` deliberately answers for the record it is handed, which is right
+    /// for the ordinary read path: the record it masks *is* the record being returned. A caller
+    /// serving data about states the record no longer has — the audit trail — cannot use that
+    /// answer, because the subject of the check is one the caller can move: editing the field a
+    /// policy conditions on (a field they may legitimately write) flips the decision and
+    /// retroactively unmasks history recorded while it was closed. Confirmed live, not
+    /// theoretical: see `audit_events.rs` and its regression test.
+    ///
+    /// Evaluating each audit entry against its *own* historical record state would be the
+    /// precise answer, but `metadata.audit_trail_entries` stores only a per-entry `diff`, never
+    /// a full state snapshot, so that state cannot be reconstructed — and reconstructing it by
+    /// replaying diffs would be wrong exactly when the audit trail is incomplete, which it is
+    /// allowed to be (the write is best-effort by design). Excluding these fields is therefore
+    /// the conservative answer available today, not the ideal one.
+    pub fn record_state_dependent_read_fields(&self) -> std::collections::HashSet<String> {
+        self.field_policies
+            .iter()
+            .filter(|policy| policy.action == "read" && policy.subject == "record" && policy.condition.is_some())
+            .filter_map(|policy| policy.field.clone())
+            .collect()
+    }
+
     pub fn get_record_policies(&self, action: EntityAction) -> &[PolicyRow] {
         self.record_policies_by_action
             .get(action.as_str())
