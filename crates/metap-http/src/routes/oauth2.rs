@@ -219,7 +219,14 @@ async fn authenticate_client(
         .await
         .map_err(internal_error_response)
         .map_err(Box::new)?
-        .ok_or_else(|| Box::new(service_error_response(401, "invalid_client", Some("Unknown client."), None)))?;
+        .ok_or_else(|| {
+            Box::new(service_error_response(
+                401,
+                "invalid_client",
+                Some("Unknown client."),
+                None,
+            ))
+        })?;
     if !metap_oauth_server::verify_client_secret(&client, client_secret) {
         return Err(Box::new(service_error_response(
             401,

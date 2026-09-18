@@ -160,8 +160,8 @@ pub async fn oauth2_login_verify_callback(
     // The access token goes out in this request's `Authorization` header — refuse to send it
     // anywhere but `https`, since `userinfo_url` is tenant-admin-configured and nothing upstream
     // of this call validates its scheme (CodeQL: cleartext transmission of sensitive information).
-    let userinfo_url = reqwest::Url::parse(&config.userinfo_url)
-        .map_err(|e| anyhow::anyhow!("invalid userinfo_url: {e}"))?;
+    let userinfo_url =
+        reqwest::Url::parse(&config.userinfo_url).map_err(|e| anyhow::anyhow!("invalid userinfo_url: {e}"))?;
     require_https_or_loopback(&userinfo_url)?;
 
     let userinfo: serde_json::Value = http
@@ -212,7 +212,11 @@ mod tests {
 
     #[test]
     fn plain_http_to_loopback_is_allowed_for_local_mock_idps() {
-        for raw in ["http://127.0.0.1:8080/user", "http://localhost:8080/user", "http://[::1]:8080/user"] {
+        for raw in [
+            "http://127.0.0.1:8080/user",
+            "http://localhost:8080/user",
+            "http://[::1]:8080/user",
+        ] {
             let url = reqwest::Url::parse(raw).unwrap();
             assert!(require_https_or_loopback(&url).is_ok(), "{raw} should be allowed");
         }
