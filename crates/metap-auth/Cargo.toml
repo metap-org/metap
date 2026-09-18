@@ -14,6 +14,10 @@ openidconnect = { version = "4", default-features = false, features = ["reqwest"
 oauth2 = { version = "5", default-features = false, features = ["reqwest"] }
 reqwest.workspace = true
 serde.workspace = true
+# For `url::Host` (`oauth2_login.rs::require_https_or_loopback`) — `reqwest::Url` re-exports the
+# type but not the `Host` enum needed to distinguish an IPv6 loopback from its bracketed display
+# form. Only this crate needs it directly.
+url = "2"
 serde_json.workspace = true
 sqlx = { workspace = true, features = [
   "runtime-tokio",

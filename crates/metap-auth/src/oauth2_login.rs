@@ -88,6 +88,29 @@ fn http_client() -> anyhow::Result<reqwest::Client> {
         .build()?)
 }
 
+/// `https` only, with a loopback exception for a local mock IdP (`oauth2_login_e2e.rs`'s
+/// `wiremock::MockServer` binds a plain-`http://127.0.0.1:<port>` listener — same allowance
+/// RFC 8252 makes for a native app's own `http://localhost` redirect URI) — a real tenant-admin-
+/// configured `userinfo_url` pointing anywhere else over plain `http` would send the access token
+/// in cleartext.
+fn require_https_or_loopback(url: &reqwest::Url) -> anyhow::Result<()> {
+    if url.scheme() == "https" {
+        return Ok(());
+    }
+    // `Url::host()` gives the parsed `Host`, not `host_str()`'s display form — the latter wraps
+    // an IPv6 address in `[]` brackets, which `IpAddr::parse` would then reject outright.
+    let is_loopback = match url.host() {
+        Some(url::Host::Domain(d)) => d == "localhost",
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    if is_loopback {
+        return Ok(());
+    }
+    anyhow::bail!("userinfo_url must use https (got {:?})", url.scheme());
+}
+
 /// Returns `(authorize_url, csrf_token, pkce_verifier)` — one fewer element than
 /// `oidc_authorize_url`'s tuple (no `nonce`: that's an OIDC-specific replay defense tied to the
 /// `id_token` this provider never receives). The caller (`crates/metap-http`) stashes
@@ -134,8 +157,15 @@ pub async fn oauth2_login_verify_callback(
         .await
         .map_err(|e| anyhow::anyhow!("OAuth2 code exchange failed: {e}"))?;
 
+    // The access token goes out in this request's `Authorization` header — refuse to send it
+    // anywhere but `https`, since `userinfo_url` is tenant-admin-configured and nothing upstream
+    // of this call validates its scheme (CodeQL: cleartext transmission of sensitive information).
+    let userinfo_url = reqwest::Url::parse(&config.userinfo_url)
+        .map_err(|e| anyhow::anyhow!("invalid userinfo_url: {e}"))?;
+    require_https_or_loopback(&userinfo_url)?;
+
     let userinfo: serde_json::Value = http
-        .get(&config.userinfo_url)
+        .get(userinfo_url)
         .bearer_auth(token_response.access_token().secret())
         .send()
         .await?
@@ -162,4 +192,29 @@ pub async fn oauth2_login_verify_callback(
         email,
         external_subject,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::require_https_or_loopback;
+
+    #[test]
+    fn https_is_always_allowed() {
+        let url = reqwest::Url::parse("https://idp.example/user").unwrap();
+        assert!(require_https_or_loopback(&url).is_ok());
+    }
+
+    #[test]
+    fn plain_http_to_a_real_host_is_rejected() {
+        let url = reqwest::Url::parse("http://idp.example/user").unwrap();
+        assert!(require_https_or_loopback(&url).is_err());
+    }
+
+    #[test]
+    fn plain_http_to_loopback_is_allowed_for_local_mock_idps() {
+        for raw in ["http://127.0.0.1:8080/user", "http://localhost:8080/user", "http://[::1]:8080/user"] {
+            let url = reqwest::Url::parse(raw).unwrap();
+            assert!(require_https_or_loopback(&url).is_ok(), "{raw} should be allowed");
+        }
+    }
 }
