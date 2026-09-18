@@ -3,7 +3,7 @@
 //! never touch a DB; these run explicitly via `cargo test -- --ignored`).
 
 use metap_metadata::{EntityDefinition, EntityField, EntityListView, EntityUniqueConstraint, FieldKind, FieldStorage};
-use metap_reconciler::reconcile;
+use metap_reconciler::{reconcile, reconcile_with_scope, BackfillScope};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -331,6 +331,102 @@ async fn storage_column_backfill_does_not_touch_another_tenants_row_in_a_shared_
     );
 
     drop_table_if_exists(&pool, "test_reconciler_storage_column_multitenant").await;
+}
+
+/// Regression for `metap-demo-waf/CLAUDE.md`'s 9th finding (`../metap-docs/docs/roadmap/
+/// 89-backfill-tenant-scoping-fix.md`): a `Schema`-strategy service reconciling its own shared
+/// table at boot always passes a sentinel `tenant_id` (`metap_control::PLATFORM_TENANT_ID` in
+/// practice — reproduced here with a plain fresh `Uuid`, since this crate doesn't depend on
+/// `metap-control`), never one of the real tenants whose rows actually live in the table. Confirms
+/// both halves: the *old* default (`reconcile`, `BackfillScope::SingleTenant`) reproduces the bug
+/// live — a backfill scoped to a sentinel that owns no rows touches nothing, for either tenant —
+/// and `reconcile_with_scope(..., BackfillScope::AllTenants)` is the fix, reaching every real
+/// tenant's rows in the one shared table.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn all_tenants_scope_backfills_a_shared_table_reconciled_with_a_sentinel_tenant_id() {
+    let pool = connect().await;
+    let sentinel_tenant_id = Uuid::new_v4(); // stands in for `metap_control::PLATFORM_TENANT_ID`
+    let real_tenant_a = Uuid::new_v4();
+    let real_tenant_b = Uuid::new_v4();
+    let entity_name = "test.reconciler_backfill_scope";
+    drop_table_if_exists(&pool, "test_reconciler_backfill_scope").await;
+
+    // Boot-time DDL against the sentinel, matching `zones-service`'s own call shape — the table
+    // itself is genuinely tenant-agnostic structure, correct regardless of scope.
+    let def_v1 = entity(entity_name, vec![plain_field("amount", FieldKind::Money)]);
+    reconcile(&pool, sentinel_tenant_id, &def_v1, &[]).await.unwrap();
+
+    // Two *real* tenants' rows land in this one shared table, as they would in production.
+    for (tenant, amount) in [(real_tenant_a, "12.50"), (real_tenant_b, "999.99")] {
+        sqlx::query(
+            "INSERT INTO entities.test_reconciler_backfill_scope (tenant_id, data) \
+             VALUES ($1, jsonb_build_object('amount', $2::text))",
+        )
+        .bind(tenant)
+        .bind(amount)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let mut promoted = plain_field("amount", FieldKind::Money);
+    promoted.indexed = Some(true);
+    promoted.storage = Some(FieldStorage::Column);
+    let def_v2 = entity(entity_name, vec![promoted]);
+
+    async fn amounts(pool: &PgPool) -> Vec<Option<f64>> {
+        sqlx::query_as::<_, (Option<f64>,)>(
+            "SELECT amount::float8 FROM entities.test_reconciler_backfill_scope ORDER BY tenant_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(v,)| v)
+        .collect()
+    }
+
+    // The bug, reproduced live: the historical default scopes the batch to the sentinel, which
+    // owns zero rows in this table — `ops_applied > 0` (the sync trigger/backfill op did run) but
+    // it reports success while backfilling nothing real.
+    let buggy = reconcile(&pool, sentinel_tenant_id, &def_v2, &[]).await.unwrap();
+    assert!(buggy.ops_applied > 0);
+    assert_eq!(
+        amounts(&pool).await,
+        vec![None, None],
+        "SingleTenant scoped to a sentinel must touch neither real tenant's row — this is the bug"
+    );
+
+    // Un-stick it: drop the backfill's own progress row so the next reconcile re-attempts it (the
+    // op itself, not the whole table, is what needs re-running — same shape `zones-service`'s own
+    // live unblock used).
+    sqlx::query("DELETE FROM reconciler_backfill_progress WHERE tenant_id = $1 AND entity_name = $2")
+        .bind(sentinel_tenant_id)
+        .bind(entity_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The fix: same sentinel `tenant_id` (identifying this reconcile call, not an owner to
+    // filter by), but `AllTenants` scope — now reaches every real row in the shared table.
+    let fixed = reconcile_with_scope(&pool, sentinel_tenant_id, &def_v2, &[], BackfillScope::AllTenants)
+        .await
+        .unwrap();
+    assert!(fixed.ops_applied > 0);
+    assert_eq!(
+        amounts(&pool).await,
+        vec![Some(12.50), Some(999.99)],
+        "AllTenants must backfill every real tenant's row in the shared table"
+    );
+
+    // Converges to zero ops afterward, same guarantee every other backfill path already has.
+    let converged = reconcile_with_scope(&pool, sentinel_tenant_id, &def_v2, &[], BackfillScope::AllTenants)
+        .await
+        .unwrap();
+    assert_eq!(converged.ops_applied, 0);
+
+    drop_table_if_exists(&pool, "test_reconciler_backfill_scope").await;
 }
 
 /// §3.3 — a `Reference` field whose `ref_entity` already has its own table gets a real FK.
