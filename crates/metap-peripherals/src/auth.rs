@@ -180,6 +180,12 @@ struct Claims {
     iss: String,
     aud: String,
     jti: String,
+    /// Set only by [`mint_oauth_access_token`] — an ordinary session token never carries this,
+    /// same "absent, not null" optionality as `metap-jwks::mint`'s `functionId`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<String>,
+    #[serde(rename = "clientId", skip_serializing_if = "Option::is_none")]
+    client_id: Option<String>,
 }
 
 /// Mints an RS256 JWT with the exact claim shape `crates/metap-http/src/auth.rs`'s
@@ -198,6 +204,42 @@ struct Claims {
 /// is a purely additive change (a new table plus one check in `decode_access_token`), not a
 /// breaking claim-shape migration touching every already-issued token.
 pub fn mint_jwt(private_key_pem: &str, tenant_id: Uuid, user_id: Uuid, ttl_seconds: u64) -> anyhow::Result<String> {
+    mint_claims(private_key_pem, tenant_id, user_id, ttl_seconds, None, None)
+}
+
+/// The OAuth2-authorization-server counterpart to [`mint_jwt`] — same trust root, same claim
+/// shape plus `scope`/`clientId` (`crates/metap-oauth-server`'s doc comment has the full
+/// reasoning: reusing this trust root means `crates/metap-http/src/auth.rs`'s `AuthContext`
+/// verifies a token minted here with zero new decode path). A separate function rather than two
+/// new parameters on [`mint_jwt`] itself — that signature is called from `dev-tools`, 3 routes in
+/// `metap-http`, and every downstream binary's own scaffolding; adding parameters there would be
+/// a breaking change to all of them for a capability only the OAuth2 token endpoint needs.
+pub fn mint_oauth_access_token(
+    private_key_pem: &str,
+    tenant_id: Uuid,
+    user_id: Uuid,
+    ttl_seconds: u64,
+    scope: &str,
+    client_id: &str,
+) -> anyhow::Result<String> {
+    mint_claims(
+        private_key_pem,
+        tenant_id,
+        user_id,
+        ttl_seconds,
+        Some(scope.to_string()),
+        Some(client_id.to_string()),
+    )
+}
+
+fn mint_claims(
+    private_key_pem: &str,
+    tenant_id: Uuid,
+    user_id: Uuid,
+    ttl_seconds: u64,
+    scope: Option<String>,
+    client_id: Option<String>,
+) -> anyhow::Result<String> {
     let key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes())?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
     let claims = Claims {
@@ -207,6 +249,8 @@ pub fn mint_jwt(private_key_pem: &str, tenant_id: Uuid, user_id: Uuid, ttl_secon
         iss: JWT_ISSUER.to_string(),
         aud: JWT_AUDIENCE.to_string(),
         jti: Uuid::new_v4().to_string(),
+        scope,
+        client_id,
     };
     Ok(encode(&Header::new(Algorithm::RS256), &claims, &key)?)
 }
@@ -229,6 +273,13 @@ pub struct AccessClaims {
     #[serde(rename = "functionId")]
     pub function_id: Option<String>,
     pub jti: Option<String>,
+    /// Present only on a token minted by [`mint_oauth_access_token`] — `crates/metap-http/src/
+    /// auth.rs`'s `AuthContext` folds this into the resolved `RequestContext.context_attributes`
+    /// when set. `Option` for the same reason `function_id`/`jti` are: every token minted before
+    /// this claim existed still decodes.
+    pub scope: Option<String>,
+    #[serde(rename = "clientId")]
+    pub client_id: Option<String>,
 }
 
 /// Verifies a Bearer access token minted by `mint_jwt`: RS256, audience/issuer pinned to

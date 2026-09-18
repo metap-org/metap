@@ -38,6 +38,7 @@ fn core_openapi() -> utoipa::openapi::OpenApi {
         crate::routes::dashboards::openapi(),
         crate::routes::platform_config::openapi(),
         crate::routes::tenant_config::openapi(),
+        crate::routes::oauth2::openapi(),
     ] {
         doc.merge(fragment);
     }

@@ -25,6 +25,7 @@ members = [
   "crates/metap-jwks-http",
   "crates/metap-metadata",
   "crates/metap-notification-worker",
+  "crates/metap-oauth-server",
   "crates/metap-outbox-publisher",
   "crates/metap-peripherals",
   "crates/metap-permission",

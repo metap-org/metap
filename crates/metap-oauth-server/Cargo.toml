@@ -1,0 +1,25 @@
+[package]
+name = "metap-oauth-server"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Single consumer (client-secret/refresh-token/authorization-code hashing) — stays local per the
+# root `Cargo.toml`'s own convention for a dep only 1 crate uses.
+sha2 = "0.10"
+sqlx = { workspace = true, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "uuid",
+  "chrono",
+] }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

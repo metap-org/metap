@@ -36,6 +36,7 @@ pub use metap_infra as infra;
 pub use metap_jwks as jwks;
 pub use metap_jwks_http as jwks_http;
 pub use metap_metadata as metadata;
+pub use metap_oauth_server as oauth_server;
 pub use metap_peripherals as peripherals;
 pub use metap_permission as permission;
 pub use metap_query as query;

@@ -15,7 +15,11 @@
 use sqlx::{PgExecutor, Row};
 use uuid::Uuid;
 
+mod oauth2_login;
 mod oidc;
+pub use oauth2_login::{
+    oauth2_login_authorize_url, oauth2_login_config, oauth2_login_verify_callback, OAuth2LoginConfig,
+};
 pub use oidc::{
     oidc_authorize_url, oidc_config, oidc_verify_callback, resolve_client_secret_env, OidcConfig, VerifiedIdentity,
 };
@@ -27,6 +31,10 @@ pub enum AuthProviderKind {
     Local,
     Basic,
     Oidc,
+    /// Plain OAuth2 authorization-code login — distinct from `Oidc` above (see
+    /// `oauth2_login.rs`'s doc comment): no discovery, no id_token, identity resolved by calling
+    /// a configured userinfo endpoint with the obtained access token instead of decoding a JWT.
+    OAuth2,
 }
 
 impl AuthProviderKind {
@@ -35,6 +43,7 @@ impl AuthProviderKind {
             AuthProviderKind::Local => "local",
             AuthProviderKind::Basic => "basic",
             AuthProviderKind::Oidc => "oidc",
+            AuthProviderKind::OAuth2 => "oauth2",
         }
     }
 
@@ -43,6 +52,7 @@ impl AuthProviderKind {
             "local" => Some(AuthProviderKind::Local),
             "basic" => Some(AuthProviderKind::Basic),
             "oidc" => Some(AuthProviderKind::Oidc),
+            "oauth2" => Some(AuthProviderKind::OAuth2),
             _ => None,
         }
     }
@@ -88,19 +98,24 @@ pub async fn enabled_providers<'e>(
     Ok(kinds.iter().filter_map(|k| AuthProviderKind::parse(k)).collect())
 }
 
-/// A user JIT-provisioned (or previously linked) by a prior OIDC login for this tenant — looked
-/// up by `external_subject` (the IdP's stable `sub` claim), never by email, since email can
-/// change at the IdP but `sub` does not.
-pub async fn find_oidc_user<'e>(
+/// A user JIT-provisioned (or previously linked) by a prior login through an external-identity
+/// provider (`"oidc"` or `"oauth2"` — `users.auth_provider` is a plain free-text column, no
+/// schema change needed to add the second value) for this tenant — looked up by
+/// `external_subject` (the IdP's stable subject identifier), never by email, since email can
+/// change at the IdP but the subject does not. [`find_oidc_user`] is now a thin `"oidc"`-fixed
+/// wrapper so no existing caller changes.
+pub async fn find_external_user<'e>(
     executor: impl PgExecutor<'e>,
     tenant_id: Uuid,
+    provider: &str,
     external_subject: &str,
 ) -> anyhow::Result<Option<AuthUser>> {
     let row = sqlx::query(
         "SELECT id, tenant_id, email FROM users \
-         WHERE tenant_id = $1 AND auth_provider = 'oidc' AND external_subject = $2",
+         WHERE tenant_id = $1 AND auth_provider = $2 AND external_subject = $3",
     )
     .bind(tenant_id)
+    .bind(provider)
     .bind(external_subject)
     .fetch_optional(executor)
     .await?;
@@ -114,25 +129,38 @@ pub async fn find_oidc_user<'e>(
     .transpose()
 }
 
-/// First-ever OIDC login for this `(tenant_id, external_subject)` — auto-creates the local user
-/// row (JIT provisioning, project owner decision 2026-08-24: no admin pre-creation required).
-/// `password_hash` stays `NULL` (`crates/migrations/0020_users_oidc_columns.sql` made it
-/// nullable for exactly this) — an OIDC-only user has no local password to verify against. No
-/// role is assigned here: a JIT-provisioned user starts with zero roles, same
-/// deny-by-default posture `PermissionService` already applies to any roleless caller; an admin
-/// grants roles afterward via the existing `POST /admin/users/{userId}/roles`.
-pub async fn jit_provision_oidc_user<'e>(
+pub async fn find_oidc_user<'e>(
     executor: impl PgExecutor<'e>,
     tenant_id: Uuid,
+    external_subject: &str,
+) -> anyhow::Result<Option<AuthUser>> {
+    find_external_user(executor, tenant_id, "oidc", external_subject).await
+}
+
+/// First-ever login through an external-identity provider for this `(tenant_id, provider,
+/// external_subject)` — auto-creates the local user row (JIT provisioning, project owner
+/// decision 2026-08-24 for OIDC, extended to the OAuth2 login provider under the same reasoning:
+/// no admin pre-creation required). `password_hash` stays `NULL`
+/// (`crates/migrations/0020_users_oidc_columns.sql` made it nullable for exactly this) — neither
+/// provider gives a local password to verify against. No role is assigned here: a JIT-provisioned
+/// user starts with zero roles, same deny-by-default posture `PermissionService` already applies
+/// to any roleless caller; an admin grants roles afterward via the existing
+/// `POST /admin/users/{userId}/roles`. [`jit_provision_oidc_user`] is now a thin `"oidc"`-fixed
+/// wrapper so no existing caller changes.
+pub async fn jit_provision_external_user<'e>(
+    executor: impl PgExecutor<'e>,
+    tenant_id: Uuid,
+    provider: &str,
     email: &str,
     external_subject: &str,
 ) -> anyhow::Result<AuthUser> {
     let row = sqlx::query(
         "INSERT INTO users (tenant_id, email, auth_provider, external_subject) \
-         VALUES ($1, $2, 'oidc', $3) RETURNING id, tenant_id, email",
+         VALUES ($1, $2, $3, $4) RETURNING id, tenant_id, email",
     )
     .bind(tenant_id)
     .bind(email)
+    .bind(provider)
     .bind(external_subject)
     .fetch_one(executor)
     .await?;
@@ -141,4 +169,13 @@ pub async fn jit_provision_oidc_user<'e>(
         tenant_id: row.try_get("tenant_id")?,
         email: row.try_get("email")?,
     })
+}
+
+pub async fn jit_provision_oidc_user<'e>(
+    executor: impl PgExecutor<'e>,
+    tenant_id: Uuid,
+    email: &str,
+    external_subject: &str,
+) -> anyhow::Result<AuthUser> {
+    jit_provision_external_user(executor, tenant_id, "oidc", email, external_subject).await
 }

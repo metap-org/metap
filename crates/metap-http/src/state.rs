@@ -220,6 +220,32 @@ impl AppState {
         }
     }
 
+    /// Mints an OAuth2-authorization-server access token — the `scope`/`clientId`-carrying
+    /// sibling of [`AppState::mint_token`], same dual dispatch (JWKS trust root when configured,
+    /// else the static keypair). The only caller is `crate::routes::oauth2`'s token endpoint.
+    pub fn mint_oauth_token(
+        &self,
+        tenant_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        ttl_seconds: u64,
+        scope: &str,
+        client_id: &str,
+    ) -> anyhow::Result<String> {
+        match &self.token_signer {
+            Some(signer) => {
+                metap_jwks::mint_oauth_token_with_signer(signer, tenant_id, user_id, ttl_seconds, scope, client_id)
+            }
+            None => metap_peripherals::mint_oauth_access_token(
+                &self.jwt_encoding_key_pem,
+                tenant_id,
+                user_id,
+                ttl_seconds,
+                scope,
+                client_id,
+            ),
+        }
+    }
+
     /// One tenant's effective configuration — its own `tenant_configs` overrides layered over the
     /// fleet snapshot (`metap_config::EffectiveConfig`).
     ///

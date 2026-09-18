@@ -3555,6 +3555,7 @@ dependencies = [
  "metap-jwks",
  "metap-jwks-http",
  "metap-metadata",
+ "metap-oauth-server",
  "metap-peripherals",
  "metap-permission",
  "metap-query",
@@ -3627,6 +3628,7 @@ dependencies = [
  "base64 0.22.1",
  "jsonwebtoken",
  "metap-peripherals",
+ "oauth2",
  "openidconnect",
  "rand 0.8.7",
  "reqwest 0.12.28",
@@ -3635,6 +3637,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "url",
  "uuid",
  "wiremock",
 ]
@@ -3940,6 +3943,7 @@ dependencies = [
  "metap-infra",
  "metap-jwks",
  "metap-metadata",
+ "metap-oauth-server",
  "metap-peripherals",
  "metap-permission",
  "metap-query",
@@ -4033,6 +4037,21 @@ dependencies = [
  "metap-runtime",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "metap-oauth-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

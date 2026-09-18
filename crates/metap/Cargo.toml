@@ -22,6 +22,7 @@ metap-infra = { path = "../metap-infra" }
 metap-jwks = { path = "../metap-jwks" }
 metap-jwks-http = { path = "../metap-jwks-http" }
 metap-metadata = { path = "../metap-metadata" }
+metap-oauth-server = { path = "../metap-oauth-server" }
 metap-peripherals = { path = "../metap-peripherals" }
 metap-permission = { path = "../metap-permission" }
 metap-query = { path = "../metap-query" }

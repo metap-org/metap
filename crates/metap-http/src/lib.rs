@@ -67,6 +67,11 @@ pub struct RouteGroups {
     pub cron: bool,
     pub dashboards: bool,
     pub tenant_config: bool,
+    /// `routes::oauth2` — the `/oauth/*`/`/.well-known/oauth-authorization-server`/
+    /// `/admin/oauth/clients*` group (`crates/metap-oauth-server`'s HTTP surface). Toggleable
+    /// like the 3 siblings above since it needs `crates/migrations/0034_oauth2.sql` applied — a
+    /// binary that hasn't run that migration yet can boot without mounting these routes.
+    pub oauth2: bool,
 }
 
 impl RouteGroups {
@@ -76,6 +81,7 @@ impl RouteGroups {
             cron: true,
             dashboards: true,
             tenant_config: true,
+            oauth2: true,
         }
     }
 }
@@ -167,6 +173,9 @@ pub fn build_router_with_groups(
     }
     if groups.tenant_config {
         router = router.merge(routes::tenant_config::router());
+    }
+    if groups.oauth2 {
+        router = router.merge(routes::oauth2::router());
     }
 
     router
