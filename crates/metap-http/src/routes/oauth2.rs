@@ -208,22 +208,25 @@ fn extract_client_auth(
     }
 }
 
+/// The `Err` is boxed (clippy's `result_large_err`) since a full `Response` is much larger than
+/// the `Ok` variant — same pattern as `metap-graphql-gateway::server::authenticate`.
 async fn authenticate_client(
     state: &AppState,
     client_id: &str,
     client_secret: &str,
-) -> Result<metap_oauth_server::ClientWithSecret, Response> {
+) -> Result<metap_oauth_server::ClientWithSecret, Box<Response>> {
     let client = metap_oauth_server::get_client_by_client_id(&state.pool, client_id)
         .await
-        .map_err(internal_error_response)?
-        .ok_or_else(|| service_error_response(401, "invalid_client", Some("Unknown client."), None))?;
+        .map_err(internal_error_response)
+        .map_err(Box::new)?
+        .ok_or_else(|| Box::new(service_error_response(401, "invalid_client", Some("Unknown client."), None)))?;
     if !metap_oauth_server::verify_client_secret(&client, client_secret) {
-        return Err(service_error_response(
+        return Err(Box::new(service_error_response(
             401,
             "invalid_client",
             Some("Invalid client credentials."),
             None,
-        ));
+        )));
     }
     Ok(client)
 }
@@ -262,7 +265,7 @@ async fn token(State(state): State<AppState>, headers: HeaderMap, Form(body): Fo
     };
     let client = match authenticate_client(&state, &client_id_str, &client_secret).await {
         Ok(c) => c,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     if client.client.revoked_at.is_some() {
         return service_error_response(401, "invalid_client", Some("This client has been revoked."), None);
@@ -480,7 +483,7 @@ async fn revoke(State(state): State<AppState>, headers: HeaderMap, Form(body): F
     };
     let client = match authenticate_client(&state, &client_id_str, &client_secret).await {
         Ok(c) => c,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     // Errors here still degrade to success per RFC 7009 §2.2 (see `revoke_refresh_token`'s doc
     // comment) — this only turns a genuine infrastructure failure into a 500 the caller can
