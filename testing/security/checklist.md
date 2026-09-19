@@ -53,6 +53,49 @@ phải test mới viết, trừ hàng JWKS cuối cùng):
 | GraphQL query quá sâu bị chặn bởi depth limit | `crates/metap-graphql/tests/graphql_schema_postgres.rs`'s `overly_deep_query_is_rejected_by_the_depth_limit` | Audit 04 A#7 |
 | Token ký bởi key JWKS đã bị retire (không còn publish) bị từ chối | `crates/metap-jwks/src/lib.rs`'s `jwks_client_rejects_a_token_signed_by_a_key_no_longer_published_in_the_jwks` | **Test mới, viết 2026-09-07** — trước đó JWKS hoàn toàn không xuất hiện trong file này dù đã có rotation/`JwksClient`. Không cover nhánh "verifier đã cache key trước khi bị retire, chỉ hết hạn theo TTL của chính cache đó" — đây là grace-window có chủ đích của thiết kế 3-bước, không phải gap, xem test's doc comment |
 
+### Bổ sung 2026-09-19 — OAuth2 Authorization Server (login provider + consent/client_credentials), audit 06 (tenant isolation + audit-trail bypass), ABAC `Contains`
+
+Từ 2026-09-07 đến giờ ship: OAuth2 login provider bên ngoài (`metap-auth`), OAuth2 Authorization
+Server đầy đủ (`metap-oauth-server` + `crates/metap-http/src/routes/oauth2.rs`), audit 06's 3
+finding HIGH, và operator ABAC mới `Contains`/`NotContains`. Phần lớn là test đã tồn tại từ các
+commit trước (`fd1af60`, `oauth2_login_e2e.rs`) chưa từng vào bảng này; các hàng đánh dấu **"test
+mới 2026-09-19"** là viết cùng lúc với feature trong lần rà này (consent screen,
+`client_credentials`, `Contains`).
+
+| Scenario | Test | Ghi chú |
+|---|---|---|
+| JIT-provision user OIDC/OAuth2-login chỉ tạo 1 lần, login lại thì link vào user cũ | `crates/metap-auth/tests/oauth2_login_e2e.rs`'s `jit_provisioning_creates_once_then_links_on_repeat_login` | |
+| Cùng `external_subject` nhưng khác `auth_provider` không bị coi là cùng 1 user | `..oauth2_login_e2e.rs`'s `same_external_subject_under_different_providers_does_not_collide` | `users_tenant_external_subject_idx` đúng khoá `(tenant_id, auth_provider, external_subject)` |
+| Response `userinfo` thiếu field cấu hình (`subject_field`/`email_field`) là lỗi rõ ràng, không JIT-provision với dữ liệu rỗng/sai | `..oauth2_login_e2e.rs`'s `missing_configured_field_in_the_userinfo_response_is_an_error` | |
+| Client secret không bao giờ lưu plaintext | `crates/metap-oauth-server/tests/oauth_server_postgres.rs`'s `client_secret_is_never_stored_in_plaintext_and_verifies_correctly` | |
+| Client bị revoke thì verify secret luôn fail dù đúng secret | `..oauth_server_postgres.rs`'s `revoked_client_fails_secret_verification_even_with_the_right_secret` | |
+| Authorization code chỉ đổi được 1 lần (chặn replay) | `..oauth_server_postgres.rs`'s `authorization_code_is_single_use` | |
+| `redirect_uri` không khớp URI lúc `/authorize` bị từ chối | `..oauth_server_postgres.rs`'s `authorization_code_rejects_a_mismatched_redirect_uri` | RFC 6749 §4.1.3 |
+| Refresh token rotate mỗi lần dùng, token cũ chết ngay | `..oauth_server_postgres.rs`'s `refresh_token_rotates_and_the_old_one_stops_working` | |
+| Refresh token bị replay (dùng lại token đã rotate) → revoke cả chain của client/user đó | `..oauth_server_postgres.rs`'s `refresh_token_reuse_revokes_the_whole_chain` | Đúng dấu hiệu token bị đánh cắp — xem `consume_refresh_token`'s doc comment |
+| `POST /oauth/revoke` chặn refresh token rotate tiếp | `..oauth_server_postgres.rs`'s `revoke_refresh_token_stops_it_from_rotating` | |
+| Full flow `authorization_code`+`refresh_token` qua HTTP thật (không chỉ unit) | `crates/metap-http/tests/oauth2_authorization_server_postgres.rs`'s `full_authorization_code_and_refresh_lifecycle` | |
+| Public client thiếu PKCE (`code_challenge`) bị từ chối | `..oauth2_authorization_server_postgres.rs`'s `public_client_without_pkce_is_rejected` | |
+| Sai `client_secret` ở `/oauth/token` bị từ chối | `..oauth2_authorization_server_postgres.rs`'s `wrong_client_secret_is_rejected` | |
+| Lần đầu 1 cặp (client, user) phải hiện consent screen thật, không tự động approve | `..oauth2_authorization_server_postgres.rs`'s `consent_screen_names_the_client_and_requested_scope` | **Test mới 2026-09-19** |
+| Từ chối consent trả về `error=access_denied`, không có `code` | `..oauth2_authorization_server_postgres.rs`'s `denying_consent_redirects_with_access_denied_and_no_code` | **Test mới 2026-09-19** |
+| Đã consent scope này trước thì lần `/authorize` sau bỏ qua màn hình, không nag lại | `..oauth2_authorization_server_postgres.rs`'s `a_second_authorization_after_consent_skips_the_screen` | **Test mới 2026-09-19** |
+| Pending authorization của user A không thể bị user B (cùng tenant) quyết định thay, và vẫn còn nguyên cho A quyết định sau | `..oauth2_authorization_server_postgres.rs`'s `a_pending_authorization_cannot_be_decided_by_a_different_user_but_survives_for_the_real_owner` | **Test mới 2026-09-19** — `consume_pending_authorization` match `(tenant_id, user_id)` ngay trong query, không consume nhầm rồi mới check |
+| `client_credentials` mint đúng token dưới danh nghĩa service user của client, không phải user gọi API tạo client | `..oauth2_authorization_server_postgres.rs`'s `client_credentials_mints_a_token_as_the_provisioned_service_user` | **Test mới 2026-09-19** |
+| `client_credentials` bị từ chối với public client (RFC 6749 §4.4 — chỉ confidential client) | `..oauth2_authorization_server_postgres.rs`'s `client_credentials_is_rejected_for_a_public_client` | **Test mới 2026-09-19** |
+| `client_credentials` từ chối scope vượt quá `allowed_scopes` đã đăng ký cho client | `..oauth2_authorization_server_postgres.rs`'s `client_credentials_rejects_a_scope_the_client_is_not_allowed` | **Test mới 2026-09-19** |
+| `Router::pool_for` và `Router::begin` phải trỏ cùng 1 schema cho tenant `Schema`-strategy (chặn split-schema: đọc 1 nơi, ghi 1 nơi khác) | `crates/metap-control/tests/router_postgres.rs`'s `pool_for_resolves_the_same_schema_begin_does` | Audit 06 finding #1 |
+| Tenant mới provision vẫn login được qua path tenant-less (`users`/`user_roles` không bị clone riêng theo schema) | `crates/metap-control/tests/provisioning_postgres.rs`'s `provision_schema_tenant_writes_registry_row_and_admin_user` | Audit 06 finding #2 — assertion đã đảo ngược so với trước fix (trước đây *yêu cầu* role sống trong schema riêng của tenant, chính là hành vi gây lỗi) |
+| Audit trail che field mà caller không có quyền đọc | `crates/metap-crud/tests/crud_service_postgres.rs`'s `audit_events_mask_fields_the_caller_cannot_read` | Audit 06 finding #3 |
+| Che field record-conditional không thể bị đảo ngược bằng cách tự sửa field mà điều kiện phụ thuộc vào | `..crud_service_postgres.rs`'s `audit_events_mask_survives_the_caller_editing_the_field_it_is_conditioned_on` | |
+| Record-level access state-dependent thì giấu toàn bộ before/after, chỉ giữ action/actor/timestamp/reason | `..crud_service_postgres.rs`'s `audit_events_withhold_values_when_record_level_access_is_state_dependent` | |
+| Field có unconditional grant riêng thì không bị che oan dù cũng có 1 policy conditional khác (không over-mask) | `..crud_service_postgres.rs`'s `audit_events_still_show_fields_an_unconditional_grant_already_settles` | |
+| Field khai báo trong `EntityAuditConfig.redactedFields` không bao giờ vào bảng audit ở dạng plaintext | `..crud_service_postgres.rs`'s `a_redacted_field_never_reaches_the_audit_table` | Assert thẳng trên row lưu trong DB, không qua service — loại trừ khả năng chỉ lọc lúc đọc mà giá trị thật vẫn nằm trong bảng |
+| `PostgresAuditTrailStore` không ghi/đọc nhầm entry qua tenant khác | `crates/metap-audit/tests/audit_trail_postgres.rs`'s `postgres_store_rejects_a_mismatched_tenant_id` | |
+| `Contains` fail-closed khi attribute không phải JSON array (không đoán bừa) | `crates/metap-permission/src/policy_condition.rs`'s `contains_fails_closed_when_the_attribute_is_not_an_array` | **Test mới 2026-09-19** |
+| Scope-gating thật qua ABAC `context`-subject + `Contains` — token thường (không có `oauthScope`) bị chặn đúng | `..policy_condition.rs`'s `oauth_scope_gating_via_context_subject_and_contains` | **Test mới 2026-09-19** — chứng minh `fromContext.oauthScope` dùng được ngay hôm nay, không cần sửa `PermissionService` |
+| `Contains` trên record field trong `list()` bị từ chối rõ ràng (chưa hỗ trợ SQL pushdown cho JSONB array), không sinh sai SQL âm thầm | `crates/metap-query/src/condition_to_sql/tests.rs`'s `contains_on_a_record_field_is_a_clear_error_not_silently_wrong_sql` | **Test mới 2026-09-19** |
+
 ### Semgrep false positive đã xác nhận (không cần sửa code)
 
 | File | Rule | Vì sao là false positive |
@@ -73,6 +116,15 @@ phải test mới viết, trừ hàng JWKS cuối cùng):
   hình dạng giống `jwt_security_postgres.rs`/`rbac_abac_integration_postgres.rs` cho riêng đường
   gRPC — permission/validation đi qua cùng `CrudService` với REST nên rủi ro thấp, nhưng chưa có
   test khẳng định trực tiếp.
+- **OAuth2 `scope` không tự động enforce vào RBAC/ABAC** (2026-09-19) — có chủ đích, không phải
+  gap ẩn: `AuthContext` đã fold `scope`/`clientId` vào `context_attributes` (`oauthScope`/
+  `oauthClientId`), và `ConditionOp::Contains` đã đủ để 1 tenant tự viết policy gate theo đó (xem
+  bảng trên) — nhưng không có gì trong `PermissionService`/`metap-oauth-server` *bắt buộc* việc
+  này. Một token `client_credentials`/`authorization_code` với `scope` hẹp nhưng service user vẫn
+  còn role rộng (`admin`) thì vẫn làm được mọi thứ role đó cho phép, `scope` chỉ là thông tin, không
+  phải giới hạn quyền tự động. Quyết định chủ đích: enforce cứng ở tầng platform sẽ ảnh hưởng mọi
+  deployment đang chạy theo cách không tenant nào chọn được — xem `metap-oauth-server`'s doc comment
+  đầu file.
 
 ## Công cụ bổ sung (không phải regression test, không CI)
 
