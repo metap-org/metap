@@ -4046,11 +4046,13 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
+ "metap-infra",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "sqlx",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

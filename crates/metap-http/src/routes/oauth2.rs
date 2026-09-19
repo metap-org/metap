@@ -19,6 +19,22 @@
 //! carrying `?error=...`. A conforming client still gets a clear, immediate error; it just isn't
 //! ferried back through the browser redirect the spec technically prescribes for that subset of
 //! failures. Flagged rather than silently deviated from.
+//!
+//! **Real interactive consent (2026-09-19)**: `authorize` used to treat any already-authenticated
+//! caller as approving the client's request outright — no screen, no way for a user to see what
+//! they were granting. It now renders a plain server-rendered HTML page (`consent_page_html`) the
+//! first time a `(client, user)` pair has no prior [`metap_oauth_server::get_consent_scope`]
+//! covering the requested scope, and skips straight to the redirect exactly as before once one
+//! does — same "don't nag a returning user" behavior every real IdP has. The page is rendered by
+//! this crate, not handed off to `platform-ui`/a tenant's own frontend: the consent decision is
+//! part of the auth boundary itself (deciding what a third party can do as this user), not a
+//! business screen, and rendering it here needs no new "where is this tenant's frontend hosted"
+//! config concept the platform doesn't have today. Its approve/deny action
+//! (`POST /oauth/authorize/decision`) is a `fetch()` call from an inline `<script>`, not a plain
+//! HTML form post, specifically so it can carry the `X-CSRF-Token` header the existing
+//! cookie-session CSRF defense (`crate::auth`, double-submit against `metap_csrf`) already
+//! requires on every cookie-authenticated mutation — a native form submission has no way to set a
+//! custom header at all.
 
 use axum::extract::{Path, Query, State};
 use axum::http::header::AUTHORIZATION;
@@ -71,11 +87,9 @@ struct AuthorizeQuery {
 }
 
 /// Requires an existing metap session (`AuthContext` — cookie or Bearer, whichever the caller's
-/// browser already carries). There is no separate interactive consent step: an authenticated
-/// caller is treated as approving the client's request, the same trust level a registry that
-/// only an admin of the caller's own tenant can populate already implies. A real consent screen
-/// is future frontend work, not a backend gap this endpoint's contract hides — flagged in
-/// `../metap-docs/docs/roadmap/88-oauth2-authorization-server.md`, not built here.
+/// browser already carries). Renders a real consent screen (see this module's own doc comment)
+/// unless the caller has already approved this client for at least this scope before, in which
+/// case it skips straight to minting the code exactly like a returning-user IdP would.
 async fn authorize(
     State(state): State<AppState>,
     AuthContext(context): AuthContext,
@@ -152,9 +166,35 @@ async fn authorize(
         );
     }
 
-    let (_, raw_code) = match metap_oauth_server::create_authorization_code(
+    let consented_scope = match metap_oauth_server::get_consent_scope(&state.pool, client.id, user_id).await {
+        Ok(s) => s,
+        Err(e) => return internal_error_response(e),
+    };
+    let already_consented =
+        consented_scope.is_some_and(|consented| metap_oauth_server::scope_is_subset(&query.scope, &consented));
+
+    if already_consented {
+        return match issue_authorization_code(
+            &state.pool,
+            client.id,
+            tenant_id,
+            user_id,
+            &query.redirect_uri,
+            &query.scope,
+            query.code_challenge.as_deref(),
+            query.code_challenge_method.as_deref(),
+            query.state.as_deref(),
+        )
+        .await
+        {
+            Ok(redirect_to) => Redirect::to(&redirect_to).into_response(),
+            Err(e) => internal_error_response(e),
+        };
+    }
+
+    let pending = match metap_oauth_server::create_pending_authorization(
         &state.pool,
-        metap_oauth_server::CreateCodeInput {
+        metap_oauth_server::CreatePendingAuthorizationInput {
             client_id: client.id,
             tenant_id,
             user_id,
@@ -162,20 +202,230 @@ async fn authorize(
             scope: query.scope.clone(),
             code_challenge: query.code_challenge.clone(),
             code_challenge_method: query.code_challenge_method.clone(),
+            client_state: query.state.clone(),
         },
     )
     .await
     {
-        Ok(v) => v,
+        Ok(p) => p,
         Err(e) => return internal_error_response(e),
     };
 
-    let sep = if query.redirect_uri.contains('?') { '&' } else { '?' };
-    let mut redirect_to = format!("{}{sep}code={}", query.redirect_uri, percent_encode(&raw_code));
-    if let Some(s) = &query.state {
+    axum::response::Html(consent_page_html(&client.name, &query.scope, pending.id)).into_response()
+}
+
+// -------------------------------------------------------------------------------------------
+// Shared: minting a code + building the redirect it goes back on
+// -------------------------------------------------------------------------------------------
+
+/// Builds the `redirect_uri?code=...&state=...` target every successful authorization ends on —
+/// shared by [`authorize`]'s "already consented, skip the screen" path and
+/// [`authorize_decision`]'s "just approved" path so the two can't drift.
+#[allow(clippy::too_many_arguments)]
+async fn issue_authorization_code(
+    pool: &sqlx::PgPool,
+    client_id: Uuid,
+    tenant_id: Uuid,
+    user_id: Uuid,
+    redirect_uri: &str,
+    scope: &str,
+    code_challenge: Option<&str>,
+    code_challenge_method: Option<&str>,
+    client_state: Option<&str>,
+) -> anyhow::Result<String> {
+    let (_, raw_code) = metap_oauth_server::create_authorization_code(
+        pool,
+        metap_oauth_server::CreateCodeInput {
+            client_id,
+            tenant_id,
+            user_id,
+            redirect_uri: redirect_uri.to_string(),
+            scope: scope.to_string(),
+            code_challenge: code_challenge.map(str::to_string),
+            code_challenge_method: code_challenge_method.map(str::to_string),
+        },
+    )
+    .await?;
+
+    let sep = if redirect_uri.contains('?') { '&' } else { '?' };
+    let mut redirect_to = format!("{redirect_uri}{sep}code={}", percent_encode(&raw_code));
+    if let Some(s) = client_state {
         redirect_to.push_str(&format!("&state={}", percent_encode(s)));
     }
-    Redirect::to(&redirect_to).into_response()
+    Ok(redirect_to)
+}
+
+fn denied_redirect(redirect_uri: &str, client_state: Option<&str>) -> String {
+    let sep = if redirect_uri.contains('?') { '&' } else { '?' };
+    let mut redirect_to = format!("{redirect_uri}{sep}error=access_denied");
+    if let Some(s) = client_state {
+        redirect_to.push_str(&format!("&state={}", percent_encode(s)));
+    }
+    redirect_to
+}
+
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+/// A minimal, dependency-free consent screen — see this module's own top doc comment for why it's
+/// server-rendered here rather than a `platform-ui` page. `client_name`/`scope` are escaped since
+/// both ultimately come from a tenant admin's own free-text input (`POST /admin/oauth/clients`);
+/// low-risk (an admin attacking their own tenant's users), but cheap to close properly regardless.
+fn consent_page_html(client_name: &str, scope: &str, request_id: Uuid) -> String {
+    let scope_items = metap_oauth_server::scope_tokens(scope)
+        .iter()
+        .map(|s| format!("<li>{}</li>", escape_html(s)))
+        .collect::<String>();
+    let scope_list = if scope_items.is_empty() {
+        "<li>(no specific permissions requested)</li>".to_string()
+    } else {
+        scope_items
+    };
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Authorize application</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; padding: 0 1rem; color: #1a1a1a; }}
+  h1 {{ font-size: 1.25rem; }}
+  ul {{ background: #f5f5f5; border-radius: 0.5rem; padding: 1rem 1rem 1rem 2rem; }}
+  .actions {{ margin-top: 1.5rem; display: flex; gap: 0.75rem; }}
+  button {{ font-size: 1rem; padding: 0.5rem 1.25rem; border-radius: 0.375rem; border: 1px solid #ccc; cursor: pointer; }}
+  #approve {{ background: #111827; color: #fff; border-color: #111827; }}
+  #error {{ color: #b91c1c; margin-top: 1rem; }}
+</style>
+</head>
+<body>
+  <h1>{client_name} is requesting access to your account</h1>
+  <p>This application would like to:</p>
+  <ul>{scope_list}</ul>
+  <div class="actions">
+    <button id="approve" type="button">Approve</button>
+    <button id="deny" type="button">Deny</button>
+  </div>
+  <p id="error" hidden></p>
+  <script>
+    function csrfToken() {{
+      const m = document.cookie.match(/(?:^|; )metap_csrf=([^;]*)/);
+      return m ? decodeURIComponent(m[1]) : "";
+    }}
+    async function decide(approve) {{
+      try {{
+        const res = await fetch("/oauth/authorize/decision", {{
+          method: "POST",
+          credentials: "include",
+          headers: {{ "content-type": "application/json", "x-csrf-token": csrfToken() }},
+          body: JSON.stringify({{ requestId: "{request_id}", approve: approve }}),
+        }});
+        const body = await res.json();
+        if (res.ok && body.redirectTo) {{
+          window.location.href = body.redirectTo;
+          return;
+        }}
+        throw new Error((body.error && body.error.message) || "request failed");
+      }} catch (e) {{
+        const el = document.getElementById("error");
+        el.hidden = false;
+        el.textContent = "Something went wrong: " + e.message;
+      }}
+    }}
+    document.getElementById("approve").addEventListener("click", () => decide(true));
+    document.getElementById("deny").addEventListener("click", () => decide(false));
+  </script>
+</body>
+</html>"#,
+        client_name = escape_html(client_name),
+    )
+}
+
+// -------------------------------------------------------------------------------------------
+// POST /oauth/authorize/decision
+// -------------------------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct DecisionBody {
+    #[serde(rename = "requestId")]
+    request_id: Uuid,
+    approve: bool,
+}
+
+#[derive(Serialize)]
+struct DecisionResponseDto {
+    #[serde(rename = "redirectTo")]
+    redirect_to: String,
+}
+
+/// The consent page's approve/deny action. Requires the same live session that saw the consent
+/// screen — `consume_pending_authorization` matches `tenant_id`/`user_id` in its own query, so a
+/// pending authorization created for one user can't be decided by another, even within the same
+/// tenant.
+async fn authorize_decision(
+    State(state): State<AppState>,
+    AuthContext(context): AuthContext,
+    Json(body): Json<DecisionBody>,
+) -> Response {
+    let Ok(tenant_id) = Uuid::parse_str(&context.tenant_id) else {
+        return internal_error_response(anyhow::anyhow!("session context has an invalid tenant id"));
+    };
+    let Some(user_id) = context.user_id.as_deref().and_then(|id| Uuid::parse_str(id).ok()) else {
+        return service_error_response(401, "unauthorized", Some("A user session is required."), None);
+    };
+
+    // `tenant_id`/`user_id` are matched inside the query itself (see that function's own doc
+    // comment) — a pending request belonging to a different user in the same tenant comes back as
+    // `None` here, the same as an unknown/expired id, rather than a distinguishable error; same
+    // "don't reveal why" posture this codebase already applies to login/refresh-token failures.
+    let pending =
+        match metap_oauth_server::consume_pending_authorization(&state.pool, body.request_id, tenant_id, user_id).await
+        {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                return service_error_response(
+                    400,
+                    "invalid_request",
+                    Some("This authorization request has expired or was already decided. Please start over."),
+                    None,
+                )
+            }
+            Err(e) => return internal_error_response(e),
+        };
+
+    if !body.approve {
+        return Json(DecisionResponseDto {
+            redirect_to: denied_redirect(&pending.redirect_uri, pending.client_state.as_deref()),
+        })
+        .into_response();
+    }
+
+    if let Err(e) =
+        metap_oauth_server::record_consent(&state.pool, tenant_id, pending.client_id, user_id, &pending.scope).await
+    {
+        return internal_error_response(e);
+    }
+
+    match issue_authorization_code(
+        &state.pool,
+        pending.client_id,
+        tenant_id,
+        user_id,
+        &pending.redirect_uri,
+        &pending.scope,
+        pending.code_challenge.as_deref(),
+        pending.code_challenge_method.as_deref(),
+        pending.client_state.as_deref(),
+    )
+    .await
+    {
+        Ok(redirect_to) => Json(DecisionResponseDto { redirect_to }).into_response(),
+        Err(e) => internal_error_response(e),
+    }
 }
 
 // -------------------------------------------------------------------------------------------
@@ -281,17 +531,72 @@ async fn token(State(state): State<AppState>, headers: HeaderMap, Form(body): Fo
     match body.grant_type.as_str() {
         "authorization_code" => authorization_code_grant(&state, &client, body).await,
         "refresh_token" => refresh_token_grant(&state, &client, body).await,
-        // `client_credentials` is a registered grant type in `oauth_clients`' conceptual space
-        // (RFC 6749 §4.4) but not implemented — see `metap-oauth-server`'s doc comment for why
-        // (needs a service-user identity to mint a token *as*, not provisioned here). The spec's
-        // own error code for a grant this server doesn't support, rather than pretending success.
+        "client_credentials" => client_credentials_grant(&state, &client, body).await,
         _ => service_error_response(
             400,
             "unsupported_grant_type",
-            Some("Only authorization_code and refresh_token are supported."),
+            Some("Only authorization_code, refresh_token, and client_credentials are supported."),
             None,
         ),
     }
+}
+
+/// RFC 6749 §4.4 — no resource owner in the loop, the client acts as itself. Mints a token for
+/// `client.service_user_id` (see that field's own doc comment: eagerly provisioned at
+/// `POST /admin/oauth/clients` time, `None` only for a client registered before this grant
+/// existed) rather than any particular tenant user. No refresh token is issued (§4.4.3) — the
+/// client already holds its own long-lived credential (`client_secret`) and can request a fresh
+/// access token the same way at any time.
+async fn client_credentials_grant(
+    state: &AppState,
+    client: &metap_oauth_server::ClientWithSecret,
+    body: TokenForm,
+) -> Response {
+    if !client.client.is_confidential {
+        return service_error_response(
+            400,
+            "unauthorized_client",
+            Some("client_credentials requires a confidential client."),
+            None,
+        );
+    }
+    let Some(service_user_id) = client.client.service_user_id else {
+        return service_error_response(
+            400,
+            "unauthorized_client",
+            Some("This client has no service account provisioned; re-register it to use client_credentials."),
+            None,
+        );
+    };
+    let requested_scope = body.scope.as_deref().unwrap_or("");
+    if !metap_oauth_server::scope_is_subset(requested_scope, &client.client.allowed_scopes.join(" ")) {
+        return service_error_response(
+            400,
+            "invalid_scope",
+            Some("Requested scope exceeds what this client is allowed to request."),
+            None,
+        );
+    }
+
+    let access_token = match state.mint_oauth_token(
+        client.client.tenant_id,
+        service_user_id,
+        OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+        requested_scope,
+        &client.client.client_id,
+    ) {
+        Ok(t) => t,
+        Err(e) => return internal_error_response(e),
+    };
+
+    Json(TokenResponseDto {
+        access_token,
+        token_type: "Bearer",
+        expires_in: OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+        refresh_token: None,
+        scope: requested_scope.to_string(),
+    })
+    .into_response()
 }
 
 async fn authorization_code_grant(
@@ -517,7 +822,7 @@ async fn discovery_metadata() -> Response {
         "token_endpoint": "/oauth/token",
         "revocation_endpoint": "/oauth/revoke",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
     }))
@@ -551,12 +856,21 @@ fn client_to_json(client: &metap_oauth_server::OAuthClient) -> serde_json::Value
         "redirectUris": client.redirect_uris,
         "allowedScopes": client.allowed_scopes,
         "isConfidential": client.is_confidential,
+        "serviceUserId": client.service_user_id,
     })
 }
 
 /// Returns the raw `clientSecret` — **the only response that ever will**, same write-once
 /// discipline `metap-oauth-server::create_client`'s doc comment describes. Losing it means
 /// revoking this client and registering a new one, not "look it up again".
+///
+/// Also provisions this client's `client_credentials` service user (`metap_auth::
+/// jit_provision_external_user`, provider `"oauth2_client_credentials"`) *before* creating the
+/// client row, so the two can't disagree — `service_user_id` is `NOT NULL`-in-practice for every
+/// client this handler ever creates, only ever absent for one from before this existed (see that
+/// column's own migration comment). The synthetic external_subject/email are pure
+/// uniqueness keys, never shown to anyone or used to authenticate — nothing but this JIT call
+/// ever reads them back.
 async fn create_client(
     State(state): State<AppState>,
     AdminContext(context): AdminContext,
@@ -565,6 +879,21 @@ async fn create_client(
     let Ok(tenant_id) = Uuid::parse_str(&context.tenant_id) else {
         return internal_error_response(anyhow::anyhow!("session context has an invalid tenant id"));
     };
+
+    let external_subject = format!("oauth-client-{}", Uuid::new_v4());
+    let service_user = match metap_auth::jit_provision_external_user(
+        &state.pool,
+        tenant_id,
+        "oauth2_client_credentials",
+        &format!("{external_subject}@service.internal"),
+        &external_subject,
+    )
+    .await
+    {
+        Ok(u) => u,
+        Err(e) => return internal_error_response(e),
+    };
+
     let (client, secret) = match metap_oauth_server::create_client(
         &state.pool,
         metap_oauth_server::CreateClientInput {
@@ -573,6 +902,7 @@ async fn create_client(
             redirect_uris: body.redirect_uris,
             allowed_scopes: body.allowed_scopes,
             is_confidential: body.is_confidential,
+            service_user_id: service_user.id,
         },
     )
     .await
@@ -618,6 +948,7 @@ async fn revoke_client(
 fn build_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .route("/oauth/authorize", get(authorize))
+        .route("/oauth/authorize/decision", post(authorize_decision))
         .route("/oauth/token", post(token))
         .route("/oauth/revoke", post(revoke))
         .route("/.well-known/oauth-authorization-server", get(discovery_metadata))

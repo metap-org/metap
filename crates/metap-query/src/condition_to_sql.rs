@@ -38,6 +38,20 @@ impl std::fmt::Display for CrossRecordConditionInListError {
 }
 impl std::error::Error for CrossRecordConditionInListError {}
 
+/// A record-level policy's condition uses `Contains`/`NotContains` — see the `condition_to_sql`
+/// match arm that constructs this for why it's refused rather than silently mistranslated.
+/// Deterministic and permanent for as long as the policy stays configured this way, same
+/// downcast-for-a-clear-error treatment `CrossRecordConditionInListError` gets.
+#[derive(Debug)]
+pub struct UnsupportedContainsConditionInListError(pub String);
+
+impl std::fmt::Display for UnsupportedContainsConditionInListError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for UnsupportedContainsConditionInListError {}
+
 /// A dotted attribute path (`"project.ownerId"`) names a cross-record condition —
 /// `metap-permission`'s `required_relation_fields`/`CrudService`'s enrichment resolve those by
 /// fetching the related record and merging it onto an already-fetched subject, which only
@@ -212,6 +226,27 @@ pub fn condition_to_sql(
                         _ => unreachable!(),
                     };
                     Ok(format!("{lhs} {sql_op} {rhs}"))
+                }
+                // `Contains`/`NotContains` were added for `context`-subject conditions (the
+                // motivating case: `metap-http::auth`'s array-valued `oauthScope` attribute) —
+                // those never reach here at all (`PermissionSnapshot::from_rows` only keeps
+                // `subject == "record"` rows in `record_policies_by_action`, which is the only
+                // source `record_policy_where_clause` reads from). A record-level policy *could*
+                // still declare one against an array-shaped JSONB field, which this function
+                // can't push into SQL today: `field_expression`'s `jsonb_extract_path_text`
+                // returns the array's own text rendering (`"[\"a\",\"b\"]"`), not a queryable
+                // JSONB value `@>` could containment-check against, and building that properly
+                // needs a different column expression / bind-value shape than every other
+                // operator here uses. Refused loudly (same posture `CrossRecordConditionInListError`
+                // already takes for a different unsupported case in this same function) rather
+                // than silently building an always-false or wrong comparison.
+                ConditionOp::Contains | ConditionOp::NotContains => {
+                    Err(UnsupportedContainsConditionInListError(format!(
+                        "policy condition attribute {attribute:?} uses 'contains'/'notContains', not supported in \
+                         list() queries against a record field — only against a context-subject attribute, which \
+                         is evaluated in-process and never reaches SQL generation"
+                    ))
+                    .into())
                 }
             }
         }

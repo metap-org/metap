@@ -1,7 +1,7 @@
 use metap_permission::{EntityAction, RequestContext};
 use metap_query::{
     apply_params, encode_cursor, plan_list, CrossRecordConditionInListError, Cursor, InvalidCursorError,
-    InvalidJqlError, ListInput, SortDir, UnknownListViewError,
+    InvalidJqlError, ListInput, SortDir, UnknownListViewError, UnsupportedContainsConditionInListError,
 };
 
 use crate::dto::RecordDto;
@@ -60,8 +60,12 @@ impl CrudService {
                 // Deterministic/permanent (an entity read-policy misconfiguration, not
                 // something this specific request can fix) — still a `5xx`, but with its own
                 // `code` and message rather than falling through to a generic, indistinguishable
-                // `internal_error` (found in code review, 2026-08-22).
-                if e.downcast_ref::<CrossRecordConditionInListError>().is_some() {
+                // `internal_error` (found in code review, 2026-08-22). `UnsupportedContainsConditionInListError`
+                // (a `Contains`/`NotContains` record-level condition, see that type's own doc
+                // comment) is the same class of permanent misconfiguration, so it shares the code.
+                if e.downcast_ref::<CrossRecordConditionInListError>().is_some()
+                    || e.downcast_ref::<UnsupportedContainsConditionInListError>().is_some()
+                {
                     return Ok(ServiceResult::err_with_message(
                         500,
                         "unsupported_policy_condition",

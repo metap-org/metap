@@ -1,6 +1,7 @@
 use metap_permission::{EntityAction, RequestContext};
 use metap_query::{
     apply_params, plan_aggregate, AggregateInput, CrossRecordConditionInListError, InvalidAggregateError,
+    UnsupportedContainsConditionInListError,
 };
 use serde_json::Value;
 use sqlx::Row;
@@ -61,7 +62,9 @@ impl CrudService {
                 if e.downcast_ref::<InvalidAggregateError>().is_some() {
                     return Ok(ServiceResult::err_with_message(400, "invalid_aggregate", e.to_string()));
                 }
-                if e.downcast_ref::<CrossRecordConditionInListError>().is_some() {
+                if e.downcast_ref::<CrossRecordConditionInListError>().is_some()
+                    || e.downcast_ref::<UnsupportedContainsConditionInListError>().is_some()
+                {
                     return Ok(ServiceResult::err_with_message(
                         500,
                         "unsupported_policy_condition",

@@ -1,0 +1,22 @@
+-- Enables the `client_credentials` grant (RFC 6749 §4.4) — `0034_oauth2.sql` shipped it as a
+-- registered-but-rejected grant type ("needs a service-user identity to mint a token *as*, which
+-- this migration doesn't provision; a deliberate v1 cut, not an oversight"). This closes that gap
+-- the same way `metap-auth`'s OIDC/OAuth2-login JIT provisioning already solves an equivalent
+-- problem: `metadata.users.auth_provider`/`external_subject` (`0020_users_oidc_columns.sql`)
+-- already model "a user identity backed by something other than a local password" — a
+-- `client_credentials` client is exactly that, just backed by an OAuth client instead of an
+-- external IdP.
+--
+-- One service user per client, provisioned **eagerly at `POST /admin/oauth/clients` time**, not
+-- lazily on first token request — so the admin who just registered a client immediately has a
+-- concrete `userId` to grant roles to via the existing `POST /admin/users/{userId}/roles`, rather
+-- than a client that authenticates successfully but can (correctly, deny-by-default) do nothing
+-- until someone notices and hunts for the id it was lazily given.
+--
+-- Nullable, not `NOT NULL`: a client registered *before* this migration has no service user and
+-- genuinely cannot use `client_credentials` (the grant didn't exist for it to have used) — no
+-- backfill is possible (there is no real identity to retroactively provision as), and the token
+-- endpoint's own `client_credentials` handler already gives a clear, actionable error for that
+-- case rather than assuming this column is always populated.
+ALTER TABLE metadata.oauth_clients
+  ADD COLUMN service_user_id uuid NULL REFERENCES metadata.users (id);

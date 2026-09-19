@@ -18,6 +18,13 @@ pub struct OAuthClient {
     pub allowed_scopes: Vec<String>,
     pub is_confidential: bool,
     pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The `users` row this client acts as for the `client_credentials` grant — `None` only for a
+    /// client registered before that grant existed (see `crates/migrations/
+    /// 0036_oauth2_client_credentials.sql`'s own doc comment); every client `create_client` mints
+    /// today gets one eagerly. Starts with zero `user_roles` like any other principal — this
+    /// column makes the identity exist, it grants nothing by itself (deny-by-default, same as
+    /// every other user in this platform).
+    pub service_user_id: Option<Uuid>,
 }
 
 /// What [`get_client_by_client_id`] returns — carries the secret hash `metap-http`'s token
@@ -35,6 +42,10 @@ pub struct CreateClientInput {
     pub redirect_uris: Vec<String>,
     pub allowed_scopes: Vec<String>,
     pub is_confidential: bool,
+    /// The caller (`metap-http`) provisions this `users` row *before* calling `create_client` —
+    /// this crate has no `metap-auth` dependency and doesn't know how to provision a user itself,
+    /// only how to record which one a client acts as.
+    pub service_user_id: Uuid,
 }
 
 fn row_to_client(row: &sqlx::postgres::PgRow) -> Result<OAuthClient, sqlx::Error> {
@@ -47,6 +58,7 @@ fn row_to_client(row: &sqlx::postgres::PgRow) -> Result<OAuthClient, sqlx::Error
         allowed_scopes: row.try_get("allowed_scopes")?,
         is_confidential: row.try_get("is_confidential")?,
         revoked_at: row.try_get("revoked_at")?,
+        service_user_id: row.try_get("service_user_id")?,
     })
 }
 
@@ -67,9 +79,11 @@ pub async fn create_client<'e>(
 
     let row = sqlx::query(
         "INSERT INTO oauth_clients \
-            (tenant_id, client_id, client_secret_hash, name, redirect_uris, allowed_scopes, is_confidential) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7) \
-         RETURNING id, tenant_id, client_id, name, redirect_uris, allowed_scopes, is_confidential, revoked_at",
+            (tenant_id, client_id, client_secret_hash, name, redirect_uris, allowed_scopes, is_confidential, \
+             service_user_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+         RETURNING id, tenant_id, client_id, name, redirect_uris, allowed_scopes, is_confidential, revoked_at, \
+                   service_user_id",
     )
     .bind(input.tenant_id)
     .bind(&client_id)
@@ -78,6 +92,7 @@ pub async fn create_client<'e>(
     .bind(&input.redirect_uris)
     .bind(&input.allowed_scopes)
     .bind(input.is_confidential)
+    .bind(input.service_user_id)
     .fetch_one(executor)
     .await?;
 
@@ -94,7 +109,7 @@ pub async fn get_client_by_client_id<'e>(
 ) -> anyhow::Result<Option<ClientWithSecret>> {
     let row = sqlx::query(
         "SELECT id, tenant_id, client_id, client_secret_hash, name, redirect_uris, allowed_scopes, \
-                is_confidential, revoked_at \
+                is_confidential, revoked_at, service_user_id \
          FROM oauth_clients WHERE client_id = $1",
     )
     .bind(client_id)
@@ -114,7 +129,8 @@ pub async fn get_client_by_client_id<'e>(
 /// accidentally leak.
 pub async fn list_clients<'e>(executor: impl PgExecutor<'e>, tenant_id: Uuid) -> anyhow::Result<Vec<OAuthClient>> {
     let rows = sqlx::query(
-        "SELECT id, tenant_id, client_id, name, redirect_uris, allowed_scopes, is_confidential, revoked_at \
+        "SELECT id, tenant_id, client_id, name, redirect_uris, allowed_scopes, is_confidential, revoked_at, \
+                service_user_id \
          FROM oauth_clients WHERE tenant_id = $1 AND revoked_at IS NULL ORDER BY created_at",
     )
     .bind(tenant_id)

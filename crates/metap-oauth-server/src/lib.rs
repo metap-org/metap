@@ -5,11 +5,13 @@
 //! plain library, same shape as `metap-cron`/`metap-dashboards`; `crates/metap-http/src/routes/
 //! oauth2.rs` is the HTTP surface built on this.
 //!
-//! **Scope shipped**: `authorization_code` (+ mandatory-for-public-clients PKCE, S256 only) and
-//! `refresh_token` grants. `client_credentials` is a registered `oauth_clients.allowed_scopes`-
-//! adjacent concept in the RFC but is **not implemented** — it needs a service-user identity to
-//! mint a token *as*, which this crate doesn't provision; `metap-http`'s token endpoint rejects
-//! it with the spec's own `unsupported_grant_type` rather than half-implementing it.
+//! **Scope shipped**: `authorization_code` (+ mandatory-for-public-clients PKCE, S256 only),
+//! `refresh_token`, and (2026-09-19) `client_credentials` grants. The last mints a token *as* the
+//! `oauth_clients.service_user_id` row `metap-http`'s `POST /admin/oauth/clients` provisions
+//! eagerly for every new client (via `metap-auth`, a dependency this crate deliberately doesn't
+//! take on itself — see `CreateClientInput::service_user_id`'s own doc comment) — confidential
+//! clients only (RFC 6749 §4.4), no refresh token is issued for it (§4.4.3), and a client
+//! registered before this existed has no service user and can't use the grant until re-registered.
 //!
 //! **Access tokens are ordinary platform JWTs**, minted through the exact same trust root
 //! (`metap_peripherals::mint_jwt` / `metap-jwks`) every other session token uses — so
@@ -32,17 +34,24 @@
 //! already-consumed refresh token revokes the rest of that (client, user) pair's live chain,
 //! since that shape only happens if a token was stolen and used by two parties.
 
+mod cleanup;
 mod client;
 mod code;
+mod consent;
 mod pkce;
 mod refresh;
 mod token;
 
+pub use cleanup::{delete_expired as delete_expired_tokens, run as run_cleanup, CleanupCounts};
 pub use client::{
     create_client, get_client_by_client_id, list_clients, revoke_client, verify_client_secret, ClientWithSecret,
     CreateClientInput, OAuthClient,
 };
 pub use code::{consume_authorization_code, create_authorization_code, AuthorizationCode, CreateCodeInput};
+pub use consent::{
+    consume_pending_authorization, create_pending_authorization, get_consent_scope, get_pending_authorization,
+    record_consent, CreatePendingAuthorizationInput, PendingAuthorization,
+};
 pub use pkce::verify_pkce;
 pub use refresh::{
     consume_refresh_token, create_refresh_token, revoke_refresh_token, ConsumeRefreshOutcome, CreateRefreshInput,

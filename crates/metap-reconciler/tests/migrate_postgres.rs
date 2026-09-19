@@ -77,6 +77,50 @@ async fn drop_table_if_exists(pool: &PgPool, table: &str) {
     .unwrap();
 }
 
+/// The shared generic `records` table this whole file migrates *off of* was itself dropped from
+/// `metap` core (`crates/migrations/0033_drop_records_table.sql`) — a fresh dev Postgres no longer
+/// has it. `migrate_generic_to_dedicated`/`copy_generic_records` are still here on purpose, as a
+/// one-time pre-upgrade escape hatch for an environment that hasn't run that migration yet and
+/// still has real rows sitting on `records` — so this test recreates the exact pre-drop shape
+/// itself (same columns as `crates/migrations/0000_green_jean_grey.sql`'s original `CREATE TABLE
+/// "records"`, later moved into the `metadata` schema by `0030_records_attachments_migrations_into_
+/// metadata.sql`) rather than assuming the real table still exists, so it keeps proving that escape
+/// hatch works regardless of whether `0033` has been applied to this dev DB.
+async fn ensure_legacy_records_table(pool: &PgPool) {
+    // `CREATE TABLE IF NOT EXISTS` is not safe against a concurrent creator (Postgres has no
+    // atomic "create or no-op" DDL) — both of this file's tests call this at startup and cargo
+    // runs them concurrently by default, so two sessions can both pass the existence check and
+    // then race on inserting the same row into `pg_type`. Whichever loses gets a `23505` unique-
+    // violation on `pg_type_typname_nsp_index`, not the "already exists" no-op `IF NOT EXISTS`
+    // implies — harmless here (the table exists either way by the time this returns), so it's
+    // swallowed rather than propagated.
+    let result = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS metadata.records (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+            tenant_id uuid NOT NULL,
+            entity varchar(120) NOT NULL,
+            code varchar(120),
+            status varchar(80),
+            data jsonb DEFAULT '{}'::jsonb NOT NULL,
+            version integer DEFAULT 1 NOT NULL,
+            deleted boolean DEFAULT false NOT NULL,
+            created_at timestamp with time zone DEFAULT now() NOT NULL,
+            updated_at timestamp with time zone DEFAULT now() NOT NULL,
+            created_by uuid,
+            updated_by uuid
+        )",
+    )
+    .execute(pool)
+    .await;
+
+    if let Err(sqlx::Error::Database(ref db_err)) = result {
+        if db_err.code().as_deref() == Some("23505") {
+            return;
+        }
+    }
+    result.unwrap();
+}
+
 async fn cleanup_records(pool: &PgPool, tenant_id: Uuid, entity_name: &str) {
     sqlx::query("DELETE FROM records WHERE tenant_id = $1 AND entity = $2")
         .bind(tenant_id)
@@ -102,6 +146,7 @@ async fn migrates_existing_records_rows_onto_a_dedicated_table_without_loss() {
     let pool = connect().await;
     let tenant_id = Uuid::new_v4();
     let entity_name = "test.migrate_customers";
+    ensure_legacy_records_table(&pool).await;
     drop_table_if_exists(&pool, "test_migrate_customers").await;
     cleanup_records(&pool, tenant_id, entity_name).await;
 
@@ -192,6 +237,7 @@ async fn resumes_from_a_saved_checkpoint_after_a_simulated_crash() {
     let pool = connect().await;
     let tenant_id = Uuid::new_v4();
     let entity_name = "test.migrate_resume";
+    ensure_legacy_records_table(&pool).await;
     drop_table_if_exists(&pool, "test_migrate_resume").await;
     cleanup_records(&pool, tenant_id, entity_name).await;
 

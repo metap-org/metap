@@ -25,6 +25,8 @@ fn match_operator(op: ConditionOp, actual: &serde_json::Value, expected: &serde_
         ConditionOp::Neq => actual != expected,
         ConditionOp::In => expected.as_array().is_some_and(|arr| arr.contains(actual)),
         ConditionOp::NotIn => expected.as_array().is_some_and(|arr| !arr.contains(actual)),
+        ConditionOp::Contains => actual.as_array().is_some_and(|arr| arr.contains(expected)),
+        ConditionOp::NotContains => actual.as_array().is_some_and(|arr| !arr.contains(expected)),
         ConditionOp::Gt => compare_ordering(actual, expected) == Some(Ordering::Greater),
         ConditionOp::Gte => matches!(
             compare_ordering(actual, expected),
@@ -177,6 +179,8 @@ pub fn evaluate_condition(
                     ConditionOp::Gte => "gte",
                     ConditionOp::Lt => "lt",
                     ConditionOp::Lte => "lte",
+                    ConditionOp::Contains => "contains",
+                    ConditionOp::NotContains => "notContains",
                 };
                 ConditionResult::Failed(format!(
                     "condition failed: {attribute} {op_str} {expected} (got {actual})"

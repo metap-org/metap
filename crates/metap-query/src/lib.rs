@@ -9,7 +9,10 @@ pub use aggregate::{
     plan_aggregate, AggregateFn, AggregateInput, AggregateMetric, AggregateSpec, InvalidAggregateError,
     PlannedAggregateQuery, TimeBucket, DEFAULT_GROUPS, MAX_GROUPS,
 };
-pub use condition_to_sql::{condition_to_sql, record_policy_where_clause, CrossRecordConditionInListError};
+pub use condition_to_sql::{
+    condition_to_sql, record_policy_where_clause, CrossRecordConditionInListError,
+    UnsupportedContainsConditionInListError,
+};
 pub use cursor::{decode_cursor, encode_cursor, Cursor, SortDir};
 pub use jql::InvalidJqlError;
 pub use query_planner::{

@@ -33,6 +33,17 @@ pub enum ConditionOp {
     Gte,
     Lt,
     Lte,
+    /// The reverse of `In`: `actual` must be a JSON array containing `expected` as an element,
+    /// rather than `expected` being an array containing `actual`. Added so a `context`-subject
+    /// policy can gate on an array-shaped context attribute — the motivating case is
+    /// `metap-http::auth`'s `oauthScope` (an OAuth2 `client_credentials`/`authorization_code`
+    /// token's granted scope, always an array even when it has one element), which `In`/`NotIn`
+    /// can't express: those need `expected` to be the array and `actual` the scalar, the opposite
+    /// of "does this array attribute contain this literal scope string". Fails closed (`false`)
+    /// when `actual` isn't an array at all, same posture `Gt`/`Gte`/`Lt`/`Lte` already take for a
+    /// type mismatch.
+    Contains,
+    NotContains,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

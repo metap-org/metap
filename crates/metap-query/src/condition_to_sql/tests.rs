@@ -201,6 +201,25 @@ fn dotted_cross_record_attribute_is_a_clear_error_not_a_silent_no_op() {
 }
 
 #[test]
+fn contains_on_a_record_field_is_a_clear_error_not_silently_wrong_sql() {
+    let ctx = context(None);
+    let mut params = ParamBuilder::new();
+    let cond = PolicyCondition::Attribute {
+        attribute: "tags".to_string(),
+        op: ConditionOp::Contains,
+        value: PolicyValue::Literal {
+            literal: serde_json::json!("urgent"),
+        },
+    };
+    let err = condition_to_sql(&cond, &ctx, &mut params).unwrap_err();
+    assert!(err.to_string().contains("contains"), "unexpected error: {err}");
+    assert!(
+        err.downcast_ref::<UnsupportedContainsConditionInListError>().is_some(),
+        "expected an UnsupportedContainsConditionInListError, got: {err:?}"
+    );
+}
+
+#[test]
 fn deny_row_narrows_the_where_clause_with_and_not_instead_of_widening_it_via_or() {
     let ctx = context(None);
     let mut params = ParamBuilder::new();

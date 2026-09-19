@@ -122,6 +122,100 @@ mod tests {
         assert!(evaluate_condition(&not_in_cond, &subject, &ctx).is_passed());
     }
 
+    #[test]
+    fn contains_and_not_contains_operators() {
+        let ctx = context("t1", None);
+        let subject = json!({ "tags": ["urgent", "billing"] });
+
+        let contains_cond = PolicyCondition::Attribute {
+            attribute: "tags".to_string(),
+            op: ConditionOp::Contains,
+            value: PolicyValue::Literal {
+                literal: json!("urgent"),
+            },
+        };
+        assert!(evaluate_condition(&contains_cond, &subject, &ctx).is_passed());
+
+        let not_contains_cond = PolicyCondition::Attribute {
+            attribute: "tags".to_string(),
+            op: ConditionOp::NotContains,
+            value: PolicyValue::Literal {
+                literal: json!("archived"),
+            },
+        };
+        assert!(evaluate_condition(&not_contains_cond, &subject, &ctx).is_passed());
+
+        let missing_cond = PolicyCondition::Attribute {
+            attribute: "tags".to_string(),
+            op: ConditionOp::Contains,
+            value: PolicyValue::Literal {
+                literal: json!("archived"),
+            },
+        };
+        assert!(!evaluate_condition(&missing_cond, &subject, &ctx).is_passed());
+    }
+
+    #[test]
+    fn contains_fails_closed_when_the_attribute_is_not_an_array() {
+        let ctx = context("t1", None);
+        let subject = json!({ "tags": "urgent" });
+        let cond = PolicyCondition::Attribute {
+            attribute: "tags".to_string(),
+            op: ConditionOp::Contains,
+            value: PolicyValue::Literal {
+                literal: json!("urgent"),
+            },
+        };
+        // A single string is not a JSON array, even though it "contains" the substring
+        // textually — same "fail closed on a type mismatch" posture `Gt`/`Gte`/`Lt`/`Lte` take.
+        assert!(!evaluate_condition(&cond, &subject, &ctx).is_passed());
+    }
+
+    /// The motivating real-world case for `Contains`/`NotContains`: a tenant gating access by an
+    /// OAuth2 grant's scope. `metap-http::auth`'s `AuthContext` folds a `client_credentials`/
+    /// `authorization_code` token's granted scope into `RequestContext.context_attributes` as
+    /// `oauthScope` (always a JSON array, even for a single scope token) — a `context`-subject
+    /// policy condition resolves `attribute` against `context.to_value()` directly (see
+    /// `permission_snapshot::match_stability`'s doc comment for why `subject == "context"` passes
+    /// the context itself, not a record, as the subject), so this is exactly what a tenant would
+    /// write to require `"read:widgets"` before a context-subject allow policy grants anything.
+    #[test]
+    fn oauth_scope_gating_via_context_subject_and_contains() {
+        let ctx_with_scope = RequestContext {
+            tenant_id: "t1".to_string(),
+            user_id: None,
+            roles: None,
+            function_id: None,
+            context_attributes: Some(
+                json!({ "oauthScope": ["read:widgets", "write:widgets"] })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+            forwarded_bearer_token: None,
+        };
+        let ctx_without_scope = RequestContext {
+            context_attributes: None,
+            ..ctx_with_scope.clone()
+        };
+
+        let requires_read_scope = PolicyCondition::Attribute {
+            attribute: "oauthScope".to_string(),
+            op: ConditionOp::Contains,
+            value: PolicyValue::Literal {
+                literal: json!("read:widgets"),
+            },
+        };
+
+        // `subject == "context"` policies evaluate against `context.to_value()`, not a record —
+        // an empty object subject here proves the condition never touches it.
+        assert!(evaluate_condition(&requires_read_scope, &ctx_with_scope.to_value(), &ctx_with_scope).is_passed());
+        assert!(
+            !evaluate_condition(&requires_read_scope, &ctx_without_scope.to_value(), &ctx_without_scope).is_passed(),
+            "an ordinary session token (no oauthScope claim at all) must not satisfy a scope requirement"
+        );
+    }
+
     /// Regression for the finding in `AUDIT_2.md`: before `Gt`/`Gte`/`Lt`/`Lte` existed, a guard
     /// like "amount > 10000" was inexpressible — `journal_entry_entity.rs`'s `post` guard had to
     /// fake "at least one side is positive" with `Neq 0`, which wrongly also accepted a negative

@@ -22,7 +22,21 @@ async fn connect() -> PgPool {
         .unwrap()
 }
 
+// `oauth_clients.service_user_id` is a real FK into `users` — this crate has no `metap-auth`
+// dependency to provision one the real way (`metap-http`'s `create_client` handler does that),
+// so tests insert a minimal row directly, same as any other fixture-only user this codebase's
+// e2e tests create by hand.
+async fn make_test_user(pool: &PgPool, tenant_id: Uuid) -> Uuid {
+    sqlx::query_scalar("INSERT INTO users (tenant_id, email, password_hash) VALUES ($1, $2, 'test') RETURNING id")
+        .bind(tenant_id)
+        .bind(format!("{}@example.com", Uuid::new_v4()))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
 async fn make_confidential_client(pool: &PgPool, tenant_id: Uuid) -> (metap_oauth_server::OAuthClient, String) {
+    let service_user_id = make_test_user(pool, tenant_id).await;
     create_client(
         pool,
         CreateClientInput {
@@ -31,6 +45,7 @@ async fn make_confidential_client(pool: &PgPool, tenant_id: Uuid) -> (metap_oaut
             redirect_uris: vec!["https://example.com/callback".to_string()],
             allowed_scopes: vec!["read:widgets".to_string(), "write:widgets".to_string()],
             is_confidential: true,
+            service_user_id,
         },
     )
     .await

@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 chrono.workspace = true
+metap-infra = { path = "../metap-infra" }
 serde.workspace = true
 serde_json.workspace = true
 # Single consumer (client-secret/refresh-token/authorization-code hashing) — stays local per the
@@ -19,6 +20,7 @@ sqlx = { workspace = true, features = [
   "uuid",
   "chrono",
 ] }
+tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
