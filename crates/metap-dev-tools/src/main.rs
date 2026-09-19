@@ -160,8 +160,18 @@ fn mint_token(args: &[String]) -> anyhow::Result<()> {
         .unwrap_or("00000000-0000-0000-0000-000000000002")
         .parse()?;
 
-    let private_pem = std::fs::read_to_string("keys/dev-jwt-private.pem")
-        .map_err(|e| anyhow::anyhow!("failed to read keys/dev-jwt-private.pem: {e}"))?;
+    // `AUTH_JWT_PRIVATE_KEY_PATH`, if set, wins over the plain `keys/dev-jwt-private.pem`
+    // relative-to-cwd default — every other binary in this workspace already reads this exact
+    // env var (`metap_infra::load_config`), and both `testing/performance/k6/run.sh` and
+    // `testing/security/zap/run.sh`'s own doc comments already told a caller to set it to mint a
+    // token for a *different* app's keypair than this repo's own — found live (2026-09-19) that
+    // this function silently ignored it and always read the hardcoded relative path regardless,
+    // so setting it had no effect at all. Falls back to the original literal path unchanged, so
+    // every existing caller relying on cwd-relative behavior (crm's own default) is unaffected.
+    let key_path =
+        std::env::var("AUTH_JWT_PRIVATE_KEY_PATH").unwrap_or_else(|_| "keys/dev-jwt-private.pem".to_string());
+    let private_pem =
+        std::fs::read_to_string(&key_path).map_err(|e| anyhow::anyhow!("failed to read {key_path}: {e}"))?;
 
     let token = metap_peripherals::mint_jwt(&private_pem, tenant_id, user_id, 3600)?;
     println!("{token}");

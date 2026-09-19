@@ -60,6 +60,10 @@ echo "✓ token minted for $APP (tenant=$TENANT_ID)"
 OPENAPI_URL="${OPENAPI_URL:-$BASE_URL/metadata/openapi.json}"
 STAMP=$(date +%s)
 REPORT_NAME="${APP}-${MODE}-${STAMP}.html"
+# JSON alongside the HTML report (same `-r`-shaped `-J` flag both zap-*.py scripts accept) — the
+# machine-readable form .github/workflows/pentest.yml's report step parses for an alert-count
+# summary. The human-facing report stays the HTML file; this is purely additive.
+JSON_REPORT_NAME="${APP}-${MODE}-${STAMP}.json"
 
 # Inject the bearer token on every request ZAP makes, via a ZAP "replacer" rule — the documented
 # way to auth a ZAP scan against a JWT-protected API (zap-api-scan.py/zap-baseline.py have no
@@ -81,12 +85,12 @@ case "$MODE" in
   api)
     echo "=== zap-api-scan (OpenAPI import: $OPENAPI_URL) ==="
     docker run "${DOCKER_OPTS[@]}" \
-      zap-api-scan.py -t "$OPENAPI_URL" -f openapi -r "$REPORT_NAME" -z "$AUTH_OPTS" || true
+      zap-api-scan.py -t "$OPENAPI_URL" -f openapi -r "$REPORT_NAME" -J "$JSON_REPORT_NAME" -z "$AUTH_OPTS" || true
     ;;
   baseline)
     echo "=== zap-baseline (passive spider only, $BASE_URL) ==="
     docker run "${DOCKER_OPTS[@]}" \
-      zap-baseline.py -t "$BASE_URL" -r "$REPORT_NAME" -z "$AUTH_OPTS" || true
+      zap-baseline.py -t "$BASE_URL" -r "$REPORT_NAME" -J "$JSON_REPORT_NAME" -z "$AUTH_OPTS" || true
     ;;
   *)
     echo "unknown MODE=$MODE (expected api|baseline)" >&2
@@ -97,4 +101,4 @@ esac
 # zap-api-scan.py/zap-baseline.py exit non-zero whenever they find WARN/FAIL alerts (their
 # designed behavior, not a script failure) — `|| true` above keeps this script's own exit clean
 # so the report is always produced; read the report itself for pass/fail, not this script's $?.
-echo "=== done — report: $OUT_DIR/$REPORT_NAME ==="
+echo "=== done — report: $OUT_DIR/$REPORT_NAME (JSON: $OUT_DIR/$JSON_REPORT_NAME) ==="

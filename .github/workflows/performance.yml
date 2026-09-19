@@ -1,0 +1,230 @@
+name: Performance
+
+# Wires the k6 + Prometheus tooling `testing/performance/` already had (see that dir's own
+# README/scenarios.md) into CI for the first time — previously 100% manual, this repo's own docs
+# said so explicitly. Report-only (project-owner decision) — never fails the build, same
+# convention `codeql.yml`/`nightly-benchmark.yml` already established for a new signal on an
+# existing codebase. `workflow_dispatch` + weekly cron, never on push/PR: a single run takes
+# ~6-7 minutes (rate-limit-bound, see scenarios.md) and needs a real booted app, not something to
+# add to every PR's critical path.
+#
+# Target app is parameterized via `testing/apps/<name>.env` (`jira` is the only one today —
+# metap-demo-crm, the old hardcoded default everywhere in this tooling, is deprecated since
+# 2026-09-11; adding a 2nd app here is "add testing/apps/<name>.env + list it in the `target`
+# input's options", not a workflow rewrite).
+#
+# Needs a 2nd repo checked out as a sibling directory (`../metap-demo-jira`, this workflow's app
+# target) for its Cargo path dependencies on ../metap/crates/* to resolve — if metap-demo-jira is
+# private, the default `GITHUB_TOKEN` only has read access within the same org for public repos;
+# a cross-repo PAT (`secrets.CROSS_REPO_CHECKOUT_TOKEN` or similar) may be needed for the second
+# `actions/checkout` step below. Not verified live in this change — flagged for whoever first
+# triggers this workflow for real.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "App target (testing/apps/<target>.env)"
+        required: false
+        default: jira
+        type: choice
+        options: [jira]
+  schedule:
+    - cron: "0 4 * * 1" # weekly, Monday 04:00 UTC
+
+jobs:
+  performance:
+    name: k6 load test + resource report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout metap
+        uses: actions/checkout@v4
+        with:
+          path: metap
+
+      - name: Checkout app target repo
+        uses: actions/checkout@v4
+        with:
+          repository: metap-org/metap-demo-jira
+          path: metap-demo-jira
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: metap
+
+      # `.cargo/config.toml` hard-requires the mold linker (see ci.yml's own step for why).
+      - run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Load app target config
+        id: target
+        run: |
+          set -a
+          # shellcheck disable=SC1090
+          source "metap/testing/apps/${{ inputs.target || 'jira' }}.env"
+          set +a
+          {
+            echo "app_name=$APP_NAME"
+            echo "app_port=$APP_PORT"
+            echo "base_url=$BASE_URL"
+            echo "metrics_job_name=$METRICS_JOB_NAME"
+            echo "default_entity=$DEFAULT_ENTITY"
+            echo "default_seed_template=$DEFAULT_SEED_TEMPLATE"
+            echo "dsn_secret_ref_name=$DSN_SECRET_REF_NAME"
+            echo "db_name_prefix=$DB_NAME_PREFIX"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Start Postgres + RabbitMQ + observability exporters
+        working-directory: metap
+        run: |
+          docker compose --profile observability up -d postgres rabbitmq postgres-exporter
+          # Real health, not just "container started" — db-migrate/provision-tenant below need a
+          # live server, not merely a listening TCP port mid-initdb.
+          for _ in $(seq 1 30); do
+            docker exec metap-postgres-1 pg_isready -U metap && break
+            sleep 2
+          done
+
+      - name: Generate CI Prometheus config and start Prometheus
+        run: |
+          cat > /tmp/prometheus-ci.yml <<EOF
+          global:
+            scrape_interval: 5s
+          scrape_configs:
+            - job_name: postgres
+              static_configs:
+                - targets: ["postgres-exporter:9187"]
+            - job_name: ${{ steps.target.outputs.metrics_job_name }}
+              static_configs:
+                - targets: ["host.docker.internal:${{ steps.target.outputs.app_port }}"]
+          EOF
+          docker run -d --name ci-prometheus \
+            --network metap_default \
+            --add-host=host.docker.internal:host-gateway \
+            -v /tmp/prometheus-ci.yml:/etc/prometheus/prometheus.yml:ro \
+            -p 9090:9090 \
+            prom/prometheus:v2.55.1 \
+            --config.file=/etc/prometheus/prometheus.yml \
+            --web.enable-remote-write-receiver
+
+      - name: Apply metap migrations
+        working-directory: metap
+        env:
+          DATABASE_URL: postgres://metap:metap@localhost:5433/metap
+        run: cargo run --release -p metap-db-migrate --locked
+
+      - name: Provision a fresh dedicated-DB tenant for this run
+        id: provision
+        working-directory: metap
+        env:
+          DATABASE_URL: postgres://metap:metap@localhost:5433/metap
+        run: |
+          RUN_ID="ci$(date +%s)"
+          TENANT_DB="${{ steps.target.outputs.db_name_prefix }}_${RUN_ID}"
+          docker exec metap-postgres-1 createdb -U metap "$TENANT_DB"
+          TENANT_ID=$(uuidgen)
+          DSN="postgres://metap:metap@localhost:5433/${TENANT_DB}"
+          OUTPUT=$(cargo run --release -p metap-dev-tools --locked --quiet -- \
+            provision-tenant "$TENANT_ID" dedicated_db \
+            "${{ steps.target.outputs.dsn_secret_ref_name }}" "$DSN" \
+            "admin@${RUN_ID}.ci.local" "ChangeMe123!")
+          echo "$OUTPUT"
+          ADMIN_USER_ID=$(echo "$OUTPUT" | grep -oE 'admin user [0-9a-f-]{36}' | awk '{print $3}')
+          {
+            echo "tenant_id=$TENANT_ID"
+            echo "admin_user_id=$ADMIN_USER_ID"
+            echo "dsn=$DSN"
+            echo "tenant_db=$TENANT_DB"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate dev JWT keypair for the app target
+        working-directory: metap-demo-jira
+        run: |
+          cargo run --release --manifest-path ../metap/crates/metap-dev-tools/Cargo.toml --locked -- gen-keys keys
+
+      - name: Boot app target
+        working-directory: metap-demo-jira
+        env:
+          NODE_ENV: development
+          HOST: 0.0.0.0
+          PORT: ${{ steps.target.outputs.app_port }}
+          DATABASE_URL: postgres://metap:metap@localhost:5433/metap
+          RABBITMQ_URL: amqp://metap:metap@localhost:5672
+          AUTH_JWT_PUBLIC_KEY_PATH: ./keys/dev-jwt-public.pem
+          AUTH_JWT_PRIVATE_KEY_PATH: ./keys/dev-jwt-private.pem
+          JIRA_TENANT_ID: ${{ steps.provision.outputs.tenant_id }}
+        run: |
+          echo "${{ steps.provision.outputs.dsn_secret_ref_name }}=${{ steps.provision.outputs.dsn }}" >> "$GITHUB_ENV"
+          nohup cargo run --release --locked > /tmp/app.log 2>&1 &
+          echo $! > /tmp/app.pid
+          for _ in $(seq 1 60); do
+            curl -sf "http://localhost:${{ steps.target.outputs.app_port }}/health" && break
+            sleep 2
+          done
+
+      - name: Mint a token for the provisioned admin
+        id: token
+        working-directory: metap
+        env:
+          AUTH_JWT_PRIVATE_KEY_PATH: ../metap-demo-jira/keys/dev-jwt-private.pem
+          AUTH_JWT_PUBLIC_KEY_PATH: ../metap-demo-jira/keys/dev-jwt-public.pem
+        run: |
+          TOKEN=$(cargo run --release -p metap-dev-tools --locked --quiet -- mint-token \
+            "${{ steps.provision.outputs.tenant_id }}" "${{ steps.provision.outputs.admin_user_id }}" \
+            2>/dev/null | tail -1)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Restore previous run numbers (trend comparison)
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/perf-previous.json
+          key: perf-history-${{ inputs.target || 'jira' }}-${{ github.run_id }}
+          restore-keys: |
+            perf-history-${{ inputs.target || 'jira' }}-
+
+      - name: Run k6 scenarios
+        working-directory: metap
+        env:
+          TARGET: ${{ inputs.target || 'jira' }}
+          BASE_URL: ${{ steps.target.outputs.base_url }}
+          ENTITY: ${{ steps.target.outputs.default_entity }}
+          SEED_TEMPLATE: ${{ steps.target.outputs.default_seed_template }}
+          TENANT_ID: ${{ steps.provision.outputs.tenant_id }}
+          USER_ID: ${{ steps.provision.outputs.admin_user_id }}
+          TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          echo "RUN_TAG=$(date +%s)" >> "$GITHUB_ENV"
+          RUN_TAG="$(date +%s)" ./testing/performance/k6/run.sh
+
+      - name: Generate report
+        working-directory: metap
+        run: |
+          chmod +x testing/performance/report.sh
+          PROMETHEUS_URL=http://localhost:9090 \
+          RUN_TAG="$RUN_TAG" \
+          METRICS_JOB_NAME=${{ steps.target.outputs.metrics_job_name }} \
+          OUTPUT_JSON=/tmp/perf-current.json \
+          PREVIOUS_JSON=/tmp/perf-previous.json \
+          ./testing/performance/report.sh >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save this run for next time's trend comparison
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: /tmp/perf-current.json
+          key: perf-history-${{ inputs.target || 'jira' }}-${{ github.run_id }}
+
+      - name: Upload report JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-report-${{ inputs.target || 'jira' }}
+          path: /tmp/perf-current.json
+          retention-days: 90
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker rm -f ci-prometheus || true
+          if [ -f /tmp/app.pid ]; then kill "$(cat /tmp/app.pid)" || true; fi

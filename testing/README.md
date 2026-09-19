@@ -1,8 +1,14 @@
-# Backend test kit — regression, performance, security
+# Backend test kit — regression, performance, security, disruptive
 
-Control tower cho 3 trụ test backend. **Không chứa code Rust** — code test/benchmark thật nằm
-trong từng crate (`crates/*/tests/*.rs`, `crates/*/benches/*.rs`), đúng convention Cargo. Thư
-mục này chỉ có tài liệu điều phối, checklist sống, baseline số liệu, script gọi tới test đã có.
+Control tower cho 4 trụ test backend (trụ thứ 4, disruptive/chaos, thêm 2026-09-19). **Không chứa
+code Rust** — code test/benchmark thật nằm trong từng crate (`crates/*/tests/*.rs`,
+`crates/*/benches/*.rs`), đúng convention Cargo. Thư mục này chỉ có tài liệu điều phối, checklist
+sống, baseline số liệu, script gọi tới test đã có.
+
+**App target cho cả 3 trụ có CI tự động** (performance/pentest/disruptive) khai báo qua
+[`apps/`](apps/) — 1 file `apps/<name>.env` mỗi app, hiện chỉ có `jira` (`metap-demo-crm`, default
+cũ khắp nơi trong tooling này, đã deprecated 2026-09-11). Thêm app khác: 1 file mới, không sửa
+workflow nào.
 
 Kế hoạch gốc: `docs/architectures/11-risks.md` (hàng ghi nhận gap test-coverage bảo mật).
 
@@ -15,7 +21,13 @@ thủ công, 2026-08-28 — xem file đó's doc comment) đã cover phần lớn
 
 ## Performance
 
-Chưa có gate tự động dài hạn (baseline/nightly) — nhưng đã có 2 công cụ load-test **tái sử dụng
+**Giờ có CI report-only** (2026-09-19, `.github/workflows/performance.yml`) —
+`workflow_dispatch`/cron hàng tuần, không bao giờ block build (số liệu runner GitHub-hosted dao
+động, không đại diện — chỉ dùng để phát hiện lệch tương đối giữa 2 lần chạy gần nhau, không phải
+baseline tuyệt đối). Chi tiết từng scenario CI thật sự chạy: [`performance/scenarios.md`](performance/scenarios.md).
+Phần dưới đây vẫn đúng cho việc chạy tay tại máy dev.
+
+Trước 2026-09-19: chưa có gate tự động dài hạn — nhưng đã có 2 công cụ load-test **tái sử dụng
 được cho nhiều router/entity**, không hardcode `crm.customers`, và không có logic stress-test nào
 nằm trong file `.sh` (một bài stress test nặng IO/CPU/RAM cần engine thật, không phải `curl` fork
 qua `xargs` + hậu xử lý `awk` — file `.sh` ở đây chỉ còn vai trò orchestration mỏng: seed token +
@@ -95,7 +107,7 @@ công cụ, mỗi cái một vai trò:
 - **Semgrep** (`.semgrep.yml`) — chạy tay trên máy dev, phản hồi nhanh trước khi push, chưa wire
   vào CI.
 
-### DAST — OWASP ZAP (chạy tay, không CI)
+### DAST — OWASP ZAP
 
 Cả 3 bộ trên đều là test nhắm đúng bug/invariant đã biết trước — không cover rộng kiểu OWASP Top
 10 (injection payload theo từng field, header thiếu, v.v). `metap`'s router hoàn toàn
@@ -113,8 +125,19 @@ APP=jira TENANT_ID=<uuid> USER_ID=<uuid> ./testing/security/zap/run.sh   # jira-
 
 Script chỉ orchestration mỏng (mint token qua `dev-tools mint-token` có sẵn, tự inject
 `Authorization: Bearer` vào mọi request ZAP bắn qua ZAP replacer rule, `docker run
-zaproxy/zap-stable`) — không có logic scan nào tự viết. Report HTML ra
-`testing/security/zap/reports/` (gitignored). Công cụ tay, **không** wire CI — chạy trước khi push
-thay đổi lớn liên quan tới route/auth, không phải gate tự động. Không thay thế 4 bộ test tenant-
-isolation/JWT/RBAC-ABAC ở trên — ZAP không hiểu multi-tenant ABAC/workflow guard của app này,
-đây chỉ là lớp phủ rộng bổ sung cho các lỗ hổng web chung chung.
+zaproxy/zap-stable`) — không có logic scan nào tự viết. Report HTML+JSON ra
+`testing/security/zap/reports/` (gitignored). Chạy tay trước khi push thay đổi lớn liên quan tới
+route/auth vẫn dùng được y nguyên. **Giờ cũng có bản CI report-only** (2026-09-19,
+`.github/workflows/pentest.yml`) — `workflow_dispatch`/cron hàng tuần (`baseline` mode nhanh, `api`
+mode đầy đủ chỉ khi trigger tay), không bao giờ block build, chỉ đăng bảng alert-theo-risk-level
+vào step summary + upload report làm artifact. Không thay thế 4 bộ test tenant-isolation/JWT/
+RBAC-ABAC ở trên — ZAP không hiểu multi-tenant ABAC/workflow guard của app này, đây chỉ là lớp
+phủ rộng bổ sung cho các lỗ hổng web chung chung.
+
+## Disruptive (chaos)
+
+Trụ thứ 4, mới thêm 2026-09-19 — trước đó không tồn tại. Real fault injection (`docker stop`/
+`start`/`pause` container thật giữa lúc test chạy) chứng minh resilience code đã có
+(`run_resilient_consumer`, `metap-outbox-publisher`'s reconnect) thật sự hoạt động, không chỉ đúng
+trong unit test với mock. Chi tiết đầy đủ (triết lý, bảng kịch bản, cách chạy tay, CI):
+[`disruptive/README.md`](disruptive/README.md).

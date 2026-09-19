@@ -35,10 +35,19 @@ CONCURRENCY="${CONCURRENCY:-20}"
 TENANT_ID="${TENANT_ID:-00000000-0000-0000-0000-000000000001}"
 USER_ID="${USER_ID:-00000000-0000-0000-0000-000000000002}"
 
-echo "=== seed admin + mint dev token ==="
-cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- seed-admin "$TENANT_ID" "$USER_ID" >/dev/null
-TOKEN=$(cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)
-echo "✓ token minted"
+# A caller that already has a real provisioned tenant/admin (e.g. .github/workflows/performance.yml
+# provisioning a real DedicatedDb jira tenant via `dev-tools provision-tenant`, not this repo's
+# own shared dev registry) passes a pre-minted TOKEN directly — seed-admin below assumes the
+# platform's own shared tenant registry, which a DedicatedDb tenant's admin was never written
+# into, so re-running it for that tenant_id would be at best redundant and at worst confusing.
+if [ -z "${TOKEN:-}" ]; then
+  echo "=== seed admin + mint dev token ==="
+  cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- seed-admin "$TENANT_ID" "$USER_ID" >/dev/null
+  TOKEN=$(cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)
+  echo "✓ token minted"
+else
+  echo "✓ using pre-minted TOKEN (caller already provisioned a real tenant/admin)"
+fi
 
 COMMON_ENV=(
   -e "BASE_URL=$BASE_URL"

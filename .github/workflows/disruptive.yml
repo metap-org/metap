@@ -1,0 +1,65 @@
+name: Disruptive (chaos)
+
+# Runs the 3 v1 chaos tests (real docker stop/start/pause against this workspace's own dev
+# containers — see testing/disruptive/README.md for the full scenario table and the "only ever
+# our own containers, never shared/production infra" rule):
+#   - crates/metap-outbox-publisher/tests/chaos_postgres.rs
+#   - crates/metap-infra/tests/chaos_rabbitmq.rs
+#   - crates/metap-control/tests/chaos_postgres.rs
+#
+# Unlike performance.yml/pentest.yml, this is **not** report-only — these are deterministic
+# pass/fail assertions about a real resilience invariant (does reconnect-with-backoff actually
+# work), not a noisy number needing human judgment, so a real failure here is a real signal worth
+# a red workflow run. Still never on push/PR (`workflow_dispatch` + weekly cron only) — real
+# fault injection is slow (~2 minutes across all 3: 10-60s of induced downtime each) and, by
+# definition, briefly breaks something on purpose, not something to run on every commit.
+#
+# Uses `docker compose up -d` as an explicit step (not GitHub Actions' `services:` block) — the
+# chaos tests themselves shell out to `docker stop`/`start`/`pause` by container *name*
+# (`metap-postgres-1`/`metap-rabbitmq-1`, Compose's own default naming), which only exist when
+# Compose itself started them; a `services:` block container has a different, less predictable
+# name and isn't a target these tests know how to find.
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC (after performance.yml/pentest.yml)
+
+jobs:
+  chaos:
+    name: Real fault injection (RabbitMQ + Postgres)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Start Postgres + RabbitMQ
+        run: |
+          docker compose up -d postgres rabbitmq
+          for _ in $(seq 1 30); do
+            docker exec metap-postgres-1 pg_isready -U metap && break
+            sleep 2
+          done
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: postgres://metap:metap@localhost:5433/metap
+        run: cargo run --release -p metap-db-migrate --locked
+
+      - name: Outbox publisher recovers after RabbitMQ outage
+        env:
+          DATABASE_URL: postgres://metap:metap@localhost:5433/metap
+          RABBITMQ_URL: amqp://metap:metap@localhost:5672
+        run: cargo test --release -p metap-outbox-publisher --test chaos_postgres --locked -- --ignored --nocapture
+
+      - name: Resilient consumer reconnects after RabbitMQ outage
+        env:
+          RABBITMQ_URL: amqp://metap:metap@localhost:5672
+        run: cargo test --release -p metap-infra --test chaos_rabbitmq --locked -- --ignored --nocapture
+
+      - name: Dedicated-tenant request fails cleanly when its Postgres is paused
+        env:
+          DATABASE_URL: postgres://metap:metap@localhost:5433/metap
+        run: cargo test --release -p metap-control --test chaos_postgres --locked -- --ignored --nocapture

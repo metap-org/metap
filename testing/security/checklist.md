@@ -126,12 +126,17 @@ mới 2026-09-19"** là viết cùng lúc với feature trong lần rà này (co
   deployment đang chạy theo cách không tenant nào chọn được — xem `metap-oauth-server`'s doc comment
   đầu file.
 
-## Công cụ bổ sung (không phải regression test, không CI)
+## Công cụ bổ sung (không phải regression test)
 
 - **OWASP ZAP (DAST)** — `testing/security/zap/run.sh`, xem `testing/README.md`'s mục "DAST —
   OWASP ZAP". Cover rộng kiểu OWASP Top 10 (injection/header/v.v) bằng cách import
   `/metadata/openapi.json` — không hiểu multi-tenant ABAC/workflow của app này, không thay thế
-  các hàng ở trên.
+  các hàng ở trên. **Giờ có bản CI report-only** (2026-09-19,
+  `.github/workflows/pentest.yml`) — `workflow_dispatch`/cron hàng tuần (`baseline` mode nhanh),
+  không bao giờ block build, chỉ đăng bảng alert-theo-risk-level vào step summary + upload
+  report HTML/JSON làm artifact. Nhắm vào `metap-demo-jira` (tham chiếu đầu tiên qua
+  `testing/apps/jira.env` — không phải `metap-demo-crm`, đã deprecated). Vẫn không thay thế 4 bộ
+  test tenant-isolation/JWT/RBAC-ABAC/audit ở trên — báo hiệu song song, không phải phủ nhau.
 
 ## Không thay thế review thủ công
 
