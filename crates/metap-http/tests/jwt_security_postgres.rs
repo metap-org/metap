@@ -8,7 +8,6 @@ use std::process::Command;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use axum::Router;
 use jsonwebtoken::DecodingKey;
 use metap_http::{build_router, AppState};
 use metap_metadata::{EntityDefinition, EntityField, EntityListView, FieldKind, MetadataRegistry};
@@ -186,7 +185,8 @@ async fn boot_server(tenant_id: Uuid, user_id: Uuid) -> TestServer {
         private_pem.clone(),
         test_router(pool.clone()),
     );
-    let router = build_router(state, &["http://localhost:5173".to_string()], Router::new());
+    let graphql_routes = metap_graphql_http::router(&state, metap_graphql::SchemaLimits::default()).unwrap();
+    let router = build_router(state, &["http://localhost:5173".to_string()], graphql_routes);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -236,7 +236,8 @@ async fn missing_token_is_rejected() {
     let server = boot_server(tenant_id, user_id).await;
 
     let res = reqwest::Client::new()
-        .get(format!("{}/api/test.jwt_orders", server.base))
+        .post(format!("{}/graphql", server.base))
+        .json(&json!({ "query": "{ testJwtOrdersList { records { id } } }" }))
         .send()
         .await
         .unwrap();
@@ -261,8 +262,9 @@ async fn expired_token_is_rejected() {
     tokio::time::sleep(std::time::Duration::from_secs(25)).await;
 
     let res = reqwest::Client::new()
-        .get(format!("{}/api/test.jwt_orders", server.base))
+        .post(format!("{}/graphql", server.base))
         .bearer_auth(&token)
+        .json(&json!({ "query": "{ testJwtOrdersList { records { id } } }" }))
         .send()
         .await
         .unwrap();
@@ -291,8 +293,9 @@ async fn tampered_signature_is_rejected() {
     let tampered = parts.join(".");
 
     let res = reqwest::Client::new()
-        .get(format!("{}/api/test.jwt_orders", server.base))
+        .post(format!("{}/graphql", server.base))
         .bearer_auth(&tampered)
+        .json(&json!({ "query": "{ testJwtOrdersList { records { id } } }" }))
         .send()
         .await
         .unwrap();
@@ -315,8 +318,9 @@ async fn token_signed_by_a_different_key_is_rejected() {
     let forged = mint_token_ttl(&attacker_private_pem, tenant_id, user_id, 3600);
 
     let res = reqwest::Client::new()
-        .get(format!("{}/api/test.jwt_orders", server.base))
+        .post(format!("{}/graphql", server.base))
         .bearer_auth(&forged)
+        .json(&json!({ "query": "{ testJwtOrdersList { records { id } } }" }))
         .send()
         .await
         .unwrap();
@@ -348,39 +352,51 @@ async fn a_valid_token_for_one_tenant_cannot_read_another_tenants_record() {
     let token_b = mint_token_ttl(&server.private_pem, tenant_b, user_b, 3600);
 
     let client = reqwest::Client::new();
-    let create_res = client
-        .post(format!("{}/api/test.jwt_orders", server.base))
+    let create_res: serde_json::Value = client
+        .post(format!("{}/graphql", server.base))
         .bearer_auth(&token_a)
-        .json(&json!({ "data": { "name": "tenant-a-secret" } }))
+        .json(&json!({
+            "query": "mutation($data: Json!) { createTestJwtOrders(data: $data) { id } }",
+            "variables": { "data": { "name": "tenant-a-secret" } },
+        }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(create_res.status(), 201);
-    let created: serde_json::Value = create_res.json().await.unwrap();
-    let id = created["data"]["id"].as_str().unwrap();
+    assert!(create_res.get("errors").is_none(), "unexpected errors: {create_res:?}");
+    let id = create_res["data"]["createTestJwtOrders"]["id"].as_str().unwrap();
 
-    let get_as_b = client
-        .get(format!("{}/api/test.jwt_orders/{id}", server.base))
+    let get_as_b: serde_json::Value = client
+        .post(format!("{}/graphql", server.base))
         .bearer_auth(&token_b)
+        .json(&json!({ "query": format!(r#"{{ testJwtOrders(id: "{id}") {{ id }} }}"#) }))
         .send()
+        .await
+        .unwrap()
+        .json()
         .await
         .unwrap();
     assert_eq!(
-        get_as_b.status(),
+        get_as_b["errors"][0]["extensions"]["status"],
         404,
         "tenant B must not be able to fetch tenant A's record by id"
     );
 
-    let list_as_b = client
-        .get(format!("{}/api/test.jwt_orders", server.base))
+    let list_as_b: serde_json::Value = client
+        .post(format!("{}/graphql", server.base))
         .bearer_auth(&token_b)
+        .json(&json!({ "query": "{ testJwtOrdersList { records { id } } }" }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(list_as_b.status(), 200);
-    let listed: serde_json::Value = list_as_b.json().await.unwrap();
+    assert!(list_as_b.get("errors").is_none(), "unexpected errors: {list_as_b:?}");
     assert_eq!(
-        listed["data"].as_array().map(|a| a.len()),
+        list_as_b["data"]["testJwtOrdersList"]["records"].as_array().map(|a| a.len()),
         Some(0),
         "tenant B's list must not include tenant A's record"
     );
@@ -430,9 +446,10 @@ async fn basic_auth_rejects_a_declared_tenant_that_does_not_match_the_users_real
     // Correct password, but declaring tenant B (not this user's real tenant A) — must be
     // rejected, not silently authenticated as tenant B.
     let cross_tenant = client
-        .get(format!("{}/api/test.jwt_orders", server.base))
+        .post(format!("{}/graphql", server.base))
         .basic_auth(&email, Some(password))
         .header("X-Tenant-Id", tenant_b.to_string())
+        .json(&json!({ "query": "{ testJwtOrdersList { records { id } } }" }))
         .send()
         .await
         .unwrap();
@@ -445,9 +462,10 @@ async fn basic_auth_rejects_a_declared_tenant_that_does_not_match_the_users_real
     // Sanity: the same credential against its *real* tenant still works — the fix must not have
     // broken the legitimate path.
     let same_tenant = client
-        .get(format!("{}/api/test.jwt_orders", server.base))
+        .post(format!("{}/graphql", server.base))
         .basic_auth(&email, Some(password))
         .header("X-Tenant-Id", tenant_a.to_string())
+        .json(&json!({ "query": "{ testJwtOrdersList { records { id } } }" }))
         .send()
         .await
         .unwrap();

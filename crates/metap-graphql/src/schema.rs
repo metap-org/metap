@@ -331,14 +331,13 @@ fn add_query_fields(mut query: Object, entity_name: &str, type_name: &str, conne
 }
 
 /// One static field, not per-entity (unlike `add_query_fields`) — `aggregate` is generic over
-/// *which* entity via its own `entity` argument, the same way `POST /api/{entity}/aggregate`
-/// (REST) and the `Aggregate` RPC (gRPC) are one endpoint for every entity rather than one per
-/// entity. Added 2026-09-04 alongside `RecordBackend::aggregate` (that method's own doc comment
-/// has the full backstory — this was the one transport still missing it).
+/// *which* entity via its own `entity` argument, the same way gRPC's `Aggregate` RPC is one
+/// endpoint for every entity rather than one per entity. Added 2026-09-04 alongside
+/// `RecordBackend::aggregate` (that method's own doc comment has the full backstory — this was
+/// the one transport still missing it).
 ///
-/// Returns the `Json` scalar wrapped as `{"data": [...]}`, matching REST's exact response
-/// envelope (`crates/metap-http/src/routes/records.rs`'s `aggregate_records`) — a caller that
-/// already knows how to read one transport's aggregate response can read the other's identically.
+/// Returns the `Json` scalar wrapped as `{"data": [...]}` — a caller that already knows how to
+/// read gRPC's aggregate response can read GraphQL's identically.
 fn add_aggregate_field(mut query: Object) -> Object {
     query = query.field(
         Field::new("aggregate", TypeRef::named_nn(JSON_SCALAR), |ctx| {

@@ -1,6 +1,6 @@
 //! Builds a `metap_query::ListInput` from a `{camel}List` field's arguments — the GraphQL
-//! counterpart to REST's `parse_list_input` (`crates/metap-http/src/routes/records.rs`) and
-//! `metap-grpc`'s `list_input_from_query`. Same defaults (limit 30, max 200).
+//! counterpart to `metap-grpc`'s `list_input_from_query`, the other transport entity access goes
+//! through. Same defaults (limit 30, max 200).
 
 use async_graphql::dynamic::ObjectAccessor;
 use async_graphql::Error as GqlError;

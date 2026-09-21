@@ -16,6 +16,16 @@ metap-runtime = { path = "../metap-runtime" }
 metap-control = { path = "../metap-control" }
 metap-cron = { path = "../metap-cron" }
 metap-infra = { path = "../metap-infra" }
+# `workflow_transition`/`bulk_query_action` targets call back into the owning app's entity CRUD
+# over gRPC (`metap-grpc::client::GrpcBackend`) now that `metap-http` no longer serves a REST
+# `/api/:entity*` surface for them to call instead — see `executor/workflow_transition.rs`'s doc
+# comment. `metap-crud`/`metap-permission`/`metap-query` are `RecordBackend`/`RequestContext`/
+# `ListInput`'s home crates, both already a `GrpcBackend` dependency, so this adds no new edge
+# beyond the one `metap-grpc` itself already needs.
+metap-grpc = { path = "../metap-grpc" }
+metap-crud = { path = "../metap-crud" }
+metap-permission = { path = "../metap-permission" }
+metap-query = { path = "../metap-query" }
 anyhow.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal", "net"] }
 sqlx = { workspace = true, features = [

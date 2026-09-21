@@ -55,3 +55,10 @@ chrono.workspace = true
 # lives in `metap-control`, which this crate already depends on.
 async-trait.workspace = true
 secrecy.workspace = true
+# `tests/http_server.rs` mounts `/graphql` as a downstream binary would (`extra_routes`) since
+# entity CRUD is GraphQL-only now (no more REST `routes::records` — see this crate's own
+# `CLAUDE.md` bullet). Dev-only: `metap-graphql-http` depends on this crate normally, so a
+# non-dev dependency here would be a real cycle; as dev-dependencies they aren't, since building
+# this crate as a library never needs its own test targets.
+metap-graphql = { path = "../metap-graphql" }
+metap-graphql-http = { path = "../metap-graphql-http" }

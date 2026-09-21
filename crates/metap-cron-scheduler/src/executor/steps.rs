@@ -42,7 +42,6 @@ struct StepsConfig {
 /// for a failure *after* a resume).
 pub(crate) async fn run_steps(
     pool: &PgPool,
-    http: &reqwest::Client,
     config: &ExecutorConfig,
     payload: &CronJobDuePayload,
 ) -> anyhow::Result<DispatchOutcome> {
@@ -60,7 +59,7 @@ pub(crate) async fn run_steps(
     )
     .await?;
 
-    run_step_range(pool, http, config, payload, workflow_run_id, &cfg.steps, 0).await
+    run_step_range(pool, config, payload, workflow_run_id, &cfg.steps, 0).await
 }
 
 /// Runs `steps[start_index..]` in order against an already-existing `workflow_run_id` — shared
@@ -68,10 +67,8 @@ pub(crate) async fn run_steps(
 /// picking back up right after its `wait_event` step). Pulled out separately so pausing again on
 /// a *second* `wait_event` step later in the same chain works identically whether this is the
 /// chain's first run or a resume — the loop doesn't know or care which.
-#[allow(clippy::too_many_arguments)]
 async fn run_step_range(
     pool: &PgPool,
-    http: &reqwest::Client,
     config: &ExecutorConfig,
     payload: &CronJobDuePayload,
     workflow_run_id: Uuid,
@@ -93,7 +90,7 @@ async fn run_step_range(
             return Ok(DispatchOutcome::Waiting);
         }
 
-        let step_result = run_one_step(http, config, payload, step).await;
+        let step_result = run_one_step(config, payload, step).await;
         match step_result {
             Ok(value) => {
                 if let Err(err) = advance_workflow_run(pool, workflow_run_id, step_index, &value).await {
@@ -129,12 +126,7 @@ async fn run_step_range(
 /// failure, goes through `finish_run_with_retry` exactly like a first-run failure — the chain
 /// retries from step 0 on the next attempt, not from wherever it paused; there's no
 /// resume-aware retry here, deliberately (`TargetType::WaitEvent`'s doc comment).
-pub async fn resume_steps(
-    pool: &PgPool,
-    http: &reqwest::Client,
-    config: &ExecutorConfig,
-    resumed: &ResumedWorkflowRun,
-) {
+pub async fn resume_steps(pool: &PgPool, config: &ExecutorConfig, resumed: &ResumedWorkflowRun) {
     let payload = CronJobDuePayload {
         run_id: resumed.cron_job_run_id,
         job_id: resumed.job_id,
@@ -159,7 +151,6 @@ pub async fn resume_steps(
 
     let outcome = run_step_range(
         pool,
-        http,
         config,
         &payload,
         resumed.workflow_run_id,
@@ -197,15 +188,10 @@ pub async fn resume_steps(
 /// one — a step has no `run_id`/trigger context of its own): `run_webhook`/`run_email` get the
 /// chain's real `job_id`/`run_id`/trigger fields, same as they'd see running as a standalone
 /// (non-chained) job for that same firing.
-async fn run_one_step(
-    http: &reqwest::Client,
-    config: &ExecutorConfig,
-    chain: &CronJobDuePayload,
-    step: &Activity,
-) -> anyhow::Result<Value> {
+async fn run_one_step(config: &ExecutorConfig, chain: &CronJobDuePayload, step: &Activity) -> anyhow::Result<Value> {
     match TargetType::parse(&step.target_type) {
-        Some(TargetType::WorkflowTransition) => run_workflow_transition(http, config, &step.target_config).await,
-        Some(TargetType::BulkQueryAction) => run_bulk_query_action(http, config, &step.target_config).await,
+        Some(TargetType::WorkflowTransition) => run_workflow_transition(config, &step.target_config).await,
+        Some(TargetType::BulkQueryAction) => run_bulk_query_action(config, &step.target_config).await,
         Some(TargetType::Webhook) => {
             // The chain's own tenant, exactly as a standalone webhook job would use its row's —
             // a step inside a chain gets no different credential reach than one outside it.

@@ -20,7 +20,6 @@ pub struct TickerConfig {
 
 pub async fn run_ticker(
     pool: &PgPool,
-    http: &reqwest::Client,
     executor_config: &ExecutorConfig,
     config: TickerConfig,
     shutdown: impl std::future::Future<Output = ()>,
@@ -34,7 +33,7 @@ pub async fn run_ticker(
                 tracing::info!("shutdown signal received, exiting ticker");
                 return Ok(());
             }
-            result = tick(pool, http, executor_config, config.batch_size) => {
+            result = tick(pool, executor_config, config.batch_size) => {
                 result?;
             }
         }
@@ -50,12 +49,7 @@ pub async fn run_ticker(
     }
 }
 
-async fn tick(
-    pool: &PgPool,
-    http: &reqwest::Client,
-    executor_config: &ExecutorConfig,
-    batch_size: i64,
-) -> anyhow::Result<()> {
+async fn tick(pool: &PgPool, executor_config: &ExecutorConfig, batch_size: i64) -> anyhow::Result<()> {
     let due = metap_cron::claim_due_jobs(pool, chrono::Utc::now(), batch_size).await?;
     if due.claimed > 0 {
         tracing::info!(
@@ -64,7 +58,7 @@ async fn tick(
             "cron ticker claimed due jobs"
         );
     }
-    run_direct_jobs(pool, http, executor_config, due.direct_jobs).await;
+    run_direct_jobs(pool, executor_config, due.direct_jobs).await;
 
     // Retries scheduled by a prior failed attempt (`finish_run_with_retry`) — same claim/dispatch
     // shape as `claim_due_jobs`, just sourced from `cron_job_runs` instead of `cron_jobs`.
@@ -76,7 +70,7 @@ async fn tick(
             "cron ticker claimed due retries"
         );
     }
-    run_direct_jobs(pool, http, executor_config, retries.direct_jobs).await;
+    run_direct_jobs(pool, executor_config, retries.direct_jobs).await;
 
     Ok(())
 }
@@ -85,12 +79,7 @@ async fn tick(
 // slow direct job delays the next tick's claim, which is the fire-and-forget tradeoff this
 // dispatch mode signs up for (see `metap_cron::DispatchMode`'s doc comment); a job that can't
 // tolerate that delay should use `DispatchMode::Outbox` instead.
-async fn run_direct_jobs(
-    pool: &PgPool,
-    http: &reqwest::Client,
-    executor_config: &ExecutorConfig,
-    direct_jobs: Vec<ClaimedDirectJob>,
-) {
+async fn run_direct_jobs(pool: &PgPool, executor_config: &ExecutorConfig, direct_jobs: Vec<ClaimedDirectJob>) {
     for direct_job in direct_jobs {
         let payload = CronJobDuePayload {
             run_id: direct_job.run_id,
@@ -105,6 +94,6 @@ async fn run_direct_jobs(
             trigger_record_id: direct_job.trigger_record_id,
             trigger_entity: direct_job.trigger_entity,
         };
-        execute(pool, http, executor_config, &payload).await;
+        execute(pool, executor_config, &payload).await;
     }
 }

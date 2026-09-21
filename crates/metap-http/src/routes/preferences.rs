@@ -1,6 +1,8 @@
 //! Self-service `GET`/`PUT` for the caller's own `metap_peripherals::preferences` row — the
-//! backend half of i18n (`docs/roadmap.md` Phase 14). A separate top-level path (not
-//! `/api/preferences`) so it can't collide with `routes::records`' `/api/{entity}` wildcard.
+//! backend half of i18n (`docs/roadmap.md` Phase 14). A separate top-level path (`/preferences`,
+//! not `/api/preferences`) originally so it couldn't collide with the now-removed REST
+//! `routes::records`'s `/api/{entity}` wildcard — kept unchanged since removing that route left
+//! no reason to move this one.
 
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};

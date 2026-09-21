@@ -1,10 +1,14 @@
 //! Consumes `cron.job.due` (`crates/metap-cron`'s `ROUTING_KEY`) and actually runs the job.
-//! `workflow_transition`/`bulk_query_action` call back into the owning `crm-server`'s own
-//! `/api/:entity/...` HTTP surface — reusing its permission checks, field validation,
-//! optimistic-locking, and workflow audit trail for free — rather than this binary linking
-//! `metap-crud`/`metap-metadata` directly, which would give an ops binary business-entity
-//! knowledge (`CLAUDE.md`'s boundary rules forbid that). `webhook` calls an arbitrary
-//! external URL instead.
+//! `workflow_transition`/`bulk_query_action` call back into the owning app's own entity CRUD via
+//! `metap-grpc::client::GrpcBackend` (`config.target_grpc_backend`) — reusing its permission
+//! checks, field validation, optimistic-locking, and workflow audit trail for free — rather than
+//! this binary linking `metap-crud`/`metap-metadata` directly, which would give an ops binary
+//! business-entity knowledge (`CLAUDE.md`'s boundary rules forbid that). **Moved off REST
+//! 2026-09-21**: `metap-http` no longer serves a generic `/api/:entity*` CRUD surface for this to
+//! call (GraphQL-only for entity access now — see `metap-http`'s own `CLAUDE.md` bullet), and
+//! `RecordBackend`/`GrpcBackend` is the exact same client `metap-graphql-gateway` already uses for
+//! the identical purpose, not new surface built for this crate alone. `webhook` calls an
+//! arbitrary external URL instead.
 //!
 //! Split into one file per `TargetType` (`workflow_transition`/`webhook`/`email`) plus
 //! `config` (`ExecutorConfig`/`SmtpConfig`), `dispatch` (the consume loop and per-`TargetType`

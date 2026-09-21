@@ -10,67 +10,6 @@
 
 use serde_json::{json, Value};
 
-use crate::entity::{EntityField, FieldKind};
-use crate::registry::EntitySummary;
-
-fn field_kind_json_schema(kind: FieldKind) -> Value {
-    match kind {
-        FieldKind::Id => json!({ "type": "string" }),
-        FieldKind::String => json!({ "type": "string" }),
-        FieldKind::Number => json!({ "type": "number" }),
-        FieldKind::Boolean => json!({ "type": "boolean" }),
-        FieldKind::Date => json!({ "type": "string", "format": "date" }),
-        FieldKind::Datetime => json!({ "type": "string", "format": "date-time" }),
-        FieldKind::Money => json!({ "type": "number" }),
-        FieldKind::Enum => json!({ "type": "string" }),
-        FieldKind::Reference => json!({ "type": "string" }),
-        FieldKind::Json => json!({}),
-    }
-}
-
-fn field_schema(field: &EntityField) -> Value {
-    if matches!(field.kind, FieldKind::Enum) {
-        return json!({
-            "type": "string",
-            "enum": field.enum_values.clone().unwrap_or_default(),
-        });
-    }
-    let mut schema = field_kind_json_schema(field.kind);
-    if let Value::Object(map) = &mut schema {
-        if let Some(min) = field.min {
-            map.insert("minimum".to_string(), json!(min));
-        }
-        if let Some(max) = field.max {
-            map.insert("maximum".to_string(), json!(max));
-        }
-        if let Some(min_length) = field.min_length {
-            map.insert("minLength".to_string(), json!(min_length));
-        }
-        if let Some(max_length) = field.max_length {
-            map.insert("maxLength".to_string(), json!(max_length));
-        }
-    }
-    schema
-}
-
-fn entity_schema(entity: &EntitySummary) -> Value {
-    let mut properties = serde_json::Map::new();
-    for field in &entity.fields {
-        properties.insert(field.name.clone(), field_schema(field));
-    }
-    let required: Vec<&str> = entity
-        .fields
-        .iter()
-        .filter(|f| f.required.unwrap_or(false))
-        .map(|f| f.name.as_str())
-        .collect();
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-    })
-}
-
 /// `pub` (unlike the rest of this file's schema builders) so `metap-lowcode-http` can describe
 /// its draft/publish/export/import request-and-response bodies — which embed
 /// `Vec<EntityField>`/`Vec<EntityListView>`/`Option<EntityWorkflow>` verbatim, the same wire
@@ -237,7 +176,14 @@ fn entity_audit_config_json_schema() -> Value {
     })
 }
 
-pub fn generate_openapi_document(entities: &[EntitySummary]) -> Value {
+/// `/metadata/*`'s own static paths, plus the `EntitySummary` component schema every one of them
+/// can reference. **No longer takes an `entities: &[EntitySummary]` parameter** (removed
+/// 2026-09-21) — this used to also generate a per-entity `/api/{entity}*` CRUD path block
+/// (list/create/get/update/delete/transition), dropped alongside `metap-http`'s REST
+/// `/api/:entity*` surface itself (entity access is GraphQL-only now — see that crate's own
+/// `CLAUDE.md` bullet). `/graphql/schema.graphql` (`metap-graphql-http`) is that API's own
+/// schema-discovery equivalent, not this document.
+pub fn generate_openapi_document() -> Value {
     let mut paths = serde_json::Map::new();
 
     paths.insert(
@@ -314,95 +260,6 @@ pub fn generate_openapi_document(entities: &[EntitySummary]) -> Value {
         }),
     );
 
-    for entity in entities {
-        let schema = entity_schema(entity);
-        let list_path = format!("/api/{}", entity.name);
-        let item_path = format!("/api/{}/{{id}}", entity.name);
-
-        paths.insert(
-            list_path,
-            json!({
-                "get": {
-                    "summary": format!("List {}", entity.label),
-                    "responses": { "200": { "description": "OK" } },
-                },
-                "post": {
-                    "summary": format!("Create {}", entity.label),
-                    "requestBody": {
-                        "content": {
-                            "application/json": { "schema": { "type": "object", "properties": { "data": schema } } },
-                        },
-                    },
-                    "responses": { "201": { "description": "Created" } },
-                },
-            }),
-        );
-
-        paths.insert(
-            item_path,
-            json!({
-                "get": {
-                    "summary": format!("Get one {}", entity.label),
-                    "responses": {
-                        "200": {
-                            "description": "OK",
-                            "content": {
-                                "application/json": {
-                                    "schema": { "type": "object", "properties": { "data": schema.clone() } },
-                                },
-                            },
-                        },
-                        "404": { "description": "Not found" },
-                    },
-                },
-                "patch": {
-                    "summary": format!("Update {}", entity.label),
-                    "requestBody": {
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": { "version": { "type": "number" }, "data": schema.clone() },
-                                },
-                            },
-                        },
-                    },
-                    "responses": { "200": { "description": "OK" } },
-                },
-                "delete": {
-                    "summary": format!("Delete {}", entity.label),
-                    "requestBody": {
-                        "content": {
-                            "application/json": {
-                                "schema": { "type": "object", "properties": { "version": { "type": "number" } } },
-                            },
-                        },
-                    },
-                    "responses": { "200": { "description": "OK" } },
-                },
-            }),
-        );
-
-        if entity.workflow.is_some() {
-            paths.insert(
-                format!("/api/{}/{{id}}/transitions/{{action}}", entity.name),
-                json!({
-                    "post": {
-                        "summary": format!("Transition {}", entity.label),
-                        "requestBody": {
-                            "content": {
-                                "application/json": {
-                                    "schema": { "type": "object", "properties": { "version": { "type": "number" } } },
-                                },
-                            },
-                        },
-                        "responses": { "200": { "description": "OK" } },
-                    },
-                }),
-            );
-        }
-    }
-
     json!({
         "openapi": "3.1.0",
         "info": { "title": "Metap API", "version": "1.0.0" },
@@ -418,62 +275,15 @@ pub fn generate_openapi_document(entities: &[EntitySummary]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler;
-    use crate::entity::{EntityDefinition, EntityField, FieldKind};
 
     #[test]
-    fn generates_list_and_item_paths_per_entity() {
-        let entity = EntityDefinition {
-            name: "crm.customers".to_string(),
-            label: "Customer".to_string(),
-            table_name: "crm.customers".to_string(),
-            fields: vec![EntityField {
-                name: "name".to_string(),
-                label: "Name".to_string(),
-                kind: FieldKind::String,
-                required: Some(true),
-                indexed: None,
-                unique: None,
-                enum_values: None,
-                ref_entity: None,
-                ref_display_field: None,
-                searchable: None,
-                search_mode: None,
-                sortable: None,
-                storage: None,
-                min: None,
-                max: None,
-                min_length: None,
-                max_length: None,
-                computed: None,
-            }],
-            list_views: vec![],
-            workflow: None,
-            unique_constraints: vec![],
-            audit: None,
-        };
-        let summary = EntitySummary {
-            name: entity.name.clone(),
-            label: entity.label.clone(),
-            fields: entity.fields.clone(),
-            list_views: entity.list_views.clone(),
-            workflow: entity.workflow.clone(),
-            related_views: Vec::new(),
-            field_display_hints: Vec::new(),
-            unique_constraints: Vec::new(),
-            audit: None,
-            version: compiler::hash(&entity).unwrap(),
-        };
-        let doc = generate_openapi_document(&[summary]);
-        assert!(doc["paths"]["/api/crm.customers"]["post"].is_object());
-        assert!(doc["paths"]["/api/crm.customers/{id}"]["get"].is_object());
-        assert!(doc["paths"]["/api/crm.customers/{id}"]["patch"].is_object());
-        assert!(doc["paths"]["/api/crm.customers/{id}"]["delete"].is_object());
-        assert!(doc["paths"]["/api/crm.customers/{id}/transitions/{action}"].is_null());
-        assert_eq!(
-            doc["paths"]["/api/crm.customers"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-                ["properties"]["data"]["properties"]["name"]["type"],
-            "string"
-        );
+    fn only_the_static_metadata_paths_are_generated() {
+        let doc = generate_openapi_document();
+        assert!(doc["paths"]["/metadata/entities"]["get"].is_object());
+        assert!(doc["paths"]["/metadata/entities/{entity}"]["get"].is_object());
+        assert!(doc["paths"]["/metadata/actions"]["get"].is_object());
+        // No per-entity `/api/{entity}*` CRUD path — REST entity access is gone, this document
+        // no longer takes an `entities` list to generate one from at all.
+        assert_eq!(doc["paths"].as_object().unwrap().len(), 3);
     }
 }
