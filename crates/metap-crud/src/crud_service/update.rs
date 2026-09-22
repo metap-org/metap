@@ -149,6 +149,9 @@ impl CrudService {
         tx.commit().await?;
         tracing::info!(entity = entity.name, record_id = %record.id, version = record.version, "record updated");
 
+        self.invalidate_context_cache_if_configured(&entity.name, tenant_id, &data)
+            .await;
+
         self.record_audit(
             &entity,
             metap_audit::AuditEntry {

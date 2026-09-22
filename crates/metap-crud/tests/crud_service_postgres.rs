@@ -42,6 +42,7 @@ const CHILDREN_TABLE: &str = "entities.test_children";
 const GRANDCHILDREN_TABLE: &str = "entities.test_grandchildren";
 const NODES_TABLE: &str = "entities.test_nodes";
 const PEOPLE_TABLE: &str = "entities.test_people";
+const MEMBERSHIPS_TABLE: &str = "entities.test_memberships";
 
 fn test_entity() -> EntityDefinition {
     EntityDefinition {
@@ -666,6 +667,7 @@ async fn ensure_core_test_tables(pool: &PgPool) {
         GRANDCHILDREN_TABLE,
         NODES_TABLE,
         PEOPLE_TABLE,
+        MEMBERSHIPS_TABLE,
     ] {
         sqlx::query(&format!(
             "CREATE TABLE IF NOT EXISTS {table} (
@@ -727,7 +729,7 @@ fn admin_context(tenant_id: Uuid) -> RequestContext {
 
 /// Every core dedicated table this file's fixtures point at — see `ensure_core_test_tables`'s
 /// own doc comment.
-const CORE_TEST_TABLES: [&str; 7] = [
+const CORE_TEST_TABLES: [&str; 8] = [
     ORDERS_TABLE,
     AUDITED_ORDERS_TABLE,
     PARENTS_TABLE,
@@ -735,6 +737,7 @@ const CORE_TEST_TABLES: [&str; 7] = [
     GRANDCHILDREN_TABLE,
     NODES_TABLE,
     PEOPLE_TABLE,
+    MEMBERSHIPS_TABLE,
 ];
 
 async fn cleanup(pool: &PgPool, tenant_id: Uuid) {
@@ -3347,6 +3350,170 @@ async fn a_redacted_field_never_reaches_the_audit_table() {
     assert!(
         stored.iter().any(|d| d.contains("Sensitive order")),
         "control failed: a field not listed in redactedFields must still be recorded in full"
+    );
+
+    cleanup(&pool, tenant_id).await;
+}
+
+/// A minimal `AUTH_CONTEXT_ENTITY`-shaped entity — a membership record identified by its own
+/// `userId` field, same lookup key `metap_peripherals::fetch_context_attributes` queries by.
+fn membership_entity() -> EntityDefinition {
+    EntityDefinition {
+        name: "test.memberships".to_string(),
+        label: "Membership".to_string(),
+        table_name: MEMBERSHIPS_TABLE.to_string(),
+        fields: vec![
+            EntityField {
+                name: "userId".to_string(),
+                label: "User".to_string(),
+                kind: FieldKind::String,
+                required: Some(true),
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
+                computed: None,
+            },
+            EntityField {
+                name: "department".to_string(),
+                label: "Department".to_string(),
+                kind: FieldKind::String,
+                required: None,
+                indexed: None,
+                unique: None,
+                enum_values: None,
+                ref_entity: None,
+                ref_display_field: None,
+                searchable: None,
+                search_mode: None,
+                sortable: None,
+                storage: None,
+                min: None,
+                max: None,
+                min_length: None,
+                max_length: None,
+                computed: None,
+            },
+        ],
+        list_views: vec![metap_metadata::EntityListView {
+            name: "default".to_string(),
+            label: "Default".to_string(),
+            fields: vec![],
+            filters: vec![],
+            required_fields: vec![],
+            default_sort: None,
+            max_limit: 50,
+        }],
+        workflow: None,
+        unique_constraints: vec![],
+        audit: None,
+    }
+}
+
+/// Closes the gap `../CLAUDE.md`'s REST-entity-CRUD-removal note flags: automatic
+/// `AUTH_CONTEXT_ENTITY` cache invalidation used to live only inside the now-deleted REST
+/// `routes::records::update_record` handler — this proves `CrudService::with_context_invalidation`
+/// restores it for every transport (GraphQL/gRPC included, since they all go through this same
+/// `update()`), scoped to exactly the affected user, not a blanket cache flush.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn updating_the_configured_auth_context_entity_invalidates_only_the_affected_users_cache_entry() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let ctx = admin_context(tenant_id);
+    let member_user_id = Uuid::new_v4();
+    let other_user_id = Uuid::new_v4();
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(membership_entity()).unwrap();
+    let permissions = PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(pool.clone()))));
+    let cache = metap_control::ContextAttributesCache::new(std::time::Duration::from_secs(300));
+    let crud = CrudService::new(
+        test_router(pool.clone()),
+        std::sync::Arc::new(arc_swap::ArcSwap::new(std::sync::Arc::new(registry))),
+        std::sync::Arc::new(permissions),
+    )
+    .with_context_invalidation("test.memberships".to_string(), cache.clone());
+
+    let mut payload = JsonObject::new();
+    payload.insert("userId".to_string(), json!(member_user_id.to_string()));
+    payload.insert("department".to_string(), json!("eng"));
+    let created = match crud.create("test.memberships", &payload, &ctx, None).await.unwrap() {
+        ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    // Each user's own fetch-count, so a re-fetch (cache miss) is distinguishable from a hit
+    // without depending on cache internals.
+    let member_fetches = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let other_fetches = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    async fn warm(
+        cache: &metap_control::ContextAttributesCache,
+        tenant_id: Uuid,
+        user_id: Uuid,
+        counter: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let counter = counter.clone();
+        cache
+            .get_with(tenant_id, user_id, || async move {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(Some(serde_json::Map::new()))
+            })
+            .await
+            .unwrap();
+    }
+
+    warm(&cache, tenant_id, member_user_id, &member_fetches).await;
+    warm(&cache, tenant_id, other_user_id, &other_fetches).await;
+    assert_eq!(member_fetches.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(other_fetches.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Both still warm — a hit must not re-run the fetch closure.
+    warm(&cache, tenant_id, member_user_id, &member_fetches).await;
+    warm(&cache, tenant_id, other_user_id, &other_fetches).await;
+    assert_eq!(
+        member_fetches.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "still cached before the update"
+    );
+    assert_eq!(other_fetches.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Update the membership record (department change) — `userId` isn't part of this specific
+    // payload but is still present on the merged row, exactly the shape the removed REST handler
+    // used to cover.
+    let mut update_payload = JsonObject::new();
+    update_payload.insert("department".to_string(), json!("sales"));
+    crud.update(
+        "test.memberships",
+        created.id,
+        created.version,
+        &update_payload,
+        &ctx,
+        None,
+    )
+    .await
+    .unwrap();
+
+    warm(&cache, tenant_id, member_user_id, &member_fetches).await;
+    warm(&cache, tenant_id, other_user_id, &other_fetches).await;
+    assert_eq!(
+        member_fetches.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "updating the membership record must invalidate that user's cache entry"
+    );
+    assert_eq!(
+        other_fetches.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "an unrelated user's cache entry must not be touched"
     );
 
     cleanup(&pool, tenant_id).await;

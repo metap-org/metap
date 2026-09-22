@@ -57,6 +57,25 @@ pub struct CrudService {
     /// every existing deployment's behavior exactly; `with_audit` is the second, additive
     /// constructor a binary opts into, mirroring `PermissionService::with_cache`'s own shape.
     audit: Option<Arc<dyn metap_audit::AuditTrailStore>>,
+    /// Closes the gap `../CLAUDE.md`'s REST-entity-CRUD-removal note flags: automatic
+    /// `AUTH_CONTEXT_ENTITY` cache invalidation used to live only inside the now-deleted REST
+    /// `routes::records::update_record` handler, so a GraphQL/gRPC update to that entity has
+    /// always left `ContextAttributesCache` stale until its TTL or an explicit
+    /// `POST /admin/users/{userId}/context/invalidate`. `None` (via `new`/`with_audit`) preserves
+    /// every existing deployment's behavior exactly — see [`Self::with_context_invalidation`],
+    /// the additive opt-in. Chainable rather than a 3rd/4th fixed constructor (unlike `audit`
+    /// above) because it's genuinely orthogonal to `audit` and a fixed-constructor combinatorial
+    /// explosion (`new`/`with_audit`/`with_context_invalidation`/`with_audit_and_context_invalidation`)
+    /// isn't worth it for 2 independent opt-ins.
+    context_invalidation: Option<ContextInvalidationConfig>,
+}
+
+/// See [`CrudService::with_context_invalidation`]'s doc comment.
+struct ContextInvalidationConfig {
+    /// The entity name `AUTH_CONTEXT_ENTITY` resolves to (`AppState.auth_context_entity`'s
+    /// existing shape) — only an `update()` on *this* entity triggers invalidation.
+    entity_name: String,
+    cache: metap_control::ContextAttributesCache,
 }
 
 impl CrudService {
@@ -66,6 +85,7 @@ impl CrudService {
             metadata,
             permissions,
             audit: None,
+            context_invalidation: None,
         }
     }
 
@@ -84,7 +104,24 @@ impl CrudService {
             metadata,
             permissions,
             audit: Some(audit),
+            context_invalidation: None,
         }
+    }
+
+    /// Opt-in `AUTH_CONTEXT_ENTITY` cache invalidation — see [`ContextInvalidationConfig`]'s doc
+    /// comment for what this closes. Chainable onto either [`Self::new`] or [`Self::with_audit`]'s
+    /// result, e.g. `CrudService::new(router, metadata, permissions)
+    /// .with_context_invalidation(entity_name, context_attributes_cache)`; `cache` should be the
+    /// *same* `ContextAttributesCache` instance `AuthContext`/`resolve_request_context` reads
+    /// from (e.g. `AppState.context_attributes_cache.clone()` — cheap, shares the underlying
+    /// `moka` cache) — a separate instance would invalidate a cache nothing actually reads.
+    pub fn with_context_invalidation(
+        mut self,
+        entity_name: String,
+        cache: metap_control::ContextAttributesCache,
+    ) -> Self {
+        self.context_invalidation = Some(ContextInvalidationConfig { entity_name, cache });
+        self
     }
 
     fn get_entity(&self, entity_name: &str) -> Option<EntityDefinition> {
@@ -114,6 +151,33 @@ impl CrudService {
         if let Err(e) = store.record(tenant_id, entry).await {
             tracing::error!(entity = %entity.name, error = %e, "failed to record audit trail entry");
         }
+    }
+
+    /// No-ops unless `context_invalidation` is configured *and* `entity_name` matches its
+    /// `entity_name` — the common case (feature unused) pays nothing beyond 1-2 field reads,
+    /// mirroring `record_audit`'s shape. `data` must be the full, unmasked write payload (the
+    /// `AUTH_CONTEXT_ENTITY` record's own `userId` field is business data, unrelated to which
+    /// fields the *actor performing this update* can read back — reading it from a
+    /// permission-masked `RecordDto` instead could silently skip invalidation for an actor
+    /// without read access to `userId`, even though the write itself succeeded). Only ever
+    /// called from `update()`, same as the REST handler this restores parity with — a `delete()`
+    /// of an `AUTH_CONTEXT_ENTITY` record leaves a stale cache entry until its TTL, a known,
+    /// narrower gap than before this method existed at all, not a new one.
+    async fn invalidate_context_cache_if_configured(&self, entity_name: &str, tenant_id: Uuid, data: &JsonObject) {
+        let Some(config) = &self.context_invalidation else {
+            return;
+        };
+        if config.entity_name != entity_name {
+            return;
+        }
+        let Some(user_id) = data
+            .get("userId")
+            .and_then(Value::as_str)
+            .and_then(|s| Uuid::parse_str(s).ok())
+        else {
+            return;
+        };
+        config.cache.invalidate(tenant_id, user_id).await;
     }
 
     /// Cross-record permission conditions (`docs/roadmap.md`'s permission-review findings,

@@ -26,7 +26,10 @@ mod type_map;
 
 pub use composite_backend::CompositeBackend;
 pub use loader::{RecordKey, RecordLoader};
-pub use schema::{build_schema, build_schema_parts, with_request_data, SchemaLimits};
+pub use schema::{
+    build_schema, build_schema_parts, build_schema_parts_with_federation, build_schema_with_federation,
+    with_request_data, SchemaLimits,
+};
 pub use type_map::JSON_SCALAR;
 
 // Re-exported so a downstream binary only needs this crate, not a direct `async-graphql`

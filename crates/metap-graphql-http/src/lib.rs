@@ -27,7 +27,7 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::Router;
 use metap_crud::RecordBackend;
-use metap_graphql::{build_schema, with_request_data, Schema, SchemaLimits};
+use metap_graphql::{build_schema, build_schema_with_federation, with_request_data, Schema, SchemaLimits};
 use metap_http::auth::AuthContext;
 use metap_http::AppState;
 use metap_metadata::MetadataRegistry;
@@ -36,6 +36,11 @@ use tokio::sync::Mutex;
 struct SchemaHolder {
     backend: Arc<dyn RecordBackend>,
     limits: SchemaLimits,
+    /// Whether this holder builds/rebuilds with Apollo Federation support (`@key`/`_entities`) —
+    /// see `metap_graphql::build_schema_with_federation`'s doc comment. Fixed for the holder's
+    /// lifetime, same as `backend`/`limits` — a binary either mounts a federation-capable
+    /// `/graphql` or it doesn't, this never toggles mid-flight.
+    federation: bool,
     cached: Mutex<(Arc<MetadataRegistry>, Arc<Schema>)>,
 }
 
@@ -44,13 +49,28 @@ impl SchemaHolder {
         metadata: Arc<MetadataRegistry>,
         backend: Arc<dyn RecordBackend>,
         limits: SchemaLimits,
+        federation: bool,
     ) -> anyhow::Result<Self> {
-        let schema = Arc::new(build_schema(&metadata, backend.clone(), limits)?);
+        let schema = Arc::new(Self::build(&metadata, backend.clone(), limits, federation)?);
         Ok(Self {
             backend,
             limits,
+            federation,
             cached: Mutex::new((metadata, schema)),
         })
+    }
+
+    fn build(
+        metadata: &MetadataRegistry,
+        backend: Arc<dyn RecordBackend>,
+        limits: SchemaLimits,
+        federation: bool,
+    ) -> Result<Schema, async_graphql::dynamic::SchemaError> {
+        if federation {
+            build_schema_with_federation(metadata, backend, limits)
+        } else {
+            build_schema(metadata, backend, limits)
+        }
     }
 
     /// Returns the current schema, rebuilding first if `current_metadata` isn't the same `Arc`
@@ -61,7 +81,7 @@ impl SchemaHolder {
     async fn get(&self, current_metadata: &Arc<MetadataRegistry>) -> Arc<Schema> {
         let mut guard = self.cached.lock().await;
         if !Arc::ptr_eq(&guard.0, current_metadata) {
-            if let Ok(schema) = build_schema(current_metadata, self.backend.clone(), self.limits) {
+            if let Ok(schema) = Self::build(current_metadata, self.backend.clone(), self.limits, self.federation) {
                 *guard = (current_metadata.clone(), Arc::new(schema));
             }
         }
@@ -92,9 +112,31 @@ impl SchemaHolder {
 /// here — the single-service (in-process) case of the same seam the BFF gateway
 /// (`crates/metap-graphql-gateway`) uses a remote `GrpcBackend`/`CompositeBackend` for instead.
 pub fn router(state: &AppState, limits: SchemaLimits) -> anyhow::Result<Router<AppState>> {
+    router_with_federation(state, limits, false)
+}
+
+/// Same as [`router`], with Apollo Federation v2 subgraph support opt-in via `federation` — see
+/// `metap_graphql::build_schema_with_federation`'s doc comment for what that adds (`@key`/
+/// `_entities`) and `../metap-docs/docs/roadmap/91-graphql-federation-capability.md` for the
+/// full design. A binary decides this itself (typically
+/// `metap_runtime::env::flag_enabled("GRAPHQL_FEDERATION_ENABLED")` read in its own `main.rs`,
+/// same opt-in-via-env-var shape as `GRPC_ENABLED`) — this crate has no opinion on how the
+/// decision is made, only on how to build the schema once it is. **No binary in this
+/// organization's repos passes `true` here yet** — the capability exists, nothing has turned it
+/// on.
+pub fn router_with_federation(
+    state: &AppState,
+    limits: SchemaLimits,
+    federation: bool,
+) -> anyhow::Result<Router<AppState>> {
     let initial_metadata = state.metadata.load_full();
     let initial_backend: Arc<dyn RecordBackend> = state.crud.clone();
-    let holder = Arc::new(SchemaHolder::new(initial_metadata, initial_backend, limits)?);
+    let holder = Arc::new(SchemaHolder::new(
+        initial_metadata,
+        initial_backend,
+        limits,
+        federation,
+    )?);
     let sdl_holder = holder.clone();
 
     Ok(Router::new()

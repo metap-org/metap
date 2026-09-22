@@ -17,6 +17,7 @@
 //! into `async-graphql`'s dynamic schema builder — set from caller-supplied config (a per-
 //! deployment tuning knob), not hardcoded here.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_graphql::dataloader::DataLoader;
@@ -550,6 +551,34 @@ pub fn build_schema_parts(
     backend: Arc<dyn RecordBackend>,
     limits: SchemaLimits,
 ) -> (SchemaBuilder, Object, Object) {
+    build_schema_parts_inner(metadata, backend, limits, false)
+}
+
+/// Same as [`build_schema_parts`], plus Apollo Federation v2 subgraph support: every entity
+/// `Object` type gets `@key(fields: "id")` and the schema gains an `_entities`/`_service`
+/// resolver (`async-graphql`'s `dynamic` module supports Federation natively — `Object::key`/
+/// `SchemaBuilder::entity_resolver`, no separate cargo feature). This is what would let a future
+/// standalone `metap-lowcode` microservice (or any single-service binary mounting
+/// `metap-graphql-http`) be composed by a real Federation router (Apollo Router or equivalent)
+/// instead of `crates/metap-graphql-gateway`'s own hand-rolled upstream-stitching — that gateway
+/// is untouched by this and keeps working exactly as before; nothing currently calls this
+/// function with `true`, opt-in per binary via its own `main.rs` (see
+/// `crates/metap-graphql-http`'s `router_with_federation`). See
+/// `../metap-docs/docs/roadmap/91-graphql-federation-capability.md`.
+pub fn build_schema_parts_with_federation(
+    metadata: &MetadataRegistry,
+    backend: Arc<dyn RecordBackend>,
+    limits: SchemaLimits,
+) -> (SchemaBuilder, Object, Object) {
+    build_schema_parts_inner(metadata, backend, limits, true)
+}
+
+fn build_schema_parts_inner(
+    metadata: &MetadataRegistry,
+    backend: Arc<dyn RecordBackend>,
+    limits: SchemaLimits,
+    federation: bool,
+) -> (SchemaBuilder, Object, Object) {
     let entities = metadata.list_entities();
 
     let mut query = Object::new("Query");
@@ -560,13 +589,25 @@ pub fn build_schema_parts(
         .limit_depth(limits.depth)
         .limit_complexity(limits.complexity);
 
+    // `__typename` (GraphQL type name, e.g. "JiraProjects") -> entity name (e.g. "jira.projects")
+    // — only populated/consulted when `federation`, so a non-federation schema pays nothing here.
+    let mut type_to_entity: HashMap<String, String> = HashMap::new();
+
     for summary in &entities {
         let entity_name = &summary.name;
         let type_name = naming::type_name(entity_name);
         let connection_type_name = naming::connection_type_name(entity_name);
 
+        let mut entity_object = build_entity_object(metadata, entity_name);
+        if federation {
+            // Every entity's `RecordDto` envelope always has `id` (`add_envelope_fields`) — the
+            // one natural key every entity already has, no per-entity configuration needed.
+            entity_object = entity_object.key("id");
+            type_to_entity.insert(type_name.clone(), entity_name.clone());
+        }
+
         builder = builder
-            .register(build_entity_object(metadata, entity_name))
+            .register(entity_object)
             .register(build_connection_object(entity_name));
 
         query = add_query_fields(query, entity_name, &type_name, &connection_type_name);
@@ -574,6 +615,49 @@ pub fn build_schema_parts(
     }
 
     query = add_aggregate_field(query);
+
+    if federation {
+        builder = builder.entity_resolver(move |ctx| {
+            let type_to_entity = type_to_entity.clone();
+            FieldFuture::new(async move {
+                let backend = backend_from_ctx(&ctx);
+                let context = request_context_from_ctx(&ctx)?;
+                let representations = ctx.args.try_get("representations")?.list()?;
+                let mut values = Vec::with_capacity(representations.len());
+                for item in representations.iter() {
+                    let item = item.object()?;
+                    let typename = item.try_get("__typename")?.string()?;
+                    // Verified live (e2e, `graphql_schema_postgres.rs`): `async-graphql`'s
+                    // dynamic-module union resolution requires every list item to be
+                    // `FieldValue::WithType` — a bare `FieldValue::NULL` for a "not found"/
+                    // "forbidden" representation hits `resolve_list`'s fail-fast
+                    // `try_join_all` and errors the *entire* `_entities` call, not just that
+                    // list position (there is no library-level per-item-null path for a union
+                    // output today). So an unresolvable representation is a real `GqlError`
+                    // here, same shape `service_result_to_gql` already produces for every other
+                    // resolver in this file (`extensions.code`/`status`/`fieldErrors`) — a
+                    // caller sees exactly the same permission/not-found error
+                    // `Query.{camel}(id)` would give it for the same id, just surfaced through
+                    // `_entities` instead.
+                    let entity_name = type_to_entity
+                        .get(typename)
+                        .ok_or_else(|| GqlError::new(format!("federation: unknown entity type \"{typename}\"")))?;
+                    let id =
+                        Uuid::parse_str(item.try_get("id")?.string()?).map_err(|e| GqlError::new(e.to_string()))?;
+                    let result = backend
+                        .get(entity_name, id, context)
+                        .await
+                        .map_err(|e| GqlError::new(e.to_string()))?;
+                    let (dto, capabilities) = service_result_to_gql(result)?;
+                    values.push(
+                        FieldValue::owned_any(RecordHandle::from_dto_with_capabilities(dto, capabilities))
+                            .with_type(typename.to_string()),
+                    );
+                }
+                Ok(Some(FieldValue::list(values)))
+            })
+        });
+    }
 
     (builder, query, mutation)
 }
@@ -586,6 +670,17 @@ pub fn build_schema(
     limits: SchemaLimits,
 ) -> Result<Schema, SchemaError> {
     let (builder, query, mutation) = build_schema_parts(metadata, backend, limits);
+    builder.register(query).register(mutation).finish()
+}
+
+/// Same as [`build_schema`], with Federation support — see
+/// [`build_schema_parts_with_federation`]'s doc comment.
+pub fn build_schema_with_federation(
+    metadata: &MetadataRegistry,
+    backend: Arc<dyn RecordBackend>,
+    limits: SchemaLimits,
+) -> Result<Schema, SchemaError> {
+    let (builder, query, mutation) = build_schema_parts_with_federation(metadata, backend, limits);
     builder.register(query).register(mutation).finish()
 }
 
