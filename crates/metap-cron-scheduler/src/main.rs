@@ -120,7 +120,12 @@ async fn main() -> anyhow::Result<()> {
     let executor_connect = metap_infra::rabbitmq_connector(config.rabbitmq_url.clone());
     let trigger_connect = metap_infra::rabbitmq_connector(config.rabbitmq_url.clone());
 
-    let ticker = run_ticker(&pool, &executor_config, ticker_config, metap_runtime::shutdown::signal());
+    let ticker = run_ticker(
+        &pool,
+        &executor_config,
+        ticker_config,
+        metap_runtime::shutdown::signal(),
+    );
     let executor = run_executor(
         executor_connect,
         &pool,

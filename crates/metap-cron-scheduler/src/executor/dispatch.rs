@@ -140,7 +140,11 @@ pub(crate) enum DispatchOutcome {
     Waiting,
 }
 
-async fn dispatch(pool: &PgPool, config: &ExecutorConfig, payload: &CronJobDuePayload) -> anyhow::Result<DispatchOutcome> {
+async fn dispatch(
+    pool: &PgPool,
+    config: &ExecutorConfig,
+    payload: &CronJobDuePayload,
+) -> anyhow::Result<DispatchOutcome> {
     let Some(target_type) = TargetType::parse(&payload.target_type) else {
         anyhow::bail!("unknown target_type {:?}", payload.target_type);
     };

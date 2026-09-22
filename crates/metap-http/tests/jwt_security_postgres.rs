@@ -379,8 +379,7 @@ async fn a_valid_token_for_one_tenant_cannot_read_another_tenants_record() {
         .await
         .unwrap();
     assert_eq!(
-        get_as_b["errors"][0]["extensions"]["status"],
-        404,
+        get_as_b["errors"][0]["extensions"]["status"], 404,
         "tenant B must not be able to fetch tenant A's record by id"
     );
 
@@ -396,7 +395,9 @@ async fn a_valid_token_for_one_tenant_cannot_read_another_tenants_record() {
         .unwrap();
     assert!(list_as_b.get("errors").is_none(), "unexpected errors: {list_as_b:?}");
     assert_eq!(
-        list_as_b["data"]["testJwtOrdersList"]["records"].as_array().map(|a| a.len()),
+        list_as_b["data"]["testJwtOrdersList"]["records"]
+            .as_array()
+            .map(|a| a.len()),
         Some(0),
         "tenant B's list must not include tenant A's record"
     );

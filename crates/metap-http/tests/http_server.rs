@@ -311,7 +311,10 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
         .await
         .unwrap();
     assert!(create_res.get("errors").is_none(), "unexpected errors: {create_res:?}");
-    let id = create_res["data"]["createTestOrders"]["id"].as_str().unwrap().to_string();
+    let id = create_res["data"]["createTestOrders"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     assert_eq!(create_res["data"]["createTestOrders"]["status"], "draft");
     let version = create_res["data"]["createTestOrders"]["version"].as_i64().unwrap();
 
@@ -828,7 +831,10 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
         .await
         .unwrap();
     assert!(sales_task.get("errors").is_none(), "unexpected errors: {sales_task:?}");
-    let sales_task_id = sales_task["data"]["createTestTasks"]["id"].as_str().unwrap().to_string();
+    let sales_task_id = sales_task["data"]["createTestTasks"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // grant "employee" bare read access (context-subject, RBAC only) ...
     let policy1 = client
@@ -876,7 +882,10 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
     // ... the cache still holds the stale "eng" attribute (long TTL, no invalidation yet) — the
     // employee's *next* request still resolves against the old department.
     let status = read_test_task_status(&client, &base, &employee_token, &eng_task_id).await;
-    assert_eq!(status, 200, "cached context_attributes should still be stale (deptId=eng)");
+    assert_eq!(
+        status, 200,
+        "cached context_attributes should still be stale (deptId=eng)"
+    );
 
     // explicit invalidate clears it immediately, without waiting on the TTL.
     let invalidate_res = client
@@ -889,11 +898,7 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
 
     // now the employee's context is fresh: eng is no longer reachable, sales is.
     let status = read_test_task_status(&client, &base, &employee_token, &eng_task_id).await;
-    assert_eq!(
-        status,
-        403,
-        "post-invalidate context should be fresh (deptId=sales)"
-    );
+    assert_eq!(status, 403, "post-invalidate context should be fresh (deptId=sales)");
     let status = read_test_task_status(&client, &base, &employee_token, &sales_task_id).await;
     assert_eq!(status, 200, "post-invalidate context should now see the sales task");
 
