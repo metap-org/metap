@@ -5,9 +5,18 @@
 /// handle to every tenant's credentials is not something to make trivially loggable anyway.
 #[derive(Clone)]
 pub struct ExecutorConfig {
-    /// Base URL of the `crm-server` instance `workflow_transition`/`bulk_query_action` jobs
-    /// call back into.
+    /// Base URL of the owning app instance's `POST /auth/login` (`REST` stays for `/auth/*`
+    /// even though the entity-CRUD surface it used to also cover — `/api/:entity*` — is gone;
+    /// see `target_grpc_backend`'s doc comment).
     pub target_base_url: String,
+    /// `workflow_transition`/`bulk_query_action` jobs' entity CRUD backend — `metap-http` no
+    /// longer serves a REST `/api/:entity*` surface for these to call (see
+    /// `executor/workflow_transition.rs`'s module doc comment), so this is a
+    /// `metap-grpc::client::GrpcBackend` connected to the owning app's `RecordService` gRPC port
+    /// instead. `None` when `CRON_TARGET_GRPC_ADDR` is unset or the initial connection failed —
+    /// same "most job types don't need this, only these two fail" degrade-gracefully shape as
+    /// `service_token`/`secrets` below, not a boot failure.
+    pub target_grpc_backend: Option<std::sync::Arc<dyn metap_crud::RecordBackend>>,
     /// A service-account token this process logged into `crm-server`'s own `POST /auth/login`
     /// with, kept fresh in the background (`metap_runtime::service_token::ServiceTokenSource`) —
     /// replaced a static, hand-minted-once JWT (`CRON_SERVICE_JWT`) 2026-09-02, the same fix

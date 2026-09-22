@@ -19,7 +19,6 @@ use std::process::Command;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use axum::Router;
 use jsonwebtoken::DecodingKey;
 use metap_http::cookies::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME, SESSION_STARTED_AT_COOKIE_NAME};
 use metap_http::{build_router, AppState};
@@ -190,7 +189,8 @@ async fn boot_server(tenant_id: Uuid, user_id: Uuid) -> TestServer {
         private_pem.clone(),
         test_router(pool.clone()),
     );
-    let router = build_router(state, &["http://localhost:5173".to_string()], Router::new());
+    let graphql_routes = metap_graphql_http::router(&state, metap_graphql::SchemaLimits::default()).unwrap();
+    let router = build_router(state, &["http://localhost:5173".to_string()], graphql_routes);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -232,8 +232,12 @@ async fn a_session_cookie_alone_authenticates_a_safe_request() {
     let user_id = Uuid::new_v4();
     let server = boot_server(tenant_id, user_id).await;
 
+    // `GET /auth/me` (not entity CRUD, which is GraphQL-only now — see this crate's own
+    // `CLAUDE.md` bullet) is the stand-in for "an authenticated GET": it needs `AuthContext`,
+    // makes no state change, and stays REST regardless of this repo's GraphQL migration (`/auth/*`
+    // is the explicitly-kept-REST group).
     let res = reqwest::Client::new()
-        .get(format!("{}/api/{ENTITY}", server.base))
+        .get(format!("{}/auth/me", server.base))
         .header("cookie", session_cookie_header(&server.token))
         .send()
         .await
@@ -254,9 +258,12 @@ async fn a_mutating_request_without_the_csrf_header_is_rejected() {
     let server = boot_server(tenant_id, user_id).await;
 
     let res = reqwest::Client::new()
-        .post(format!("{}/api/{ENTITY}", server.base))
+        .post(format!("{}/graphql", server.base))
         .header("cookie", session_cookie_header(&server.token))
-        .json(&json!({ "data": { "name": "Forged" } }))
+        .json(&json!({
+            "query": "mutation($data: Json!) { createTestCookieOrders(data: $data) { id } }",
+            "variables": { "data": { "name": "Forged" } },
+        }))
         .send()
         .await
         .unwrap();
@@ -279,10 +286,13 @@ async fn a_mutating_request_with_a_mismatched_csrf_header_is_rejected() {
     let server = boot_server(tenant_id, user_id).await;
 
     let res = reqwest::Client::new()
-        .post(format!("{}/api/{ENTITY}", server.base))
+        .post(format!("{}/graphql", server.base))
         .header("cookie", session_cookie_header(&server.token))
         .header(CSRF_HEADER_NAME, "not-the-cookie-value")
-        .json(&json!({ "data": { "name": "Forged" } }))
+        .json(&json!({
+            "query": "mutation($data: Json!) { createTestCookieOrders(data: $data) { id } }",
+            "variables": { "data": { "name": "Forged" } },
+        }))
         .send()
         .await
         .unwrap();
@@ -299,15 +309,21 @@ async fn a_mutating_request_with_the_matching_csrf_header_succeeds() {
     let server = boot_server(tenant_id, user_id).await;
 
     let res = reqwest::Client::new()
-        .post(format!("{}/api/{ENTITY}", server.base))
+        .post(format!("{}/graphql", server.base))
         .header("cookie", session_cookie_header(&server.token))
         .header(CSRF_HEADER_NAME, CSRF_VALUE)
-        .json(&json!({ "data": { "name": "Legitimate" } }))
+        .json(&json!({
+            "query": "mutation($data: Json!) { createTestCookieOrders(data: $data) { id } }",
+            "variables": { "data": { "name": "Legitimate" } },
+        }))
         .send()
         .await
         .unwrap();
 
-    assert_eq!(res.status(), 201, "the double-submit pair must be accepted");
+    assert_eq!(res.status(), 200, "the double-submit pair must be accepted");
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert!(body.get("errors").is_none(), "unexpected errors: {body:?}");
+    assert!(body["data"]["createTestCookieOrders"]["id"].as_str().is_some());
     cleanup(&server.pool, tenant_id).await;
 }
 
@@ -322,17 +338,22 @@ async fn an_authorization_header_wins_over_a_cookie_and_is_never_csrf_gated() {
     let server = boot_server(tenant_id, user_id).await;
 
     let res = reqwest::Client::new()
-        .post(format!("{}/api/{ENTITY}", server.base))
+        .post(format!("{}/graphql", server.base))
         .bearer_auth(&server.token)
         // A junk session cookie and no CSRF header at all: if the extractor ever consulted the
         // cookie first, or ran the CSRF check on the header path, this would 401.
         .header("cookie", format!("{SESSION_COOKIE_NAME}=not-a-real-jwt"))
-        .json(&json!({ "data": { "name": "Bearer client" } }))
+        .json(&json!({
+            "query": "mutation($data: Json!) { createTestCookieOrders(data: $data) { id } }",
+            "variables": { "data": { "name": "Bearer client" } },
+        }))
         .send()
         .await
         .unwrap();
 
-    assert_eq!(res.status(), 201);
+    assert_eq!(res.status(), 200);
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert!(body.get("errors").is_none(), "unexpected errors: {body:?}");
     cleanup(&server.pool, tenant_id).await;
 }
 
@@ -388,9 +409,10 @@ async fn an_expired_token_in_a_cookie_is_rejected() {
     let server = boot_server(tenant_id, user_id).await;
 
     // Minted against a *different* keypair — the shape of "a cookie value this server will not
-    // accept" that doesn't require waiting out a real expiry.
+    // accept" that doesn't require waiting out a real expiry. `/auth/me` (not entity CRUD, see
+    // the safe-request test above) stands in for "an authenticated GET" here too.
     let res = reqwest::Client::new()
-        .get(format!("{}/api/{ENTITY}", server.base))
+        .get(format!("{}/auth/me", server.base))
         .header("cookie", format!("{SESSION_COOKIE_NAME}=clearly.not.a.jwt"))
         .send()
         .await

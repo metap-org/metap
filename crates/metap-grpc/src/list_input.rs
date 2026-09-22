@@ -1,8 +1,9 @@
-//! Builds a `metap_query::ListInput` from `ListRequest.query` — the gRPC counterpart to REST's
-//! `parse_list_input` (`crates/metap-http/src/routes/records.rs`). Same defaults (limit 30,
-//! max 200) and same "unknown/malformed value degrades gracefully rather than erroring" posture
-//! for everything except `limit`, matching REST's behavior field-for-field so a caller can't
-//! observe a difference in list semantics between the two transports.
+//! Builds a `metap_query::ListInput` from `ListRequest.query` — same defaults (limit 30, max
+//! 200) and same "unknown/malformed value degrades gracefully rather than erroring" posture for
+//! everything except `limit` as `metap-graphql`'s own `list_input.rs`, so a caller can't observe
+//! a difference in list semantics between the two transports. (REST's own `parse_list_input`,
+//! `crates/metap-http/src/routes/records.rs`, this used to also match field-for-field, is gone —
+//! entity access is GraphQL/gRPC-only now, see `metap-http`'s own `CLAUDE.md` bullet.)
 
 use metap_query::ListInput;
 use serde_json::{Map, Value};

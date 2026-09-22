@@ -1,7 +1,7 @@
 //! The consume-and-run loop (`run_executor`), one firing's idempotency-checked execution
 //! (`execute`), and the per-`TargetType` router (`dispatch`) that calls into
 //! `super::workflow_transition`/`super::webhook`/`super::email`/`super::steps` — see `super`'s
-//! doc comment for why `workflow_transition`/`bulk_query_action` call back over HTTP instead of
+//! doc comment for why `workflow_transition`/`bulk_query_action` call back over gRPC instead of
 //! linking `metap-crud` directly.
 
 use std::future::Future;
@@ -27,7 +27,6 @@ pub const QUEUE: &str = "cron.executor";
 pub async fn run_executor<B, F, Fut>(
     connect: F,
     pool: &PgPool,
-    http: &reqwest::Client,
     config: &ExecutorConfig,
     shutdown: impl Future<Output = ()>,
 ) -> anyhow::Result<()>
@@ -48,7 +47,7 @@ where
         |event| async move {
             match serde_json::from_value::<CronJobDuePayload>(event.payload.clone()) {
                 Ok(payload) => {
-                    execute(pool, http, config, &payload).await;
+                    execute(pool, config, &payload).await;
                     event.ack().await.ok();
                 }
                 Err(err) => {
@@ -81,12 +80,12 @@ where
 /// `traceparent` mints a new trace id, so every job run becomes its own trace root that the
 /// `workflow_transition`/`bulk_query_action`/`webhook` calls it makes then propagate onward — a
 /// record written by a cron job is traceable back to the run that caused it.
-pub async fn execute(pool: &PgPool, http: &reqwest::Client, config: &ExecutorConfig, payload: &CronJobDuePayload) {
+pub async fn execute(pool: &PgPool, config: &ExecutorConfig, payload: &CronJobDuePayload) {
     let trace_ctx = metap_runtime::trace_context::from_headers(&Default::default());
-    metap_runtime::trace_context::scope(trace_ctx, execute_traced(pool, http, config, payload)).await
+    metap_runtime::trace_context::scope(trace_ctx, execute_traced(pool, config, payload)).await
 }
 
-async fn execute_traced(pool: &PgPool, http: &reqwest::Client, config: &ExecutorConfig, payload: &CronJobDuePayload) {
+async fn execute_traced(pool: &PgPool, config: &ExecutorConfig, payload: &CronJobDuePayload) {
     match metap_cron::run_status(pool, payload.run_id).await {
         Ok(Some(RunStatus::Success)) | Ok(Some(RunStatus::Failed)) | Ok(Some(RunStatus::Waiting)) => {
             tracing::warn!(
@@ -106,7 +105,7 @@ async fn execute_traced(pool: &PgPool, http: &reqwest::Client, config: &Executor
         tracing::error!(run_id = %payload.run_id, error = %err, "failed to mark cron job run started");
     }
 
-    let outcome = dispatch(pool, http, config, payload).await;
+    let outcome = dispatch(pool, config, payload).await;
     let (status, error, summary) = match outcome {
         Ok(DispatchOutcome::Completed(summary)) => (RunStatus::Success, None, Some(summary)),
         // `run_steps` already wrote `cron_job_runs.status = "waiting"` (via `pause_workflow_run`)
@@ -143,7 +142,6 @@ pub(crate) enum DispatchOutcome {
 
 async fn dispatch(
     pool: &PgPool,
-    http: &reqwest::Client,
     config: &ExecutorConfig,
     payload: &CronJobDuePayload,
 ) -> anyhow::Result<DispatchOutcome> {
@@ -151,10 +149,10 @@ async fn dispatch(
         anyhow::bail!("unknown target_type {:?}", payload.target_type);
     };
     match target_type {
-        TargetType::WorkflowTransition => run_workflow_transition(http, config, &payload.target_config)
+        TargetType::WorkflowTransition => run_workflow_transition(config, &payload.target_config)
             .await
             .map(DispatchOutcome::Completed),
-        TargetType::BulkQueryAction => run_bulk_query_action(http, config, &payload.target_config)
+        TargetType::BulkQueryAction => run_bulk_query_action(config, &payload.target_config)
             .await
             .map(DispatchOutcome::Completed),
         TargetType::Webhook => run_webhook(
@@ -179,7 +177,7 @@ async fn dispatch(
         )
         .await
         .map(DispatchOutcome::Completed),
-        TargetType::Steps => run_steps(pool, http, config, payload).await,
+        TargetType::Steps => run_steps(pool, config, payload).await,
         TargetType::WaitEvent => {
             anyhow::bail!("\"wait_event\" is not a valid top-level targetType, only a step inside a \"steps\" chain")
         }

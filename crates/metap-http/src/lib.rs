@@ -154,7 +154,6 @@ pub fn build_router_with_groups(
         .merge(routes::metrics::router())
         .merge(routes::metadata::public_router())
         .merge(routes::metadata::protected_router())
-        .merge(routes::records::router())
         .merge(routes::users::router())
         .merge(routes::workflow_events::router())
         .merge(routes::audit_events::router())

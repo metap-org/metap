@@ -16,14 +16,13 @@ use crate::error::service_error_response;
 use crate::state::AppState;
 
 async fn openapi_json(State(state): State<AppState>) -> Response {
-    let entities = state.metadata.load().list_entities();
-    let mut doc = metap_metadata::generate_openapi_document(&entities);
+    let mut doc = metap_metadata::generate_openapi_document();
     // Merge in this crate's own static-route paths plus whatever optional platform capability
     // the composition root wired in (`state.extra_openapi_paths` — see that field's doc
-    // comment). `generate_openapi_document` only knows about `/metadata/*` and the per-entity
-    // `/api/{entity}*` paths it derives from `MetadataRegistry`; every other route this binary
-    // serves is documented by `crate::openapi_paths` instead (`utoipa`-derived since
-    // 2026-09-06, see that module's doc comment), since none of it is metadata-driven.
+    // comment). `generate_openapi_document` only knows about `/metadata/*`'s own static paths
+    // now (entity access is GraphQL-only — see this crate's own `CLAUDE.md` bullet); every
+    // route this binary actually serves is documented by `crate::openapi_paths` instead
+    // (`utoipa`-derived since 2026-09-06, see that module's doc comment).
     if let Some(paths) = doc.get_mut("paths").and_then(Value::as_object_mut) {
         paths.extend(crate::openapi_paths::static_paths());
         paths.extend((*state.extra_openapi_paths).clone());

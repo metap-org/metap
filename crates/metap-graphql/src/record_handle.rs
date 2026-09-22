@@ -26,9 +26,7 @@ impl RecordHandle {
     }
 
     /// `get`'s response additionally carries `RecordCapabilities` — merged into the same JSON
-    /// object under a `capabilities` key, exactly mirroring how
-    /// `crates/metap-http/src/routes/records.rs`'s REST `get_record` handler merges the two for
-    /// its JSON response, so both transports expose capabilities the same way.
+    /// object under a `capabilities` key.
     pub fn from_dto_with_capabilities(dto: RecordDto, capabilities: RecordCapabilities) -> Self {
         let mut json = serde_json::to_value(dto).unwrap_or(Value::Null);
         if let Value::Object(map) = &mut json {

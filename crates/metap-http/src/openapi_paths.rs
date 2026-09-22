@@ -7,11 +7,13 @@
 //! `metap-lowcode-http`).
 //!
 //! `routes::metadata::openapi_json` merges [`static_paths`]/[`static_schemas`] into the served
-//! document alongside the per-entity dynamic ones (`metap_metadata::generate_openapi_document`)
-//! and whatever optional platform capability the composition root wired in
-//! (`AppState.extra_openapi_paths`/`extra_openapi_schemas`). `routes::records`'s `/api/{entity}*`
-//! CRUD paths stay solely `generate_openapi_document`'s job — entities aren't known at compile
-//! time, incompatible with `utoipa`'s macro model, so that generator stays hand-written forever.
+//! document alongside `metap_metadata::generate_openapi_document`'s own `/metadata/*` static
+//! paths and whatever optional platform capability the composition root wired in
+//! (`AppState.extra_openapi_paths`/`extra_openapi_schemas`). **There is no `routes::records`
+//! anymore** (removed 2026-09-21 alongside REST `/api/:entity*` — entity access is GraphQL-only
+//! now, `/graphql/schema.graphql` from `metap-graphql-http` is its schema-discovery equivalent),
+//! so `generate_openapi_document` no longer generates a per-entity path block either — this
+//! module's own static fragments are the entire document now, `/metadata/*` aside.
 //!
 //! `GET /metrics` is deliberately omitted — it serves Prometheus text exposition format, not
 //! JSON, so there's nothing here for `openapi-typescript` to usefully describe. `GET /auth/logout`,

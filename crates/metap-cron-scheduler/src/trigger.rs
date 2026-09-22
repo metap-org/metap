@@ -69,7 +69,6 @@ fn classify_topic(routing_key: &str) -> Option<Topic<'_>> {
 pub async fn run_trigger_listener<B, F, Fut>(
     connect: F,
     pool: &PgPool,
-    http: &reqwest::Client,
     executor_config: &ExecutorConfig,
     shutdown: impl Future<Output = ()>,
 ) -> anyhow::Result<()>
@@ -97,7 +96,6 @@ where
                                     Some(action) => {
                                         dispatch_transition(
                                             pool,
-                                            http,
                                             executor_config,
                                             &policy,
                                             &event,
@@ -120,7 +118,6 @@ where
                             (Some(tenant_id), Some(record_id)) => {
                                 dispatch_record_event(
                                     pool,
-                                    http,
                                     executor_config,
                                     &policy,
                                     &event,
@@ -177,7 +174,6 @@ fn parse_record_id(event: &ConsumedEvent) -> Option<Uuid> {
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_transition(
     pool: &PgPool,
-    http: &reqwest::Client,
     executor_config: &ExecutorConfig,
     policy: &RetryPolicy,
     event: &ConsumedEvent,
@@ -189,7 +185,6 @@ async fn dispatch_transition(
     let fire_result = metap_cron::dispatch_on_transition_matches(pool, tenant_id, entity, action, record_id).await;
     finish_dispatch(
         pool,
-        http,
         executor_config,
         policy,
         event,
@@ -207,7 +202,6 @@ async fn dispatch_transition(
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_record_event(
     pool: &PgPool,
-    http: &reqwest::Client,
     executor_config: &ExecutorConfig,
     policy: &RetryPolicy,
     event: &ConsumedEvent,
@@ -220,7 +214,6 @@ async fn dispatch_record_event(
         metap_cron::dispatch_on_record_event_matches(pool, tenant_id, entity, record_event, record_id).await;
     finish_dispatch(
         pool,
-        http,
         executor_config,
         policy,
         event,
@@ -259,7 +252,6 @@ enum ResumeQuery<'a> {
 #[allow(clippy::too_many_arguments)]
 async fn finish_dispatch(
     pool: &PgPool,
-    http: &reqwest::Client,
     executor_config: &ExecutorConfig,
     policy: &RetryPolicy,
     event: &ConsumedEvent,
@@ -287,7 +279,7 @@ async fn finish_dispatch(
                     trigger_record_id: direct_job.trigger_record_id,
                     trigger_entity: direct_job.trigger_entity,
                 };
-                execute(pool, http, executor_config, &payload).await;
+                execute(pool, executor_config, &payload).await;
             }
 
             let resume_result = match resume_query {
@@ -302,7 +294,7 @@ async fn finish_dispatch(
             match resume_result {
                 Ok(resumed) => {
                     for resumed_run in &resumed {
-                        resume_steps(pool, http, executor_config, resumed_run).await;
+                        resume_steps(pool, executor_config, resumed_run).await;
                     }
                 }
                 Err(err) => {

@@ -1,8 +1,10 @@
-//! `RecordServiceServer`'s handler implementation — the gRPC counterpart to
-//! `crates/metap-http/src/routes/records.rs`. Every RPC follows the same three steps: authenticate
+//! `RecordServiceServer`'s handler implementation — generic, metadata-driven CRUD over gRPC, one
+//! of the two transports entity access goes through now (`metap-graphql` is the other; REST's own
+//! `crates/metap-http/src/routes/records.rs` was removed 2026-09-21, see `metap-http`'s own
+//! `CLAUDE.md` bullet). Every RPC follows the same three steps: authenticate
 //! (`crate::auth::authenticate`), convert the request's `Struct` payload to `serde_json`, call the
 //! matching `metap_crud::CrudService` method, convert the result back. No entity-specific code
-//! anywhere — same generic-over-metadata shape REST/OpenAPI already have.
+//! anywhere.
 
 use std::sync::Arc;
 

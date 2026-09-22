@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use cron_scheduler::{run_executor, run_ticker, run_trigger_listener, ExecutorConfig, SmtpConfig, TickerConfig};
@@ -49,11 +50,35 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // `workflow_transition`/`bulk_query_action` jobs' entity CRUD backend, over gRPC now that
+    // `metap-http` no longer serves a REST `/api/:entity*` surface for these to call (see
+    // `executor/workflow_transition.rs`'s doc comment). Same degrade-gracefully shape as
+    // `service_token`/`secrets` below — a missing/unreachable gRPC endpoint only fails these two
+    // job types, everything else (webhook, email) is unaffected.
+    let grpc_addr = metap_runtime::env::optional("CRON_TARGET_GRPC_ADDR");
+    let target_grpc_backend: Option<Arc<dyn metap_crud::RecordBackend>> = match grpc_addr {
+        Some(addr) => match metap_grpc::client::GrpcBackend::connect(addr.clone(), service_token.clone()).await {
+            Ok(backend) => Some(Arc::new(backend)),
+            Err(e) => {
+                tracing::warn!(error = %e, addr, "failed to connect to CRON_TARGET_GRPC_ADDR — workflow_transition/bulk_query_action jobs will fail until this is fixed; webhook/email jobs are unaffected");
+                None
+            }
+        },
+        None => {
+            tracing::warn!(
+                "CRON_TARGET_GRPC_ADDR is unset — workflow_transition/bulk_query_action jobs will fail; \
+                 webhook/email jobs are unaffected. Point it at the owning app's gRPC port (GRPC_PORT)."
+            );
+            None
+        }
+    };
+
     tracing::info!("connecting to postgres...");
     let pool = connect_db(config.outbox_database_url()).await?;
 
     let executor_config = ExecutorConfig {
         target_base_url,
+        target_grpc_backend,
         service_token,
         smtp: SmtpConfig {
             host: config.smtp_host.clone(),
@@ -97,7 +122,6 @@ async fn main() -> anyhow::Result<()> {
 
     let ticker = run_ticker(
         &pool,
-        &http,
         &executor_config,
         ticker_config,
         metap_runtime::shutdown::signal(),
@@ -105,14 +129,12 @@ async fn main() -> anyhow::Result<()> {
     let executor = run_executor(
         executor_connect,
         &pool,
-        &http,
         &executor_config,
         metap_runtime::shutdown::signal(),
     );
     let trigger = run_trigger_listener(
         trigger_connect,
         &pool,
-        &http,
         &executor_config,
         metap_runtime::shutdown::signal(),
     );

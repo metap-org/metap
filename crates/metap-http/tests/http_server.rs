@@ -158,6 +158,13 @@ async fn connect() -> PgPool {
         .unwrap()
 }
 
+/// **Moved off REST 2026-09-21** — entity CRUD is GraphQL-only now (no more REST
+/// `routes::records`, see `metap-http`'s own `CLAUDE.md` bullet), so the create/get/transition/
+/// conflict/delete portion of this test goes through `/graphql` (mounted as `extra_routes`,
+/// exactly as a downstream binary mounts it) instead of `/api/test.orders*`. The transport-level
+/// assertions this test exists to catch regressions in — security headers, request/trace id,
+/// the CORS `allow_credentials` branch, `/metadata/openapi.json` staying public — are unchanged
+/// and still real: none of them are specific to which route family sits behind them.
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
@@ -215,10 +222,11 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
         private_pem.clone(),
         test_router(pool.clone()),
     );
+    let graphql_routes = metap_graphql_http::router(&state, metap_graphql::SchemaLimits::default()).unwrap();
     // A real origin list, not empty — exercises the `allow_credentials` +
     // explicit-origin/header CORS branch (see `lib.rs`'s doc comment on the panic this
     // once triggered; an empty list here would silently skip that branch again).
-    let router = build_router(state, &["http://localhost:5173".to_string()], Router::new());
+    let router = build_router(state, &["http://localhost:5173".to_string()], graphql_routes);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -268,8 +276,14 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
         .unwrap();
     assert_eq!(openapi.status(), 200);
 
-    // records route without a token -> 401, with requestId/traceId injected into the error body
-    let unauthed = client.get(format!("{base}/api/test.orders")).send().await.unwrap();
+    // /graphql without a token -> 401, with requestId/traceId injected into the error body — the
+    // same `AuthContext` extractor REST used, gating the whole endpoint before any resolver runs.
+    let unauthed = client
+        .post(format!("{base}/graphql"))
+        .json(&json!({ "query": "{ testOrdersList { records { id } } }" }))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(unauthed.status(), 401);
     let expected_request_id = unauthed
         .headers()
@@ -283,74 +297,121 @@ async fn full_http_lifecycle_over_a_real_server_and_a_real_jwt() {
     assert!(unauthed_body["error"]["traceId"].is_string());
 
     // create
-    let create_res = client
-        .post(format!("{base}/api/test.orders"))
+    let create_res: serde_json::Value = client
+        .post(format!("{base}/graphql"))
         .bearer_auth(&token)
-        .json(&json!({ "data": { "name": "First" } }))
+        .json(&json!({
+            "query": "mutation($data: Json!) { createTestOrders(data: $data) { id status version } }",
+            "variables": { "data": { "name": "First" } },
+        }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(create_res.status(), 201);
-    let created: serde_json::Value = create_res.json().await.unwrap();
-    let id = created["data"]["id"].as_str().unwrap().to_string();
-    assert_eq!(created["data"]["status"], "draft");
-    let version = created["data"]["version"].as_i64().unwrap();
+    assert!(create_res.get("errors").is_none(), "unexpected errors: {create_res:?}");
+    let id = create_res["data"]["createTestOrders"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(create_res["data"]["createTestOrders"]["status"], "draft");
+    let version = create_res["data"]["createTestOrders"]["version"].as_i64().unwrap();
 
     // get
-    let get_res = client
-        .get(format!("{base}/api/test.orders/{id}"))
+    let get_res: serde_json::Value = client
+        .post(format!("{base}/graphql"))
         .bearer_auth(&token)
+        .json(&json!({
+            "query": format!(r#"{{ testOrders(id: "{id}") {{ id capabilities }} }}"#),
+        }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(get_res.status(), 200);
-    let fetched: serde_json::Value = get_res.json().await.unwrap();
-    assert_eq!(fetched["data"]["id"], id);
-    assert_eq!(fetched["data"]["capabilities"]["transitions"][0]["action"], "activate");
+    assert!(get_res.get("errors").is_none(), "unexpected errors: {get_res:?}");
+    assert_eq!(get_res["data"]["testOrders"]["id"], id);
+    assert_eq!(
+        get_res["data"]["testOrders"]["capabilities"]["transitions"][0]["action"],
+        "activate"
+    );
 
     // transition
-    let transition_res = client
-        .post(format!("{base}/api/test.orders/{id}/transitions/activate"))
+    let transition_res: serde_json::Value = client
+        .post(format!("{base}/graphql"))
         .bearer_auth(&token)
-        .json(&json!({ "version": version }))
+        .json(&json!({
+            "query": format!(
+                r#"mutation {{ transitionTestOrders(id: "{id}", action: "activate", expectedVersion: {version}) {{ status version }} }}"#
+            ),
+        }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(transition_res.status(), 200);
-    let transitioned: serde_json::Value = transition_res.json().await.unwrap();
-    assert_eq!(transitioned["data"]["status"], "active");
-    let version = transitioned["data"]["version"].as_i64().unwrap();
+    assert!(
+        transition_res.get("errors").is_none(),
+        "unexpected errors: {transition_res:?}"
+    );
+    assert_eq!(transition_res["data"]["transitionTestOrders"]["status"], "active");
+    let version = transition_res["data"]["transitionTestOrders"]["version"]
+        .as_i64()
+        .unwrap();
 
-    // stale-version update -> 409 with the same error shape the TS error-handler produces
-    let conflict_res = client
-        .patch(format!("{base}/api/test.orders/{id}"))
+    // stale-version update -> a GraphQL error carrying the same `version_conflict` code REST's
+    // error envelope used, now in `extensions` instead of an `{"error": ...}` body.
+    let conflict_res: serde_json::Value = client
+        .post(format!("{base}/graphql"))
         .bearer_auth(&token)
-        .json(&json!({ "version": 999, "data": { "name": "Changed" } }))
+        .json(&json!({
+            "query": format!(
+                r#"mutation($data: Json!) {{ updateTestOrders(id: "{id}", expectedVersion: 999, data: $data) {{ id }} }}"#
+            ),
+            "variables": { "data": { "name": "Changed" } },
+        }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(conflict_res.status(), 409);
-    let conflict_body: serde_json::Value = conflict_res.json().await.unwrap();
-    assert_eq!(conflict_body["error"]["code"], "version_conflict");
+    assert_eq!(conflict_res["errors"][0]["extensions"]["code"], "version_conflict");
 
     // delete
-    let delete_res = client
-        .delete(format!("{base}/api/test.orders/{id}"))
+    let delete_res: serde_json::Value = client
+        .post(format!("{base}/graphql"))
         .bearer_auth(&token)
-        .json(&json!({ "version": version }))
+        .json(&json!({
+            "query": format!(
+                r#"mutation {{ deleteTestOrders(id: "{id}", expectedVersion: {version}) {{ id }} }}"#
+            ),
+        }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(delete_res.status(), 200);
+    assert!(delete_res.get("errors").is_none(), "unexpected errors: {delete_res:?}");
 
-    // post-delete get -> 404
-    let after_delete = client
-        .get(format!("{base}/api/test.orders/{id}"))
+    // post-delete get -> GraphQL error, extensions.status carrying the original 404
+    let after_delete: serde_json::Value = client
+        .post(format!("{base}/graphql"))
         .bearer_auth(&token)
+        .json(&json!({
+            "query": format!(r#"{{ testOrders(id: "{id}") {{ id }} }}"#),
+        }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(after_delete.status(), 404);
+    assert_eq!(after_delete["errors"][0]["extensions"]["status"], 404);
 
     sqlx::query("DELETE FROM outbox_events WHERE aggregate_type = 'test.orders'")
         .execute(&pool)
@@ -631,6 +692,27 @@ async fn create_dedicated_table(pool: &PgPool, table_name: &str) {
     .unwrap();
 }
 
+/// Reads `test.tasks` over `/graphql` (entity access is GraphQL-only — see `routes/records.rs`'s
+/// removal) and translates the result back into REST's old status-code shape (200 on success, the
+/// `extensions.status` carried by a GraphQL error otherwise), so the ABAC assertions below read
+/// the same way they did before the REST `/api/test.tasks/{id}` route existed.
+async fn read_test_task_status(client: &reqwest::Client, base: &str, token: &str, id: &str) -> i64 {
+    let res: serde_json::Value = client
+        .post(format!("{base}/graphql"))
+        .bearer_auth(token)
+        .json(&json!({ "query": format!(r#"{{ testTasks(id: "{id}") {{ id }} }}"#) }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    match res.get("errors") {
+        Some(errors) => errors[0]["extensions"]["status"].as_i64().unwrap(),
+        None => 200,
+    }
+}
+
 /// Live verification of A4/A4b (`docs/features/03-organization-identity.md`): `AUTH_CONTEXT_ENTITY`
 /// enriches `RequestContext` from the caller's own record on a configured entity (`test.profiles`
 /// here, standing in for `hr.employees`), an org-scoped ABAC policy on `test.tasks` reads that
@@ -692,7 +774,8 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
     state.auth_context_entity = Some(Arc::from("test.profiles"));
     state.context_attributes_cache =
         metap_http::cache::ContextAttributesCache::new(std::time::Duration::from_secs(3600));
-    let router = build_router(state, &[], Router::new());
+    let graphql_routes = metap_graphql_http::router(&state, metap_graphql::SchemaLimits::default()).unwrap();
+    let router = build_router(state, &[], graphql_routes);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -719,28 +802,39 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
 
     // admin bypasses policy checks entirely -> seed two task records in different departments
     let eng_task: serde_json::Value = client
-        .post(format!("{base}/api/test.tasks"))
+        .post(format!("{base}/graphql"))
         .bearer_auth(&admin_token)
-        .json(&json!({ "data": { "deptId": "eng", "title": "Eng task" } }))
+        .json(&json!({
+            "query": "mutation($data: Json!) { createTestTasks(data: $data) { id } }",
+            "variables": { "data": { "deptId": "eng", "title": "Eng task" } },
+        }))
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    let eng_task_id = eng_task["data"]["id"].as_str().unwrap().to_string();
+    assert!(eng_task.get("errors").is_none(), "unexpected errors: {eng_task:?}");
+    let eng_task_id = eng_task["data"]["createTestTasks"]["id"].as_str().unwrap().to_string();
 
     let sales_task: serde_json::Value = client
-        .post(format!("{base}/api/test.tasks"))
+        .post(format!("{base}/graphql"))
         .bearer_auth(&admin_token)
-        .json(&json!({ "data": { "deptId": "sales", "title": "Sales task" } }))
+        .json(&json!({
+            "query": "mutation($data: Json!) { createTestTasks(data: $data) { id } }",
+            "variables": { "data": { "deptId": "sales", "title": "Sales task" } },
+        }))
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    let sales_task_id = sales_task["data"]["id"].as_str().unwrap().to_string();
+    assert!(sales_task.get("errors").is_none(), "unexpected errors: {sales_task:?}");
+    let sales_task_id = sales_task["data"]["createTestTasks"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // grant "employee" bare read access (context-subject, RBAC only) ...
     let policy1 = client
@@ -768,21 +862,11 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
     assert_eq!(policy2.status(), 201);
 
     // employee (deptId=eng, from their test.profiles record) reads the eng task ...
-    let res = client
-        .get(format!("{base}/api/test.tasks/{eng_task_id}"))
-        .bearer_auth(&employee_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 200);
+    let status = read_test_task_status(&client, &base, &employee_token, &eng_task_id).await;
+    assert_eq!(status, 200);
     // ... but not the sales task — deny-by-default, no matching record-level policy.
-    let res = client
-        .get(format!("{base}/api/test.tasks/{sales_task_id}"))
-        .bearer_auth(&employee_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 403);
+    let status = read_test_task_status(&client, &base, &employee_token, &sales_task_id).await;
+    assert_eq!(status, 403);
 
     // move the employee to "sales" ...
     sqlx::query(&format!(
@@ -797,15 +881,9 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
 
     // ... the cache still holds the stale "eng" attribute (long TTL, no invalidation yet) — the
     // employee's *next* request still resolves against the old department.
-    let res = client
-        .get(format!("{base}/api/test.tasks/{eng_task_id}"))
-        .bearer_auth(&employee_token)
-        .send()
-        .await
-        .unwrap();
+    let status = read_test_task_status(&client, &base, &employee_token, &eng_task_id).await;
     assert_eq!(
-        res.status(),
-        200,
+        status, 200,
         "cached context_attributes should still be stale (deptId=eng)"
     );
 
@@ -819,236 +897,12 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
     assert_eq!(invalidate_res.status(), 204);
 
     // now the employee's context is fresh: eng is no longer reachable, sales is.
-    let res = client
-        .get(format!("{base}/api/test.tasks/{eng_task_id}"))
-        .bearer_auth(&employee_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        res.status(),
-        403,
-        "post-invalidate context should be fresh (deptId=sales)"
-    );
-    let res = client
-        .get(format!("{base}/api/test.tasks/{sales_task_id}"))
-        .bearer_auth(&employee_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        res.status(),
-        200,
-        "post-invalidate context should now see the sales task"
-    );
+    let status = read_test_task_status(&client, &base, &employee_token, &eng_task_id).await;
+    assert_eq!(status, 403, "post-invalidate context should be fresh (deptId=sales)");
+    let status = read_test_task_status(&client, &base, &employee_token, &sales_task_id).await;
+    assert_eq!(status, 200, "post-invalidate context should now see the sales task");
 
     sqlx::query("DELETE FROM outbox_events WHERE aggregate_type = 'test.tasks'")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("DELETE FROM policies WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query(&format!("DELETE FROM {tasks_table} WHERE tenant_id = $1"))
-        .bind(tenant_id)
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query(&format!("DELETE FROM {profiles_table} WHERE tenant_id = $1"))
-        .bind(tenant_id)
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("DELETE FROM user_roles WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .execute(&pool)
-        .await
-        .ok();
-}
-
-/// Regression test for a real gap found in code review (2026-08-22): the *only* invalidation
-/// path exercised above is an admin remembering to call
-/// `POST /admin/users/{userId}/context/invalidate` after editing the underlying record — an
-/// easy step to forget. Editing the same `AUTH_CONTEXT_ENTITY` record through the ordinary
-/// `PATCH /api/:entity/:id` path must invalidate the cache automatically, no separate call
-/// needed. Reuses the same `test.profiles`/`test.tasks`/org-scoped-policy shape as the test
-/// above, but changes `deptId` via a real `PATCH` instead of raw SQL, and never calls the
-/// explicit invalidate endpoint at all.
-#[tokio::test]
-#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
-async fn updating_the_auth_context_entity_record_via_patch_invalidates_the_cache_automatically() {
-    let pool = connect().await;
-    let tenant_id = Uuid::new_v4();
-    let admin_user_id = Uuid::new_v4();
-    let employee_user_id = Uuid::new_v4();
-
-    sqlx::query("INSERT INTO user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')")
-        .bind(tenant_id)
-        .bind(admin_user_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'employee')")
-        .bind(tenant_id)
-        .bind(employee_user_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let keydir = tempdir();
-    let (private_pem, public_pem) = openssl_genrsa(keydir.path());
-    let admin_token = mint_token(&private_pem, tenant_id, admin_user_id);
-    let employee_token = mint_token(&private_pem, tenant_id, employee_user_id);
-
-    let profiles_table = dedicated_table_for("test.profiles");
-    let tasks_table = dedicated_table_for("test.tasks");
-    create_dedicated_table(&pool, &profiles_table).await;
-    create_dedicated_table(&pool, &tasks_table).await;
-
-    let mut registry = MetadataRegistry::new();
-    registry
-        .register(plain_string_entity("test.profiles", &["userId", "deptId"]))
-        .unwrap();
-    registry
-        .register(plain_string_entity("test.tasks", &["deptId", "title"]))
-        .unwrap();
-    let registry = Arc::new(registry);
-    let permissions = PermissionService::new(Box::new(metap_control::PostgresPolicyStore::new(test_router(
-        pool.clone(),
-    ))));
-    let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap();
-    let mut state = AppState::new(
-        pool.clone(),
-        registry.clone(),
-        Arc::new(ArcSwap::new(registry)),
-        Arc::new(permissions),
-        decoding_key,
-        private_pem.clone(),
-        test_router(pool.clone()),
-    );
-    state.auth_context_entity = Some(Arc::from("test.profiles"));
-    // Long TTL, same reasoning as the test above: proves invalidation is automatic, not that
-    // it happened to occur right as a short TTL also expired.
-    state.context_attributes_cache =
-        metap_http::cache::ContextAttributesCache::new(std::time::Duration::from_secs(3600));
-    let router = build_router(state, &[], Router::new());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .await
-        .unwrap();
-    });
-    let base = format!("http://{addr}");
-    let client = reqwest::Client::new();
-
-    // employee's own "profile" record, created through the API (not raw SQL) so its id/version
-    // are on hand for the PATCH below.
-    let profile: serde_json::Value = client
-        .post(format!("{base}/api/test.profiles"))
-        .bearer_auth(&admin_token)
-        .json(&json!({ "data": { "userId": employee_user_id.to_string(), "deptId": "eng" } }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let profile_id = profile["data"]["id"].as_str().unwrap().to_string();
-    let profile_version = profile["data"]["version"].as_i64().unwrap();
-
-    let eng_task: serde_json::Value = client
-        .post(format!("{base}/api/test.tasks"))
-        .bearer_auth(&admin_token)
-        .json(&json!({ "data": { "deptId": "eng", "title": "Eng task" } }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let eng_task_id = eng_task["data"]["id"].as_str().unwrap().to_string();
-
-    let sales_task: serde_json::Value = client
-        .post(format!("{base}/api/test.tasks"))
-        .bearer_auth(&admin_token)
-        .json(&json!({ "data": { "deptId": "sales", "title": "Sales task" } }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let sales_task_id = sales_task["data"]["id"].as_str().unwrap().to_string();
-
-    client
-        .post(format!("{base}/admin/policies"))
-        .bearer_auth(&admin_token)
-        .json(&json!({ "entity": "test.tasks", "action": "read", "roles": ["employee"], "subject": "context" }))
-        .send()
-        .await
-        .unwrap();
-    client
-        .post(format!("{base}/admin/policies"))
-        .bearer_auth(&admin_token)
-        .json(&json!({
-            "entity": "test.tasks",
-            "action": "read",
-            "subject": "record",
-            "condition": { "attribute": "deptId", "op": "eq", "value": { "fromContext": "deptId" } }
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    // employee (deptId=eng) can reach the eng task, primes the cache.
-    let res = client
-        .get(format!("{base}/api/test.tasks/{eng_task_id}"))
-        .bearer_auth(&employee_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 200);
-
-    // an ordinary PATCH to the profile record — not raw SQL, not the explicit invalidate
-    // endpoint — moves the employee to "sales".
-    let patch_res = client
-        .patch(format!("{base}/api/test.profiles/{profile_id}"))
-        .bearer_auth(&admin_token)
-        .json(&json!({ "version": profile_version, "data": { "deptId": "sales" } }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(patch_res.status(), 200);
-
-    // the employee's *very next* request already sees the new department — no explicit
-    // invalidate call, no waiting on the TTL.
-    let res = client
-        .get(format!("{base}/api/test.tasks/{eng_task_id}"))
-        .bearer_auth(&employee_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        res.status(),
-        403,
-        "PATCH to the profile record should have auto-invalidated the cache (deptId=sales now)"
-    );
-    let res = client
-        .get(format!("{base}/api/test.tasks/{sales_task_id}"))
-        .bearer_auth(&employee_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 200, "employee should now reach the sales task instead");
-
-    sqlx::query("DELETE FROM outbox_events WHERE aggregate_type IN ('test.tasks', 'test.profiles')")
         .execute(&pool)
         .await
         .ok();
