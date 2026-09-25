@@ -325,7 +325,13 @@ fn add_query_fields(mut query: Object, entity_name: &str, type_name: &str, conne
         .argument(InputValue::new("sort", TypeRef::named(TypeRef::STRING)))
         .argument(InputValue::new("cursor", TypeRef::named(TypeRef::STRING)))
         .argument(InputValue::new("limit", TypeRef::named(TypeRef::INT)))
-        .argument(InputValue::new("listView", TypeRef::named(TypeRef::STRING))),
+        .argument(InputValue::new("listView", TypeRef::named(TypeRef::STRING)))
+        // `list_input_from_args` (`list_input.rs`) has read this since it was written — GraphQL
+        // validation rejects any argument a field doesn't declare ("Unknown argument"), so `jql`
+        // was silently unusable over GraphQL until now even though the parsing side already
+        // supported it (found live migrating `metap-demo-jira/web`'s `AdvancedSearchPage`/
+        // `LogworkReportPage`/`CustomizableDashboardPage` off REST — all 3 use `?jql=`).
+        .argument(InputValue::new("jql", TypeRef::named(TypeRef::STRING))),
     );
 
     query
