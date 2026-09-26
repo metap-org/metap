@@ -211,7 +211,8 @@ fn no_redirect_client() -> reqwest::Client {
 }
 
 const CREATE_OAUTH_CLIENT_MUTATION: &str = "mutation($name: String!, $redirectUris: [String!]!, $allowedScopes: [String!], $isConfidential: Boolean) { \
-    createOAuthClient(name: $name, redirectUris: $redirectUris, allowedScopes: $allowedScopes, isConfidential: $isConfidential) }";
+    createOAuthClient(name: $name, redirectUris: $redirectUris, allowedScopes: $allowedScopes, isConfidential: $isConfidential) { \
+    clientId clientSecret serviceUserId } }";
 
 /// Registers a client via the real `createOAuthClient` GraphQL mutation (not the library function
 /// directly) — this test's own way of also proving it end to end. `POST /admin/oauth/clients`'s

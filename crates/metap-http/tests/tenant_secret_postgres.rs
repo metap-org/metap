@@ -243,11 +243,12 @@ async fn graphql(server: &TestServer, token: &str, query: &str, variables: Value
         .unwrap()
 }
 
-const SET_TENANT_CONFIG: &str = "mutation($key: String!, $value: Json!) { setTenantConfig(key: $key, value: $value) }";
-const RESET_TENANT_CONFIG: &str = "mutation($key: String!) { resetTenantConfig(key: $key) }";
-const TENANT_CONFIG_QUERY: &str = "{ tenantConfig }";
+const SET_TENANT_CONFIG: &str =
+    "mutation($key: String!, $value: Json!) { setTenantConfig(key: $key, value: $value) { key value overridden } }";
+const RESET_TENANT_CONFIG: &str = "mutation($key: String!) { resetTenantConfig(key: $key) { key value overridden } }";
+const TENANT_CONFIG_QUERY: &str = "{ tenantConfig { key value level overridden public } }";
 const SET_PLATFORM_CONFIG: &str =
-    "mutation($key: String!, $value: Json!) { setPlatformConfig(key: $key, value: $value) }";
+    "mutation($key: String!, $value: Json!) { setPlatformConfig(key: $key, value: $value) { key value appliesImmediately } }";
 
 async fn put_credential(server: &TestServer, token: &str, value: Value) -> Value {
     graphql(server, token, SET_TENANT_CONFIG, json!({ "key": KEY, "value": value })).await

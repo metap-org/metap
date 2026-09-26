@@ -94,7 +94,7 @@ impl SchemaHolder {
         } else {
             build_schema_parts(metadata, backend, limits)
         };
-        let (query, mutation) = platform_fields::add_platform_fields(query, mutation);
+        let (builder, query, mutation) = platform_fields::add_platform_fields(builder, query, mutation);
         builder.data(state).register(query).register(mutation).finish()
     }
 

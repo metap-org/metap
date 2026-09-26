@@ -239,11 +239,12 @@ async fn graphql(server: &TestServer, token: &str, query: &str, variables: Value
         .unwrap()
 }
 
-const TENANT_CONFIG_QUERY: &str = "{ tenantConfig }";
-const SET_TENANT_CONFIG: &str = "mutation($key: String!, $value: Json!) { setTenantConfig(key: $key, value: $value) }";
-const RESET_TENANT_CONFIG: &str = "mutation($key: String!) { resetTenantConfig(key: $key) }";
+const TENANT_CONFIG_QUERY: &str = "{ tenantConfig { key value level overridden public } }";
+const SET_TENANT_CONFIG: &str =
+    "mutation($key: String!, $value: Json!) { setTenantConfig(key: $key, value: $value) { key value overridden } }";
+const RESET_TENANT_CONFIG: &str = "mutation($key: String!) { resetTenantConfig(key: $key) { key value overridden } }";
 const SET_PLATFORM_CONFIG: &str =
-    "mutation($key: String!, $value: Json!) { setPlatformConfig(key: $key, value: $value) }";
+    "mutation($key: String!, $value: Json!) { setPlatformConfig(key: $key, value: $value) { key value appliesImmediately } }";
 
 async fn tenant_config(server: &TestServer, token: &str) -> Value {
     let res = graphql(server, token, TENANT_CONFIG_QUERY, json!({})).await;

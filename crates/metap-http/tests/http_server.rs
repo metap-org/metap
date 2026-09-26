@@ -844,7 +844,7 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
         .bearer_auth(&admin_token)
         .json(&json!({
             "query": "mutation($entity: String!, $action: String!, $roles: [String!], $subject: String) { \
-                createPolicy(entity: $entity, action: $action, roles: $roles, subject: $subject) }",
+                createPolicy(entity: $entity, action: $action, roles: $roles, subject: $subject) { id } }",
             "variables": { "entity": "test.tasks", "action": "read", "roles": ["employee"], "subject": "context" },
         }))
         .send()
@@ -861,7 +861,7 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
         .bearer_auth(&admin_token)
         .json(&json!({
             "query": "mutation($entity: String!, $action: String!, $subject: String, $condition: Json) { \
-                createPolicy(entity: $entity, action: $action, subject: $subject, condition: $condition) }",
+                createPolicy(entity: $entity, action: $action, subject: $subject, condition: $condition) { id } }",
             "variables": {
                 "entity": "test.tasks",
                 "action": "read",

@@ -176,10 +176,11 @@ async fn graphql(server: &TestServer, token: &str, query: &str, variables: Value
         .unwrap()
 }
 
-const PLATFORM_CONFIG_QUERY: &str = "{ platformConfig }";
+const PLATFORM_CONFIG_QUERY: &str = "{ platformConfig { key value level tenantOverridable } }";
 const SET_PLATFORM_CONFIG: &str =
-    "mutation($key: String!, $value: Json!) { setPlatformConfig(key: $key, value: $value) }";
-const RESET_PLATFORM_CONFIG: &str = "mutation($key: String!) { resetPlatformConfig(key: $key) }";
+    "mutation($key: String!, $value: Json!) { setPlatformConfig(key: $key, value: $value) { key value appliesImmediately } }";
+const RESET_PLATFORM_CONFIG: &str =
+    "mutation($key: String!) { resetPlatformConfig(key: $key) { key value appliesImmediately } }";
 
 fn first_error(res: &Value) -> &Value {
     res["errors"]

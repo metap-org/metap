@@ -14,13 +14,20 @@
 //! `state.context_attributes_cache`) — `metap-graphql` itself must stay backend-agnostic (only
 //! `RecordBackend`/`MetadataRegistry`).
 //!
-//! **Output shape is a JSON scalar for every field here**, not a fully-typed GraphQL object —
-//! consistent with how the entity schema already treats `capabilities`/`filter`/`aggregate`
-//! (`metap-graphql/src/type_map.rs`'s `JSON_SCALAR`). Modeling `Policy`/`CronJob`/`OAuthClient`/…
-//! as real GraphQL object types is a nice-to-have follow-up, not required for functional parity
-//! with REST — every field/mutation below calls the exact same underlying service function its
-//! REST counterpart did, and reproduces that route's own JSON shape (field names/casing) exactly,
-//! so an existing REST response body and this field's GraphQL result parse identically.
+//! **Every non-scalar output is a real, named GraphQL object type** (`AdminUserSummary`/
+//! `Policy`/`CronJob`/`CronJobRun`/`OAuthClient`/`DashboardConfig`/`Preferences`/
+//! `PlatformConfigItem`/`TenantConfigItem`/`SetConfigResult`/`SetTenantConfigResult`), not a
+//! `Json` scalar (2026-09-26, `../metap-docs/docs/roadmap/97-platform-fields-typed-objects.md`;
+//! Phase 95 originally shipped these as `Json` — a deliberate, explicitly-flagged scope cut —
+//! this phase closes it). Each type is a thin GraphQL view over the exact same `serde_json::Value`
+//! every resolver already built, via [`JsonHandle`] — the same "wrap the already-serialized JSON,
+//! resolve each field with a JSON-pointer lookup" pattern `metap-graphql/src/record_handle.rs`
+//! established for entity records, applied here to non-entity data instead. A field whose value is
+//! genuinely dynamic/schema-less by design (a cron trigger/target config that varies by type, a
+//! dashboard layout, a config value, a policy condition tree, `explainPermission`'s diagnostic
+//! trace) still uses the `Json` scalar — typing those would either be inaccurate (they're not one
+//! fixed shape) or duplicate validation that already happens server-side; see each type's own
+//! field list below for exactly which fields stayed `Json` and why.
 //!
 //! **Auth is per-field here, not per-route.** REST gated each handler with an axum extractor
 //! (`AuthContext`/`AdminContext`/`PlatformAdminContext`) that ran before the handler at all — one
@@ -30,7 +37,9 @@
 //! checks (`metap_http::auth`) inside the resolver itself — every field that REST gated with one
 //! of those two extractors calls the matching helper first.
 
-use async_graphql::dynamic::{Field, FieldFuture, FieldValue, InputValue, Object, ResolverContext, TypeRef};
+use async_graphql::dynamic::{
+    Field, FieldFuture, FieldValue, InputObject, InputValue, Object, ResolverContext, SchemaBuilder, TypeRef,
+};
 use async_graphql::{Error as GqlError, Value as GqlValue};
 use metap_http::AppState;
 use metap_permission::RequestContext;
@@ -41,7 +50,7 @@ use uuid::Uuid;
 const JSON_SCALAR: &str = "Json";
 
 // -------------------------------------------------------------------------------------------
-// Shared helpers: context access, auth, error mapping, JSON scalar plumbing
+// Shared helpers: context access, auth, error mapping, JSON object/scalar plumbing
 // -------------------------------------------------------------------------------------------
 
 fn state_from_ctx<'a>(ctx: &ResolverContext<'a>) -> &'a AppState {
@@ -135,15 +144,52 @@ fn user_id_of(context: &RequestContext) -> Result<Uuid, GqlError> {
         .ok_or_else(|| gql_err(401, "unauthorized", "Token is missing a user id."))
 }
 
+/// Wraps an already-built `serde_json::Value` object so a registered [`Object`] type's fields can
+/// each resolve themselves with a plain JSON-pointer lookup — the exact same role
+/// `metap-graphql/src/record_handle.rs`'s `RecordHandle` plays for entity records, applied here to
+/// every non-entity type this module registers.
+struct JsonHandle(Value);
+
+/// A `Json`-scalar leaf value, or `null` for a missing/absent key.
+fn json_field_value(value: Option<&Value>) -> Option<FieldValue<'static>> {
+    match value {
+        None | Some(Value::Null) => None,
+        Some(v) => GqlValue::from_json(v.clone()).ok().map(FieldValue::value),
+    }
+}
+
+/// Builds one field of a `JsonHandle`-backed `Object` type — reads `name` straight out of the
+/// wrapped JSON object and converts it to whatever GraphQL scalar `type_ref` declares (string/int/
+/// boolean/ID all round-trip through `async_graphql::Value::from_json` the same way the `Json`
+/// scalar does; the declared `type_ref` is purely a schema/introspection promise, not a runtime
+/// coercion this function performs itself — every value here already comes from a `serde_json`
+/// serialization of a concrete Rust type, so it's already shaped correctly).
+fn json_field(name: &'static str, type_ref: TypeRef) -> Field {
+    Field::new(name, type_ref, move |ctx| {
+        let handle = ctx
+            .parent_value
+            .downcast_ref::<JsonHandle>()
+            .expect("parent_value is always a JsonHandle for platform_fields object types");
+        FieldFuture::Value(json_field_value(handle.0.get(name)))
+    })
+}
+
+/// One record of a registered `Object` type, ready to return from a field whose declared type is
+/// that `Object` (not a list, not a union — no `.with_type()` needed, same reasoning
+/// `RecordHandle::from_dto` doesn't need it for a non-federated entity field).
+fn json_object(value: Value) -> FieldValue<'static> {
+    FieldValue::owned_any(JsonHandle(value))
+}
+
+fn json_object_list(values: Vec<Value>) -> FieldValue<'static> {
+    FieldValue::list(values.into_iter().map(json_object))
+}
+
 fn json_value(v: Value) -> FieldValue<'static> {
     match GqlValue::from_json(v) {
         Ok(v) => FieldValue::value(v),
         Err(_) => FieldValue::NULL,
     }
-}
-
-fn json_list(values: Vec<Value>) -> FieldValue<'static> {
-    FieldValue::list(values.into_iter().map(json_value))
 }
 
 fn true_field() -> FieldValue<'static> {
@@ -198,6 +244,194 @@ fn uuid_arg(ctx: &ResolverContext<'_>, name: &str) -> Result<Uuid, GqlError> {
 
 fn i64_arg_opt(ctx: &ResolverContext<'_>, name: &str) -> Option<i64> {
     ctx.args.get(name).and_then(|v| v.i64().ok())
+}
+
+// -------------------------------------------------------------------------------------------
+// Object types — each a thin JsonHandle view (see module doc comment). A field typed `Json` here
+// stays that way deliberately: the underlying value has no single fixed shape (varies by
+// triggerType/targetType, is an opaque per-tenant blob, or is a recursive condition tree).
+// -------------------------------------------------------------------------------------------
+
+fn admin_user_summary_object() -> Object {
+    Object::new("AdminUserSummary")
+        .field(json_field("userId", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("roles", TypeRef::named_nn_list_nn(TypeRef::STRING)))
+}
+
+fn create_admin_user_result_object() -> Object {
+    Object::new("CreateAdminUserResult")
+        .field(json_field("userId", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("email", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("roles", TypeRef::named_nn_list_nn(TypeRef::STRING)))
+}
+
+fn tenant_user_summary_object() -> Object {
+    Object::new("TenantUserSummary")
+        .field(json_field("id", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("email", TypeRef::named_nn(TypeRef::STRING)))
+}
+
+fn policy_object() -> Object {
+    Object::new("Policy")
+        .field(json_field("id", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("tenantId", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("entity", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("action", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("field", TypeRef::named(TypeRef::STRING)))
+        .field(json_field("subject", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("roles", TypeRef::named_list_nn(TypeRef::STRING)))
+        // A recursive condition tree (`PolicyCondition`) — genuinely schema-less from GraphQL's
+        // point of view, same reasoning `createPolicy`'s `condition` argument stays `Json`.
+        .field(json_field("condition", TypeRef::named(JSON_SCALAR)))
+        .field(json_field("createdBy", TypeRef::named(TypeRef::ID)))
+        .field(json_field("effect", TypeRef::named_nn(TypeRef::STRING)))
+}
+
+fn cron_job_object() -> Object {
+    Object::new("CronJob")
+        .field(json_field("id", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("tenantId", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("name", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("enabled", TypeRef::named_nn(TypeRef::BOOLEAN)))
+        .field(json_field("triggerType", TypeRef::named_nn(TypeRef::STRING)))
+        // Shape depends on `triggerType` (`{entity,action}` for on_transition, `{entity,event}`
+        // for on_record_event, absent for schedule) — see `validate_trigger` below.
+        .field(json_field("triggerConfig", TypeRef::named(JSON_SCALAR)))
+        .field(json_field("cronExpr", TypeRef::named(TypeRef::STRING)))
+        .field(json_field("timezone", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("targetType", TypeRef::named_nn(TypeRef::STRING)))
+        // Shape depends on `targetType` (5 different payload shapes, or a `steps` chain of them)
+        // — see `validate_target_config` below.
+        .field(json_field("targetConfig", TypeRef::named_nn(JSON_SCALAR)))
+        .field(json_field("dispatchMode", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("maxAttempts", TypeRef::named_nn(TypeRef::INT)))
+        .field(json_field("retryBackoffSeconds", TypeRef::named_nn(TypeRef::INT)))
+        .field(json_field("nextRunAt", TypeRef::named(TypeRef::STRING)))
+        .field(json_field("lastRunAt", TypeRef::named(TypeRef::STRING)))
+        .field(json_field("createdAt", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("updatedAt", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("createdBy", TypeRef::named(TypeRef::ID)))
+}
+
+fn cron_job_run_object() -> Object {
+    Object::new("CronJobRun")
+        .field(json_field("id", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("tenantId", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("jobId", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("status", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("attempt", TypeRef::named_nn(TypeRef::INT)))
+        .field(json_field("scheduledFor", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("startedAt", TypeRef::named(TypeRef::STRING)))
+        .field(json_field("finishedAt", TypeRef::named(TypeRef::STRING)))
+        .field(json_field("error", TypeRef::named(TypeRef::STRING)))
+        // Free-form per dispatch target (webhook response body, email send result, ...).
+        .field(json_field("responseSummary", TypeRef::named(JSON_SCALAR)))
+        .field(json_field("createdAt", TypeRef::named_nn(TypeRef::STRING)))
+}
+
+fn oauth_client_object() -> Object {
+    Object::new("OAuthClient")
+        .field(json_field("id", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("clientId", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("name", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("redirectUris", TypeRef::named_nn_list_nn(TypeRef::STRING)))
+        .field(json_field("allowedScopes", TypeRef::named_nn_list_nn(TypeRef::STRING)))
+        .field(json_field("isConfidential", TypeRef::named_nn(TypeRef::BOOLEAN)))
+        .field(json_field("serviceUserId", TypeRef::named(TypeRef::ID)))
+        // Only ever non-null once, in `createOAuthClient`'s own result — see that mutation's doc
+        // comment (write-once, same discipline `metap-oauth-server::create_client` documents).
+        .field(json_field("clientSecret", TypeRef::named(TypeRef::STRING)))
+}
+
+fn dashboard_config_object() -> Object {
+    Object::new("DashboardConfig")
+        .field(json_field("id", TypeRef::named_nn(TypeRef::ID)))
+        .field(json_field("ownerUserId", TypeRef::named(TypeRef::ID)))
+        // A dashboard layout is an opaque JSON blob to this crate and to `metap-dashboards`
+        // itself, interpreted only by the frontend's widget catalog — see that crate's own doc
+        // comment.
+        .field(json_field("layout", TypeRef::named_nn(JSON_SCALAR)))
+        .field(json_field("updatedAt", TypeRef::named_nn(TypeRef::STRING)))
+}
+
+fn preferences_object() -> Object {
+    Object::new("Preferences").field(json_field("locale", TypeRef::named_nn(TypeRef::STRING)))
+}
+
+fn platform_config_item_object() -> Object {
+    Object::new("PlatformConfigItem")
+        .field(json_field("key", TypeRef::named_nn(TypeRef::STRING)))
+        // A config value's shape is whatever that specific key's declaration says (string, bool,
+        // number, or a structured object for some keys) — genuinely per-key, not one fixed shape.
+        .field(json_field("value", TypeRef::named_nn(JSON_SCALAR)))
+        .field(json_field("level", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("tenantOverridable", TypeRef::named_nn(TypeRef::BOOLEAN)))
+}
+
+fn tenant_config_item_object() -> Object {
+    Object::new("TenantConfigItem")
+        .field(json_field("key", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("value", TypeRef::named_nn(JSON_SCALAR)))
+        .field(json_field("level", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("overridden", TypeRef::named_nn(TypeRef::BOOLEAN)))
+        .field(json_field("public", TypeRef::named_nn(TypeRef::BOOLEAN)))
+}
+
+fn set_config_result_object() -> Object {
+    Object::new("SetConfigResult")
+        .field(json_field("key", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("value", TypeRef::named_nn(JSON_SCALAR)))
+        .field(json_field("appliesImmediately", TypeRef::named_nn(TypeRef::BOOLEAN)))
+}
+
+fn set_tenant_config_result_object() -> Object {
+    Object::new("SetTenantConfigResult")
+        .field(json_field("key", TypeRef::named_nn(TypeRef::STRING)))
+        .field(json_field("value", TypeRef::named_nn(JSON_SCALAR)))
+        .field(json_field("overridden", TypeRef::named_nn(TypeRef::BOOLEAN)))
+}
+
+// -------------------------------------------------------------------------------------------
+// Input types. `CronJobInput`/`CronJobUpdateInput`'s `triggerConfig`/`targetConfig` stay `Json`
+// for the same reason the matching `CronJob` output fields do — the resolver still fully
+// validates them (`validate_trigger`/`validate_target_config` below), a typed GraphQL schema
+// would only duplicate that validation, not replace it.
+// -------------------------------------------------------------------------------------------
+
+fn matrix_grant_input_object() -> InputObject {
+    InputObject::new("MatrixGrantInput")
+        .field(InputValue::new("role", TypeRef::named(TypeRef::STRING)))
+        .field(InputValue::new("action", TypeRef::named_nn(TypeRef::STRING)))
+}
+
+fn cron_job_input_object() -> InputObject {
+    InputObject::new("CronJobInput")
+        .field(InputValue::new("name", TypeRef::named_nn(TypeRef::STRING)))
+        .field(InputValue::new("triggerType", TypeRef::named(TypeRef::STRING)))
+        .field(InputValue::new("triggerConfig", TypeRef::named(JSON_SCALAR)))
+        .field(InputValue::new("cronExpr", TypeRef::named(TypeRef::STRING)))
+        .field(InputValue::new("timezone", TypeRef::named(TypeRef::STRING)))
+        .field(InputValue::new("targetType", TypeRef::named_nn(TypeRef::STRING)))
+        .field(InputValue::new("targetConfig", TypeRef::named_nn(JSON_SCALAR)))
+        .field(InputValue::new("dispatchMode", TypeRef::named(TypeRef::STRING)))
+        .field(InputValue::new("maxAttempts", TypeRef::named(TypeRef::INT)))
+        .field(InputValue::new("retryBackoffSeconds", TypeRef::named(TypeRef::INT)))
+        .field(InputValue::new("enabled", TypeRef::named(TypeRef::BOOLEAN)))
+}
+
+fn cron_job_update_input_object() -> InputObject {
+    InputObject::new("CronJobUpdateInput")
+        .field(InputValue::new("name", TypeRef::named(TypeRef::STRING)))
+        .field(InputValue::new("triggerType", TypeRef::named(TypeRef::STRING)))
+        .field(InputValue::new("triggerConfig", TypeRef::named(JSON_SCALAR)))
+        .field(InputValue::new("cronExpr", TypeRef::named(TypeRef::STRING)))
+        .field(InputValue::new("timezone", TypeRef::named(TypeRef::STRING)))
+        .field(InputValue::new("targetType", TypeRef::named(TypeRef::STRING)))
+        .field(InputValue::new("targetConfig", TypeRef::named(JSON_SCALAR)))
+        .field(InputValue::new("dispatchMode", TypeRef::named(TypeRef::STRING)))
+        .field(InputValue::new("maxAttempts", TypeRef::named(TypeRef::INT)))
+        .field(InputValue::new("retryBackoffSeconds", TypeRef::named(TypeRef::INT)))
+        .field(InputValue::new("enabled", TypeRef::named(TypeRef::BOOLEAN)))
 }
 
 // -------------------------------------------------------------------------------------------
@@ -448,16 +682,38 @@ fn not_found_cron_job() -> GqlError {
 }
 
 // -------------------------------------------------------------------------------------------
-// The extension point: called from `SchemaHolder::build` on the `(query, mutation)` pair
-// `metap_graphql::build_schema_parts`/`build_schema_parts_with_federation` returns, before
+// The extension point: called from `SchemaHolder::build` on the `(builder, query, mutation)`
+// triple `metap_graphql::build_schema_parts`/`build_schema_parts_with_federation` returns, before
 // `.register(query).register(mutation).finish()`.
 // -------------------------------------------------------------------------------------------
 
-pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, Object) {
+pub fn add_platform_fields(
+    mut builder: SchemaBuilder,
+    mut query: Object,
+    mut mutation: Object,
+) -> (SchemaBuilder, Object, Object) {
+    builder = builder
+        .register(admin_user_summary_object())
+        .register(create_admin_user_result_object())
+        .register(tenant_user_summary_object())
+        .register(policy_object())
+        .register(cron_job_object())
+        .register(cron_job_run_object())
+        .register(oauth_client_object())
+        .register(dashboard_config_object())
+        .register(preferences_object())
+        .register(platform_config_item_object())
+        .register(tenant_config_item_object())
+        .register(set_config_result_object())
+        .register(set_tenant_config_result_object())
+        .register(matrix_grant_input_object())
+        .register(cron_job_input_object())
+        .register(cron_job_update_input_object());
+
     // --- Query: users/roles -----------------------------------------------------------------
     query = query.field(Field::new(
         "adminUsers",
-        TypeRef::named_nn_list_nn(JSON_SCALAR),
+        TypeRef::named_nn_list_nn("AdminUserSummary"),
         |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = require_admin(&ctx)?;
@@ -466,14 +722,14 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     .await
                     .map_err(anyhow_err)?;
                 let _ = tx.commit().await;
-                Ok(Some(json_list(users.iter().map(user_roles_to_json).collect())))
+                Ok(Some(json_object_list(users.iter().map(user_roles_to_json).collect())))
             })
         },
     ));
 
     query = query.field(Field::new(
         "tenantUsers",
-        TypeRef::named_nn_list_nn(JSON_SCALAR),
+        TypeRef::named_nn_list_nn("TenantUserSummary"),
         |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = caller(&ctx)?;
@@ -486,14 +742,14 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     .into_iter()
                     .map(|u| json!({"id": u.id, "email": u.email}))
                     .collect();
-                Ok(Some(json_list(data)))
+                Ok(Some(json_object_list(data)))
             })
         },
     ));
 
     // --- Query: policies ---------------------------------------------------------------------
     query = query.field(
-        Field::new("policies", TypeRef::named_nn_list_nn(JSON_SCALAR), |ctx| {
+        Field::new("policies", TypeRef::named_nn_list_nn("Policy"), |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = require_admin(&ctx)?;
                 let entity = string_arg_opt(&ctx, "entity")?;
@@ -502,14 +758,14 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     .list_policies(tenant_id, entity.as_deref())
                     .await
                     .map_err(anyhow_err)?;
-                Ok(Some(json_list(rows.iter().map(policy_to_json).collect())))
+                Ok(Some(json_object_list(rows.iter().map(policy_to_json).collect())))
             })
         })
         .argument(InputValue::new("entity", TypeRef::named(TypeRef::STRING))),
     );
 
     // --- Query: cron jobs --------------------------------------------------------------------
-    query = query.field(Field::new("cronJobs", TypeRef::named_nn_list_nn(JSON_SCALAR), |ctx| {
+    query = query.field(Field::new("cronJobs", TypeRef::named_nn_list_nn("CronJob"), |ctx| {
         FieldFuture::new(async move {
             let (state, _context, tenant_id) = require_admin(&ctx)?;
             let jobs = metap_cron::list_jobs(&state.pool, tenant_id)
@@ -519,12 +775,12 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                 .iter()
                 .map(|j| serde_json::to_value(j).unwrap_or(Value::Null))
                 .collect();
-            Ok(Some(json_list(data)))
+            Ok(Some(json_object_list(data)))
         })
     }));
 
     query = query.field(
-        Field::new("cronJob", TypeRef::named(JSON_SCALAR), |ctx| {
+        Field::new("cronJob", TypeRef::named("CronJob"), |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = require_admin(&ctx)?;
                 let id = uuid_arg(&ctx, "id")?;
@@ -532,7 +788,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     .await
                     .map_err(anyhow_err)?
                 {
-                    Some(job) => Ok(Some(json_value(serde_json::to_value(&job).unwrap_or(Value::Null)))),
+                    Some(job) => Ok(Some(json_object(serde_json::to_value(&job).unwrap_or(Value::Null)))),
                     None => Ok(None),
                 }
             })
@@ -541,7 +797,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
     );
 
     query = query.field(
-        Field::new("cronJobRuns", TypeRef::named_nn_list_nn(JSON_SCALAR), |ctx| {
+        Field::new("cronJobRuns", TypeRef::named_nn_list_nn("CronJobRun"), |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = require_admin(&ctx)?;
                 let id = uuid_arg(&ctx, "id")?;
@@ -553,13 +809,17 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     .iter()
                     .map(|r| serde_json::to_value(r).unwrap_or(Value::Null))
                     .collect();
-                Ok(Some(json_list(data)))
+                Ok(Some(json_object_list(data)))
             })
         })
         .argument(InputValue::new("id", TypeRef::named_nn(TypeRef::ID)))
         .argument(InputValue::new("limit", TypeRef::named(TypeRef::INT))),
     );
 
+    // Step-level progress for one `TargetType::Steps` firing — kept as `Json`, not a typed
+    // object: `WorkflowRun`'s own shape belongs to `metap-workflow`, not this module, and this
+    // field has zero real frontend consumers today (confirmed by an org-wide grep before Phase
+    // 95 shipped) — not worth a dedicated type until something actually needs one.
     query = query.field(
         Field::new("cronJobWorkflowRun", TypeRef::named(JSON_SCALAR), |ctx| {
             FieldFuture::new(async move {
@@ -584,20 +844,20 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
     // --- Query: oauth admin clients ------------------------------------------------------------
     query = query.field(Field::new(
         "oauthClients",
-        TypeRef::named_nn_list_nn(JSON_SCALAR),
+        TypeRef::named_nn_list_nn("OAuthClient"),
         |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = require_admin(&ctx)?;
                 let clients = metap_oauth_server::list_clients(&state.pool, tenant_id)
                     .await
                     .map_err(anyhow_err)?;
-                Ok(Some(json_list(clients.iter().map(client_to_json).collect())))
+                Ok(Some(json_object_list(clients.iter().map(client_to_json).collect())))
             })
         },
     ));
 
     // --- Query: dashboards ---------------------------------------------------------------------
-    query = query.field(Field::new("myDashboard", TypeRef::named(JSON_SCALAR), |ctx| {
+    query = query.field(Field::new("myDashboard", TypeRef::named("DashboardConfig"), |ctx| {
         FieldFuture::new(async move {
             let (state, context, tenant_id) = caller(&ctx)?;
             let user_id = user_id_of(context)?;
@@ -606,13 +866,13 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                 .await
                 .map_err(anyhow_err)?;
             let _ = tx.commit().await;
-            Ok(config.as_ref().map(dashboard_to_json).map(json_value))
+            Ok(config.as_ref().map(dashboard_to_json).map(json_object))
         })
     }));
 
     query = query.field(Field::new(
         "tenantDefaultDashboard",
-        TypeRef::named(JSON_SCALAR),
+        TypeRef::named("DashboardConfig"),
         |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = caller(&ctx)?;
@@ -621,27 +881,27 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     .await
                     .map_err(anyhow_err)?;
                 let _ = tx.commit().await;
-                Ok(config.as_ref().map(dashboard_to_json).map(json_value))
+                Ok(config.as_ref().map(dashboard_to_json).map(json_object))
             })
         },
     ));
 
     // --- Query: preferences ----------------------------------------------------------------------
-    query = query.field(Field::new("myPreferences", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+    query = query.field(Field::new("myPreferences", TypeRef::named_nn("Preferences"), |ctx| {
         FieldFuture::new(async move {
             let (state, context, tenant_id) = caller(&ctx)?;
             let user_id = user_id_of(context)?;
             let locale = metap_peripherals::get_locale(&state.pool, tenant_id, user_id)
                 .await
                 .map_err(anyhow_err)?;
-            Ok(Some(json_value(json!({ "locale": locale }))))
+            Ok(Some(json_object(json!({ "locale": locale }))))
         })
     }));
 
     // --- Query: platform/tenant config -------------------------------------------------------
     query = query.field(Field::new(
         "platformConfig",
-        TypeRef::named_nn_list_nn(JSON_SCALAR),
+        TypeRef::named_nn_list_nn("PlatformConfigItem"),
         |ctx| {
             FieldFuture::new(async move {
                 let state = require_platform_admin(&ctx)?;
@@ -658,14 +918,14 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                         })
                     })
                     .collect();
-                Ok(Some(json_list(items)))
+                Ok(Some(json_object_list(items)))
             })
         },
     ));
 
     query = query.field(Field::new(
         "tenantConfig",
-        TypeRef::named_nn_list_nn(JSON_SCALAR),
+        TypeRef::named_nn_list_nn("TenantConfigItem"),
         |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = caller(&ctx)?;
@@ -683,14 +943,14 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                         })
                     })
                     .collect();
-                Ok(Some(json_list(items)))
+                Ok(Some(json_object_list(items)))
             })
         },
     ));
 
     // --- Mutation: users/roles -----------------------------------------------------------------
     mutation = mutation.field(
-        Field::new("createAdminUser", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+        Field::new("createAdminUser", TypeRef::named_nn("CreateAdminUserResult"), |ctx| {
             FieldFuture::new(async move {
                 let (state, context, tenant_id) = require_admin(&ctx)?;
                 let email = ctx.args.try_get("email")?.string()?.to_string();
@@ -717,7 +977,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                         .map_err(anyhow_err)?;
                 }
                 tx.commit().await.map_err(|e| anyhow_err(e.into()))?;
-                Ok(Some(json_value(
+                Ok(Some(json_object(
                     json!({ "userId": user.id, "email": user.email, "roles": roles }),
                 )))
             })
@@ -782,7 +1042,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
 
     // --- Mutation: policies --------------------------------------------------------------------
     mutation = mutation.field(
-        Field::new("createPolicy", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+        Field::new("createPolicy", TypeRef::named_nn("Policy"), |ctx| {
             FieldFuture::new(async move {
                 let (state, context, tenant_id) = require_admin(&ctx)?;
                 let entity = ctx.args.try_get("entity")?.string()?.to_string();
@@ -819,7 +1079,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     )
                     .await
                     .map_err(anyhow_err)?;
-                Ok(Some(json_value(policy_to_json(&row))))
+                Ok(Some(json_object(policy_to_json(&row))))
             })
         })
         .argument(InputValue::new("entity", TypeRef::named_nn(TypeRef::STRING)))
@@ -856,7 +1116,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
     ];
 
     mutation = mutation.field(
-        Field::new("seedDefaultPolicies", TypeRef::named_nn_list_nn(JSON_SCALAR), |ctx| {
+        Field::new("seedDefaultPolicies", TypeRef::named_nn_list_nn("Policy"), |ctx| {
             FieldFuture::new(async move {
                 let (state, context, tenant_id) = require_admin(&ctx)?;
                 let entity = ctx.args.try_get("entity")?.string()?.to_string();
@@ -895,7 +1155,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                         .map_err(anyhow_err)?;
                     created.push(policy_to_json(&row));
                 }
-                Ok(Some(json_list(created)))
+                Ok(Some(json_object_list(created)))
             })
         })
         .argument(InputValue::new("entity", TypeRef::named_nn(TypeRef::STRING)))
@@ -904,7 +1164,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
     );
 
     mutation = mutation.field(
-        Field::new("syncPolicyMatrix", TypeRef::named_nn_list_nn(JSON_SCALAR), |ctx| {
+        Field::new("syncPolicyMatrix", TypeRef::named_nn_list_nn("Policy"), |ctx| {
             FieldFuture::new(async move {
                 let (state, context, tenant_id) = require_admin(&ctx)?;
                 let entity = ctx.args.try_get("entity")?.string()?.to_string();
@@ -929,13 +1189,16 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     .sync_basic_policies(tenant_id, &entity, grants, created_by)
                     .await
                     .map_err(anyhow_err)?;
-                Ok(Some(json_list(rows.iter().map(policy_to_json).collect())))
+                Ok(Some(json_object_list(rows.iter().map(policy_to_json).collect())))
             })
         })
         .argument(InputValue::new("entity", TypeRef::named_nn(TypeRef::STRING)))
-        .argument(InputValue::new("grants", TypeRef::named_nn(JSON_SCALAR))),
+        .argument(InputValue::new("grants", TypeRef::named_nn_list_nn("MatrixGrantInput"))),
     );
 
+    // `PolicyExplanation`/`PolicyTraceEntry` (`metap-permission`) don't derive `ToSchema` either
+    // (REST's own doc comment for this route says the same) — a diagnostic trace shape, kept
+    // `Json` rather than modeled, same call this module made for `cronJobWorkflowRun`.
     mutation = mutation.field(
         Field::new("explainPermission", TypeRef::named_nn(JSON_SCALAR), |ctx| {
             FieldFuture::new(async move {
@@ -967,7 +1230,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
 
     // --- Mutation: cron jobs -------------------------------------------------------------------
     mutation = mutation.field(
-        Field::new("createCronJob", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+        Field::new("createCronJob", TypeRef::named_nn("CronJob"), |ctx| {
             FieldFuture::new(async move {
                 let (state, context, tenant_id) = require_admin(&ctx)?;
                 let raw = json_arg(&ctx, "input")?;
@@ -1011,14 +1274,14 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                 let job = metap_cron::create_job(&state.pool, tenant_id, input, created_by)
                     .await
                     .map_err(anyhow_err)?;
-                Ok(Some(json_value(serde_json::to_value(&job).unwrap_or(Value::Null))))
+                Ok(Some(json_object(serde_json::to_value(&job).unwrap_or(Value::Null))))
             })
         })
-        .argument(InputValue::new("input", TypeRef::named_nn(JSON_SCALAR))),
+        .argument(InputValue::new("input", TypeRef::named_nn("CronJobInput"))),
     );
 
     mutation = mutation.field(
-        Field::new("updateCronJob", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+        Field::new("updateCronJob", TypeRef::named_nn("CronJob"), |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = require_admin(&ctx)?;
                 let id = uuid_arg(&ctx, "id")?;
@@ -1087,11 +1350,11 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     .await
                     .map_err(anyhow_err)?
                     .ok_or_else(not_found_cron_job)?;
-                Ok(Some(json_value(serde_json::to_value(&job).unwrap_or(Value::Null))))
+                Ok(Some(json_object(serde_json::to_value(&job).unwrap_or(Value::Null))))
             })
         })
         .argument(InputValue::new("id", TypeRef::named_nn(TypeRef::ID)))
-        .argument(InputValue::new("input", TypeRef::named_nn(JSON_SCALAR))),
+        .argument(InputValue::new("input", TypeRef::named_nn("CronJobUpdateInput"))),
     );
 
     mutation = mutation.field(
@@ -1110,7 +1373,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
 
     // --- Mutation: oauth admin clients -----------------------------------------------------------
     mutation = mutation.field(
-        Field::new("createOAuthClient", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+        Field::new("createOAuthClient", TypeRef::named_nn("OAuthClient"), |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = require_admin(&ctx)?;
                 let name = ctx.args.try_get("name")?.string()?.to_string();
@@ -1150,7 +1413,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                 dto.as_object_mut()
                     .expect("client_to_json always returns an object")
                     .insert("clientSecret".to_string(), json!(secret));
-                Ok(Some(json_value(dto)))
+                Ok(Some(json_object(dto)))
             })
         })
         .argument(InputValue::new("name", TypeRef::named_nn(TypeRef::STRING)))
@@ -1184,7 +1447,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
 
     // --- Mutation: dashboards --------------------------------------------------------------------
     mutation = mutation.field(
-        Field::new("setMyDashboard", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+        Field::new("setMyDashboard", TypeRef::named_nn("DashboardConfig"), |ctx| {
             FieldFuture::new(async move {
                 let (state, context, tenant_id) = caller(&ctx)?;
                 let user_id = user_id_of(context)?;
@@ -1194,32 +1457,36 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     .await
                     .map_err(anyhow_err)?;
                 tx.commit().await.map_err(|e| anyhow_err(e.into()))?;
-                Ok(Some(json_value(dashboard_to_json(&config))))
+                Ok(Some(json_object(dashboard_to_json(&config))))
             })
         })
         .argument(InputValue::new("layout", TypeRef::named_nn(JSON_SCALAR))),
     );
 
     mutation = mutation.field(
-        Field::new("setTenantDefaultDashboard", TypeRef::named_nn(JSON_SCALAR), |ctx| {
-            FieldFuture::new(async move {
-                let (state, context, tenant_id) = require_admin(&ctx)?;
-                let user_id = user_id_of(context)?;
-                let layout = json_arg(&ctx, "layout")?;
-                let mut tx = state.router.begin(tenant_id.into()).await.map_err(anyhow_err)?;
-                let config = metap_dashboards::upsert_tenant_default(&mut *tx, tenant_id, layout, user_id)
-                    .await
-                    .map_err(anyhow_err)?;
-                tx.commit().await.map_err(|e| anyhow_err(e.into()))?;
-                Ok(Some(json_value(dashboard_to_json(&config))))
-            })
-        })
+        Field::new(
+            "setTenantDefaultDashboard",
+            TypeRef::named_nn("DashboardConfig"),
+            |ctx| {
+                FieldFuture::new(async move {
+                    let (state, context, tenant_id) = require_admin(&ctx)?;
+                    let user_id = user_id_of(context)?;
+                    let layout = json_arg(&ctx, "layout")?;
+                    let mut tx = state.router.begin(tenant_id.into()).await.map_err(anyhow_err)?;
+                    let config = metap_dashboards::upsert_tenant_default(&mut *tx, tenant_id, layout, user_id)
+                        .await
+                        .map_err(anyhow_err)?;
+                    tx.commit().await.map_err(|e| anyhow_err(e.into()))?;
+                    Ok(Some(json_object(dashboard_to_json(&config))))
+                })
+            },
+        )
         .argument(InputValue::new("layout", TypeRef::named_nn(JSON_SCALAR))),
     );
 
     // --- Mutation: preferences -------------------------------------------------------------------
     mutation = mutation.field(
-        Field::new("setMyPreferences", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+        Field::new("setMyPreferences", TypeRef::named_nn("Preferences"), |ctx| {
             FieldFuture::new(async move {
                 let locale = ctx.args.try_get("locale")?.string()?.to_string();
                 const SUPPORTED_LOCALES: [&str; 2] = ["en", "vi"];
@@ -1234,7 +1501,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                 metap_peripherals::set_locale(&state.pool, tenant_id, user_id, &locale)
                     .await
                     .map_err(anyhow_err)?;
-                Ok(Some(json_value(json!({ "locale": locale }))))
+                Ok(Some(json_object(json!({ "locale": locale }))))
             })
         })
         .argument(InputValue::new("locale", TypeRef::named_nn(TypeRef::STRING))),
@@ -1242,7 +1509,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
 
     // --- Mutation: platform/tenant config ----------------------------------------------------
     mutation = mutation.field(
-        Field::new("setPlatformConfig", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+        Field::new("setPlatformConfig", TypeRef::named_nn("SetConfigResult"), |ctx| {
             FieldFuture::new(async move {
                 let state = require_platform_admin(&ctx)?;
                 let key = ctx.args.try_get("key")?.string()?.to_string();
@@ -1252,7 +1519,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     .set_platform_global(&key, value.clone())
                     .await
                     .map_err(config_err)?;
-                Ok(Some(json_value(json!({
+                Ok(Some(json_object(json!({
                     "key": key,
                     "value": value,
                     "appliesImmediately": applies_immediately(&key),
@@ -1264,13 +1531,13 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
     );
 
     mutation = mutation.field(
-        Field::new("resetPlatformConfig", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+        Field::new("resetPlatformConfig", TypeRef::named_nn("SetConfigResult"), |ctx| {
             FieldFuture::new(async move {
                 let state = require_platform_admin(&ctx)?;
                 let key = ctx.args.try_get("key")?.string()?.to_string();
                 state.config.reset_platform_global(&key).await.map_err(config_err)?;
                 let value = state.config.current().get(&key);
-                Ok(Some(json_value(json!({
+                Ok(Some(json_object(json!({
                     "key": key,
                     "value": value,
                     "appliesImmediately": applies_immediately(&key),
@@ -1281,7 +1548,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
     );
 
     mutation = mutation.field(
-        Field::new("setTenantConfig", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+        Field::new("setTenantConfig", TypeRef::named_nn("SetTenantConfigResult"), |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = require_admin(&ctx)?;
                 let key = ctx.args.try_get("key")?.string()?.to_string();
@@ -1326,7 +1593,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     value
                 };
                 tx.commit().await.map_err(|e| anyhow_err(e.into()))?;
-                Ok(Some(json_value(
+                Ok(Some(json_object(
                     json!({ "key": key, "value": stored_value, "overridden": true }),
                 )))
             })
@@ -1336,7 +1603,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
     );
 
     mutation = mutation.field(
-        Field::new("resetTenantConfig", TypeRef::named_nn(JSON_SCALAR), |ctx| {
+        Field::new("resetTenantConfig", TypeRef::named_nn("SetTenantConfigResult"), |ctx| {
             FieldFuture::new(async move {
                 let (state, _context, tenant_id) = require_admin(&ctx)?;
                 let key = ctx.args.try_get("key")?.string()?.to_string();
@@ -1347,10 +1614,11 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                     .await
                     .map_err(config_err)?;
                 tx.commit().await.map_err(|e| anyhow_err(e.into()))?;
-                // Clearing a credential key must revoke it from the backend, not just unlink the
-                // marker row — the cron executor derives the same reference itself at send time
-                // and never reads this row, so a row-only delete would leave a live credential
-                // still being sent (same reasoning `metap-config`'s own doc comments give).
+                // Clearing a credential key must revoke it from the backend, not just unlink
+                // the marker row — the cron executor derives the same reference itself at
+                // send time and never reads this row, so a row-only delete would leave a live
+                // credential still being sent (same reasoning `metap-config`'s own doc
+                // comments give).
                 if metap_config::keys::lookup(&key).is_some_and(|d| d.secret) {
                     let reference = metap_control::tenant_secret_ref(tenant_id, &key);
                     state
@@ -1361,7 +1629,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
                         .map_err(anyhow_err)?;
                 }
                 let value = state.effective_config(tenant_id).await.get(&key);
-                Ok(Some(json_value(
+                Ok(Some(json_object(
                     json!({ "key": key, "value": value, "overridden": false }),
                 )))
             })
@@ -1369,7 +1637,7 @@ pub fn add_platform_fields(mut query: Object, mut mutation: Object) -> (Object, 
         .argument(InputValue::new("key", TypeRef::named_nn(TypeRef::STRING))),
     );
 
-    (query, mutation)
+    (builder, query, mutation)
 }
 
 fn level_name(level: metap_config::ConfigLevel) -> &'static str {

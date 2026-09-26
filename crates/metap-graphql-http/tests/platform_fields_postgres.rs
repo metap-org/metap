@@ -188,7 +188,7 @@ async fn users_and_roles_lifecycle() {
     let denied = graphql(
         &server,
         &server.member_token,
-        "mutation($email: String!, $password: String!) { createAdminUser(email: $email, password: $password) }",
+        "mutation($email: String!, $password: String!) { createAdminUser(email: $email, password: $password) { userId } }",
         json!({ "email": "denied@example.com", "password": "hunter2hunter2" }),
     )
     .await;
@@ -201,7 +201,7 @@ async fn users_and_roles_lifecycle() {
         &server,
         &server.admin_token,
         "mutation($email: String!, $password: String!, $roles: [String!]) { \
-            createAdminUser(email: $email, password: $password, roles: $roles) }",
+            createAdminUser(email: $email, password: $password, roles: $roles) { userId email roles } }",
         json!({ "email": email, "password": "hunter2hunter2", "roles": ["member"] }),
     )
     .await;
@@ -213,7 +213,13 @@ async fn users_and_roles_lifecycle() {
     assert_eq!(created["data"]["createAdminUser"]["roles"], json!(["member"]));
 
     // `adminUsers` lists the role assignment.
-    let listed = graphql(&server, &server.admin_token, "{ adminUsers }", json!({})).await;
+    let listed = graphql(
+        &server,
+        &server.admin_token,
+        "{ adminUsers { userId roles } }",
+        json!({}),
+    )
+    .await;
     assert_no_errors(&listed);
     let entry = listed["data"]["adminUsers"]
         .as_array()
@@ -245,7 +251,13 @@ async fn users_and_roles_lifecycle() {
     assert_no_errors(&revoked);
     assert_eq!(revoked["data"]["revokeUserRole"], true);
 
-    let listed = graphql(&server, &server.admin_token, "{ adminUsers }", json!({})).await;
+    let listed = graphql(
+        &server,
+        &server.admin_token,
+        "{ adminUsers { userId roles } }",
+        json!({}),
+    )
+    .await;
     let entry = listed["data"]["adminUsers"]
         .as_array()
         .unwrap()
@@ -254,7 +266,7 @@ async fn users_and_roles_lifecycle() {
         .unwrap();
     assert_eq!(entry["roles"], json!(["admin"]));
 
-    let picker = graphql(&server, &server.member_token, "{ tenantUsers }", json!({})).await;
+    let picker = graphql(&server, &server.member_token, "{ tenantUsers { id email } }", json!({})).await;
     assert_no_errors(&picker);
     assert!(picker["data"]["tenantUsers"]
         .as_array()
@@ -286,7 +298,7 @@ async fn cron_job_lifecycle_and_validation() {
     let rejected = graphql(
         &server,
         &server.admin_token,
-        "mutation($input: Json!) { createCronJob(input: $input) }",
+        "mutation($input: CronJobInput!) { createCronJob(input: $input) { id } }",
         json!({ "input": { "name": "bad", "targetType": "webhook", "targetConfig": { "url": "https://example.com" } } }),
     )
     .await;
@@ -295,7 +307,7 @@ async fn cron_job_lifecycle_and_validation() {
     let created = graphql(
         &server,
         &server.admin_token,
-        "mutation($input: Json!) { createCronJob(input: $input) }",
+        "mutation($input: CronJobInput!) { createCronJob(input: $input) { id enabled name } }",
         json!({
             "input": {
                 "name": "nightly webhook",
@@ -310,7 +322,7 @@ async fn cron_job_lifecycle_and_validation() {
     let job_id = created["data"]["createCronJob"]["id"].as_str().unwrap().to_string();
     assert_eq!(created["data"]["createCronJob"]["enabled"], true);
 
-    let listed = graphql(&server, &server.admin_token, "{ cronJobs }", json!({})).await;
+    let listed = graphql(&server, &server.admin_token, "{ cronJobs { id } }", json!({})).await;
     assert_no_errors(&listed);
     assert!(listed["data"]["cronJobs"]
         .as_array()
@@ -321,7 +333,7 @@ async fn cron_job_lifecycle_and_validation() {
     let fetched = graphql(
         &server,
         &server.admin_token,
-        "query($id: ID!) { cronJob(id: $id) }",
+        "query($id: ID!) { cronJob(id: $id) { name } }",
         json!({ "id": job_id }),
     )
     .await;
@@ -331,7 +343,7 @@ async fn cron_job_lifecycle_and_validation() {
     let updated = graphql(
         &server,
         &server.admin_token,
-        "mutation($id: ID!, $input: Json!) { updateCronJob(id: $id, input: $input) }",
+        "mutation($id: ID!, $input: CronJobUpdateInput!) { updateCronJob(id: $id, input: $input) { enabled } }",
         json!({ "id": job_id, "input": { "enabled": false } }),
     )
     .await;
@@ -341,7 +353,7 @@ async fn cron_job_lifecycle_and_validation() {
     let runs = graphql(
         &server,
         &server.admin_token,
-        "query($id: ID!) { cronJobRuns(id: $id) }",
+        "query($id: ID!) { cronJobRuns(id: $id) { id } }",
         json!({ "id": job_id }),
     )
     .await;
@@ -364,7 +376,7 @@ async fn cron_job_lifecycle_and_validation() {
     let gone = graphql(
         &server,
         &server.admin_token,
-        "query($id: ID!) { cronJob(id: $id) }",
+        "query($id: ID!) { cronJob(id: $id) { name } }",
         json!({ "id": job_id }),
     )
     .await;
@@ -374,7 +386,7 @@ async fn cron_job_lifecycle_and_validation() {
     let update_missing = graphql(
         &server,
         &server.admin_token,
-        "mutation($id: ID!) { updateCronJob(id: $id, input: {}) }",
+        "mutation($id: ID!) { updateCronJob(id: $id, input: {}) { id } }",
         json!({ "id": job_id }),
     )
     .await;
@@ -391,7 +403,7 @@ async fn dashboard_personal_and_tenant_default() {
     let server = boot_server().await;
 
     // Nothing set yet.
-    let empty = graphql(&server, &server.member_token, "{ myDashboard }", json!({})).await;
+    let empty = graphql(&server, &server.member_token, "{ myDashboard { layout } }", json!({})).await;
     assert_no_errors(&empty);
     assert_eq!(empty["data"]["myDashboard"], Value::Null);
 
@@ -399,7 +411,7 @@ async fn dashboard_personal_and_tenant_default() {
     let denied = graphql(
         &server,
         &server.member_token,
-        "mutation($layout: Json!) { setTenantDefaultDashboard(layout: $layout) }",
+        "mutation($layout: Json!) { setTenantDefaultDashboard(layout: $layout) { layout } }",
         json!({ "layout": { "widgets": ["fleet-wide"] } }),
     )
     .await;
@@ -408,14 +420,14 @@ async fn dashboard_personal_and_tenant_default() {
     let set_default = graphql(
         &server,
         &server.admin_token,
-        "mutation($layout: Json!) { setTenantDefaultDashboard(layout: $layout) }",
+        "mutation($layout: Json!) { setTenantDefaultDashboard(layout: $layout) { layout } }",
         json!({ "layout": { "widgets": ["fleet-wide"] } }),
     )
     .await;
     assert_no_errors(&set_default);
 
     // The member, who has no personal layout, now falls back to the tenant default.
-    let effective = graphql(&server, &server.member_token, "{ myDashboard }", json!({})).await;
+    let effective = graphql(&server, &server.member_token, "{ myDashboard { layout } }", json!({})).await;
     assert_no_errors(&effective);
     assert_eq!(
         effective["data"]["myDashboard"]["layout"],
@@ -426,18 +438,24 @@ async fn dashboard_personal_and_tenant_default() {
     let set_personal = graphql(
         &server,
         &server.member_token,
-        "mutation($layout: Json!) { setMyDashboard(layout: $layout) }",
+        "mutation($layout: Json!) { setMyDashboard(layout: $layout) { layout } }",
         json!({ "layout": { "widgets": ["personal"] } }),
     )
     .await;
     assert_no_errors(&set_personal);
-    let effective = graphql(&server, &server.member_token, "{ myDashboard }", json!({})).await;
+    let effective = graphql(&server, &server.member_token, "{ myDashboard { layout } }", json!({})).await;
     assert_eq!(
         effective["data"]["myDashboard"]["layout"],
         json!({ "widgets": ["personal"] })
     );
 
-    let tenant_default = graphql(&server, &server.admin_token, "{ tenantDefaultDashboard }", json!({})).await;
+    let tenant_default = graphql(
+        &server,
+        &server.admin_token,
+        "{ tenantDefaultDashboard { layout } }",
+        json!({}),
+    )
+    .await;
     assert_eq!(
         tenant_default["data"]["tenantDefaultDashboard"]["layout"],
         json!({ "widgets": ["fleet-wide"] }),
@@ -453,14 +471,14 @@ async fn dashboard_personal_and_tenant_default() {
 async fn preferences_locale_round_trip() {
     let server = boot_server().await;
 
-    let default = graphql(&server, &server.member_token, "{ myPreferences }", json!({})).await;
+    let default = graphql(&server, &server.member_token, "{ myPreferences { locale } }", json!({})).await;
     assert_no_errors(&default);
     assert_eq!(default["data"]["myPreferences"]["locale"], "en");
 
     let rejected = graphql(
         &server,
         &server.member_token,
-        "mutation($locale: String!) { setMyPreferences(locale: $locale) }",
+        "mutation($locale: String!) { setMyPreferences(locale: $locale) { locale } }",
         json!({ "locale": "xx" }),
     )
     .await;
@@ -469,14 +487,14 @@ async fn preferences_locale_round_trip() {
     let set = graphql(
         &server,
         &server.member_token,
-        "mutation($locale: String!) { setMyPreferences(locale: $locale) }",
+        "mutation($locale: String!) { setMyPreferences(locale: $locale) { locale } }",
         json!({ "locale": "vi" }),
     )
     .await;
     assert_no_errors(&set);
     assert_eq!(set["data"]["setMyPreferences"]["locale"], "vi");
 
-    let read_back = graphql(&server, &server.member_token, "{ myPreferences }", json!({})).await;
+    let read_back = graphql(&server, &server.member_token, "{ myPreferences { locale } }", json!({})).await;
     assert_eq!(read_back["data"]["myPreferences"]["locale"], "vi");
 
     cleanup(&server).await;
