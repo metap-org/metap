@@ -648,3 +648,84 @@ async fn federated_schema_exposes_key_directive_and_resolves_entities_through_no
 
     cleanup(&pool, tenant_id).await;
 }
+
+/// Regression test for a real bug found live 2026-09-26
+/// (`../metap-docs/docs/roadmap/95-platform-graphql-fields.md`): audit 04 B#2 moved every
+/// resolver onto `service_result_to_gql`'s `extensions.code`/`status`/`fieldErrors` error shape
+/// *except* `get`/`{entity}List`, which were missed and kept a bare `"{status}: {message}"`
+/// string with no `extensions` at all — silently breaking any client-side error handler that
+/// branches on `extensions` (every other field's errors already required it). Asserts both
+/// fields now carry the same shape a mutation's permission error does.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn get_and_list_permission_errors_carry_the_same_extensions_shape_mutations_do() {
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    ensure_tables(&pool).await;
+
+    let mut registry = MetadataRegistry::new();
+    registry.register(parent_entity()).unwrap();
+    let registry = Arc::new(registry);
+
+    let permissions = Arc::new(PermissionService::new(Box::new(PostgresPolicyStore::new(test_router(
+        pool.clone(),
+    )))));
+    let crud = Arc::new(CrudService::new(
+        test_router(pool.clone()),
+        Arc::new(ArcSwap::new(registry.clone())),
+        permissions,
+    ));
+
+    let admin_ctx = admin_context(tenant_id);
+    let mut payload = metap_crud::JsonObject::new();
+    payload.insert("name".to_string(), json!("Acme"));
+    payload.insert("secret".to_string(), json!("classified"));
+    let parent = match crud
+        .create("test.gql_parents", &payload, &admin_ctx, None)
+        .await
+        .unwrap()
+    {
+        metap_crud::ServiceResult::Ok { data, .. } => data,
+        other => panic!("expected create to succeed, got {other:?}"),
+    };
+
+    let schema = build_schema(&registry, crud.clone(), SchemaLimits::default()).unwrap();
+    // No policy at all was ever created for this tenant/role — deny-by-default rejects both
+    // calls below, exactly the permission error shape a real caller would hit.
+    let stranger_ctx = RequestContext {
+        tenant_id: tenant_id.to_string(),
+        user_id: Some(Uuid::new_v4().to_string()),
+        roles: Some(vec!["stranger".to_string()]),
+        function_id: None,
+        context_attributes: None,
+        forwarded_bearer_token: None,
+    };
+
+    let get_query = format!(r#"{{ testGqlParents(id: "{}") {{ id }} }}"#, parent.id);
+    let request = with_request_data(
+        async_graphql::Request::new(&get_query),
+        crud.clone(),
+        stranger_ctx.clone(),
+    );
+    let response = schema.execute(request).await;
+    assert!(!response.errors.is_empty(), "expected a permission error from get");
+    let extensions = response.errors[0]
+        .extensions
+        .as_ref()
+        .expect("get's permission error must carry extensions, same as a mutation's");
+    assert!(extensions.get("code").is_some(), "missing extensions.code");
+    assert!(extensions.get("status").is_some(), "missing extensions.status");
+
+    let list_query = "{ testGqlParentsList { records { id } } }";
+    let request = with_request_data(async_graphql::Request::new(list_query), crud.clone(), stranger_ctx);
+    let response = schema.execute(request).await;
+    assert!(!response.errors.is_empty(), "expected a permission error from list");
+    let extensions = response.errors[0]
+        .extensions
+        .as_ref()
+        .expect("list's permission error must carry extensions, same as a mutation's");
+    assert!(extensions.get("code").is_some(), "missing extensions.code");
+    assert!(extensions.get("status").is_some(), "missing extensions.status");
+
+    cleanup(&pool, tenant_id).await;
+}

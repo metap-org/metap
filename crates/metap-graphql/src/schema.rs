@@ -63,6 +63,29 @@ impl Default for SchemaLimits {
 /// `fieldErrors`, same camelCase keys as the REST error body and as `metap-grpc`'s `ErrorDetails`,
 /// so one client-side error handler covers all three transports). `message` stays the plain human
 /// text it always was — no longer prefixed with a number a client had to parse back out.
+/// The `extensions.code`/`status`/`fieldErrors` envelope-building half of the fix described
+/// above, split out from [`service_result_to_gql`] so a caller that can't use that function
+/// directly — `list`'s `Ok` arm also needs `page`, which `service_result_to_gql` deliberately
+/// discards — can still build the exact same error shape instead of a second, divergent one.
+fn service_error_to_gql(
+    status: u16,
+    error: String,
+    message: Option<String>,
+    field_errors: Option<HashMap<String, Vec<String>>>,
+) -> GqlError {
+    let mut err = GqlError::new(message.unwrap_or_else(|| error.clone()));
+    let mut extensions = async_graphql::ErrorExtensionValues::default();
+    extensions.set("code", error);
+    extensions.set("status", status as i32);
+    if let Some(field_errors) = field_errors {
+        if let Ok(value) = async_graphql::Value::from_json(serde_json::json!(field_errors)) {
+            extensions.set("fieldErrors", value);
+        }
+    }
+    err.extensions = Some(extensions);
+    err
+}
+
 fn service_result_to_gql<T>(result: ServiceResult<T>) -> Result<T, GqlError> {
     match result {
         ServiceResult::Ok { data, .. } => Ok(data),
@@ -71,19 +94,7 @@ fn service_result_to_gql<T>(result: ServiceResult<T>) -> Result<T, GqlError> {
             error,
             message,
             field_errors,
-        } => {
-            let mut err = GqlError::new(message.unwrap_or_else(|| error.clone()));
-            let mut extensions = async_graphql::ErrorExtensionValues::default();
-            extensions.set("code", error);
-            extensions.set("status", status as i32);
-            if let Some(field_errors) = field_errors {
-                if let Ok(value) = async_graphql::Value::from_json(serde_json::json!(field_errors)) {
-                    extensions.set("fieldErrors", value);
-                }
-            }
-            err.extensions = Some(extensions);
-            Err(err)
-        }
+        } => Err(service_error_to_gql(status, error, message, field_errors)),
     }
 }
 
@@ -270,18 +281,18 @@ fn add_query_fields(mut query: Object, entity_name: &str, type_name: &str, conne
                         .get(&entity_name, id, context)
                         .await
                         .map_err(|e| GqlError::new(e.to_string()))?;
-                    match result {
-                        ServiceResult::Ok {
-                            data: (dto, capabilities),
-                            ..
-                        } => Ok(Some(FieldValue::owned_any(RecordHandle::from_dto_with_capabilities(
-                            dto,
-                            capabilities,
-                        )))),
-                        ServiceResult::Err {
-                            status, error, message, ..
-                        } => Err(GqlError::new(format!("{status}: {}", message.unwrap_or(error)))),
-                    }
+                    // Found live 2026-09-26 (`../metap-docs/docs/roadmap/95-platform-graphql-fields.md`):
+                    // `get`/`list` were missed when audit 04 B#2 moved every other resolver here
+                    // onto `service_result_to_gql`'s `extensions.code`/`status`/`fieldErrors`
+                    // shape — a permission-denied/not-found error from *this* field alone carried
+                    // none of that, only a bare `"{status}: {message}"` string, breaking any
+                    // client-side handler that branches on `extensions` (every other field's
+                    // errors already do).
+                    let (dto, capabilities) = service_result_to_gql(result)?;
+                    Ok(Some(FieldValue::owned_any(RecordHandle::from_dto_with_capabilities(
+                        dto,
+                        capabilities,
+                    ))))
                 })
             },
         )
@@ -303,6 +314,10 @@ fn add_query_fields(mut query: Object, entity_name: &str, type_name: &str, conne
                         .list(&entity_name, &input, context)
                         .await
                         .map_err(|e| GqlError::new(e.to_string()))?;
+                    // Same fix as `get` above — `service_result_to_gql` can't be used directly
+                    // here since its `Ok` arm discards `page`, which this field also needs, so
+                    // the error arm reuses `service_error_to_gql` (the same envelope-building
+                    // logic, factored out) instead of a second, divergent bare-string shape.
                     match result {
                         ServiceResult::Ok { data, page } => {
                             let records = data.into_iter().map(RecordHandle::from_dto).collect();
@@ -315,8 +330,11 @@ fn add_query_fields(mut query: Object, entity_name: &str, type_name: &str, conne
                             })))
                         }
                         ServiceResult::Err {
-                            status, error, message, ..
-                        } => Err(GqlError::new(format!("{status}: {}", message.unwrap_or(error)))),
+                            status,
+                            error,
+                            message,
+                            field_errors,
+                        } => Err(service_error_to_gql(status, error, message, field_errors)),
                     }
                 })
             },
