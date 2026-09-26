@@ -2,10 +2,20 @@
 //! extracted per-handler (see `auth.rs`) rather than as a route-group-scoped hook, axum's
 //! idiomatic equivalent of Fastify's `onRequest` hook scoped to a route group — same
 //! effect (every protected handler requires and validates a bearer token, admin routes
-//! additionally require the `admin` role), different mechanism. `routes::admin` is the HTTP
-//! surface for role assignment (`metap_peripherals`) and policy CRUD/explain
-//! (`PermissionService`) — both existed only as tested functions until this route module was
-//! added (see `docs/architectures/11-risks.md`).
+//! additionally require the `admin` role), different mechanism.
+//!
+//! **`routes::{admin,cron,dashboards,preferences,platform_config,tenant_config,users}` were
+//! removed 2026-09-26** (`../metap-docs/docs/roadmap/95-platform-graphql-fields.md`) — role/
+//! policy CRUD (`metap_peripherals`/`PermissionService`), cron job admin (`metap_cron`),
+//! dashboards (`metap_dashboards`), preferences (`metap_peripherals`), and platform/tenant/public
+//! config (`metap_config`) are now GraphQL-only, hand-written fields in
+//! `metap-graphql-http::platform_fields` (that crate, not this one, since every resolver needs
+//! `AppState` plus each bespoke service — `metap-http` itself has no GraphQL dependency and never
+//! will). `routes::oauth2` (`/oauth/*`) is the one partial exception: its 5 RFC 6749/7009/8414
+//! protocol endpoints (`authorize`/`authorize/decision`/`token`/`revoke`/`.well-known/*`) stay
+//! REST forever — a third-party OAuth2 client library speaks the wire protocol, not GraphQL — only
+//! that file's 3 admin-CRUD routes (`/admin/oauth/clients*`) moved to GraphQL alongside the groups
+//! above.
 //!
 //! Phase 8 Hardening (`docs/roadmap.md`): `security_headers` (helmet-equivalent, moved to
 //! `metap-runtime` 2026-09-02, re-exported here unchanged — see that module's doc comment for
@@ -48,29 +58,20 @@ pub use state::AppState;
 
 /// Which of `build_router`'s optional route groups actually get mounted — every field defaults
 /// to `true` (`RouteGroups::all()`, what `build_router` itself still passes unconditionally), so
-/// an existing caller is completely unaffected. Only 4 groups are toggleable at all, chosen from
-/// a real cross-app usage survey (2026-09-15) rather than guessed: `attachments`/`cron`/
-/// `dashboards`/`tenant_config` are each genuinely unused by at least one real downstream app
-/// today (`../metap-demo-waf`'s 3 services use none of `attachments`/`dashboards` — confirmed by
-/// grepping its web app and backend for any caller; `../metap-demo-jira` uses none of
-/// `tenant_config`), while every other group (`health`/`metrics`/`metadata`/`records`/`users`/
-/// `auth`/`preferences`/`workflow_events`/`audit_events`/`admin`/`platform_config`) stays
-/// unconditionally mounted — either genuinely core (auth, metadata, the CRUD surface itself) or
-/// cheap enough, and surprising enough to 404 on, that no real survey found a case worth the
-/// toggle. Mounting a group nobody calls isn't a correctness bug (an unused route is just unused
-/// surface area, same as the doc comment on `AppState`'s unused fields notes elsewhere) — this
-/// exists so a deployment that wants a smaller attack surface / a leaner `/metadata/openapi.json`
-/// can actually get one, not because leaving them all on was ever broken.
+/// an existing caller is completely unaffected. `cron`/`dashboards`/`tenant_config` (each
+/// toggleable prior to 2026-09-26 for the same "genuinely unused by at least one real downstream
+/// app" reason `attachments` still is) were removed as `RouteGroups` fields when their REST route
+/// files were deleted outright — see this crate's own top doc comment. Only 2 groups remain
+/// toggleable now:
 #[derive(Debug, Clone, Copy)]
 pub struct RouteGroups {
     pub attachments: bool,
-    pub cron: bool,
-    pub dashboards: bool,
-    pub tenant_config: bool,
-    /// `routes::oauth2` — the `/oauth/*`/`/.well-known/oauth-authorization-server`/
-    /// `/admin/oauth/clients*` group (`crates/metap-oauth-server`'s HTTP surface). Toggleable
-    /// like the 3 siblings above since it needs `crates/migrations/0034_oauth2.sql` applied — a
-    /// binary that hasn't run that migration yet can boot without mounting these routes.
+    /// `routes::oauth2` — now just the 5 RFC 6749/7009/8414 protocol routes (`/oauth/*`,
+    /// `/.well-known/oauth-authorization-server`), `crates/metap-oauth-server`'s wire-protocol
+    /// HTTP surface. Its former 3 admin-CRUD routes (`/admin/oauth/clients*`) moved to GraphQL
+    /// 2026-09-26 (this crate's own top doc comment) — `routes::oauth2` kept its name and this
+    /// flag despite shrinking, since the file and the toggle both still exist for the same reason
+    /// (`crates/migrations/0034_oauth2.sql` must be applied before mounting any of it).
     pub oauth2: bool,
 }
 
@@ -78,9 +79,6 @@ impl RouteGroups {
     pub fn all() -> Self {
         Self {
             attachments: true,
-            cron: true,
-            dashboards: true,
-            tenant_config: true,
             oauth2: true,
         }
     }
@@ -154,24 +152,11 @@ pub fn build_router_with_groups(
         .merge(routes::metrics::router())
         .merge(routes::metadata::public_router())
         .merge(routes::metadata::protected_router())
-        .merge(routes::users::router())
         .merge(routes::workflow_events::router())
         .merge(routes::audit_events::router())
-        .merge(routes::admin::router())
-        .merge(routes::auth::router())
-        .merge(routes::platform_config::router())
-        .merge(routes::preferences::router());
+        .merge(routes::auth::router());
     if groups.attachments {
         router = router.merge(routes::attachments::router());
-    }
-    if groups.cron {
-        router = router.merge(routes::cron::router());
-    }
-    if groups.dashboards {
-        router = router.merge(routes::dashboards::router());
-    }
-    if groups.tenant_config {
-        router = router.merge(routes::tenant_config::router());
     }
     if groups.oauth2 {
         router = router.merge(routes::oauth2::router());

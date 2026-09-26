@@ -1,5 +1,9 @@
-//! `/admin/config` and `/public/config` end to end
-//! (`../metap-docs/docs/features/18-config-tiers-db-backed.md`, slice 2).
+//! `tenantConfig`/`setTenantConfig`/`resetTenantConfig` and the unauthenticated `publicConfig`
+//! end to end (`../metap-docs/docs/features/18-config-tiers-db-backed.md`, slice 2) — GraphQL
+//! since 2026-09-26, `/admin/config*`/`/public/config`'s replacement
+//! (`../metap-docs/docs/roadmap/95-platform-graphql-fields.md`). `publicConfig` lives on its own
+//! unauthenticated schema/route (`POST /graphql/public`, `metap-graphql-http::public_schema`),
+//! never the main `/graphql`.
 //!
 //! Three boundaries carry this file, and each is here because it is the one a later change would
 //! most plausibly erode:
@@ -20,7 +24,6 @@ use std::process::Command;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use axum::Router;
 use jsonwebtoken::DecodingKey;
 use metap_http::{build_router, AppState};
 use metap_metadata::MetadataRegistry;
@@ -149,7 +152,10 @@ async fn boot_server() -> TestServer {
         test_router(pool.clone()),
     );
     state.config.reload().await.unwrap();
-    let router = build_router(state, &[], Router::new());
+    let graphql_routes = metap_graphql_http::router(&state, metap_graphql::SchemaLimits::default())
+        .unwrap()
+        .merge(metap_graphql_http::public_schema::public_router(&state));
+    let router = build_router(state, &[], graphql_routes);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -203,8 +209,8 @@ async fn cleanup(server: &TestServer) {
         .ok();
 }
 
-fn value_of(body: &Value, key: &str) -> Value {
-    body["data"]
+fn value_of(items: &Value, key: &str) -> Value {
+    items
         .as_array()
         .unwrap()
         .iter()
@@ -213,10 +219,47 @@ fn value_of(body: &Value, key: &str) -> Value {
         .clone()
 }
 
-async fn admin_config(server: &TestServer, token: &str) -> Value {
+fn first_error(res: &Value) -> &Value {
+    res["errors"]
+        .as_array()
+        .and_then(|e| e.first())
+        .unwrap_or_else(|| panic!("expected a GraphQL error: {res:?}"))
+}
+
+async fn graphql(server: &TestServer, token: &str, query: &str, variables: Value) -> Value {
     reqwest::Client::new()
-        .get(format!("{}/admin/config", server.base))
+        .post(format!("{}/graphql", server.base))
         .bearer_auth(token)
+        .json(&json!({ "query": query, "variables": variables }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+const TENANT_CONFIG_QUERY: &str = "{ tenantConfig }";
+const SET_TENANT_CONFIG: &str = "mutation($key: String!, $value: Json!) { setTenantConfig(key: $key, value: $value) }";
+const RESET_TENANT_CONFIG: &str = "mutation($key: String!) { resetTenantConfig(key: $key) }";
+const SET_PLATFORM_CONFIG: &str =
+    "mutation($key: String!, $value: Json!) { setPlatformConfig(key: $key, value: $value) }";
+
+async fn tenant_config(server: &TestServer, token: &str) -> Value {
+    let res = graphql(server, token, TENANT_CONFIG_QUERY, json!({})).await;
+    assert!(res.get("errors").is_none(), "unexpected errors: {res:?}");
+    res["data"]["tenantConfig"].clone()
+}
+
+async fn set_tenant_config(server: &TestServer, token: &str, key: &str, value: Value) -> Value {
+    graphql(server, token, SET_TENANT_CONFIG, json!({ "key": key, "value": value })).await
+}
+
+async fn public_config(server: &TestServer, host: &str) -> Value {
+    reqwest::Client::new()
+        .post(format!("{}/graphql/public", server.base))
+        .header("host", host)
+        .json(&json!({ "query": "{ publicConfig }" }))
         .send()
         .await
         .unwrap()
@@ -233,7 +276,6 @@ async fn admin_config(server: &TestServer, token: &str) -> Value {
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn a_tenant_admin_cannot_write_an_operator_or_fleet_key() {
     let server = boot_server().await;
-    let client = reqwest::Client::new();
 
     for key in [
         "cron.webhookAllowPrivateTargets",
@@ -243,27 +285,21 @@ async fn a_tenant_admin_cannot_write_an_operator_or_fleet_key() {
         "graphql.maxDepth",
         "http.rateLimitBurst",
     ] {
-        let res = client
-            .put(format!("{}/admin/config/{key}", server.base))
-            .bearer_auth(&server.tenant_a_admin)
-            .json(&json!({ "value": true }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(res.status(), 403, "{key} must not be writable by a tenant admin");
+        let res = set_tenant_config(&server, &server.tenant_a_admin, key, json!(true)).await;
+        let err = first_error(&res);
         assert_eq!(
-            res.json::<Value>().await.unwrap()["error"]["code"],
-            "config_key_not_writable"
+            err["extensions"]["status"], 403,
+            "{key} must not be writable by a tenant admin"
         );
+        assert_eq!(err["extensions"]["code"], "config_key_not_writable");
     }
 
     // ...and none of the Operator/fleet-wide keys above is even listed on this surface. Only the
     // two Operator-tier cron keys are checked by prefix-free name — `cron.webhookAuthorization`
-    // is `Tenant`-tier and legitimately appears here (`ConfigStore::tenant_view` lists every
-    // `Tenant`-level key), so a blanket `starts_with("cron.")` would wrongly fail once that key
-    // exists.
-    let listed = admin_config(&server, &server.tenant_a_admin).await;
-    let keys: Vec<&str> = listed["data"]
+    // is `Tenant`-tier and legitimately appears here (`tenant_view()` lists every `Tenant`-level
+    // key), so a blanket `starts_with("cron.")` would wrongly fail once that key exists.
+    let listed = tenant_config(&server, &server.tenant_a_admin).await;
+    let keys: Vec<&str> = listed
         .as_array()
         .unwrap()
         .iter()
@@ -281,17 +317,17 @@ async fn a_tenant_admin_cannot_write_an_operator_or_fleet_key() {
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn a_member_can_read_but_not_write_tenant_config() {
     let server = boot_server().await;
-    let listed = admin_config(&server, &server.tenant_a_member).await;
-    assert!(!listed["data"].as_array().unwrap().is_empty());
+    let listed = tenant_config(&server, &server.tenant_a_member).await;
+    assert!(!listed.as_array().unwrap().is_empty());
 
-    let res = reqwest::Client::new()
-        .put(format!("{}/admin/config/theme.displayName", server.base))
-        .bearer_auth(&server.tenant_a_member)
-        .json(&json!({ "value": "Not Allowed" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 403);
+    let res = set_tenant_config(
+        &server,
+        &server.tenant_a_member,
+        "theme.displayName",
+        json!("Not Allowed"),
+    )
+    .await;
+    assert_eq!(first_error(&res)["extensions"]["status"], 403);
     cleanup(&server).await;
 }
 
@@ -301,27 +337,20 @@ async fn a_member_can_read_but_not_write_tenant_config() {
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn one_tenants_overrides_never_leak_into_another() {
     let server = boot_server().await;
-    let client = reqwest::Client::new();
 
-    let set = client
-        .put(format!("{}/admin/config/theme.displayName", server.base))
-        .bearer_auth(&server.tenant_a_admin)
-        .json(&json!({ "value": "Tenant A" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(set.status(), 200);
+    let set = set_tenant_config(&server, &server.tenant_a_admin, "theme.displayName", json!("Tenant A")).await;
+    assert!(set.get("errors").is_none(), "unexpected errors: {set:?}");
 
     assert_eq!(
         value_of(
-            &admin_config(&server, &server.tenant_a_admin).await,
+            &tenant_config(&server, &server.tenant_a_admin).await,
             "theme.displayName"
         ),
         json!("Tenant A")
     );
     assert_eq!(
         value_of(
-            &admin_config(&server, &server.tenant_b_admin).await,
+            &tenant_config(&server, &server.tenant_b_admin).await,
             "theme.displayName"
         ),
         json!(""),
@@ -330,79 +359,64 @@ async fn one_tenants_overrides_never_leak_into_another() {
     cleanup(&server).await;
 }
 
-/// The full chain `declared default <- platform fleet default <- tenant override`, over HTTP, on a
-/// key that is genuinely wired (session TTL is what `/auth/token` mints with).
+/// The full chain `declared default <- platform fleet default <- tenant override`, over GraphQL, on
+/// a key that is genuinely wired (session TTL is what `/auth/token` mints with).
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn the_three_tiers_resolve_in_order() {
     let server = boot_server().await;
-    let client = reqwest::Client::new();
     let key = "auth.sessionTtlSeconds";
 
     // Tier 1: nothing set anywhere -> the value declared in Rust.
     assert_eq!(
-        value_of(&admin_config(&server, &server.tenant_a_admin).await, key),
+        value_of(&tenant_config(&server, &server.tenant_a_admin).await, key),
         json!(3600)
     );
 
     // Tier 2: a platform admin sets the fleet default; every tenant inherits it.
-    assert_eq!(
-        client
-            .put(format!("{}/platform/config/{key}", server.base))
-            .bearer_auth(&server.platform_token)
-            .json(&json!({ "value": 7200 }))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        200
-    );
+    let set = graphql(
+        &server,
+        &server.platform_token,
+        SET_PLATFORM_CONFIG,
+        json!({ "key": key, "value": 7200 }),
+    )
+    .await;
+    assert!(set.get("errors").is_none(), "unexpected errors: {set:?}");
     for token in [&server.tenant_a_admin, &server.tenant_b_admin] {
-        assert_eq!(value_of(&admin_config(&server, token).await, key), json!(7200));
+        assert_eq!(value_of(&tenant_config(&server, token).await, key), json!(7200));
     }
 
     // Tier 3: tenant A overrides it for itself alone.
+    let set = set_tenant_config(&server, &server.tenant_a_admin, key, json!(900)).await;
+    assert!(set.get("errors").is_none(), "unexpected errors: {set:?}");
     assert_eq!(
-        client
-            .put(format!("{}/admin/config/{key}", server.base))
-            .bearer_auth(&server.tenant_a_admin)
-            .json(&json!({ "value": 900 }))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        200
-    );
-    assert_eq!(
-        value_of(&admin_config(&server, &server.tenant_a_admin).await, key),
+        value_of(&tenant_config(&server, &server.tenant_a_admin).await, key),
         json!(900)
     );
     assert_eq!(
-        value_of(&admin_config(&server, &server.tenant_b_admin).await, key),
+        value_of(&tenant_config(&server, &server.tenant_b_admin).await, key),
         json!(7200),
         "tenant B still inherits the fleet default"
     );
 
     // Clearing the tenant override falls back to the fleet default, not to the declared one.
+    let reset = graphql(
+        &server,
+        &server.tenant_a_admin,
+        RESET_TENANT_CONFIG,
+        json!({ "key": key }),
+    )
+    .await;
+    assert!(reset.get("errors").is_none(), "unexpected errors: {reset:?}");
     assert_eq!(
-        client
-            .delete(format!("{}/admin/config/{key}", server.base))
-            .bearer_auth(&server.tenant_a_admin)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        200
-    );
-    assert_eq!(
-        value_of(&admin_config(&server, &server.tenant_a_admin).await, key),
+        value_of(&tenant_config(&server, &server.tenant_a_admin).await, key),
         json!(7200)
     );
     cleanup(&server).await;
 }
 
 /// Proof the tenant tier is *wired*, not just readable: a token minted after the override carries
-/// the tenant's own expiry. Without this, `/admin/config` could report a TTL nothing acts on.
+/// the tenant's own expiry. Without this, `tenantConfig` could report a TTL nothing acts on.
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn a_tenants_session_ttl_override_changes_the_tokens_it_mints() {
@@ -423,6 +437,7 @@ async fn a_tenants_session_ttl_override_changes_the_tokens_it_mints() {
         }
     };
 
+    // `GET /auth/token` is unaffected by this migration — `/auth/*` stays REST forever.
     async fn fetch_token(base: &str, bearer: &str) -> String {
         let body: Value = reqwest::Client::new()
             .get(format!("{base}/auth/token"))
@@ -442,17 +457,8 @@ async fn a_tenants_session_ttl_override_changes_the_tokens_it_mints() {
         "expected the 3600s default, got {before}"
     );
 
-    assert_eq!(
-        reqwest::Client::new()
-            .put(format!("{}/admin/config/auth.sessionTtlSeconds", server.base))
-            .bearer_auth(&server.tenant_a_admin)
-            .json(&json!({ "value": 600 }))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        200
-    );
+    let set = set_tenant_config(&server, &server.tenant_a_admin, "auth.sessionTtlSeconds", json!(600)).await;
+    assert!(set.get("errors").is_none(), "unexpected errors: {set:?}");
 
     let after = issued_ttl(fetch_token(&server.base, &server.tenant_a_admin).await).await;
     assert!(
@@ -475,7 +481,6 @@ async fn a_tenants_session_ttl_override_changes_the_tokens_it_mints() {
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn the_public_surface_serves_branding_and_nothing_else() {
     let server = boot_server().await;
-    let client = reqwest::Client::new();
 
     // Tenant A sets one public key and one that is emphatically not.
     for (key, value) in [
@@ -483,33 +488,17 @@ async fn the_public_surface_serves_branding_and_nothing_else() {
         ("theme.primaryColor", json!("#0af")),
         ("auth.sessionTtlSeconds", json!(1800)),
     ] {
-        assert_eq!(
-            client
-                .put(format!("{}/admin/config/{key}", server.base))
-                .bearer_auth(&server.tenant_a_admin)
-                .json(&json!({ "value": value }))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            200,
-            "setting {key}"
-        );
+        let res = set_tenant_config(&server, &server.tenant_a_admin, key, value).await;
+        assert!(res.get("errors").is_none(), "setting {key}: {res:?}");
     }
 
-    let public: Value = client
-        .get(format!("{}/public/config", server.base))
-        .header("host", &server.hostname)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(value_of(&public, "theme.displayName"), json!("Acme"));
-    assert_eq!(value_of(&public, "theme.primaryColor"), json!("#0af"));
+    let public_res = public_config(&server, &server.hostname).await;
+    assert!(public_res.get("errors").is_none(), "unexpected errors: {public_res:?}");
+    let public = &public_res["data"]["publicConfig"];
+    assert_eq!(value_of(public, "theme.displayName"), json!("Acme"));
+    assert_eq!(value_of(public, "theme.primaryColor"), json!("#0af"));
 
-    let keys: Vec<&str> = public["data"]
+    let keys: Vec<&str> = public
         .as_array()
         .unwrap()
         .iter()
@@ -525,20 +514,18 @@ async fn the_public_surface_serves_branding_and_nothing_else() {
         "a non-public key must be absent entirely — not rendered, not forbidden"
     );
 
-    // An unregistered hostname answers 200 with the fleet-wide values, not 404: answering
+    // An unregistered hostname answers 200 with the fleet-wide values, not an error: answering
     // differently would make this a tenant-existence oracle for anyone who can set a Host header.
-    let unknown: reqwest::Response = client
-        .get(format!("{}/public/config", server.base))
-        .header("host", "nobody-claims-this.example.com")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(unknown.status(), 200);
-    let unknown: Value = unknown.json().await.unwrap();
-    assert_eq!(value_of(&unknown, "theme.displayName"), json!(""));
+    let unknown_res = public_config(&server, "nobody-claims-this.example.com").await;
+    assert!(
+        unknown_res.get("errors").is_none(),
+        "unexpected errors: {unknown_res:?}"
+    );
+    let unknown = &unknown_res["data"]["publicConfig"];
+    assert_eq!(value_of(unknown, "theme.displayName"), json!(""));
     assert_eq!(
-        unknown["data"].as_array().unwrap().len(),
-        public["data"].as_array().unwrap().len(),
+        unknown.as_array().unwrap().len(),
+        public.as_array().unwrap().len(),
         "an unknown hostname must return the same shape, so the two are indistinguishable"
     );
     cleanup(&server).await;
@@ -549,37 +536,24 @@ async fn the_public_surface_serves_branding_and_nothing_else() {
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn injection_shaped_theme_values_are_refused_before_storage() {
     let server = boot_server().await;
-    let client = reqwest::Client::new();
 
     for (key, value) in [
         ("theme.primaryColor", "#0af; background: url(https://evil.example/x)"),
         ("theme.logoUrl", "javascript:alert(1)"),
         ("theme.logoUrl", "data:image/svg+xml;base64,PHN2Zz4="),
     ] {
-        let res = client
-            .put(format!("{}/admin/config/{key}", server.base))
-            .bearer_auth(&server.tenant_a_admin)
-            .json(&json!({ "value": value }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(res.status(), 422, "{key} = {value:?} must be refused");
-        assert_eq!(
-            res.json::<Value>().await.unwrap()["error"]["code"],
-            "invalid_config_value"
-        );
+        let res = set_tenant_config(&server, &server.tenant_a_admin, key, json!(value)).await;
+        let err = first_error(&res);
+        assert_eq!(err["extensions"]["status"], 422, "{key} = {value:?} must be refused");
+        assert_eq!(err["extensions"]["code"], "invalid_config_value");
     }
 
     // Nothing was stored, so the public surface still serves the inherited values.
-    let public: Value = client
-        .get(format!("{}/public/config", server.base))
-        .header("host", &server.hostname)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(value_of(&public, "theme.logoUrl"), json!(""));
+    let public_res = public_config(&server, &server.hostname).await;
+    assert!(public_res.get("errors").is_none(), "unexpected errors: {public_res:?}");
+    assert_eq!(
+        value_of(&public_res["data"]["publicConfig"], "theme.logoUrl"),
+        json!("")
+    );
     cleanup(&server).await;
 }

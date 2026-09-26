@@ -1,15 +1,8 @@
-pub mod admin;
 pub mod attachments;
 pub mod audit_events;
 pub mod auth;
-pub mod cron;
-pub mod dashboards;
 pub mod health;
 pub mod metadata;
 pub mod metrics;
 pub mod oauth2;
-pub mod platform_config;
-pub mod preferences;
-pub mod tenant_config;
-pub mod users;
 pub mod workflow_events;

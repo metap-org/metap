@@ -67,8 +67,9 @@ async fn get_entity(
 /// The fixed action set a policy can grant (`EntityAction::ALL`) — static, non-sensitive shape
 /// information (same category as entity/field names), not admin-only. Exists so the frontend's
 /// permission-matrix UI has a single source of truth for its action columns instead of a second
-/// hand-typed mirror of this list (the exact drift `metap-http::routes::admin::KNOWN_ACTIONS`
-/// already had before it was pointed at `EntityAction::ALL` too).
+/// hand-typed mirror of this list (the exact drift a `KNOWN_ACTIONS` constant once had before
+/// being pointed at `EntityAction::ALL` too — now `metap-graphql-http::platform_fields`'s own
+/// `KNOWN_ACTIONS`, since REST `routes::admin` no longer exists).
 async fn list_actions(AuthContext(_context): AuthContext) -> Response {
     let actions: Vec<&'static str> = EntityAction::ALL.iter().map(EntityAction::as_str).collect();
     Json(json!({ "data": actions })).into_response()

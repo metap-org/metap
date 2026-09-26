@@ -36,7 +36,7 @@
 //! requires on every cookie-authenticated mutation — a native form submission has no way to set a
 //! custom header at all.
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Query, State};
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -49,7 +49,7 @@ use serde_json::json;
 use utoipa_axum::router::OpenApiRouter;
 use uuid::Uuid;
 
-use crate::auth::{AdminContext, AuthContext};
+use crate::auth::AuthContext;
 use crate::error::{internal_error_response, service_error_response};
 use crate::state::AppState;
 
@@ -829,118 +829,12 @@ async fn discovery_metadata() -> Response {
     .into_response()
 }
 
-// -------------------------------------------------------------------------------------------
-// Admin client management
-// -------------------------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct CreateClientBody {
-    name: String,
-    #[serde(rename = "redirectUris")]
-    redirect_uris: Vec<String>,
-    #[serde(rename = "allowedScopes", default)]
-    allowed_scopes: Vec<String>,
-    #[serde(rename = "isConfidential", default = "default_confidential")]
-    is_confidential: bool,
-}
-
-fn default_confidential() -> bool {
-    true
-}
-
-fn client_to_json(client: &metap_oauth_server::OAuthClient) -> serde_json::Value {
-    json!({
-        "id": client.id,
-        "clientId": client.client_id,
-        "name": client.name,
-        "redirectUris": client.redirect_uris,
-        "allowedScopes": client.allowed_scopes,
-        "isConfidential": client.is_confidential,
-        "serviceUserId": client.service_user_id,
-    })
-}
-
-/// Returns the raw `clientSecret` — **the only response that ever will**, same write-once
-/// discipline `metap-oauth-server::create_client`'s doc comment describes. Losing it means
-/// revoking this client and registering a new one, not "look it up again".
-///
-/// Also provisions this client's `client_credentials` service user (`metap_auth::
-/// jit_provision_external_user`, provider `"oauth2_client_credentials"`) *before* creating the
-/// client row, so the two can't disagree — `service_user_id` is `NOT NULL`-in-practice for every
-/// client this handler ever creates, only ever absent for one from before this existed (see that
-/// column's own migration comment). The synthetic external_subject/email are pure
-/// uniqueness keys, never shown to anyone or used to authenticate — nothing but this JIT call
-/// ever reads them back.
-async fn create_client(
-    State(state): State<AppState>,
-    AdminContext(context): AdminContext,
-    Json(body): Json<CreateClientBody>,
-) -> Response {
-    let Ok(tenant_id) = Uuid::parse_str(&context.tenant_id) else {
-        return internal_error_response(anyhow::anyhow!("session context has an invalid tenant id"));
-    };
-
-    let external_subject = format!("oauth-client-{}", Uuid::new_v4());
-    let service_user = match metap_auth::jit_provision_external_user(
-        &state.pool,
-        tenant_id,
-        "oauth2_client_credentials",
-        &format!("{external_subject}@service.internal"),
-        &external_subject,
-    )
-    .await
-    {
-        Ok(u) => u,
-        Err(e) => return internal_error_response(e),
-    };
-
-    let (client, secret) = match metap_oauth_server::create_client(
-        &state.pool,
-        metap_oauth_server::CreateClientInput {
-            tenant_id,
-            name: body.name,
-            redirect_uris: body.redirect_uris,
-            allowed_scopes: body.allowed_scopes,
-            is_confidential: body.is_confidential,
-            service_user_id: service_user.id,
-        },
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => return internal_error_response(e),
-    };
-    let mut dto = client_to_json(&client);
-    dto.as_object_mut()
-        .unwrap()
-        .insert("clientSecret".to_string(), json!(secret));
-    (StatusCode::CREATED, Json(json!({ "data": dto }))).into_response()
-}
-
-async fn list_clients(State(state): State<AppState>, AdminContext(context): AdminContext) -> Response {
-    let Ok(tenant_id) = Uuid::parse_str(&context.tenant_id) else {
-        return internal_error_response(anyhow::anyhow!("session context has an invalid tenant id"));
-    };
-    match metap_oauth_server::list_clients(&state.pool, tenant_id).await {
-        Ok(clients) => Json(json!({ "data": clients.iter().map(client_to_json).collect::<Vec<_>>() })).into_response(),
-        Err(e) => internal_error_response(e),
-    }
-}
-
-async fn revoke_client(
-    State(state): State<AppState>,
-    AdminContext(context): AdminContext,
-    Path(id): Path<Uuid>,
-) -> Response {
-    let Ok(tenant_id) = Uuid::parse_str(&context.tenant_id) else {
-        return internal_error_response(anyhow::anyhow!("session context has an invalid tenant id"));
-    };
-    match metap_oauth_server::revoke_client(&state.pool, tenant_id, id).await {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => service_error_response(404, "not_found", Some("No such client in your tenant."), None),
-        Err(e) => internal_error_response(e),
-    }
-}
+// `/admin/oauth/clients*` (admin CRUD over registered clients) moved to GraphQL 2026-09-26
+// (`createOAuthClient`/`oauthClients`/`revokeOAuthClient`, `metap-graphql-http::platform_fields`)
+// — see `../metap-docs/docs/roadmap/95-platform-graphql-fields.md`. Nothing below this point is
+// part of the OAuth2/OIDC wire protocol REST had to keep it near; it was only ever admin-CRUD
+// that happened to live in this file. Everything above (the 5 routes this file still serves) is
+// permanently REST — a third-party OAuth2 client library speaks RFC 6749/7009/8414, not GraphQL.
 
 // Deliberately plain `.route()` calls, not `routes!` — these aren't `utoipa`-documented (matches
 // `routes::auth`'s own `logout`/`issue_token`, undocumented for the same reason: not in scope of
@@ -952,8 +846,6 @@ fn build_router() -> OpenApiRouter<AppState> {
         .route("/oauth/token", post(token))
         .route("/oauth/revoke", post(revoke))
         .route("/.well-known/oauth-authorization-server", get(discovery_metadata))
-        .route("/admin/oauth/clients", post(create_client).get(list_clients))
-        .route("/admin/oauth/clients/{id}", axum::routing::delete(revoke_client))
 }
 
 pub fn router() -> Router<AppState> {

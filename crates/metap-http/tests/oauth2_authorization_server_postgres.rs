@@ -9,7 +9,6 @@ use std::process::Command;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use axum::Router;
 use jsonwebtoken::DecodingKey;
 use metap_http::{build_router, AppState};
 use metap_metadata::MetadataRegistry;
@@ -72,7 +71,7 @@ impl Drop for TempDir {
 struct TestServer {
     base: String,
     /// The resource owner's own session token — used to authenticate `GET /oauth/authorize` and,
-    /// since this test's user also holds the `admin` role, `POST /admin/oauth/clients`.
+    /// since this test's user also holds the `admin` role, the `createOAuthClient` mutation.
     user_token: String,
     /// Kept so a test can mint a *second* user's session token (`metap_peripherals::mint_jwt`)
     /// against the same trust root this server verifies against, without re-booting a server.
@@ -111,7 +110,11 @@ async fn boot_server(tenant_id: Uuid, user_id: Uuid) -> TestServer {
         private_pem.clone(),
         test_router(pool.clone()),
     );
-    let router = build_router(state, &["http://localhost:5173".to_string()], Router::new());
+    // `createOAuthClient` (`register_client`/`register_client_with_service_user` below) is a
+    // GraphQL mutation now (`/admin/oauth/clients`'s replacement, 2026-09-26) — this server needs
+    // `/graphql` mounted, unlike before that migration.
+    let graphql_routes = metap_graphql_http::router(&state, metap_graphql::SchemaLimits::default()).unwrap();
+    let router = build_router(state, &["http://localhost:5173".to_string()], graphql_routes);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -207,54 +210,67 @@ fn no_redirect_client() -> reqwest::Client {
         .unwrap()
 }
 
-/// Registers a client via the real admin endpoint (not the library function directly) — this
-/// test's own way of also proving `POST /admin/oauth/clients` end to end.
+const CREATE_OAUTH_CLIENT_MUTATION: &str = "mutation($name: String!, $redirectUris: [String!]!, $allowedScopes: [String!], $isConfidential: Boolean) { \
+    createOAuthClient(name: $name, redirectUris: $redirectUris, allowedScopes: $allowedScopes, isConfidential: $isConfidential) }";
+
+/// Registers a client via the real `createOAuthClient` GraphQL mutation (not the library function
+/// directly) — this test's own way of also proving it end to end. `POST /admin/oauth/clients`'s
+/// replacement since 2026-09-26 (`../metap-docs/docs/roadmap/95-platform-graphql-fields.md`).
 async fn register_client(server: &TestServer, redirect_uri: &str, confidential: bool) -> (String, String) {
-    let res = reqwest::Client::new()
-        .post(format!("{}/admin/oauth/clients", server.base))
+    let res: Value = reqwest::Client::new()
+        .post(format!("{}/graphql", server.base))
         .bearer_auth(&server.user_token)
         .json(&serde_json::json!({
-            "name": "E2E Test Client",
-            "redirectUris": [redirect_uri],
-            "allowedScopes": ["read:widgets", "write:widgets"],
-            "isConfidential": confidential,
+            "query": CREATE_OAUTH_CLIENT_MUTATION,
+            "variables": {
+                "name": "E2E Test Client",
+                "redirectUris": [redirect_uri],
+                "allowedScopes": ["read:widgets", "write:widgets"],
+                "isConfidential": confidential,
+            },
         }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(res.status(), 201);
-    let body: Value = res.json().await.unwrap();
-    let data = &body["data"];
+    assert!(res.get("errors").is_none(), "unexpected errors: {res:?}");
+    let data = &res["data"]["createOAuthClient"];
     (
         data["clientId"].as_str().unwrap().to_string(),
         data["clientSecret"].as_str().unwrap().to_string(),
     )
 }
 
-/// Same as [`register_client`] but also returns the `serviceUserId` `POST /admin/oauth/clients`
-/// eagerly provisions — only the `client_credentials` tests below need it (to grant that identity
-/// a role and prove the resulting access token is governed by real RBAC, same as any other
-/// session).
+/// Same as [`register_client`] but also returns the `serviceUserId` the mutation eagerly
+/// provisions — only the `client_credentials` tests below need it (to grant that identity a role
+/// and prove the resulting access token is governed by real RBAC, same as any other session).
 async fn register_client_with_service_user(
     server: &TestServer,
     redirect_uri: &str,
     confidential: bool,
 ) -> (String, String, Uuid) {
-    let res = reqwest::Client::new()
-        .post(format!("{}/admin/oauth/clients", server.base))
+    let res: Value = reqwest::Client::new()
+        .post(format!("{}/graphql", server.base))
         .bearer_auth(&server.user_token)
         .json(&serde_json::json!({
-            "name": "E2E Test Client",
-            "redirectUris": [redirect_uri],
-            "allowedScopes": ["read:widgets", "write:widgets"],
-            "isConfidential": confidential,
+            "query": CREATE_OAUTH_CLIENT_MUTATION,
+            "variables": {
+                "name": "E2E Test Client",
+                "redirectUris": [redirect_uri],
+                "allowedScopes": ["read:widgets", "write:widgets"],
+                "isConfidential": confidential,
+            },
         }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(res.status(), 201);
-    let body: Value = res.json().await.unwrap();
-    let data = &body["data"];
+    assert!(res.get("errors").is_none(), "unexpected errors: {res:?}");
+    let data = &res["data"]["createOAuthClient"];
     (
         data["clientId"].as_str().unwrap().to_string(),
         data["clientSecret"].as_str().unwrap().to_string(),

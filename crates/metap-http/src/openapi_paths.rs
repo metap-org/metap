@@ -1,10 +1,17 @@
 //! OpenAPI `paths`/`components.schemas` for this crate's own static (non-entity) routes —
-//! `routes::health`/`preferences`/`users`/`auth`/`admin`/`cron`/`dashboards`/`attachments`/
-//! `workflow_events`/`audit_events`/`platform_config`/`tenant_config`. Derived from each of those modules'
-//! `#[utoipa::path(...)]` annotations (2026-09-06, `../metap-lowcode/docs/features/
-//! 02-utoipa-migration.md`), not hand-written JSON anymore — see that doc for the migration's
-//! full history (this was the third and final crate converted, after `metap-control-http`/
-//! `metap-lowcode-http`).
+//! `routes::health`/`auth`/`attachments`/`workflow_events`/`audit_events`/`oauth2`. Derived from
+//! each of those modules' `#[utoipa::path(...)]` annotations (2026-09-06, `../metap-lowcode/docs/
+//! features/02-utoipa-migration.md`), not hand-written JSON anymore — see that doc for the
+//! migration's full history (this was the third and final crate converted, after
+//! `metap-control-http`/`metap-lowcode-http`).
+//!
+//! **`routes::{admin,cron,dashboards,preferences,platform_config,tenant_config,users}` are gone**
+//! (2026-09-26, `../metap-docs/docs/roadmap/95-platform-graphql-fields.md`) — those groups moved
+//! to GraphQL-only, hand-written fields (`metap-graphql-http::platform_fields`), which have no
+//! OpenAPI document at all (`GET /graphql/schema.graphql`'s SDL is their schema-discovery
+//! equivalent, same relationship `/api/:entity*`'s removal already established for entity CRUD
+//! below). `routes::oauth2` lost only its 3 admin-CRUD routes the same way — its 5 protocol
+//! routes (`/oauth/*`, `/.well-known/*`) are unaffected and still contribute a fragment here.
 //!
 //! `routes::metadata::openapi_json` merges [`static_paths`]/[`static_schemas`] into the served
 //! document alongside `metap_metadata::generate_openapi_document`'s own `/metadata/*` static
@@ -16,10 +23,10 @@
 //! module's own static fragments are the entire document now, `/metadata/*` aside.
 //!
 //! `GET /metrics` is deliberately omitted — it serves Prometheus text exposition format, not
-//! JSON, so there's nothing here for `openapi-typescript` to usefully describe. `GET /auth/logout`,
-//! `GET /auth/token`, and `GET /admin/cron-jobs/{jobId}/runs/{runId}/workflow-run` are also
-//! deliberately undocumented — plain `axum` routes with no `#[utoipa::path]`, matching what the
-//! old hand-written fragments covered (they never documented these three either).
+//! JSON, so there's nothing here for `openapi-typescript` to usefully describe. `GET /auth/logout`
+//! and `GET /auth/token` are also deliberately undocumented — plain `axum` routes with no
+//! `#[utoipa::path]`, matching what the old hand-written fragments covered (they never documented
+//! these two either).
 
 use serde_json::{Map, Value};
 
@@ -29,17 +36,10 @@ use serde_json::{Map, Value};
 fn core_openapi() -> utoipa::openapi::OpenApi {
     let mut doc = crate::routes::health::openapi();
     for fragment in [
-        crate::routes::users::openapi(),
-        crate::routes::preferences::openapi(),
         crate::routes::workflow_events::openapi(),
         crate::routes::audit_events::openapi(),
         crate::routes::attachments::openapi(),
         crate::routes::auth::openapi(),
-        crate::routes::admin::openapi(),
-        crate::routes::cron::openapi(),
-        crate::routes::dashboards::openapi(),
-        crate::routes::platform_config::openapi(),
-        crate::routes::tenant_config::openapi(),
         crate::routes::oauth2::openapi(),
     ] {
         doc.merge(fragment);
@@ -81,21 +81,10 @@ mod tests {
         let paths = static_paths();
         for expected in [
             "/health",
-            "/preferences",
-            "/users",
             "/auth/login",
             "/auth/me",
-            "/admin/users",
-            "/admin/policies",
-            "/admin/cron-jobs",
-            "/dashboards/me",
             "/api/{entity}/{record_id}/attachments",
             "/api/{entity}/{record_id}/workflow-events",
-            "/platform/config",
-            "/platform/config/{key}",
-            "/admin/config",
-            "/admin/config/{key}",
-            "/public/config",
         ] {
             assert!(paths.contains_key(expected), "missing path: {expected}");
         }

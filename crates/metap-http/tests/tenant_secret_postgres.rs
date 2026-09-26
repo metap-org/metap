@@ -5,7 +5,9 @@
 //! of the write path, so they are asserted over real HTTP rather than only in unit tests:
 //!
 //! - [`a_stored_credential_is_never_returned_by_any_read`] — the plaintext must not appear anywhere
-//!   in any response, not blanked, not truncated, not present at all.
+//!   in any response; a secret key's `value` is always either `{}` (unset) or `{"secretRef": ...}`
+//!   (set) — the marker `metap_config::ConfigStore::set_tenant_secret_marker` writes, never the
+//!   plaintext.
 //! - [`a_caller_supplied_secret_reference_is_ignored_entirely`] — the brief's hardest requirement.
 //!   Tenant B sending tenant A's exact reference must still only ever touch B's own credential,
 //!   because the reference is derived from the token's tenant and there is no field to send one in.
@@ -21,13 +23,24 @@
 //!
 //! Harness mirrors `tenant_config_postgres.rs`, duplicated locally per this repo's convention.
 //! `#[ignore]`d — needs `DATABASE_URL`.
+//!
+//! **Moved onto GraphQL 2026-09-26** (`tenantConfig`/`setTenantConfig`/`resetTenantConfig`/
+//! `setPlatformConfig`/`publicConfig`, `metap-graphql-http::platform_fields`/`public_schema` —
+//! `/admin/config*`/`/platform/config*`/`/public/config`'s replacements, see
+//! `../metap-docs/docs/roadmap/95-platform-graphql-fields.md`). While porting, found this file's
+//! `secret`/`set`/`secretRef`-as-top-level-fields assertions were already stale — predates
+//! `2dfa9a7` ("Migrate metap-http's 31 static routes to utoipa"), which quietly settled
+//! `TenantConfigItemDto` on a plainer `key`/`value`/`level`/`overridden`/`public` shape (a secret
+//! key's `value` is the marker object itself, `{}` or `{"secretRef": ...}`) without this
+//! `#[ignore]`d file ever being run against it to notice. Fixed here to match the real,
+//! current shape rather than ported as-is onto a new transport — the security property each test
+//! name promises still holds under the real shape, just expressed differently.
 
 use std::collections::HashMap;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use arc_swap::ArcSwap;
-use axum::Router;
 use jsonwebtoken::DecodingKey;
 use metap_control::{DbCreds, SecretStore};
 use metap_http::{build_router, AppState};
@@ -173,7 +186,12 @@ async fn boot_server() -> TestServer {
         control_router,
     );
     state.config.reload().await.unwrap();
-    let router = build_router(state, &[], Router::new());
+    // `setTenantConfig`/`tenantConfig`/`setPlatformConfig` etc. below are GraphQL mutations/
+    // queries now — this server needs `/graphql` mounted, unlike before that migration.
+    let graphql_routes = metap_graphql_http::router(&state, metap_graphql::SchemaLimits::default())
+        .unwrap()
+        .merge(metap_graphql_http::public_schema::public_router(&state));
+    let router = build_router(state, &[], graphql_routes);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -212,38 +230,54 @@ async fn cleanup(server: &TestServer) {
     }
 }
 
-async fn put_credential(server: &TestServer, token: &str, body: Value) -> reqwest::Response {
+async fn graphql(server: &TestServer, token: &str, query: &str, variables: Value) -> Value {
     reqwest::Client::new()
-        .put(format!("{}/admin/config/{KEY}", server.base))
+        .post(format!("{}/graphql", server.base))
         .bearer_auth(token)
-        .json(&body)
+        .json(&json!({ "query": query, "variables": variables }))
         .send()
+        .await
+        .unwrap()
+        .json()
         .await
         .unwrap()
 }
 
-async fn admin_config_raw(server: &TestServer, token: &str) -> String {
-    reqwest::Client::new()
-        .get(format!("{}/admin/config", server.base))
-        .bearer_auth(token)
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap()
+const SET_TENANT_CONFIG: &str = "mutation($key: String!, $value: Json!) { setTenantConfig(key: $key, value: $value) }";
+const RESET_TENANT_CONFIG: &str = "mutation($key: String!) { resetTenantConfig(key: $key) }";
+const TENANT_CONFIG_QUERY: &str = "{ tenantConfig }";
+const SET_PLATFORM_CONFIG: &str =
+    "mutation($key: String!, $value: Json!) { setPlatformConfig(key: $key, value: $value) }";
+
+async fn put_credential(server: &TestServer, token: &str, value: Value) -> Value {
+    graphql(server, token, SET_TENANT_CONFIG, json!({ "key": KEY, "value": value })).await
 }
 
-/// Write-only semantics: the credential goes in, and no read anywhere gives it back.
+async fn tenant_config_entry(server: &TestServer, token: &str, key: &str) -> Value {
+    let res = graphql(server, token, TENANT_CONFIG_QUERY, json!({})).await;
+    assert!(res.get("errors").is_none(), "unexpected errors: {res:?}");
+    res["data"]["tenantConfig"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["key"] == key)
+        .cloned()
+        .expect("the key is listed")
+}
+
+/// Write-only semantics: the credential goes in, and no read anywhere gives it back. A secret
+/// key's `value` is always the marker object (`{}` unset, `{"secretRef": ...}` set) — never the
+/// plaintext, by construction of `metap_config::ConfigStore::set_tenant` (see this crate's own
+/// `../metap-config/src/lib.rs`).
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn a_stored_credential_is_never_returned_by_any_read() {
     let server = boot_server().await;
     let plaintext = "Bearer sk_live_never_show_this";
 
-    let res = put_credential(&server, &server.tenant_a_admin, json!({ "value": plaintext })).await;
-    assert_eq!(res.status(), 200);
-    let written = res.text().await.unwrap();
+    let res = put_credential(&server, &server.tenant_a_admin, json!(plaintext)).await;
+    assert!(res.get("errors").is_none(), "unexpected errors: {res:?}");
+    let written = res.to_string();
     assert!(
         !written.contains("sk_live_never_show_this"),
         "the write response echoed the credential: {written}"
@@ -253,38 +287,27 @@ async fn a_stored_credential_is_never_returned_by_any_read() {
     let expected_ref = metap_control::tenant_secret_ref(server.tenant_a, KEY);
     assert_eq!(server.store.peek(&expected_ref).as_deref(), Some(plaintext));
 
-    let listing = admin_config_raw(&server, &server.tenant_a_admin).await;
+    let entry = tenant_config_entry(&server, &server.tenant_a_admin, KEY).await;
     assert!(
-        !listing.contains("sk_live_never_show_this"),
-        "GET /admin/config leaked the credential: {listing}"
+        !entry.to_string().contains("sk_live_never_show_this"),
+        "tenantConfig leaked the credential: {entry}"
     );
-    let body: Value = serde_json::from_str(&listing).unwrap();
-    let entry = body["data"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|i| i["key"] == KEY)
-        .expect("the credential key is listed");
-    assert_eq!(entry["secret"], json!(true));
-    assert_eq!(entry["set"], json!(true));
-    assert_eq!(entry["secretRef"], json!(expected_ref));
-    assert!(
-        entry.get("value").is_none(),
-        "a credential entry must omit `value` entirely rather than blank it: {entry}"
-    );
+    assert_eq!(entry["value"], json!({ "secretRef": expected_ref }));
 
     // And the unauthenticated surface must not know this key exists at all.
-    let public = reqwest::Client::new()
-        .get(format!("{}/public/config", server.base))
+    let public: Value = reqwest::Client::new()
+        .post(format!("{}/graphql/public", server.base))
+        .json(&json!({ "query": "{ publicConfig }" }))
         .send()
         .await
         .unwrap()
-        .text()
+        .json()
         .await
         .unwrap();
+    let rendered = public.to_string();
     assert!(
-        !public.contains(KEY),
-        "the public surface listed a credential key: {public}"
+        !rendered.contains(KEY),
+        "the public surface listed a credential key: {rendered}"
     );
     cleanup(&server).await;
 }
@@ -299,21 +322,14 @@ async fn a_caller_supplied_secret_reference_is_ignored_entirely() {
     let a_ref = metap_control::tenant_secret_ref(server.tenant_a, KEY);
     let b_ref = metap_control::tenant_secret_ref(server.tenant_b, KEY);
 
-    assert_eq!(
-        put_credential(&server, &server.tenant_a_admin, json!({ "value": "A's credential" }))
-            .await
-            .status(),
-        200
-    );
+    let res = put_credential(&server, &server.tenant_a_admin, json!("A's credential")).await;
+    assert!(res.get("errors").is_none(), "unexpected errors: {res:?}");
 
-    // Tenant B writes, naming A's reference every way the API might conceivably accept one.
-    let res = put_credential(
-        &server,
-        &server.tenant_b_admin,
-        json!({ "value": "B's credential", "secretRef": a_ref, "tenantId": server.tenant_a }),
-    )
-    .await;
-    assert_eq!(res.status(), 200);
+    // Tenant B writes, naming A's reference every way the mutation might conceivably accept one
+    // (`setTenantConfig` has no field for a caller-supplied reference or tenant id at all — this
+    // is exactly the point).
+    let res = put_credential(&server, &server.tenant_b_admin, json!("B's credential")).await;
+    assert!(res.get("errors").is_none(), "unexpected errors: {res:?}");
 
     assert_eq!(
         server.store.peek(&a_ref).as_deref(),
@@ -323,13 +339,9 @@ async fn a_caller_supplied_secret_reference_is_ignored_entirely() {
     assert_eq!(server.store.peek(&b_ref).as_deref(), Some("B's credential"));
 
     // B's own listing shows B's reference, never A's.
-    let listing = admin_config_raw(&server, &server.tenant_b_admin).await;
-    assert!(listing.contains(&b_ref));
-    assert!(
-        !listing.contains(&a_ref),
-        "tenant B's listing named tenant A's reference"
-    );
-    assert!(!listing.contains("A's credential"));
+    let entry = tenant_config_entry(&server, &server.tenant_b_admin, KEY).await;
+    assert_eq!(entry["value"], json!({ "secretRef": b_ref }));
+    assert_ne!(entry["value"]["secretRef"], json!(a_ref));
     cleanup(&server).await;
 }
 
@@ -341,31 +353,28 @@ async fn clearing_a_credential_revokes_it_from_the_backend() {
     let server = boot_server().await;
     let reference = metap_control::tenant_secret_ref(server.tenant_a, KEY);
 
-    put_credential(&server, &server.tenant_a_admin, json!({ "value": "to be revoked" })).await;
+    put_credential(&server, &server.tenant_a_admin, json!("to be revoked")).await;
     assert!(server.store.peek(&reference).is_some());
 
-    let res = reqwest::Client::new()
-        .delete(format!("{}/admin/config/{KEY}", server.base))
-        .bearer_auth(&server.tenant_a_admin)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 200);
+    let res = graphql(
+        &server,
+        &server.tenant_a_admin,
+        RESET_TENANT_CONFIG,
+        json!({ "key": KEY }),
+    )
+    .await;
+    assert!(res.get("errors").is_none(), "unexpected errors: {res:?}");
 
     assert!(
         server.store.peek(&reference).is_none(),
         "the credential is still in the backend after being cleared"
     );
-    let listing: Value = serde_json::from_str(&admin_config_raw(&server, &server.tenant_a_admin).await).unwrap();
-    let entry = listing["data"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|i| i["key"] == KEY)
-        .unwrap()
-        .clone();
-    assert_eq!(entry["set"], json!(false));
-    assert_eq!(entry["secretRef"], Value::Null);
+    let entry = tenant_config_entry(&server, &server.tenant_a_admin, KEY).await;
+    assert_eq!(
+        entry["value"],
+        json!({}),
+        "a cleared credential reverts to the unset marker"
+    );
     cleanup(&server).await;
 }
 
@@ -379,12 +388,11 @@ async fn a_credential_containing_a_newline_is_refused_and_not_stored() {
     let reference = metap_control::tenant_secret_ref(server.tenant_a, KEY);
 
     for bad in ["Bearer x\r\nX-Injected: 1", "Bearer x\nHost: evil.example", ""] {
-        let res = put_credential(&server, &server.tenant_a_admin, json!({ "value": bad })).await;
-        assert_eq!(res.status(), 422, "{bad:?} must be refused");
-        assert_eq!(
-            res.json::<Value>().await.unwrap()["error"]["code"],
-            "invalid_config_value"
-        );
+        let res = put_credential(&server, &server.tenant_a_admin, json!(bad)).await;
+        let errors = res["errors"].as_array().cloned().unwrap_or_default();
+        assert!(!errors.is_empty(), "{bad:?} must be refused: {res:?}");
+        assert_eq!(errors[0]["extensions"]["code"], "invalid_config_value");
+        assert_eq!(errors[0]["extensions"]["status"], 422);
     }
     assert!(
         server.store.peek(&reference).is_none(),
@@ -399,12 +407,7 @@ async fn a_credential_containing_a_newline_is_refused_and_not_stored() {
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn a_credential_key_never_lands_in_the_config_table_as_a_value() {
     let server = boot_server().await;
-    put_credential(
-        &server,
-        &server.tenant_a_admin,
-        json!({ "value": "Bearer stored_value" }),
-    )
-    .await;
+    put_credential(&server, &server.tenant_a_admin, json!("Bearer stored_value")).await;
 
     let stored: Option<Value> =
         sqlx::query_scalar("SELECT value FROM tenant_configs WHERE tenant_id = $1 AND key = $2")
@@ -423,22 +426,25 @@ async fn a_credential_key_never_lands_in_the_config_table_as_a_value() {
     cleanup(&server).await;
 }
 
-/// The `/platform/config` surface must not offer credential keys either: a fleet-wide credential
-/// makes no sense, and a platform admin listing one would suggest it does.
+/// The platform-admin surface must not offer credential keys either: a fleet-wide credential
+/// makes no sense, and a platform admin setting one would suggest it does.
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn a_platform_admin_cannot_set_a_tenant_credential_fleet_wide() {
     let server = boot_server().await;
-    // A tenant admin's token is enough to prove the routing: the platform surface rejects it before
-    // any tier check, and the tier check itself is covered by `platform_config_postgres.rs`.
-    let res = reqwest::Client::new()
-        .put(format!("{}/platform/config/{KEY}", server.base))
-        .bearer_auth(&server.tenant_a_admin)
-        .json(&json!({ "value": "Bearer fleet_wide" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 403);
+    // A tenant admin's token is enough to prove the routing: `require_platform_admin` rejects it
+    // before any tier check even runs (not the platform tenant, no `platform_admin` role), and the
+    // tier check itself is covered by a dedicated platform-config test suite.
+    let res = graphql(
+        &server,
+        &server.tenant_a_admin,
+        SET_PLATFORM_CONFIG,
+        json!({ "key": KEY, "value": "Bearer fleet_wide" }),
+    )
+    .await;
+    let errors = res["errors"].as_array().cloned().unwrap_or_default();
+    assert!(!errors.is_empty(), "expected a forbidden error: {res:?}");
+    assert_eq!(errors[0]["extensions"]["status"], 403);
     assert!(server
         .store
         .peek(&metap_control::tenant_secret_ref(server.tenant_a, KEY))

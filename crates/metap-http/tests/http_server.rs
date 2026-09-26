@@ -717,8 +717,8 @@ async fn read_test_task_status(client: &reqwest::Client, base: &str, token: &str
 /// enriches `RequestContext` from the caller's own record on a configured entity (`test.profiles`
 /// here, standing in for `hr.employees`), an org-scoped ABAC policy on `test.tasks` reads that
 /// enrichment via `fromContext`, and the enrichment is cached — a stale cached value persists
-/// until `POST /admin/users/{userId}/context/invalidate` clears it explicitly (a long TTL is used
-/// so this test doesn't race a timer).
+/// until the `invalidateUserContextCache` GraphQL mutation clears it explicitly (a long TTL is
+/// used so this test doesn't race a timer).
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_cache_invalidation() {
@@ -836,30 +836,46 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
         .unwrap()
         .to_string();
 
-    // grant "employee" bare read access (context-subject, RBAC only) ...
-    let policy1 = client
-        .post(format!("{base}/admin/policies"))
-        .bearer_auth(&admin_token)
-        .json(&json!({ "entity": "test.tasks", "action": "read", "roles": ["employee"], "subject": "context" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(policy1.status(), 201);
-    // ... then narrow it to same-department records only (record-subject, ABAC condition reading
-    // the enrichment this whole feature adds).
-    let policy2 = client
-        .post(format!("{base}/admin/policies"))
+    // grant "employee" bare read access (context-subject, RBAC only) — via the `createPolicy`
+    // GraphQL mutation (`metap-graphql-http::platform_fields`), `POST /admin/policies`'s
+    // replacement since 2026-09-26 (`../metap-docs/docs/roadmap/95-platform-graphql-fields.md`).
+    let policy1: serde_json::Value = client
+        .post(format!("{base}/graphql"))
         .bearer_auth(&admin_token)
         .json(&json!({
-            "entity": "test.tasks",
-            "action": "read",
-            "subject": "record",
-            "condition": { "attribute": "deptId", "op": "eq", "value": { "fromContext": "deptId" } }
+            "query": "mutation($entity: String!, $action: String!, $roles: [String!], $subject: String) { \
+                createPolicy(entity: $entity, action: $action, roles: $roles, subject: $subject) }",
+            "variables": { "entity": "test.tasks", "action": "read", "roles": ["employee"], "subject": "context" },
         }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(policy2.status(), 201);
+    assert!(policy1.get("errors").is_none(), "unexpected errors: {policy1:?}");
+    // ... then narrow it to same-department records only (record-subject, ABAC condition reading
+    // the enrichment this whole feature adds).
+    let policy2: serde_json::Value = client
+        .post(format!("{base}/graphql"))
+        .bearer_auth(&admin_token)
+        .json(&json!({
+            "query": "mutation($entity: String!, $action: String!, $subject: String, $condition: Json) { \
+                createPolicy(entity: $entity, action: $action, subject: $subject, condition: $condition) }",
+            "variables": {
+                "entity": "test.tasks",
+                "action": "read",
+                "subject": "record",
+                "condition": { "attribute": "deptId", "op": "eq", "value": { "fromContext": "deptId" } },
+            },
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(policy2.get("errors").is_none(), "unexpected errors: {policy2:?}");
 
     // employee (deptId=eng, from their test.profiles record) reads the eng task ...
     let status = read_test_task_status(&client, &base, &employee_token, &eng_task_id).await;
@@ -887,14 +903,26 @@ async fn auth_context_entity_enriches_org_scoped_policies_and_supports_explicit_
         "cached context_attributes should still be stale (deptId=eng)"
     );
 
-    // explicit invalidate clears it immediately, without waiting on the TTL.
-    let invalidate_res = client
-        .post(format!("{base}/admin/users/{employee_user_id}/context/invalidate"))
+    // explicit invalidate clears it immediately, without waiting on the TTL — via the
+    // `invalidateUserContextCache` GraphQL mutation, `POST /admin/users/{userId}/context/
+    // invalidate`'s replacement since 2026-09-26.
+    let invalidate_res: serde_json::Value = client
+        .post(format!("{base}/graphql"))
         .bearer_auth(&admin_token)
+        .json(&json!({
+            "query": format!(r#"mutation {{ invalidateUserContextCache(userId: "{employee_user_id}") }}"#),
+        }))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert_eq!(invalidate_res.status(), 204);
+    assert!(
+        invalidate_res.get("errors").is_none(),
+        "unexpected errors: {invalidate_res:?}"
+    );
+    assert_eq!(invalidate_res["data"]["invalidateUserContextCache"], true);
 
     // now the employee's context is fresh: eng is no longer reachable, sales is.
     let status = read_test_task_status(&client, &base, &employee_token, &eng_task_id).await;

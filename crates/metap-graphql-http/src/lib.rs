@@ -27,11 +27,14 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::Router;
 use metap_crud::RecordBackend;
-use metap_graphql::{build_schema, build_schema_with_federation, with_request_data, Schema, SchemaLimits};
+use metap_graphql::{build_schema_parts, build_schema_parts_with_federation, with_request_data, Schema, SchemaLimits};
 use metap_http::auth::AuthContext;
 use metap_http::AppState;
 use metap_metadata::MetadataRegistry;
 use tokio::sync::Mutex;
+
+mod platform_fields;
+pub mod public_schema;
 
 struct SchemaHolder {
     backend: Arc<dyn RecordBackend>,
@@ -41,6 +44,12 @@ struct SchemaHolder {
     /// lifetime, same as `backend`/`limits` — a binary either mounts a federation-capable
     /// `/graphql` or it doesn't, this never toggles mid-flight.
     federation: bool,
+    /// Schema-wide data every `platform_fields` resolver reads (`state.pool`/`state.router`/
+    /// `state.permissions`/`state.config`/`state.context_attributes_cache`) — safe to hold for
+    /// the schema's lifetime like `backend` above, since none of those fields hot-swap the way
+    /// `state.crud`/`state.metadata` do (only those two are re-read fresh per request, via
+    /// [`router_with_federation`]'s own `State<AppState>` extractor).
+    state: AppState,
     cached: Mutex<(Arc<MetadataRegistry>, Arc<Schema>)>,
 }
 
@@ -50,27 +59,43 @@ impl SchemaHolder {
         backend: Arc<dyn RecordBackend>,
         limits: SchemaLimits,
         federation: bool,
+        state: AppState,
     ) -> anyhow::Result<Self> {
-        let schema = Arc::new(Self::build(&metadata, backend.clone(), limits, federation)?);
+        let schema = Arc::new(Self::build(
+            &metadata,
+            backend.clone(),
+            limits,
+            federation,
+            state.clone(),
+        )?);
         Ok(Self {
             backend,
             limits,
             federation,
+            state,
             cached: Mutex::new((metadata, schema)),
         })
     }
 
+    /// Builds the entity schema via `build_schema_parts`/`build_schema_parts_with_federation`
+    /// (stopping short of `.finish()`, exactly the extension point their own doc comments
+    /// describe), adds every hand-written non-entity field (`crate::platform_fields`) onto the
+    /// same `query`/`mutation` objects, attaches `state` as schema-wide data alongside `backend`,
+    /// then finishes.
     fn build(
         metadata: &MetadataRegistry,
         backend: Arc<dyn RecordBackend>,
         limits: SchemaLimits,
         federation: bool,
+        state: AppState,
     ) -> Result<Schema, async_graphql::dynamic::SchemaError> {
-        if federation {
-            build_schema_with_federation(metadata, backend, limits)
+        let (builder, query, mutation) = if federation {
+            build_schema_parts_with_federation(metadata, backend, limits)
         } else {
-            build_schema(metadata, backend, limits)
-        }
+            build_schema_parts(metadata, backend, limits)
+        };
+        let (query, mutation) = platform_fields::add_platform_fields(query, mutation);
+        builder.data(state).register(query).register(mutation).finish()
     }
 
     /// Returns the current schema, rebuilding first if `current_metadata` isn't the same `Arc`
@@ -81,7 +106,13 @@ impl SchemaHolder {
     async fn get(&self, current_metadata: &Arc<MetadataRegistry>) -> Arc<Schema> {
         let mut guard = self.cached.lock().await;
         if !Arc::ptr_eq(&guard.0, current_metadata) {
-            if let Ok(schema) = Self::build(current_metadata, self.backend.clone(), self.limits, self.federation) {
+            if let Ok(schema) = Self::build(
+                current_metadata,
+                self.backend.clone(),
+                self.limits,
+                self.federation,
+                self.state.clone(),
+            ) {
                 *guard = (current_metadata.clone(), Arc::new(schema));
             }
         }
@@ -136,6 +167,7 @@ pub fn router_with_federation(
         initial_backend,
         limits,
         federation,
+        state.clone(),
     )?);
     let sdl_holder = holder.clone();
 

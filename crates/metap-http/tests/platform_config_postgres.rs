@@ -1,11 +1,13 @@
-//! `/platform/config` end to end (`../metap-docs/docs/features/18-config-tiers-db-backed.md`,
-//! slice 1).
+//! `platformConfig`/`setPlatformConfig`/`resetPlatformConfig` end to end
+//! (`../metap-docs/docs/features/18-config-tiers-db-backed.md`, slice 1) — GraphQL mutations/
+//! queries since 2026-09-26, `/platform/config*`'s replacement
+//! (`../metap-docs/docs/roadmap/95-platform-graphql-fields.md`).
 //!
 //! The test that matters most here is [`an_operator_key_is_refused_even_for_a_platform_admin`]:
 //! the SSRF guard `cron-scheduler` gained for audit 04 A#1 is only worth anything because its
 //! allowlist is operator-controlled, so a convenient config API that could write those keys would
 //! silently undo that fix. That boundary is asserted over real HTTP rather than only in
-//! `metap_config::keys`'s unit tests, because it is the *route* that a future change would most
+//! `metap_config::keys`'s unit tests, because it is the *field* that a future change would most
 //! plausibly loosen.
 //!
 //! Harness mirrors `http_server.rs`/`jwt_security_postgres.rs`, duplicated locally per this repo's
@@ -15,12 +17,11 @@ use std::process::Command;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use axum::Router;
 use jsonwebtoken::DecodingKey;
 use metap_http::{build_router, AppState};
 use metap_metadata::MetadataRegistry;
 use metap_permission::PermissionService;
-use serde_json::json;
+use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -120,7 +121,8 @@ async fn boot_server() -> TestServer {
         test_router(pool.clone()),
     );
     state.config.reload().await.unwrap();
-    let router = build_router(state, &[], Router::new());
+    let graphql_routes = metap_graphql_http::router(&state, metap_graphql::SchemaLimits::default()).unwrap();
+    let router = build_router(state, &[], graphql_routes);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -161,43 +163,60 @@ async fn cleanup(server: &TestServer) {
     }
 }
 
-/// **The audit 04 A#1 regression, at the HTTP boundary.** A platform admin is the most privileged
-/// caller this API has, and it must still be refused — these keys answer to whoever controls the
-/// deployment's environment, not to anyone holding a token.
+async fn graphql(server: &TestServer, token: &str, query: &str, variables: Value) -> Value {
+    reqwest::Client::new()
+        .post(format!("{}/graphql", server.base))
+        .bearer_auth(token)
+        .json(&json!({ "query": query, "variables": variables }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+const PLATFORM_CONFIG_QUERY: &str = "{ platformConfig }";
+const SET_PLATFORM_CONFIG: &str =
+    "mutation($key: String!, $value: Json!) { setPlatformConfig(key: $key, value: $value) }";
+const RESET_PLATFORM_CONFIG: &str = "mutation($key: String!) { resetPlatformConfig(key: $key) }";
+
+fn first_error(res: &Value) -> &Value {
+    res["errors"]
+        .as_array()
+        .and_then(|e| e.first())
+        .unwrap_or_else(|| panic!("expected a GraphQL error: {res:?}"))
+}
+
+/// **The audit 04 A#1 regression, at the GraphQL boundary.** A platform admin is the most
+/// privileged caller this API has, and it must still be refused — these keys answer to whoever
+/// controls the deployment's environment, not to anyone holding a token.
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn an_operator_key_is_refused_even_for_a_platform_admin() {
     let server = boot_server().await;
-    let client = reqwest::Client::new();
 
     for key in [
         "cron.webhookAllowPrivateTargets",
         "cron.webhookAllowedHosts",
         "http.corsOrigins",
     ] {
-        let res = client
-            .put(format!("{}/platform/config/{key}", server.base))
-            .bearer_auth(&server.platform_token)
-            .json(&json!({ "value": true }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(res.status(), 403, "{key} must never be writable over HTTP");
-        let body: serde_json::Value = res.json().await.unwrap();
-        assert_eq!(body["error"]["code"], "config_key_not_writable");
+        let res = graphql(
+            &server,
+            &server.platform_token,
+            SET_PLATFORM_CONFIG,
+            json!({ "key": key, "value": true }),
+        )
+        .await;
+        let err = first_error(&res);
+        assert_eq!(err["extensions"]["status"], 403, "{key} must never be writable");
+        assert_eq!(err["extensions"]["code"], "config_key_not_writable");
     }
 
     // ...and it is not even listed, so the surface never advertises a value it cannot manage.
-    let listed: serde_json::Value = client
-        .get(format!("{}/platform/config", server.base))
-        .bearer_auth(&server.platform_token)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let keys: Vec<&str> = listed["data"]
+    let listed = graphql(&server, &server.platform_token, PLATFORM_CONFIG_QUERY, json!({})).await;
+    assert!(listed.get("errors").is_none(), "unexpected errors: {listed:?}");
+    let keys: Vec<&str> = listed["data"]["platformConfig"]
         .as_array()
         .unwrap()
         .iter()
@@ -217,13 +236,8 @@ async fn an_operator_key_is_refused_even_for_a_platform_admin() {
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn a_tenant_admin_cannot_reach_the_platform_surface_at_all() {
     let server = boot_server().await;
-    let res = reqwest::Client::new()
-        .get(format!("{}/platform/config", server.base))
-        .bearer_auth(&server.tenant_admin_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 403);
+    let res = graphql(&server, &server.tenant_admin_token, PLATFORM_CONFIG_QUERY, json!({})).await;
+    assert_eq!(first_error(&res)["extensions"]["status"], 403);
     cleanup(&server).await;
 }
 
@@ -233,17 +247,10 @@ async fn a_tenant_admin_cannot_reach_the_platform_surface_at_all() {
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn unset_keys_read_back_their_declared_defaults() {
     let server = boot_server().await;
-    let listed: serde_json::Value = reqwest::Client::new()
-        .get(format!("{}/platform/config", server.base))
-        .bearer_auth(&server.platform_token)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let find = |key: &str| -> serde_json::Value {
-        listed["data"]
+    let listed = graphql(&server, &server.platform_token, PLATFORM_CONFIG_QUERY, json!({})).await;
+    assert!(listed.get("errors").is_none(), "unexpected errors: {listed:?}");
+    let find = |key: &str| -> Value {
+        listed["data"]["platformConfig"]
             .as_array()
             .unwrap()
             .iter()
@@ -266,56 +273,52 @@ async fn unset_keys_read_back_their_declared_defaults() {
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn setting_validating_and_resetting_a_platform_global_key() {
     let server = boot_server().await;
-    let client = reqwest::Client::new();
-    let url = format!("{}/platform/config/graphql.maxDepth", server.base);
+    const KEY: &str = "graphql.maxDepth";
 
-    let set = client
-        .put(&url)
-        .bearer_auth(&server.platform_token)
-        .json(&json!({ "value": 25 }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(set.status(), 200);
-    let body: serde_json::Value = set.json().await.unwrap();
-    assert_eq!(body["data"]["value"], 25);
+    let set = graphql(
+        &server,
+        &server.platform_token,
+        SET_PLATFORM_CONFIG,
+        json!({ "key": KEY, "value": 25 }),
+    )
+    .await;
+    assert!(set.get("errors").is_none(), "unexpected errors: {set:?}");
+    assert_eq!(set["data"]["setPlatformConfig"]["value"], 25);
     assert_eq!(
-        body["data"]["appliesImmediately"], true,
+        set["data"]["setPlatformConfig"]["appliesImmediately"], true,
         "the GraphQL limits are read per use, not baked into a layer"
     );
 
     // Out of the declared range → 422, and the stored value is untouched.
-    let rejected = client
-        .put(&url)
-        .bearer_auth(&server.platform_token)
-        .json(&json!({ "value": 0 }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(rejected.status(), 422);
-    assert_eq!(
-        rejected.json::<serde_json::Value>().await.unwrap()["error"]["code"],
-        "invalid_config_value"
-    );
+    let rejected = graphql(
+        &server,
+        &server.platform_token,
+        SET_PLATFORM_CONFIG,
+        json!({ "key": KEY, "value": 0 }),
+    )
+    .await;
+    assert_eq!(first_error(&rejected)["extensions"]["status"], 422);
+    assert_eq!(first_error(&rejected)["extensions"]["code"], "invalid_config_value");
 
     // An unknown key is an addressing mistake, not a validation one.
-    let unknown = client
-        .put(format!("{}/platform/config/nope.notAKey", server.base))
-        .bearer_auth(&server.platform_token)
-        .json(&json!({ "value": 1 }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(unknown.status(), 404);
+    let unknown = graphql(
+        &server,
+        &server.platform_token,
+        SET_PLATFORM_CONFIG,
+        json!({ "key": "nope.notAKey", "value": 1 }),
+    )
+    .await;
+    assert_eq!(first_error(&unknown)["extensions"]["status"], 404);
 
-    let reset = client
-        .delete(&url)
-        .bearer_auth(&server.platform_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(reset.status(), 200);
-    assert_eq!(reset.json::<serde_json::Value>().await.unwrap()["data"]["value"], 10);
+    let reset = graphql(
+        &server,
+        &server.platform_token,
+        RESET_PLATFORM_CONFIG,
+        json!({ "key": KEY }),
+    )
+    .await;
+    assert!(reset.get("errors").is_none(), "unexpected errors: {reset:?}");
+    assert_eq!(reset["data"]["resetPlatformConfig"]["value"], 10);
     cleanup(&server).await;
 }
 
@@ -325,17 +328,14 @@ async fn setting_validating_and_resetting_a_platform_global_key() {
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn the_rate_limit_keys_report_that_they_need_a_restart() {
     let server = boot_server().await;
-    let res = reqwest::Client::new()
-        .put(format!("{}/platform/config/http.rateLimitBurst", server.base))
-        .bearer_auth(&server.platform_token)
-        .json(&json!({ "value": 500 }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 200);
-    assert_eq!(
-        res.json::<serde_json::Value>().await.unwrap()["data"]["appliesImmediately"],
-        false
-    );
+    let res = graphql(
+        &server,
+        &server.platform_token,
+        SET_PLATFORM_CONFIG,
+        json!({ "key": "http.rateLimitBurst", "value": 500 }),
+    )
+    .await;
+    assert!(res.get("errors").is_none(), "unexpected errors: {res:?}");
+    assert_eq!(res["data"]["setPlatformConfig"]["appliesImmediately"], false);
     cleanup(&server).await;
 }
