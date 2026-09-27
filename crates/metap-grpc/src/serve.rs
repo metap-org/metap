@@ -40,7 +40,7 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use metap_control::{ContextAttributesCache, Router};
-use metap_crud::CrudService;
+use metap_crud::RecordBackend;
 use metap_metadata::MetadataRegistry;
 use tonic::transport::{Server, ServerTlsConfig};
 use tower_http::classify::GrpcFailureClass;
@@ -134,7 +134,10 @@ pub async fn serve(
 /// way [`AuthConfig`] bundles its own inputs (see that struct's doc comment) rather than 5 loose
 /// parameters.
 pub struct OptionalServeConfig {
-    pub crud: Arc<CrudService>,
+    /// `Arc<CrudService>` still works unchanged at every call site (unsized coercion — see
+    /// `GrpcRecordService::new`'s doc comment) — this widened to `Arc<dyn RecordBackend>`
+    /// 2026-09-27 so a binary can hand gRPC a decorator instead of only ever the raw service.
+    pub crud: Arc<dyn RecordBackend>,
     pub router: Router,
     pub jwt_decoding_key: Arc<jsonwebtoken::DecodingKey>,
     pub auth_context_entity: Option<String>,

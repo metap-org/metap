@@ -3,12 +3,13 @@
 //! `crates/metap-http/src/routes/records.rs` was removed 2026-09-21, see `metap-http`'s own
 //! `CLAUDE.md` bullet). Every RPC follows the same three steps: authenticate
 //! (`crate::auth::authenticate`), convert the request's `Struct` payload to `serde_json`, call the
-//! matching `metap_crud::CrudService` method, convert the result back. No entity-specific code
-//! anywhere.
+//! matching `metap_crud::RecordBackend` method (normally `CrudService`, or a binary's own
+//! decorator around it — see `GrpcRecordService::new`'s doc comment), convert the result back. No
+//! entity-specific code anywhere.
 
 use std::sync::Arc;
 
-use metap_crud::CrudService;
+use metap_crud::RecordBackend;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
@@ -23,12 +24,19 @@ use crate::pb::{
 use crate::status::{error_to_status, internal, service_result_to_status};
 
 pub struct GrpcRecordService {
-    crud: Arc<CrudService>,
+    crud: Arc<dyn RecordBackend>,
     auth: AuthConfig,
 }
 
 impl GrpcRecordService {
-    pub fn new(crud: Arc<CrudService>, auth: AuthConfig) -> Self {
+    /// Takes `Arc<dyn RecordBackend>`, not `Arc<CrudService>` (changed 2026-09-27,
+    /// `../../../metap-docs/docs/roadmap/99-zones-service-guard-reachability-fix.md`) — the same
+    /// local-vs-remote/decoration seam `metap-graphql`'s resolvers already use, so a binary can
+    /// hand this a decorator (e.g. one that injects a computed field or re-validates a body before
+    /// delegating to the real `CrudService`) instead of only ever the raw service. Every existing
+    /// caller passing `Arc<CrudService>` keeps compiling unchanged — `CrudService` already
+    /// implements `RecordBackend`, so the coercion is automatic at the call site.
+    pub fn new(crud: Arc<dyn RecordBackend>, auth: AuthConfig) -> Self {
         Self { crud, auth }
     }
 }
@@ -213,11 +221,10 @@ impl RecordService for GrpcRecordService {
             .transpose()
             .map_err(|e| Status::invalid_argument(format!("invalid aggregate spec: {e}")))?
             .unwrap_or_default();
-        let input = spec.into_input().map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         let result = self
             .crud
-            .aggregate(&req.entity_name, &input, &context)
+            .aggregate(&req.entity_name, &spec, &context)
             .await
             .map_err(internal)?;
         let rows = service_result_to_status(result)?;
