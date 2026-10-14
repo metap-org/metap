@@ -3,6 +3,13 @@
 
 use serde::{Deserialize, Serialize};
 
+/// `context_attributes` key `RequestContext::apply_oauth_grant` writes the granted scope under.
+pub const OAUTH_SCOPE_ATTRIBUTE: &str = "oauthScope";
+/// `context_attributes` key for the OAuth2 client a scoped token was issued to.
+pub const OAUTH_CLIENT_ID_ATTRIBUTE: &str = "oauthClientId";
+/// The one scope token that is not `<verb>:<entity>` — required to reach admin/platform surfaces.
+pub const ADMIN_SCOPE: &str = "admin";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestContext {
@@ -43,6 +50,74 @@ impl RequestContext {
         self.roles
             .as_ref()
             .is_some_and(|roles| roles.iter().any(|r| r == "admin"))
+    }
+
+    /// Folds an OAuth2 grant (the `scope`/`clientId` claims of a token minted by
+    /// `metap-oauth-server`) into `context_attributes`, where both a tenant's own
+    /// `fromContext.oauthScope` ABAC condition and this crate's scope gate
+    /// ([`Self::oauth_scope`]) read it back. Every transport that turns a bearer token into a
+    /// `RequestContext` must call this when the token carries a `scope` claim — a transport that
+    /// forgot would silently serve a scoped token as an unrestricted session.
+    pub fn apply_oauth_grant(&mut self, scope: &str, client_id: Option<String>) {
+        let attributes = self.context_attributes.get_or_insert_with(Default::default);
+        attributes.insert(
+            OAUTH_SCOPE_ATTRIBUTE.to_string(),
+            serde_json::Value::Array(
+                scope
+                    .split_whitespace()
+                    .map(|s| serde_json::Value::String(s.to_string()))
+                    .collect(),
+            ),
+        );
+        if let Some(client_id) = client_id {
+            attributes.insert(
+                OAUTH_CLIENT_ID_ATTRIBUTE.to_string(),
+                serde_json::Value::String(client_id),
+            );
+        }
+    }
+
+    /// The granted OAuth2 scope tokens, or `None` for an ordinary session (login cookie/JWT
+    /// without a `scope` claim) — `None` means "no scope restriction", while `Some(vec![])`
+    /// (a token granted an empty scope) means "granted nothing" and denies everything below.
+    pub fn oauth_scope(&self) -> Option<Vec<&str>> {
+        let value = self.context_attributes.as_ref()?.get(OAUTH_SCOPE_ATTRIBUTE)?;
+        let tokens = value.as_array()?;
+        Some(tokens.iter().filter_map(|t| t.as_str()).collect())
+    }
+
+    /// Whether the OAuth2 scope (if any) lets this caller perform `action` on `entity`. Always
+    /// `true` for an ordinary session. Grammar: `read:<entity>` → read, `write:<entity>` →
+    /// create + update, `delete:<entity>` → delete, `transition:<entity>` → workflow
+    /// transition; `<entity>` is an exact entity name or `*`. Any other token (including
+    /// `admin`) grants no entity access. The gate narrows what the user's own roles/policies
+    /// allow — it never widens it, and it deliberately applies to admins too.
+    pub fn scope_permits(&self, entity: &str, action: EntityAction) -> bool {
+        let Some(tokens) = self.oauth_scope() else {
+            return true;
+        };
+        let verb = match action {
+            EntityAction::Read => "read",
+            EntityAction::Create | EntityAction::Update => "write",
+            EntityAction::Delete => "delete",
+            EntityAction::Transition => "transition",
+        };
+        tokens.iter().any(|t| {
+            t.split_once(':')
+                .is_some_and(|(v, e)| v == verb && (e == "*" || e == entity))
+        })
+    }
+
+    /// Whether the OAuth2 scope (if any) lets this caller reach the tenant-admin / platform
+    /// surfaces (`/admin/*`-style GraphQL fields, `AdminContext`, `PlatformAdminContext`). An
+    /// ordinary session is unaffected; a scoped token needs the explicit `admin` scope, so a
+    /// third-party client registered by an admin can never act as that admin on those surfaces
+    /// just because a user with the admin role approved it.
+    pub fn scope_permits_admin_surface(&self) -> bool {
+        match self.oauth_scope() {
+            None => true,
+            Some(tokens) => tokens.contains(&ADMIN_SCOPE),
+        }
     }
 
     /// `context[attribute]`-style lookup used when a condition's subject is the caller's
@@ -127,6 +202,66 @@ impl EntityAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scoped(scope: &str) -> RequestContext {
+        let mut ctx = RequestContext {
+            tenant_id: "t1".to_string(),
+            user_id: Some("u1".to_string()),
+            roles: Some(vec!["admin".to_string()]),
+            function_id: None,
+            context_attributes: None,
+            forwarded_bearer_token: None,
+        };
+        ctx.apply_oauth_grant(scope, Some("c1".to_string()));
+        ctx
+    }
+
+    #[test]
+    fn ordinary_session_has_no_scope_restriction() {
+        let ctx = RequestContext {
+            tenant_id: "t1".to_string(),
+            user_id: None,
+            roles: None,
+            function_id: None,
+            context_attributes: None,
+            forwarded_bearer_token: None,
+        };
+        assert!(ctx.oauth_scope().is_none());
+        assert!(ctx.scope_permits("waf.zones", EntityAction::Delete));
+        assert!(ctx.scope_permits_admin_surface());
+    }
+
+    #[test]
+    fn scope_maps_verbs_to_actions_and_matches_entities_exactly_or_by_wildcard() {
+        let ctx = scoped("read:waf.zones write:waf.rules delete:*");
+        assert!(ctx.scope_permits("waf.zones", EntityAction::Read));
+        assert!(!ctx.scope_permits("waf.zones", EntityAction::Create));
+        assert!(!ctx.scope_permits("waf.rules", EntityAction::Read));
+        assert!(ctx.scope_permits("waf.rules", EntityAction::Create));
+        assert!(ctx.scope_permits("waf.rules", EntityAction::Update));
+        assert!(!ctx.scope_permits("waf.rules", EntityAction::Transition));
+        assert!(ctx.scope_permits("anything.at_all", EntityAction::Delete));
+        assert!(
+            !ctx.scope_permits("waf.zones.extra", EntityAction::Read),
+            "no prefix matching"
+        );
+    }
+
+    #[test]
+    fn empty_or_unrecognised_scope_grants_nothing_even_to_an_admin_user() {
+        for scope in ["", "profile email", "admin"] {
+            let ctx = scoped(scope);
+            assert!(ctx.oauth_scope().is_some());
+            assert!(!ctx.scope_permits("waf.zones", EntityAction::Read), "scope {scope:?}");
+        }
+    }
+
+    #[test]
+    fn admin_surfaces_need_the_explicit_admin_scope() {
+        assert!(!scoped("read:*").scope_permits_admin_surface());
+        assert!(!scoped("").scope_permits_admin_surface());
+        assert!(scoped("admin").scope_permits_admin_surface());
+    }
 
     fn base(context_attributes: Option<serde_json::Map<String, serde_json::Value>>) -> RequestContext {
         RequestContext {
