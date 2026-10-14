@@ -781,3 +781,98 @@ async fn client_credentials_rejects_a_scope_the_client_is_not_allowed() {
 
     cleanup(&server.pool, tenant_id).await;
 }
+
+/// Registers a confidential client allowed exactly `allowed_scopes`, walks the real
+/// authorization-code flow as the server's admin user for `requested_scope`, and returns the
+/// resulting access token — so a test can call an API *as that OAuth client*, not as the user's
+/// own session.
+async fn oauth_access_token(server: &TestServer, allowed_scopes: &[&str], requested_scope: &str) -> String {
+    let redirect_uri = "https://example.com/callback";
+    let res: Value = reqwest::Client::new()
+        .post(format!("{}/graphql", server.base))
+        .bearer_auth(&server.user_token)
+        .json(&serde_json::json!({
+            "query": CREATE_OAUTH_CLIENT_MUTATION,
+            "variables": {
+                "name": "Scoped Client",
+                "redirectUris": [redirect_uri],
+                "allowedScopes": allowed_scopes,
+                "isConfidential": true,
+            },
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(res.get("errors").is_none(), "unexpected errors: {res:?}");
+    let client_id = res["data"]["createOAuthClient"]["clientId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let client_secret = res["data"]["createOAuthClient"]["clientSecret"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let location = authorize_and_approve(server, &client_id, redirect_uri, requested_scope, "s").await;
+    let code = extract_query_param(&location, "code").expect("redirect must carry a code");
+    let token_res: Value = reqwest::Client::new()
+        .post(format!("{}/oauth/token", server.base))
+        .basic_auth(&client_id, Some(&client_secret))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("redirect_uri", redirect_uri),
+        ])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    token_res["access_token"].as_str().unwrap().to_string()
+}
+
+async fn graphql_as(server: &TestServer, token: &str, query: &str) -> Value {
+    reqwest::Client::new()
+        .post(format!("{}/graphql", server.base))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "query": query }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn a_scoped_oauth_token_cannot_reach_admin_fields_even_when_the_approving_user_is_an_admin() {
+    let tenant_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let server = boot_server(tenant_id, user_id).await;
+
+    // Control: the admin user's own (unscoped) session reaches an admin-only field.
+    let own_session = graphql_as(&server, &server.user_token, "{ policies { id } }").await;
+    assert!(own_session.get("errors").is_none(), "{own_session:?}");
+
+    // A token the same admin approved for a narrow, non-admin scope does not.
+    let narrow = oauth_access_token(&server, &["read:widgets"], "read:widgets").await;
+    for query in ["{ policies { id } }", "{ myPreferences { locale } }"] {
+        let res = graphql_as(&server, &narrow, query).await;
+        let errors = res["errors"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{query} must be denied: {res:?}"));
+        assert_eq!(errors[0]["extensions"]["status"], 403, "{query}: {res:?}");
+    }
+
+    // Only the explicit `admin` scope opens the admin surface.
+    let admin = oauth_access_token(&server, &["admin"], "admin").await;
+    let res = graphql_as(&server, &admin, "{ policies { id } }").await;
+    assert!(res.get("errors").is_none(), "{res:?}");
+
+    cleanup(&server.pool, tenant_id).await;
+}

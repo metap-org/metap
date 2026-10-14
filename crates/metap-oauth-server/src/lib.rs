@@ -16,15 +16,15 @@
 //! **Access tokens are ordinary platform JWTs**, minted through the exact same trust root
 //! (`metap_peripherals::mint_jwt` / `metap-jwks`) every other session token uses — so
 //! `metap-http`'s existing `AuthContext` verifies one with zero new decode path, and RBAC/ABAC
-//! governs what the token can actually do exactly as it would for the user's own login session.
-//! The granted `scope` and `client_id` ride as two new optional JWT claims (additive — an
-//! ordinary session token simply omits them) and are folded into the resolved
-//! `RequestContext.context_attributes` by `AuthContext`, so a tenant that wants scope-gated
-//! policies can write an ABAC condition against `fromContext.oauthScope` today; nothing in this
-//! crate or `metap-permission`'s engine enforces scope automatically against `/api/:entity` on
-//! its own — that's a product decision for whoever operates a given deployment, flagged rather
-//! than decided here, same "don't resolve unilaterally" convention this repo already follows for
-//! open questions.
+//! governs what the token can actually do — and the granted `scope` *narrows* that, never widens
+//! it. The `scope`/`client_id` ride as two new optional JWT claims (additive — an ordinary
+//! session token simply omits them); every transport that decodes a token (`metap-http`'s
+//! `AuthContext`, `metap-grpc`'s `authenticate`) calls `RequestContext::apply_oauth_grant`, and
+//! `metap-permission` enforces it: `PermissionService`'s entity checks refuse anything the scope
+//! does not cover (grammar `read|write|delete|transition:<entity-or-*>`, see
+//! `RequestContext::scope_permits`) *before* the admin bypass, so a client an admin approved is
+//! not itself an admin; the tenant-admin/platform-admin surfaces additionally need the explicit
+//! `admin` scope. A tenant can still write finer ABAC conditions against `fromContext.oauthScope`.
 //!
 //! **Revocation is real for refresh tokens, not for an already-issued access token** — consistent
 //! with `mint_jwt`'s own doc comment ("no revocation-checking infrastructure... a deliberate

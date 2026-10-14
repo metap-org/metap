@@ -74,12 +74,13 @@ pub async fn authenticate(metadata: &MetadataMap, config: &AuthConfig) -> Result
         .await
         .map_err(|_| Status::unauthenticated("invalid or expired token"))?;
     let (tenant_id, user_id, function_id) = (claims.tenant_id, claims.sub, claims.function_id);
+    let (oauth_scope, oauth_client_id) = (claims.scope, claims.client_id);
 
     let tenant_id =
         Uuid::parse_str(&tenant_id).map_err(|_| Status::unauthenticated("token is missing required claims"))?;
     let user_id = Uuid::parse_str(&user_id).map_err(|_| Status::unauthenticated("token is missing required claims"))?;
 
-    resolve_request_context(
+    let mut context = resolve_request_context(
         &config.router,
         tenant_id,
         user_id,
@@ -89,5 +90,13 @@ pub async fn authenticate(metadata: &MetadataMap, config: &AuthConfig) -> Result
         &config.context_attributes_cache,
     )
     .await
-    .map_err(|_| Status::unauthenticated("failed to resolve roles"))
+    .map_err(|_| Status::unauthenticated("failed to resolve roles"))?;
+
+    // Same as `metap-http`'s `AuthContext`: a token minted for an OAuth2 client carries a granted
+    // scope, and every transport must surface it or a scoped token would be served as a full
+    // session over gRPC (including via `graphql-gateway`, which forwards the caller's own token).
+    if let Some(scope) = oauth_scope {
+        context.apply_oauth_grant(&scope, oauth_client_id);
+    }
+    Ok(context)
 }

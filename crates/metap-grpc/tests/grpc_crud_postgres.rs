@@ -291,6 +291,65 @@ async fn full_grpc_lifecycle_over_a_real_server_and_a_real_jwt() {
         .into_inner();
     assert_eq!(metap_grpc::convert::struct_to_json(fetched.record.unwrap())["id"], id);
 
+    // An OAuth2-scoped token for the same admin user is *narrowed* by its scope, over gRPC too —
+    // `authenticate` used to drop the `scope` claim entirely, serving it as a full session.
+    let read_only = metap_peripherals::mint_oauth_access_token(
+        &private_pem,
+        tenant_id,
+        user_id,
+        3600,
+        "read:test.grpc_orders",
+        "client-1",
+    )
+    .unwrap();
+    let scoped_get = client
+        .get(authed(
+            GetRequest {
+                entity_name: "test.grpc_orders".to_string(),
+                id: id.clone(),
+            },
+            &read_only,
+        ))
+        .await;
+    assert!(
+        scoped_get.is_ok(),
+        "the granted read scope must allow get: {scoped_get:?}"
+    );
+    let scoped_create = client
+        .create(authed(
+            CreateRequest {
+                entity_name: "test.grpc_orders".to_string(),
+                data: Some(metap_grpc::convert::json_to_struct(json!({ "name": "Nope" }))),
+                reason: None,
+            },
+            &read_only,
+        ))
+        .await;
+    assert_eq!(
+        scoped_create.unwrap_err().code(),
+        tonic::Code::PermissionDenied,
+        "an admin user's read-scoped OAuth token must not be able to create"
+    );
+    let other_entity = metap_peripherals::mint_oauth_access_token(
+        &private_pem,
+        tenant_id,
+        user_id,
+        3600,
+        "read:some.other_entity",
+        "client-1",
+    )
+    .unwrap();
+    let wrong_entity_get = client
+        .get(authed(
+            GetRequest {
+                entity_name: "test.grpc_orders".to_string(),
+                id: id.clone(),
+            },
+            &other_entity,
+        ))
+        .await;
+    assert_eq!(wrong_entity_get.unwrap_err().code(), tonic::Code::PermissionDenied);
+
     // transition
     let transitioned = client
         .transition(authed(

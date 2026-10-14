@@ -153,26 +153,13 @@ where
         .map_err(|_| AuthError::unauthorized("Failed to resolve roles."))?;
 
         // A token minted by `crate::routes::oauth2`'s token endpoint carries a granted OAuth2
-        // scope/client — surfaced here, not enforced here. `metap-oauth-server`'s own doc comment
-        // has the full reasoning: RBAC/ABAC still governs what this identity can do exactly as it
-        // would for the user's own login session; this only makes the grant *visible* to a policy
-        // condition (`fromContext.oauthScope`) a tenant chooses to write, and to any route that
-        // wants to check it explicitly. An ordinary session token has no `scope` claim, so this is
-        // a no-op for every login path that existed before OAuth2 support did.
+        // scope/client. `RequestContext::apply_oauth_grant` records it, and `metap-permission`
+        // enforces it: `PermissionService::check_action` refuses any entity/action the scope does
+        // not cover (admins included), and the admin/platform-admin extractors below demand the
+        // `admin` scope. An ordinary session token has no `scope` claim, so this is a no-op for
+        // every login path that existed before OAuth2 support did.
         if let Some(scope) = claims.scope {
-            let attributes = context.context_attributes.get_or_insert_with(Default::default);
-            attributes.insert(
-                "oauthScope".to_string(),
-                serde_json::Value::Array(
-                    metap_oauth_server::scope_tokens(&scope)
-                        .into_iter()
-                        .map(|s| serde_json::Value::String(s.to_string()))
-                        .collect(),
-                ),
-            );
-            if let Some(client_id) = claims.client_id {
-                attributes.insert("oauthClientId".to_string(), serde_json::Value::String(client_id));
-            }
+            context.apply_oauth_grant(&scope, claims.client_id);
         }
 
         Ok(AuthContext(context))
@@ -280,6 +267,9 @@ where
         if !context.is_admin() {
             return Err(AuthError::forbidden("This action requires the admin role."));
         }
+        if !context.scope_permits_admin_surface() {
+            return Err(AuthError::forbidden("This action requires the `admin` OAuth2 scope."));
+        }
         Ok(AdminContext(context))
     }
 }
@@ -309,6 +299,9 @@ where
             .is_some_and(|roles| roles.iter().any(|r| r == "platform_admin"));
         if !is_platform_tenant || !has_platform_admin_role {
             return Err(AuthError::forbidden("This action requires the platform_admin role."));
+        }
+        if !context.scope_permits_admin_surface() {
+            return Err(AuthError::forbidden("This action requires the `admin` OAuth2 scope."));
         }
         Ok(PlatformAdminContext(context))
     }

@@ -56,6 +56,18 @@ impl PermissionService {
         let user_id = context.user_id.as_deref().unwrap_or("unknown");
         let action_str = action.as_str();
 
+        // Before the admin bypass on purpose: an OAuth2 scope narrows even an admin user's own
+        // access, otherwise approving a third-party client as an admin would hand it everything.
+        if !context.scope_permits(entity_name, action) {
+            tracing::warn!(
+                entity = entity_name,
+                action = action_str,
+                user_id,
+                "denied: OAuth2 scope does not cover this entity/action"
+            );
+            return Ok(PermissionDecision::forbidden());
+        }
+
         if context.is_admin() {
             tracing::debug!(
                 entity = entity_name,
@@ -263,5 +275,107 @@ impl PermissionService {
             .find_explain_policies(tenant_id, entity, action, &options)
             .await?;
         Ok(explain_policies(&rows, context, record))
+    }
+}
+
+#[cfg(test)]
+mod scope_gate_tests {
+    use super::*;
+    use crate::policy_condition::PolicyCondition;
+    use crate::policy_store::{ExplainOptions, PolicyEffect, PolicyRow, PolicyStore, PolicySubject};
+    use async_trait::async_trait;
+
+    struct EmptyStore;
+
+    #[async_trait]
+    impl PolicyStore for EmptyStore {
+        async fn find_context_policies(&self, _: Uuid, _: &str, _: &str) -> anyhow::Result<Vec<PolicyRow>> {
+            Ok(vec![])
+        }
+        async fn load_all_policies(&self, _: Uuid, _: &str) -> anyhow::Result<Vec<PolicyRow>> {
+            Ok(vec![])
+        }
+        async fn find_explain_policies(
+            &self,
+            _: Uuid,
+            _: &str,
+            _: &str,
+            _: &ExplainOptions,
+        ) -> anyhow::Result<Vec<PolicyRow>> {
+            Ok(vec![])
+        }
+        async fn list_policies(&self, _: Uuid, _: Option<&str>) -> anyhow::Result<Vec<PolicyRow>> {
+            Ok(vec![])
+        }
+        async fn create_policy(
+            &self,
+            _: Uuid,
+            _: &str,
+            _: &str,
+            _: Option<Vec<String>>,
+            _: Option<PolicyCondition>,
+            _: Option<Uuid>,
+            _: Option<&str>,
+            _: Option<PolicySubject>,
+            _: PolicyEffect,
+        ) -> anyhow::Result<PolicyRow> {
+            unimplemented!()
+        }
+        async fn delete_policy(&self, _: Uuid, _: Uuid) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn sync_basic_policies(
+            &self,
+            _: Uuid,
+            _: &str,
+            _: Vec<(Option<String>, String)>,
+            _: Option<Uuid>,
+        ) -> anyhow::Result<Vec<PolicyRow>> {
+            unimplemented!()
+        }
+    }
+
+    fn admin_context(scope: Option<&str>) -> RequestContext {
+        let mut ctx = RequestContext {
+            tenant_id: Uuid::new_v4().to_string(),
+            user_id: Some(Uuid::new_v4().to_string()),
+            roles: Some(vec!["admin".to_string()]),
+            function_id: None,
+            context_attributes: None,
+            forwarded_bearer_token: None,
+        };
+        if let Some(scope) = scope {
+            ctx.apply_oauth_grant(scope, Some("client".to_string()));
+        }
+        ctx
+    }
+
+    #[tokio::test]
+    async fn scope_narrows_an_admin_user_but_an_ordinary_session_keeps_the_admin_bypass() {
+        let service = PermissionService::new(Box::new(EmptyStore));
+
+        let session = admin_context(None);
+        assert!(service.can_delete_entity(&session, "waf.zones").await.unwrap().allowed);
+
+        let scoped = admin_context(Some("read:waf.zones write:waf.rules"));
+        assert!(service.can_read_entity(&scoped, "waf.zones").await.unwrap().allowed);
+        assert!(!service.can_update_entity(&scoped, "waf.zones").await.unwrap().allowed);
+        assert!(!service.can_delete_entity(&scoped, "waf.zones").await.unwrap().allowed);
+        assert!(!service.can_read_entity(&scoped, "waf.rules").await.unwrap().allowed);
+        assert!(service.can_create_entity(&scoped, "waf.rules").await.unwrap().allowed);
+        assert!(
+            !service
+                .can_transition_entity(&scoped, "waf.rules")
+                .await
+                .unwrap()
+                .allowed
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_scope_denies_everything_even_for_an_admin_user() {
+        let service = PermissionService::new(Box::new(EmptyStore));
+        let scoped = admin_context(Some(""));
+        assert!(!service.can_read_entity(&scoped, "waf.zones").await.unwrap().allowed);
     }
 }

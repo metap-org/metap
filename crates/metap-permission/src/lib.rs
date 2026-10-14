@@ -5,7 +5,9 @@ pub mod policy_condition;
 pub mod policy_explainer;
 pub mod policy_store;
 
-pub use context::{EntityAction, PermissionDecision, RequestContext};
+pub use context::{
+    EntityAction, PermissionDecision, RequestContext, ADMIN_SCOPE, OAUTH_CLIENT_ID_ATTRIBUTE, OAUTH_SCOPE_ATTRIBUTE,
+};
 pub use permission_service::PermissionService;
 pub use permission_snapshot::{JsonObject, PermissionSnapshot};
 pub use policy_condition::{

@@ -102,6 +102,16 @@ fn config_err(e: metap_config::ConfigError) -> GqlError {
 fn caller<'a>(ctx: &ResolverContext<'a>) -> Result<(&'a AppState, &'a RequestContext, Uuid), GqlError> {
     let state = state_from_ctx(ctx);
     let context = context_from_ctx(ctx)?;
+    // Every field in this module is a platform surface (users, policies, cron, config, the
+    // caller's own dashboard/preferences), not entity data — an OAuth2-scoped token reaches none
+    // of it without the explicit `admin` scope, mirroring `AdminContext`/`PlatformAdminContext`.
+    if !context.scope_permits_admin_surface() {
+        return Err(gql_err(
+            403,
+            "forbidden",
+            "This OAuth2 token's scope does not cover platform fields; the `admin` scope is required.",
+        ));
+    }
     let tenant_id = state.permissions.scoped_tenant(context).map_err(anyhow_err)?;
     Ok((state, context, tenant_id))
 }
@@ -126,6 +136,13 @@ fn require_platform_admin<'a>(ctx: &ResolverContext<'a>) -> Result<&'a AppState,
         .roles
         .as_ref()
         .is_some_and(|roles| roles.iter().any(|r| r == "platform_admin"));
+    if !context.scope_permits_admin_surface() {
+        return Err(gql_err(
+            403,
+            "forbidden",
+            "This OAuth2 token's scope does not cover platform fields; the `admin` scope is required.",
+        ));
+    }
     if !is_platform_tenant || !has_platform_admin_role {
         return Err(gql_err(
             403,
@@ -1203,7 +1220,7 @@ pub fn add_platform_fields(
         Field::new("explainPermission", TypeRef::named_nn(JSON_SCALAR), |ctx| {
             FieldFuture::new(async move {
                 let context = context_from_ctx(&ctx)?;
-                if !context.is_admin() {
+                if !context.is_admin() || !context.scope_permits_admin_surface() {
                     return Err(gql_err(403, "forbidden", "This action requires the admin role."));
                 }
                 let state = state_from_ctx(&ctx);
