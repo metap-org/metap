@@ -3727,6 +3727,7 @@ dependencies = [
  "metap-crud",
  "metap-grpc",
  "metap-infra",
+ "metap-oauth-server",
  "metap-permission",
  "metap-query",
  "metap-runtime",

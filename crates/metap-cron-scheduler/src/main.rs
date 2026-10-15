@@ -138,7 +138,34 @@ async fn main() -> anyhow::Result<()> {
         &executor_config,
         metap_runtime::shutdown::signal(),
     );
-    let result = tokio::try_join!(ticker, executor, trigger);
+    // `OAUTH_CLEANUP_INTERVAL_SECONDS=0` turns the OAuth2 expired-token sweep off. Its pool is the
+    // main `DATABASE_URL` one (where `/oauth/token` writes), which only differs from `pool` above
+    // when `OUTBOX_DATABASE_URL` points the outbox somewhere else.
+    let oauth_cleanup_secs: u64 = metap_runtime::env::env_or("OAUTH_CLEANUP_INTERVAL_SECONDS", 3600);
+    let oauth_pool = if oauth_cleanup_secs == 0 {
+        None
+    } else if config.outbox_database_url() == config.database_url {
+        Some(pool.clone())
+    } else {
+        Some(connect_db(&config.database_url).await?)
+    };
+    let oauth_cleanup = async {
+        if let Some(oauth_pool) = oauth_pool.clone() {
+            cron_scheduler::oauth_cleanup::run(
+                oauth_pool,
+                Duration::from_secs(oauth_cleanup_secs),
+                metap_runtime::shutdown::signal(),
+            )
+            .await;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    let result = tokio::try_join!(ticker, executor, trigger, oauth_cleanup);
+
+    if let Some(oauth_pool) = oauth_pool {
+        oauth_pool.close().await;
+    }
 
     pool.close().await;
 

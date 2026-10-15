@@ -9,9 +9,13 @@
 //! `trigger_config` matches. Split into separate functions (not separate binaries) because
 //! nothing else needs to consume `cron.job.due` independently the way `notification-worker`
 //! consumes `#.workflow.transitioned` — this binary already needs its own subscriber to that
-//! routing key for `on_transition` triggers, so it's the same process either way.
+//! routing key for `on_transition` triggers, so it's the same process either way. A fourth,
+//! unrelated housekeeping loop, `oauth_cleanup::run`, sweeps expired OAuth2 codes/refresh tokens
+//! (`metap-oauth-server`'s `run_cleanup`) — hosted here because this is the one always-on ops
+//! process, not because it has anything to do with cron jobs.
 
 pub mod executor;
+pub mod oauth_cleanup;
 pub mod ticker;
 pub mod trigger;
 

@@ -16,6 +16,7 @@ metap-runtime = { path = "../metap-runtime" }
 metap-control = { path = "../metap-control" }
 metap-cron = { path = "../metap-cron" }
 metap-infra = { path = "../metap-infra" }
+metap-oauth-server = { path = "../metap-oauth-server" }
 # `workflow_transition`/`bulk_query_action` targets call back into the owning app's entity CRUD
 # over gRPC (`metap-grpc::client::GrpcBackend`) now that `metap-http` no longer serves a REST
 # `/api/:entity*` surface for them to call instead — see `executor/workflow_transition.rs`'s doc
