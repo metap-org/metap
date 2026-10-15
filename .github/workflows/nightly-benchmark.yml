@@ -17,9 +17,20 @@ jobs:
   benchmark:
     name: Criterion micro-benchmarks (plan_list, compile/diff)
     runs-on: ubuntu-latest
+    env:
+      # Pinned explicitly: `.cargo/config.toml` moves `target-dir` to `../.shared-target`, so the
+      # default `<target-dir>/criterion` is outside the `target/criterion` path the cache steps
+      # below save/restore — the history would never persist and every night would look like a
+      # fresh baseline with no regressed/improved line.
+      CRITERION_HOME: ${{ github.workspace }}/target/criterion
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # `.cargo/config.toml` hard-requires the mold linker and it isn't vendored/auto-installed —
+      # every other workflow installs it (see `ci.yml`'s `rust` job). This one didn't, so every
+      # build script failed at link time ("collect2: cannot find 'ld'") and the nightly run was
+      # red from the day that config landed, before a single benchmark compiled.
+      - run: sudo apt-get update && sudo apt-get install -y mold
       - uses: Swatinem/rust-cache@v2
       # `restore` + `save` as two separate steps (not the combined `actions/cache@v4`) — that
       # action only ever saves once per key and silently skips every run after the first, which
