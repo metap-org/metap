@@ -375,9 +375,11 @@ async fn all_tenants_scope_backfills_a_shared_table_reconciled_with_a_sentinel_t
     promoted.storage = Some(FieldStorage::Column);
     let def_v2 = entity(entity_name, vec![promoted]);
 
+    // Ordered by `amount`, not `tenant_id`: both tenants are random v4 UUIDs, so ordering by them gave the
+    // two rows in an arbitrary order and the fixed expectations below failed about half the time.
     async fn amounts(pool: &PgPool) -> Vec<Option<f64>> {
         sqlx::query_as::<_, (Option<f64>,)>(
-            "SELECT amount::float8 FROM entities.test_reconciler_backfill_scope ORDER BY tenant_id",
+            "SELECT amount::float8 FROM entities.test_reconciler_backfill_scope ORDER BY amount",
         )
         .fetch_all(pool)
         .await
