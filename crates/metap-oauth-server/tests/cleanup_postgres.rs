@@ -4,10 +4,14 @@
 //! test in this crate (`cargo test -p metap-oauth-server -- --ignored`).
 
 use chrono::{Duration as ChronoDuration, Utc};
-use metap_oauth_server::{create_client, delete_expired_tokens, CreateClientInput};
+use metap_oauth_server::{create_client, delete_expired_tokens, delete_expired_tokens_in_batches, CreateClientInput};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use uuid::Uuid;
+
+/// Both tests sweep the *whole* table, so run concurrently one's sweep deletes the other's stale
+/// rows before it can count them. Serialising the two keeps each test's counts about its own rows.
+static SWEEP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn connect() -> PgPool {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for this e2e test");
@@ -100,6 +104,7 @@ async fn row_exists(pool: &PgPool, table: &str, id: Uuid) -> bool {
 #[tokio::test]
 #[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
 async fn deletes_only_rows_past_their_grace_period() {
+    let _sweep = SWEEP_LOCK.lock().await;
     let pool = connect().await;
     let tenant_id = Uuid::new_v4();
     let client_id = make_client(&pool, tenant_id).await;
@@ -134,6 +139,61 @@ async fn deletes_only_rows_past_their_grace_period() {
     assert!(row_exists(&pool, "oauth_refresh_tokens", live_token).await);
 
     // Cleanup this test's own live leftovers so a re-run of the suite starts clean.
+    sqlx::query("DELETE FROM oauth_authorization_codes WHERE id = $1")
+        .bind(live_code)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM oauth_refresh_tokens WHERE id = $1")
+        .bind(live_token)
+        .execute(&pool)
+        .await
+        .ok();
+}
+
+/// With a batch size far below the stale-row count the sweep must loop until nothing stale is left
+/// — 6 codes (an exact multiple of the batch, so the last statement deletes 0) and 7 tokens (a
+/// remainder, so the last statement deletes 1) — and leave live rows alone. A single-statement
+/// implementation would pass `deletes_only_rows_past_their_grace_period` but not this.
+#[tokio::test]
+#[ignore = "e2e: requires DATABASE_URL / a running dev Postgres"]
+async fn sweeps_every_stale_row_across_multiple_batches() {
+    let _sweep = SWEEP_LOCK.lock().await;
+    let pool = connect().await;
+    let tenant_id = Uuid::new_v4();
+    let client_id = make_client(&pool, tenant_id).await;
+    let now = Utc::now();
+
+    let mut stale_codes = Vec::new();
+    for _ in 0..6 {
+        stale_codes.push(insert_code(&pool, client_id, tenant_id, now - ChronoDuration::days(3)).await);
+    }
+    let mut stale_tokens = Vec::new();
+    for _ in 0..7 {
+        stale_tokens.push(insert_refresh_token(&pool, client_id, tenant_id, now - ChronoDuration::days(3), None).await);
+    }
+    let live_code = insert_code(&pool, client_id, tenant_id, now + ChronoDuration::minutes(5)).await;
+    let live_token = insert_refresh_token(&pool, client_id, tenant_id, now + ChronoDuration::days(30), None).await;
+
+    let counts = delete_expired_tokens_in_batches(&pool, 3).await.unwrap();
+    assert!(counts.authorization_codes_deleted >= 6, "{counts:?}");
+    assert!(counts.refresh_tokens_deleted >= 7, "{counts:?}");
+
+    for id in stale_codes {
+        assert!(
+            !row_exists(&pool, "oauth_authorization_codes", id).await,
+            "stale code {id} survived"
+        );
+    }
+    for id in stale_tokens {
+        assert!(
+            !row_exists(&pool, "oauth_refresh_tokens", id).await,
+            "stale token {id} survived"
+        );
+    }
+    assert!(row_exists(&pool, "oauth_authorization_codes", live_code).await);
+    assert!(row_exists(&pool, "oauth_refresh_tokens", live_token).await);
+
     sqlx::query("DELETE FROM oauth_authorization_codes WHERE id = $1")
         .bind(live_code)
         .execute(&pool)

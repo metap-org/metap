@@ -42,7 +42,10 @@ mod pkce;
 mod refresh;
 mod token;
 
-pub use cleanup::{delete_expired as delete_expired_tokens, run as run_cleanup, CleanupCounts};
+pub use cleanup::{
+    delete_expired as delete_expired_tokens, delete_expired_in_batches as delete_expired_tokens_in_batches,
+    run as run_cleanup, CleanupCounts, DELETE_BATCH_SIZE,
+};
 pub use client::{
     create_client, get_client_by_client_id, list_clients, revoke_client, verify_client_secret, ClientWithSecret,
     CreateClientInput, OAuthClient,

@@ -12,7 +12,7 @@
 //! to show up in an operator's own ad-hoc query while debugging a client's failed request, without
 //! the two tables growing without bound the way this module exists to prevent.
 
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use sqlx::PgPool;
 
 /// Kept short — these rows carry no audit/compliance value once spent (unlike
@@ -27,18 +27,32 @@ pub struct CleanupCounts {
     pub pending_authorizations_deleted: u64,
 }
 
-/// One sweep. Safe to call repeatedly/concurrently (plain `DELETE ... WHERE`, no state to
-/// coordinate) — the caller decides the cadence, see [`run`] for the standard loop shape.
+/// Rows deleted per statement. The first sweep after this module first ships (or after a long
+/// outage of the sweeper) can face millions of accumulated rows, and one unbounded `DELETE` over
+/// that many holds its row locks and bloats WAL for the whole statement; bounded batches keep each
+/// transaction short. Large enough that a steady-state sweep (a few thousand rows an hour) is one
+/// statement per table.
+pub const DELETE_BATCH_SIZE: i64 = 5_000;
+
+/// One sweep, in batches of [`DELETE_BATCH_SIZE`]. Safe to call repeatedly/concurrently (no state
+/// to coordinate — a concurrent sweep skips the rows the other one holds locked) — the caller
+/// decides the cadence, see [`run`] for the standard loop shape.
 pub async fn delete_expired(pool: &PgPool) -> anyhow::Result<CleanupCounts> {
+    delete_expired_in_batches(pool, DELETE_BATCH_SIZE).await
+}
+
+/// [`delete_expired`] with an explicit batch size (clamped to at least 1) — exists so a test can
+/// prove the batch loop covers every row without inserting thousands.
+pub async fn delete_expired_in_batches(pool: &PgPool, batch_size: i64) -> anyhow::Result<CleanupCounts> {
+    let batch_size = batch_size.max(1);
+    // One cutoff for the whole sweep, so a long multi-batch run can't drift its own definition of
+    // "expired" between batches.
     let cutoff = Utc::now() - ChronoDuration::seconds(CLEANUP_GRACE_PERIOD_SECONDS);
 
     // Every authorization code is single-use and short-lived (60s) — once its own `expires_at`
     // plus the grace period has passed it's worthless whether or not `used_at` was ever set, so
     // this doesn't need to distinguish "expired unused" from "already redeemed".
-    let codes = sqlx::query("DELETE FROM oauth_authorization_codes WHERE expires_at < $1")
-        .bind(cutoff)
-        .execute(pool)
-        .await?;
+    let codes = delete_in_batches(pool, "oauth_authorization_codes", "expires_at < $1", cutoff, batch_size).await?;
 
     // A refresh token is worth deleting once either path makes it permanently unusable: it aged
     // past its own TTL, or it was explicitly revoked (a direct `POST /oauth/revoke`, a rotation,
@@ -46,26 +60,62 @@ pub async fn delete_expired(pool: &PgPool) -> anyhow::Result<CleanupCounts> {
     // the row around past the grace period serves no purpose `consume_refresh_token`'s own reuse
     // check needs (that check only ever looks up a *presented* token, and a deleted row is
     // indistinguishable from one that never existed — both correctly answer `Invalid`).
-    let tokens = sqlx::query(
-        "DELETE FROM oauth_refresh_tokens WHERE expires_at < $1 OR (revoked_at IS NOT NULL AND revoked_at < $1)",
+    let tokens = delete_in_batches(
+        pool,
+        "oauth_refresh_tokens",
+        "expires_at < $1 OR (revoked_at IS NOT NULL AND revoked_at < $1)",
+        cutoff,
+        batch_size,
     )
-    .bind(cutoff)
-    .execute(pool)
     .await?;
 
     // Already single-use and short-lived (10min) like authorization codes above — a pending
     // authorization abandoned mid-decision (tab closed, browser crash) is worthless once expired,
     // whether or not the user ever saw the screen.
-    let pending = sqlx::query("DELETE FROM oauth_pending_authorizations WHERE expires_at < $1")
-        .bind(cutoff)
-        .execute(pool)
-        .await?;
+    let pending = delete_in_batches(
+        pool,
+        "oauth_pending_authorizations",
+        "expires_at < $1",
+        cutoff,
+        batch_size,
+    )
+    .await?;
 
     Ok(CleanupCounts {
-        authorization_codes_deleted: codes.rows_affected(),
-        refresh_tokens_deleted: tokens.rows_affected(),
-        pending_authorizations_deleted: pending.rows_affected(),
+        authorization_codes_deleted: codes,
+        refresh_tokens_deleted: tokens,
+        pending_authorizations_deleted: pending,
     })
+}
+
+/// Deletes every row of `table` matching `predicate` (a `$1`-parameterised condition on `cutoff`),
+/// `batch_size` rows per statement, until a statement deletes fewer than that. `table`/`predicate`
+/// are `&'static str` so only this module's own literals can reach the formatted SQL — never
+/// caller or request input. `SKIP LOCKED` lets two concurrent sweeps split the work instead of one
+/// blocking on the other's row locks. Every table here has a `uuid` primary key `id`.
+async fn delete_in_batches(
+    pool: &PgPool,
+    table: &'static str,
+    predicate: &'static str,
+    cutoff: DateTime<Utc>,
+    batch_size: i64,
+) -> anyhow::Result<u64> {
+    let sql = format!(
+        "DELETE FROM {table} WHERE id IN (SELECT id FROM {table} WHERE {predicate} LIMIT $2 FOR UPDATE SKIP LOCKED)"
+    );
+    let mut total = 0u64;
+    loop {
+        let deleted = sqlx::query(&sql)
+            .bind(cutoff)
+            .bind(batch_size)
+            .execute(pool)
+            .await?
+            .rows_affected();
+        total += deleted;
+        if (deleted as i64) < batch_size {
+            return Ok(total);
+        }
+    }
 }
 
 /// Runs [`delete_expired`] on a fixed interval until `shutdown` resolves — same inline-or-
