@@ -14,4 +14,14 @@ ignore = [
     # (`docs/architectures/09-adr.md`). Re-check this ignore whenever `sqlx` is upgraded, in case
     # a fix lands or the mysql-optional-dep shape changes.
     "RUSTSEC-2023-0071",
+    # RUSTSEC-2026-0387 — timing-variability issues in `crypto-bigint` 0.5.5's
+    # intended-constant-time operations. No fixed version is resolvable in this dependency tree
+    # (checked 2026-10-25): `crypto-bigint` is pinned to `^0.5` by `elliptic-curve` 0.13.8, which
+    # `p256` 0.13.2 (via `openidconnect` 4.0.1, `metap-auth`'s OIDC/OAuth2 login support) requires;
+    # `cargo update -p crypto-bigint --precise 0.7.6` (the advisory's own suggested fix) fails
+    # with "candidate versions found which didn't match" against that constraint. Bumping past it
+    # needs a new `openidconnect`/`p256`/`elliptic-curve` major release this workspace doesn't
+    # control, not a local code change — re-check this ignore whenever any of those 3 crates is
+    # upgraded, same posture as RUSTSEC-2023-0071 above.
+    "RUSTSEC-2026-0387",
 ]
