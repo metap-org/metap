@@ -8,11 +8,12 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use metap_permission::EntityAction;
 
 use crate::auth::AuthContext;
-use crate::error::service_error_response;
+use crate::error::{internal_error_response, service_error_response};
 use crate::state::AppState;
 
 async fn openapi_json(State(state): State<AppState>) -> Response {
@@ -49,16 +50,37 @@ async fn openapi_json(State(state): State<AppState>) -> Response {
 /// but in a multi-entity app this discloses the existence and field names of entities the caller
 /// has no access to (architecture audit
 /// `../metap-docs/docs/audits/03-metap-core-architecture-audit.md` finding #14, 2026-09-02).
-async fn list_entities(State(state): State<AppState>, AuthContext(_context): AuthContext) -> Response {
-    Json(json!({ "data": state.metadata.load().list_entities() })).into_response()
+///
+/// Tenant-aware since `docs/features/15-tenant-scoped-lowcode-metadata.md` — resolves `state`'s
+/// configured `metadata_resolver` (`None` everywhere that feature isn't wired, which keeps
+/// reading the single shared `metadata` snapshot exactly as before). Unlike `GET
+/// /metadata/openapi.json` (deliberately global-only forever, see that handler's own doc
+/// comment), this route already requires a real session, so it has a real tenant to resolve by.
+async fn list_entities(State(state): State<AppState>, AuthContext(context): AuthContext) -> Response {
+    let tenant_id = match Uuid::parse_str(&context.tenant_id) {
+        Ok(id) => id,
+        Err(e) => return internal_error_response(anyhow::anyhow!("invalid tenant id on request context: {e}")),
+    };
+    match state.metadata_for(tenant_id).await {
+        Ok(registry) => Json(json!({ "data": registry.list_entities() })).into_response(),
+        Err(e) => internal_error_response(e),
+    }
 }
 
 async fn get_entity(
     State(state): State<AppState>,
     Path(entity): Path<String>,
-    AuthContext(_context): AuthContext,
+    AuthContext(context): AuthContext,
 ) -> Response {
-    match state.metadata.load().get_entity_metadata(&entity) {
+    let tenant_id = match Uuid::parse_str(&context.tenant_id) {
+        Ok(id) => id,
+        Err(e) => return internal_error_response(anyhow::anyhow!("invalid tenant id on request context: {e}")),
+    };
+    let registry = match state.metadata_for(tenant_id).await {
+        Ok(registry) => registry,
+        Err(e) => return internal_error_response(e),
+    };
+    match registry.get_entity_metadata(&entity) {
         Some(summary) => Json(json!({ "data": summary })).into_response(),
         None => service_error_response(404, "entity_not_found", None, None),
     }

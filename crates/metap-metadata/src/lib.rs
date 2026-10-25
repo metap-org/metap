@@ -3,6 +3,7 @@ pub mod computed;
 pub mod entity;
 pub mod openapi;
 pub mod registry;
+pub mod resolver;
 
 pub use compiler::{hash, validate, MetadataValidationError};
 pub use computed::{expression_tokens, render_expression};
@@ -13,3 +14,4 @@ pub use entity::{
 };
 pub use openapi::generate_openapi_document;
 pub use registry::{EntitySummary, MetadataRegistry, RegistryError};
+pub use resolver::MetadataResolver;

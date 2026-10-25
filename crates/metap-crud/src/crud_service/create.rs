@@ -20,7 +20,9 @@ impl CrudService {
         context: &RequestContext,
         reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
-        let Some(entity) = self.get_entity(entity_name) else {
+        let tenant_id = self.permissions.scoped_tenant(context)?;
+        let registry = self.registry_for(tenant_id).await?;
+        let Some(entity) = registry.get_entity(entity_name).cloned() else {
             tracing::debug!(entity = entity_name, "create rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
@@ -30,7 +32,6 @@ impl CrudService {
             return Ok(forbidden(decision));
         }
 
-        let tenant_id = self.permissions.scoped_tenant(context)?;
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
 
         let keys: Vec<String> = raw_data.keys().cloned().collect();

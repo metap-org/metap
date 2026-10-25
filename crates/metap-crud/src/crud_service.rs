@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use metap_control::Router;
-use metap_metadata::{EntityDefinition, EntityField, FieldKind, MetadataRegistry};
+use metap_metadata::{EntityDefinition, EntityField, FieldKind, MetadataRegistry, MetadataResolver};
 use metap_permission::{EntityAction, PermissionService, PermissionSnapshot, RequestContext};
 use serde_json::Value;
 use uuid::Uuid;
@@ -68,6 +68,12 @@ pub struct CrudService {
     /// explosion (`new`/`with_audit`/`with_context_invalidation`/`with_audit_and_context_invalidation`)
     /// isn't worth it for 2 independent opt-ins.
     context_invalidation: Option<ContextInvalidationConfig>,
+    /// Opt-in per-tenant metadata resolution (`docs/features/15-tenant-scoped-lowcode-metadata.md`)
+    /// — `None` (via every constructor) preserves today's behavior exactly: every tenant shares
+    /// the one `metadata` snapshot above. See [`Self::with_metadata_resolver`], the additive
+    /// opt-in, and [`Self::registry_for`], the one place every method below resolves a registry
+    /// through.
+    metadata_resolver: Option<Arc<dyn MetadataResolver>>,
 }
 
 /// See [`CrudService::with_context_invalidation`]'s doc comment.
@@ -86,6 +92,7 @@ impl CrudService {
             permissions,
             audit: None,
             context_invalidation: None,
+            metadata_resolver: None,
         }
     }
 
@@ -105,6 +112,7 @@ impl CrudService {
             permissions,
             audit: Some(audit),
             context_invalidation: None,
+            metadata_resolver: None,
         }
     }
 
@@ -124,8 +132,26 @@ impl CrudService {
         self
     }
 
-    fn get_entity(&self, entity_name: &str) -> Option<EntityDefinition> {
-        self.metadata.load().get_entity(entity_name).cloned()
+    /// Opt-in per-tenant metadata resolution
+    /// (`docs/features/15-tenant-scoped-lowcode-metadata.md`) — chainable onto any of the
+    /// constructors above, e.g. `CrudService::new(router, metadata, permissions)
+    /// .with_metadata_resolver(resolver)`. Every existing caller that never calls this keeps
+    /// resolving against the plain `metadata` snapshot, unchanged (see [`Self::registry_for`]).
+    pub fn with_metadata_resolver(mut self, resolver: Arc<dyn MetadataResolver>) -> Self {
+        self.metadata_resolver = Some(resolver);
+        self
+    }
+
+    /// The one place every method below resolves "the registry this call should see" — mirrors
+    /// `metap_http::AppState::metadata_for`. `None` (no resolver configured) falls back to the
+    /// plain `ArcSwap` snapshot, i.e. today's single-global-registry behavior exactly; a
+    /// configured resolver gets `tenant_id` instead, letting a low-code control plane serve a
+    /// different merged registry per tenant without this crate knowing that layer exists.
+    async fn registry_for(&self, tenant_id: Uuid) -> anyhow::Result<Arc<MetadataRegistry>> {
+        match &self.metadata_resolver {
+            Some(resolver) => resolver.resolve(tenant_id).await,
+            None => Ok(self.metadata.load_full()),
+        }
     }
 
     /// Records one audit-trail entry if (a) an `AuditTrailStore` is configured on this service at
@@ -201,6 +227,7 @@ impl CrudService {
         snapshot: &PermissionSnapshot,
         actions: &[EntityAction],
         tenant_id: Uuid,
+        registry: &MetadataRegistry,
         record: &JsonObject,
     ) -> anyhow::Result<JsonObject> {
         let mut relation_fields: Vec<String> = Vec::new();
@@ -234,7 +261,7 @@ impl CrudService {
             else {
                 continue;
             };
-            let Some(ref_entity_def) = self.get_entity(ref_entity) else {
+            let Some(ref_entity_def) = registry.get_entity(ref_entity).cloned() else {
                 continue;
             };
             if let Some(related_data) =
@@ -277,6 +304,7 @@ impl CrudService {
         entity: &EntityDefinition,
         context: &RequestContext,
         tenant_id: Uuid,
+        registry: &MetadataRegistry,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         records: Vec<RecordDto>,
     ) -> anyhow::Result<Vec<RecordDto>> {
@@ -317,7 +345,7 @@ impl CrudService {
             if ids.is_empty() {
                 continue;
             }
-            let Some(ref_entity_def) = self.get_entity(ref_entity) else {
+            let Some(ref_entity_def) = registry.get_entity(ref_entity).cloned() else {
                 continue;
             };
 

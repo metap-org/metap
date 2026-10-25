@@ -19,11 +19,13 @@ impl CrudService {
         input: &ListInput,
         context: &RequestContext,
     ) -> anyhow::Result<ServiceResult<Vec<RecordDto>>> {
-        // Loaded once, up front, and reused for both `entity` and `plan_list` below —
-        // loading it twice (once via `get_entity`, again here) would let a publish/rollback
-        // land in between and tear this request between two registry versions (see the
-        // struct doc comment's "one snapshot per call" invariant).
-        let metadata = self.metadata.load();
+        // Tenant resolved first (pure, synchronous, independent of the entity) so the registry
+        // lookup right below can be tenant-aware. Loaded once, up front, and reused for both
+        // `entity` and `plan_list` below — loading it twice (once via `registry_for`, again
+        // here) would let a publish/rollback land in between and tear this request between two
+        // registry versions (see the struct doc comment's "one snapshot per call" invariant).
+        let tenant_id = self.permissions.scoped_tenant(context)?;
+        let metadata = self.registry_for(tenant_id).await?;
         let Some(entity) = metadata.get_entity(entity_name).cloned() else {
             tracing::debug!(entity = entity_name, "list rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
@@ -34,7 +36,6 @@ impl CrudService {
             return Ok(forbidden(decision));
         }
 
-        let tenant_id = self.permissions.scoped_tenant(context)?;
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
         let record_policies = snapshot.get_record_policies(EntityAction::Read);
 
@@ -128,7 +129,7 @@ impl CrudService {
             .map(|dto| mask_record_for_read(&entity, context, &snapshot, dto))
             .collect();
         let data = self
-            .hydrate_related_display(&entity, context, tenant_id, &mut tx, data)
+            .hydrate_related_display(&entity, context, tenant_id, &metadata, &mut tx, data)
             .await?;
         tx.commit().await?;
 

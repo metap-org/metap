@@ -102,10 +102,11 @@ impl CrudService {
         record_id: Uuid,
         context: &RequestContext,
     ) -> anyhow::Result<DiffVisibility> {
-        let Some(entity) = self.get_entity(entity_name) else {
+        let tenant_id = self.permissions.scoped_tenant(context)?;
+        let registry = self.registry_for(tenant_id).await?;
+        let Some(entity) = registry.get_entity(entity_name).cloned() else {
             return Ok(DiffVisibility::Nothing);
         };
-        let tenant_id = self.permissions.scoped_tenant(context)?;
 
         let mut tx = self.router.begin(tenant_id.into()).await?;
         let existing = fetch_existing(&mut *tx, record_id, tenant_id, &entity).await?;
