@@ -33,8 +33,10 @@ impl CrudService {
         input: &AggregateInput,
         context: &RequestContext,
     ) -> anyhow::Result<ServiceResult<Vec<Value>>> {
-        // One registry snapshot for the whole call, same invariant every other operation holds.
-        let metadata = self.metadata.load();
+        // Tenant resolved first so the registry lookup can be tenant-aware; one registry
+        // snapshot for the whole call either way, same invariant every other operation holds.
+        let tenant_id = self.permissions.scoped_tenant(context)?;
+        let metadata = self.registry_for(tenant_id).await?;
         let Some(entity) = metadata.get_entity(entity_name).cloned() else {
             tracing::debug!(entity = entity_name, "aggregate rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
@@ -45,7 +47,6 @@ impl CrudService {
             return Ok(forbidden(decision));
         }
 
-        let tenant_id = self.permissions.scoped_tenant(context)?;
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
         let record_policies = snapshot.get_record_policies(EntityAction::Read);
 

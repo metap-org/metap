@@ -22,7 +22,9 @@ impl CrudService {
         context: &RequestContext,
         reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
-        let Some(entity) = self.get_entity(entity_name) else {
+        let tenant_id = self.permissions.scoped_tenant(context)?;
+        let registry = self.registry_for(tenant_id).await?;
+        let Some(entity) = registry.get_entity(entity_name).cloned() else {
             tracing::debug!(entity = entity_name, "delete rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
@@ -32,7 +34,6 @@ impl CrudService {
             return Ok(forbidden(decision));
         }
 
-        let tenant_id = self.permissions.scoped_tenant(context)?;
         let mut precheck_tx = match self.router.begin(tenant_id.into()).await {
             Ok(tx) => tx,
             Err(e) => {
@@ -50,7 +51,14 @@ impl CrudService {
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
         let enriched = self
-            .enrich_record_for_actions(&entity, &snapshot, &[EntityAction::Delete], tenant_id, &existing.data)
+            .enrich_record_for_actions(
+                &entity,
+                &snapshot,
+                &[EntityAction::Delete],
+                tenant_id,
+                &registry,
+                &existing.data,
+            )
             .await?;
         let record_decision = snapshot.can_perform_record_condition(context, &enriched, EntityAction::Delete);
         if !record_decision.allowed {
@@ -78,8 +86,7 @@ impl CrudService {
         // combined query for every referencing `(entity, field)` pair, not one query per pair
         // (found in code review, 2026-08-22 — an entity referenced by K fields used to cost K
         // sequential round trips on every delete).
-        let metadata = self.metadata.load();
-        let refs = referencing_fields(&metadata, &entity.name);
+        let refs = referencing_fields(&registry, &entity.name);
         let blockers = find_referencing_records(&mut tx, tenant_id, id, &refs).await?;
         if let Some(first) = blockers.first() {
             tx.rollback().await.ok();

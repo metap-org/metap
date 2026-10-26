@@ -47,7 +47,7 @@ use metap_grpc::OptionalServeConfig;
 use metap_http::{build_router, AppState};
 use metap_infra::AppConfig;
 use metap_jwks::{JwksClient, JwksKeyPair, JwksKeyStore, TokenSigner, TokenVerifier};
-use metap_metadata::{EntityDefinition, MetadataRegistry};
+use metap_metadata::{EntityDefinition, MetadataRegistry, MetadataResolver};
 use metap_permission::PermissionService;
 use sqlx::PgPool;
 
@@ -80,6 +80,7 @@ pub struct MetapApp {
     metadata_base: Arc<MetadataRegistry>,
     metadata: Arc<ArcSwap<MetadataRegistry>>,
     with_audit: bool,
+    metadata_resolver: Option<Arc<dyn MetadataResolver>>,
     jwks: Option<JwksMode>,
     grpc: Option<GrpcConfig>,
     extra_routes: AxumRouter<AppState>,
@@ -115,6 +116,7 @@ impl MetapApp {
             metadata_base,
             metadata,
             with_audit: false,
+            metadata_resolver: None,
             jwks: None,
             grpc: None,
             extra_routes: AxumRouter::new(),
@@ -205,6 +207,20 @@ impl MetapApp {
         self
     }
 
+    /// Opts into per-tenant metadata resolution
+    /// (`docs/features/15-tenant-scoped-lowcode-metadata.md`) — both `AppState.metadata_resolver`
+    /// (used by `metap-http`'s own `/metadata/entities*` routes and by `metap-graphql-http`'s
+    /// `SchemaHolder`) and `CrudService`'s own copy of the same resolver (so a GraphQL/gRPC
+    /// mutation's entity lookup agrees with what the schema it was validated against expects) are
+    /// set from the same `Arc` — the one thing a caller must not do is set these two
+    /// independently and risk them drifting. Chainable with [`Self::with_audit`] in either order;
+    /// `serve()` combines both into one `CrudService` build. Omit this call for every existing
+    /// deployment's unchanged, single-global-registry behavior.
+    pub fn with_metadata_resolver(mut self, resolver: Arc<dyn MetadataResolver>) -> Self {
+        self.metadata_resolver = Some(resolver);
+        self
+    }
+
     /// Verifies sessions/tokens against the `metap-jwks` Ed25519 trust root (`JWKS_URL`, default
     /// `http://localhost:3000/.well-known/jwks.json`) instead of this app's own static RSA
     /// keypair — for a binary that only ever verifies, never mints for other services. Reads
@@ -289,14 +305,23 @@ impl MetapApp {
             self.router,
         );
 
-        if self.with_audit {
-            state.crud = Arc::new(CrudService::with_audit(
-                state.router.clone(),
-                state.metadata.clone(),
-                state.permissions.clone(),
-                Arc::new(PostgresAuditTrailStore::new(state.pool.clone())),
-            ));
+        if self.with_audit || self.metadata_resolver.is_some() {
+            let mut crud = if self.with_audit {
+                CrudService::with_audit(
+                    state.router.clone(),
+                    state.metadata.clone(),
+                    state.permissions.clone(),
+                    Arc::new(PostgresAuditTrailStore::new(state.pool.clone())),
+                )
+            } else {
+                CrudService::new(state.router.clone(), state.metadata.clone(), state.permissions.clone())
+            };
+            if let Some(resolver) = &self.metadata_resolver {
+                crud = crud.with_metadata_resolver(resolver.clone());
+            }
+            state.crud = Arc::new(crud);
         }
+        state.metadata_resolver = self.metadata_resolver.clone();
 
         if self.insecure_cookies {
             state.cookie_secure = false;

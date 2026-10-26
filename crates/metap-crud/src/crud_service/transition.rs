@@ -25,7 +25,9 @@ impl CrudService {
         context: &RequestContext,
         reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
-        let Some(entity) = self.get_entity(entity_name) else {
+        let tenant_id = self.permissions.scoped_tenant(context)?;
+        let registry = self.registry_for(tenant_id).await?;
+        let Some(entity) = registry.get_entity(entity_name).cloned() else {
             tracing::debug!(entity = entity_name, "transition rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
@@ -35,7 +37,6 @@ impl CrudService {
             return Ok(forbidden(decision));
         }
 
-        let tenant_id = self.permissions.scoped_tenant(context)?;
         let mut precheck_tx = match self.router.begin(tenant_id.into()).await {
             Ok(tx) => tx,
             Err(e) => {
@@ -58,6 +59,7 @@ impl CrudService {
                 &snapshot,
                 &[EntityAction::Transition],
                 tenant_id,
+                &registry,
                 &existing.data,
             )
             .await?;

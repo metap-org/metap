@@ -6,7 +6,7 @@ use arc_swap::ArcSwap;
 use jsonwebtoken::DecodingKey;
 use metap_control::Router;
 use metap_crud::CrudService;
-use metap_metadata::MetadataRegistry;
+use metap_metadata::{MetadataRegistry, MetadataResolver};
 use metap_permission::PermissionService;
 use sqlx::PgPool;
 
@@ -141,6 +141,17 @@ pub struct AppState {
     /// outside `localhost`/HTTPS outright, though Chrome/Firefox both special-case plain
     /// `localhost` as a trustworthy origin already, so this is often not needed even then.
     pub cookie_secure: bool,
+    /// Opt-in per-tenant metadata resolution (`docs/features/15-tenant-scoped-lowcode-metadata.md`)
+    /// — `None` (set by `new`, every existing caller's default) means every tenant keeps sharing
+    /// the single `metadata` snapshot above, i.e. today's behavior exactly. A host binary that
+    /// wants a per-tenant low-code registry sets this directly after construction (every field
+    /// here is `pub`, same pattern as `object_store`/`token_verifier`) to something like
+    /// `metap-lowcode`'s `TenantMetadataResolver`. `crud` (`CrudService`) needs this too — same
+    /// field, same shape — so a binary setting this should also chain
+    /// `CrudService::with_metadata_resolver` when building `crud` before passing it to
+    /// [`AppState::new`], or the REST-free entity CRUD path and this field's own
+    /// [`AppState::metadata_for`] would resolve two different registries for the same tenant.
+    pub metadata_resolver: Option<Arc<dyn MetadataResolver>>,
 }
 
 impl AppState {
@@ -187,6 +198,7 @@ impl AppState {
             extra_openapi_paths: Arc::new(serde_json::Map::new()),
             extra_openapi_schemas: Arc::new(serde_json::Map::new()),
             cookie_secure: true,
+            metadata_resolver: None,
         }
     }
 
@@ -243,6 +255,19 @@ impl AppState {
                 scope,
                 client_id,
             ),
+        }
+    }
+
+    /// The registry `tenant_id` should see right now — the one place this crate resolves "which
+    /// metadata applies to this request" (`docs/features/15-tenant-scoped-lowcode-metadata.md`).
+    /// `None` resolver (today's default for every app) falls back to the plain `metadata`
+    /// snapshot, so this is a safe drop-in for every existing `state.metadata.load_full()`/
+    /// `state.metadata.load()` call site that needs to become tenant-aware — see
+    /// `routes::metadata::list_entities`/`get_entity` for the two that do.
+    pub async fn metadata_for(&self, tenant_id: uuid::Uuid) -> anyhow::Result<Arc<MetadataRegistry>> {
+        match &self.metadata_resolver {
+            Some(resolver) => resolver.resolve(tenant_id).await,
+            None => Ok(self.metadata.load_full()),
         }
     }
 

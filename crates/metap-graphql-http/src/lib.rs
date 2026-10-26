@@ -16,6 +16,7 @@
 //! `metap-lowcode-http` never publishes a new registry, so this rebuild path is simply never
 //! exercised for it — no forced coupling between the two optional crates.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_graphql::http::GraphiQLSource;
@@ -32,9 +33,14 @@ use metap_http::auth::AuthContext;
 use metap_http::AppState;
 use metap_metadata::MetadataRegistry;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 mod platform_fields;
 pub mod public_schema;
+
+/// A cached, already-built schema plus the registry `Arc` it was built from — compared by
+/// `Arc::ptr_eq` to detect staleness, never by value.
+type CachedSchema = (Arc<MetadataRegistry>, Arc<Schema>);
 
 struct SchemaHolder {
     backend: Arc<dyn RecordBackend>,
@@ -50,7 +56,21 @@ struct SchemaHolder {
     /// `state.crud`/`state.metadata` do (only those two are re-read fresh per request, via
     /// [`router_with_federation`]'s own `State<AppState>` extractor).
     state: AppState,
-    cached: Mutex<(Arc<MetadataRegistry>, Arc<Schema>)>,
+    /// Keyed by tenant (`docs/features/15-tenant-scoped-lowcode-metadata.md`) — a tenant-scoped
+    /// `metadata_resolver` (`AppState::metadata_for`) can hand back a *different* registry per
+    /// tenant, so one global `(registry, schema)` pair is no longer enough: each tenant gets its
+    /// own cached pair, rebuilt lazily the same way the single global cache used to (`Arc::ptr_eq`
+    /// against the registry this tenant last built from), just keyed per tenant now. When no
+    /// resolver is configured, `metadata_for` always returns the same global `Arc` for every
+    /// tenant, so every tenant's entry converges on one identical cached schema anyway — this
+    /// costs one extra `HashMap` lookup per request in that case, not a rebuild.
+    tenant_cache: Mutex<HashMap<Uuid, CachedSchema>>,
+    /// The tenant-agnostic schema `GET /graphql/schema.graphql` serves — that route is
+    /// unauthenticated (see its own doc comment), so there is no tenant to resolve by; this
+    /// always builds straight from `state.metadata`'s plain snapshot, deliberately bypassing
+    /// `metadata_resolver` even when one is configured (same "public surface describes shape
+    /// only, stays global" precedent as `GET /metadata/openapi.json`).
+    global_cache: Mutex<CachedSchema>,
 }
 
 impl SchemaHolder {
@@ -73,7 +93,8 @@ impl SchemaHolder {
             limits,
             federation,
             state,
-            cached: Mutex::new((metadata, schema)),
+            tenant_cache: Mutex::new(HashMap::new()),
+            global_cache: Mutex::new((metadata, schema)),
         })
     }
 
@@ -98,22 +119,52 @@ impl SchemaHolder {
         builder.data(state).register(query).register(mutation).finish()
     }
 
-    /// Returns the current schema, rebuilding first if `current_metadata` isn't the same `Arc`
-    /// this holder last built from. A failed rebuild (should only happen if a hot-swapped
-    /// registry is somehow invalid, which `MetadataRegistry::register`/`validate_references`
-    /// should already have rejected before it was ever published) keeps serving the last good
-    /// schema rather than erroring every subsequent request.
-    async fn get(&self, current_metadata: &Arc<MetadataRegistry>) -> Arc<Schema> {
-        let mut guard = self.cached.lock().await;
-        if !Arc::ptr_eq(&guard.0, current_metadata) {
+    /// Returns the schema `tenant_id` should see, resolving its registry via
+    /// `state.metadata_for` and rebuilding only when that tenant's resolved registry `Arc` has
+    /// changed since this holder last built for it (same `Arc::ptr_eq` staleness check the old
+    /// single global cache used, just keyed per tenant now). A failed rebuild on a tenant's
+    /// *first* request propagates (there is no "last good schema" to fall back to yet); a failed
+    /// rebuild on a later request keeps serving that tenant's last good schema instead, same
+    /// resilience the old global cache had.
+    async fn get_for_tenant(&self, tenant_id: Uuid) -> anyhow::Result<Arc<Schema>> {
+        let current = self.state.metadata_for(tenant_id).await?;
+        let mut guard = self.tenant_cache.lock().await;
+        let stale = match guard.get(&tenant_id) {
+            Some((cached, _)) => !Arc::ptr_eq(cached, &current),
+            None => true,
+        };
+        if stale {
             if let Ok(schema) = Self::build(
-                current_metadata,
+                &current,
                 self.backend.clone(),
                 self.limits,
                 self.federation,
                 self.state.clone(),
             ) {
-                *guard = (current_metadata.clone(), Arc::new(schema));
+                guard.insert(tenant_id, (current.clone(), Arc::new(schema)));
+            }
+        }
+        guard
+            .get(&tenant_id)
+            .map(|(_, schema)| schema.clone())
+            .ok_or_else(|| anyhow::anyhow!("failed to build GraphQL schema for tenant {tenant_id}"))
+    }
+
+    /// The tenant-agnostic schema `/graphql/schema.graphql` serves — see `global_cache`'s doc
+    /// comment. Same resilience as before this feature: a failed rebuild keeps serving the last
+    /// good global schema rather than erroring.
+    async fn get_global(&self) -> Arc<Schema> {
+        let current = self.state.metadata.load_full();
+        let mut guard = self.global_cache.lock().await;
+        if !Arc::ptr_eq(&guard.0, &current) {
+            if let Ok(schema) = Self::build(
+                &current,
+                self.backend.clone(),
+                self.limits,
+                self.federation,
+                self.state.clone(),
+            ) {
+                *guard = (current, Arc::new(schema));
             }
         }
         guard.1.clone()
@@ -178,8 +229,25 @@ pub fn router_with_federation(
                 move |State(state): State<AppState>, AuthContext(context): AuthContext, req: GraphQLRequest| {
                     let holder = holder.clone();
                     async move {
-                        let current_metadata: Arc<MetadataRegistry> = state.metadata.load_full();
-                        let schema = holder.get(&current_metadata).await;
+                        let tenant_id = match Uuid::parse_str(&context.tenant_id) {
+                            Ok(id) => id,
+                            Err(e) => {
+                                return GraphQLResponse::from(async_graphql::Response::from_errors(vec![
+                                    async_graphql::ServerError::new(
+                                        format!("invalid tenant id on request context: {e}"),
+                                        None,
+                                    ),
+                                ]));
+                            }
+                        };
+                        let schema = match holder.get_for_tenant(tenant_id).await {
+                            Ok(schema) => schema,
+                            Err(e) => {
+                                return GraphQLResponse::from(async_graphql::Response::from_errors(vec![
+                                    async_graphql::ServerError::new(e.to_string(), None),
+                                ]));
+                            }
+                        };
                         let backend: Arc<dyn RecordBackend> = state.crud.clone();
                         let request = with_request_data(req.into_inner(), backend, context);
                         GraphQLResponse::from(schema.execute(request).await)
@@ -189,12 +257,9 @@ pub fn router_with_federation(
         )
         .route(
             "/graphql/schema.graphql",
-            get(move |State(state): State<AppState>| {
+            get(move |State(_state): State<AppState>| {
                 let holder = sdl_holder.clone();
-                async move {
-                    let current_metadata: Arc<MetadataRegistry> = state.metadata.load_full();
-                    holder.get(&current_metadata).await.sdl()
-                }
+                async move { holder.get_global().await.sdl() }
             }),
         ))
 }

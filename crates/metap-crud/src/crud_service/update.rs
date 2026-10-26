@@ -23,7 +23,9 @@ impl CrudService {
         context: &RequestContext,
         reason: Option<&str>,
     ) -> anyhow::Result<ServiceResult<RecordDto>> {
-        let Some(entity) = self.get_entity(entity_name) else {
+        let tenant_id = self.permissions.scoped_tenant(context)?;
+        let registry = self.registry_for(tenant_id).await?;
+        let Some(entity) = registry.get_entity(entity_name).cloned() else {
             tracing::debug!(entity = entity_name, "update rejected: entity not found");
             return Ok(ServiceResult::err(404, "entity_not_found"));
         };
@@ -33,7 +35,6 @@ impl CrudService {
             return Ok(forbidden(decision));
         }
 
-        let tenant_id = self.permissions.scoped_tenant(context)?;
         let mut precheck_tx = match self.router.begin(tenant_id.into()).await {
             Ok(tx) => tx,
             Err(e) => {
@@ -51,7 +52,14 @@ impl CrudService {
 
         let snapshot = self.permissions.load_snapshot(tenant_id, &entity.name).await?;
         let enriched = self
-            .enrich_record_for_actions(&entity, &snapshot, &[EntityAction::Update], tenant_id, &existing.data)
+            .enrich_record_for_actions(
+                &entity,
+                &snapshot,
+                &[EntityAction::Update],
+                tenant_id,
+                &registry,
+                &existing.data,
+            )
             .await?;
         let record_decision = snapshot.can_perform_record_condition(context, &enriched, EntityAction::Update);
         if !record_decision.allowed {
