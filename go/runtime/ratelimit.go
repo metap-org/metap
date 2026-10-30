@@ -1,8 +1,10 @@
 package runtime
 
 import (
+	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -40,7 +42,12 @@ func RateLimit(perMillisecond time.Duration, burstSize int) func(http.Handler) h
 			if err != nil {
 				host = r.RemoteAddr
 			}
-			if !limiterFor(host).Allow() {
+			// Reserve (not Allow) so a rejected request can carry a real Retry-After — matching
+			// tower_governor's own behavior, which the Rust e2e test asserts on.
+			reservation := limiterFor(host).Reserve()
+			if delay := reservation.Delay(); delay > 0 {
+				reservation.Cancel()
+				w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(delay.Seconds()))))
 				ServiceErrorResponse(w, http.StatusTooManyRequests, "too_many_requests",
 					"Too many requests. Retry later.", nil)
 				return

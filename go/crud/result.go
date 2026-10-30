@@ -2,8 +2,8 @@ package crud
 
 // PageInfo mirrors the Rust PageInfo.
 type PageInfo struct {
-	Limit      int64
-	NextCursor *string
+	Limit      int64   `json:"limit"`
+	NextCursor *string `json:"nextCursor"`
 }
 
 // ServiceResult mirrors the Rust ServiceResult<T> enum — Go has no sum type, so this is a plain

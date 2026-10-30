@@ -37,6 +37,23 @@ func TestRateLimitRejectsBeyondBurst(t *testing.T) {
 	}
 }
 
+func TestRateLimitSetsRetryAfterHeaderWhenRejected(t *testing.T) {
+	handler := RateLimit(time.Hour, 1)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "1.2.3.4:5555"
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req)
+	if w2.Code != http.StatusTooManyRequests {
+		t.Fatalf("got status %d, want 429", w2.Code)
+	}
+	if w2.Header().Get("Retry-After") == "" {
+		t.Fatal("expected a Retry-After header on a rejected request")
+	}
+}
+
 func TestRateLimitTracksDifferentPeersSeparately(t *testing.T) {
 	handler := RateLimit(time.Hour, 1)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
