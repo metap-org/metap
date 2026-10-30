@@ -44,27 +44,35 @@ func ProvisionSchemaTenant(ctx context.Context, sharedPool *pgxpool.Pool, regist
 
 	// A dedicated connection, not the pool directly — a plain (session-level, not transaction-
 	// scoped) SET is fine only because this connection is acquired, used for this provisioning
-	// call alone, and released (never returned to serve an unrelated request afterward with a
-	// stale search_path).
+	// call alone, and released before registry.Provision runs (never held across a second call
+	// into the same pool, and never returned to serve an unrelated request afterward with a
+	// stale search_path). Releasing explicitly here, not via defer, matters concretely: registry
+	// wraps this same sharedPool, and a caller that opened sharedPool with a small MaxConns (a
+	// single-connection pool is a real, supported case — e.g. dev-tools' CLI subcommands) would
+	// deadlock waiting for a second connection that only this held-open one could ever free,
+	// found live by reproducing exactly that call shape against a 1-connection pool.
 	conn, err := sharedPool.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Release()
-
 	if _, err := conn.Exec(ctx, fmt.Sprintf(`SET search_path TO %q, metadata, control`, schemaName)); err != nil {
+		conn.Release()
 		return nil, err
 	}
 	if err := seedLocalAuthConfig(ctx, conn, tenantID); err != nil {
+		conn.Release()
 		return nil, err
 	}
 	user, err := peripherals.CreateUser(ctx, conn, tenantID, adminEmail, adminPassword)
 	if err != nil {
+		conn.Release()
 		return nil, err
 	}
 	if err := peripherals.AssignRole(ctx, conn, tenantID, user.ID, "admin", nil); err != nil {
+		conn.Release()
 		return nil, err
 	}
+	conn.Release()
 
 	if err := registry.Provision(ctx, tenantID, "trial", "schema", &schemaName, nil, "active"); err != nil {
 		return nil, err

@@ -11,10 +11,13 @@ package control
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestProvisionSchemaTenantWritesRegistryRowAndAdminUser(t *testing.T) {
@@ -73,5 +76,61 @@ func TestProvisionSchemaTenantWritesRegistryRowAndAdminUser(t *testing.T) {
 	if foundTenant != tenantID {
 		t.Fatalf("a freshly provisioned tenant's admin must be resolvable by email alone — got %v, want %v",
 			foundTenant, tenantID)
+	}
+}
+
+// Regression test: ProvisionSchemaTenant used to hold the dedicated connection it acquires for
+// seeding (SET search_path/CreateUser/AssignRole) open via defer conn.Release() until the whole
+// function returned — but registry.Provision, called before that return, acquires a *second*
+// connection from the very same pool. Against a pool with only 1 connection (a real, supported
+// case — e.g. dev-tools' CLI subcommands, found live reproducing exactly this), that second
+// acquire could never succeed while the first was still held: a permanent deadlock, not a slow
+// path. Fixed by releasing the dedicated connection before calling registry.Provision. This test
+// pins that fix down with a context deadline short enough that the old behavior would hang the
+// whole test run rather than just fail an assertion.
+func TestProvisionSchemaTenantDoesNotDeadlockASingleConnectionPool(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		url = "postgres://metap:metap@localhost:5432/metap"
+	}
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Skipf("no Postgres available (%v) — skipping e2e test", err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(context.Background()); err != nil {
+		t.Skipf("no Postgres available (%v) — skipping e2e test", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	registry := NewPostgresTenantRegistry(pool)
+	tenantID := uuid.New()
+	email := "admin-" + strings.ReplaceAll(tenantID.String(), "-", "") + "@test.local"
+
+	provisioned, err := ProvisionSchemaTenant(ctx, pool, registry, tenantID, email, "pass123")
+	if err != nil {
+		if ctx.Err() != nil {
+			t.Fatal("ProvisionSchemaTenant deadlocked against a 1-connection pool")
+		}
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		schema := "t_" + tenantSimpleHex(tenantID)
+		pool.Exec(ctx, `DROP SCHEMA IF EXISTS "`+schema+`" CASCADE`)
+		pool.Exec(ctx, "DELETE FROM user_roles WHERE tenant_id = $1", tenantID)
+		pool.Exec(ctx, "DELETE FROM users WHERE tenant_id = $1", tenantID)
+		pool.Exec(ctx, "DELETE FROM control.tenants WHERE id = $1", tenantID)
+	})
+
+	if provisioned.TenantID != tenantID {
+		t.Fatalf("got %v", provisioned.TenantID)
 	}
 }
