@@ -80,26 +80,29 @@ type OnRecordEventTriggerConfig struct {
 	Event  string `json:"event"` // "created" | "updated" | "deleted"
 }
 
-// CronJob mirrors the Rust CronJob.
+// CronJob mirrors the Rust CronJob, including its #[serde(rename = "...")] wire shape — JSON
+// tags matter here, not just documentation, since this struct is what the admin REST surface
+// serializes directly (routes_cron.go wraps it in {"data": job} with no further reshaping, same
+// as the Rust handler's own doc comment describes).
 type CronJob struct {
-	ID                  uuid.UUID
-	TenantID            uuid.UUID
-	Name                string
-	Enabled             bool
-	TriggerType         string
-	TriggerConfig       json.RawMessage
-	CronExpr            *string
-	Timezone            string
-	TargetType          string
-	TargetConfig        json.RawMessage
-	DispatchMode        string
-	MaxAttempts         int32
-	RetryBackoffSeconds int32
-	NextRunAt           *time.Time
-	LastRunAt           *time.Time
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-	CreatedBy           *uuid.UUID
+	ID                  uuid.UUID       `json:"id"`
+	TenantID            uuid.UUID       `json:"tenantId"`
+	Name                string          `json:"name"`
+	Enabled             bool            `json:"enabled"`
+	TriggerType         string          `json:"triggerType"`
+	TriggerConfig       json.RawMessage `json:"triggerConfig,omitempty"`
+	CronExpr            *string         `json:"cronExpr,omitempty"`
+	Timezone            string          `json:"timezone"`
+	TargetType          string          `json:"targetType"`
+	TargetConfig        json.RawMessage `json:"targetConfig"`
+	DispatchMode        string          `json:"dispatchMode"`
+	MaxAttempts         int32           `json:"maxAttempts"`
+	RetryBackoffSeconds int32           `json:"retryBackoffSeconds"`
+	NextRunAt           *time.Time      `json:"nextRunAt,omitempty"`
+	LastRunAt           *time.Time      `json:"lastRunAt,omitempty"`
+	CreatedAt           time.Time       `json:"createdAt"`
+	UpdatedAt           time.Time       `json:"updatedAt"`
+	CreatedBy           *uuid.UUID      `json:"createdBy,omitempty"`
 }
 
 // RunStatus is the cron_job_runs.status a run is currently at.
@@ -121,19 +124,20 @@ func ParseRunStatus(s string) (RunStatus, bool) {
 	return "", false
 }
 
-// CronJobRun mirrors the Rust CronJobRun.
+// CronJobRun mirrors the Rust CronJobRun, including its camelCase wire shape — see CronJob's own
+// doc comment for why the JSON tags matter here.
 type CronJobRun struct {
-	ID              uuid.UUID
-	TenantID        uuid.UUID
-	JobID           uuid.UUID
-	Status          string
-	Attempt         int32
-	ScheduledFor    time.Time
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
-	Error           *string
-	ResponseSummary json.RawMessage
-	CreatedAt       time.Time
+	ID              uuid.UUID       `json:"id"`
+	TenantID        uuid.UUID       `json:"tenantId"`
+	JobID           uuid.UUID       `json:"jobId"`
+	Status          string          `json:"status"`
+	Attempt         int32           `json:"attempt"`
+	ScheduledFor    time.Time       `json:"scheduledFor"`
+	StartedAt       *time.Time      `json:"startedAt,omitempty"`
+	FinishedAt      *time.Time      `json:"finishedAt,omitempty"`
+	Error           *string         `json:"error,omitempty"`
+	ResponseSummary json.RawMessage `json:"responseSummary,omitempty"`
+	CreatedAt       time.Time       `json:"createdAt"`
 }
 
 // CronJobDuePayload is the cron.job.due outbox/RabbitMQ payload shape.
@@ -179,23 +183,24 @@ const (
 	WorkflowWaiting WorkflowRunStatus = "waiting"
 )
 
-// WorkflowRun mirrors the Rust WorkflowRun.
+// WorkflowRun mirrors the Rust WorkflowRun, including its camelCase wire shape — see CronJob's
+// own doc comment for why the JSON tags matter here.
 type WorkflowRun struct {
-	ID               uuid.UUID
-	TenantID         uuid.UUID
-	JobID            uuid.UUID
-	CronJobRunID     uuid.UUID
-	Status           string
-	CurrentStepIndex int32
-	TotalSteps       int32
-	Context          json.RawMessage
-	Error            *string
-	WaitEntity       *string
-	WaitAction       *string
-	WaitRecordEvent  *string
-	StartedAt        time.Time
-	FinishedAt       *time.Time
-	CreatedAt        time.Time
+	ID               uuid.UUID       `json:"id"`
+	TenantID         uuid.UUID       `json:"tenantId"`
+	JobID            uuid.UUID       `json:"jobId"`
+	CronJobRunID     uuid.UUID       `json:"cronJobRunId"`
+	Status           string          `json:"status"`
+	CurrentStepIndex int32           `json:"currentStepIndex"`
+	TotalSteps       int32           `json:"totalSteps"`
+	Context          json.RawMessage `json:"context,omitempty"`
+	Error            *string         `json:"error,omitempty"`
+	WaitEntity       *string         `json:"waitEntity,omitempty"`
+	WaitAction       *string         `json:"waitAction,omitempty"`
+	WaitRecordEvent  *string         `json:"waitRecordEvent,omitempty"`
+	StartedAt        time.Time       `json:"startedAt"`
+	FinishedAt       *time.Time      `json:"finishedAt,omitempty"`
+	CreatedAt        time.Time       `json:"createdAt"`
 }
 
 // ResumedWorkflowRun is one workflow_runs row a dispatch_on_wait_event_*_matches call resumed.

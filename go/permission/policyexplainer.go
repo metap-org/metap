@@ -22,23 +22,31 @@ func (g Gate) String() string {
 	}
 }
 
-// PolicyTraceEntry is one policy considered during an explain() call, and why.
+// MarshalJSON serializes as the lowercase string the Rust #[derive(Serialize)] Gate enum
+// produces — see PolicyEffect.MarshalJSON's own doc comment for why this matters.
+func (g Gate) MarshalJSON() ([]byte, error) {
+	return json.Marshal(g.String())
+}
+
+// PolicyTraceEntry is one policy considered during an explain() call, and why — mirrors the
+// Rust PolicyTraceEntry's #[serde(rename_all = "camelCase")] wire shape.
 type PolicyTraceEntry struct {
-	PolicyID        string
-	Effect          PolicyEffect
-	RoleGate        Gate
-	ConditionGate   Gate
-	ConditionReason string
+	PolicyID        string       `json:"policyId"`
+	Effect          PolicyEffect `json:"effect"`
+	RoleGate        Gate         `json:"roleGate"`
+	ConditionGate   Gate         `json:"conditionGate"`
+	ConditionReason string       `json:"conditionReason,omitempty"`
 }
 
 func (e PolicyTraceEntry) matched() bool {
 	return e.RoleGate != GateFailed && e.ConditionGate != GateFailed
 }
 
-// PolicyExplanation is the full result of ExplainPolicies.
+// PolicyExplanation is the full result of ExplainPolicies — same camelCase wire shape as
+// PolicyTraceEntry.
 type PolicyExplanation struct {
-	Allowed            bool
-	PoliciesConsidered []PolicyTraceEntry
+	Allowed            bool               `json:"allowed"`
+	PoliciesConsidered []PolicyTraceEntry `json:"policiesConsidered"`
 }
 
 // ExplainPolicies is a read-only trace of every policy considered and why, for the admin-gated

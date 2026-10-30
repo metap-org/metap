@@ -2,6 +2,7 @@ package permission
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/google/uuid"
 )
@@ -19,6 +20,14 @@ func (e PolicyEffect) String() string {
 		return "deny"
 	}
 	return "allow"
+}
+
+// MarshalJSON serializes as the lowercase string the Rust #[derive(Serialize)] PolicyEffect
+// enum produces ("allow"/"deny") — found needed while porting PolicyTraceEntry/PolicyDto's own
+// wire shape (this type has no explicit tag, so encoding/json would otherwise emit the
+// underlying int unchanged).
+func (e PolicyEffect) MarshalJSON() ([]byte, error) {
+	return json.Marshal(e.String())
 }
 
 // ParsePolicyEffect: anything other than exactly "deny" parses as Allow.
