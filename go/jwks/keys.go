@@ -4,11 +4,10 @@
 // issuer binary holds the only private key(s), every other microservice verifies locally via a
 // cached JwksClient. Ported from metap's Rust metap-jwks crate.
 //
-// metap-jwks-http (the HTTP surface serving GET /.well-known/jwks.json) is deliberately not
-// ported in this pass — it's a 3-line axum handler with no logic of its own beyond "read the key
-// store, serve its JwkSet as JSON", and this Go port has no HTTP framework decision yet (metap-
-// http itself isn't ported), so there's no router to mount it on. Trivial to add once that
-// decision is made.
+// metap-jwks-http (the HTTP surface serving GET /.well-known/jwks.json) is ported in http.go,
+// right in this package rather than a separate one — a plain http.HandlerFunc has none of the
+// axum Router<State>-parameterization friction that made the Rust original a whole separate
+// crate.
 //
 // Ed25519 (EdDSA), not RS256, for every token this package mints — smaller tokens, faster verify
 // than RS256. Divergence from the Rust original: that version works in PKCS8 DER bytes end to

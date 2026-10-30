@@ -24,7 +24,12 @@ func main() {
 
 	migrationsDir := os.Getenv("MIGRATIONS_DIR")
 	if migrationsDir == "" {
-		migrationsDir = "../migrations"
+		// Relative to this binary's conventional invocation directory (the go/ module root,
+		// e.g. `go run ./cmd/db-migrate` from go/) — "../migrations" never resolved to a real
+		// directory from there (nor from go/cmd/db-migrate/ itself); there is no top-level
+		// migrations/ in this repo, only crates/migrations/. Found while auditing this binary,
+		// never previously exercised with MIGRATIONS_DIR unset.
+		migrationsDir = "../crates/migrations"
 	}
 
 	ctx := context.Background()
