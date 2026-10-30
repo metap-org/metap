@@ -136,10 +136,13 @@ func Introspect(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, ent
 		return nil, err
 	}
 	for constraintRows.Next() {
-		var conname, contype, refTable, confdeltype string
+		var conname, contype, confdeltype string
 		var convalidated bool
 		var cols, refCols []string
-		var refSchema *string
+		// refTable/refSchema are NULL for a "u" (unique) constraint row — its LEFT JOIN onto
+		// pg_class/pg_namespace via confrelid (always 0 for a non-FK constraint) matches
+		// nothing. Only ever dereferenced inside the "f" branch below.
+		var refTable, refSchema *string
 		if err := constraintRows.Scan(&conname, &contype, &convalidated, &cols, &refTable, &refSchema, &refCols, &confdeltype); err != nil {
 			constraintRows.Close()
 			return nil, err
@@ -148,9 +151,12 @@ func Introspect(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, ent
 		case "f":
 			// compile()'s desired FkSpec.RefTable is always schema-qualified, or Diff would see
 			// every FK's RefTable as "changed" on every pass and never converge.
-			qualifiedRefTable := refTable
+			qualifiedRefTable := ""
+			if refTable != nil {
+				qualifiedRefTable = *refTable
+			}
 			if refSchema != nil {
-				qualifiedRefTable = *refSchema + "." + refTable
+				qualifiedRefTable = *refSchema + "." + qualifiedRefTable
 			}
 			column, refColumn := "", ""
 			if len(cols) > 0 {
