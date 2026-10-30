@@ -145,15 +145,19 @@ func RecordEvent(ctx context.Context, db DBTX, entity metadata.EntityDefinition,
 
 // WorkflowEvent is one row of workflow_events — the read side of RecordEvent's append-only audit
 // log. Generic across every entity/app (a plain data row, no business meaning attached).
+// WorkflowEvent mirrors the Rust WorkflowEvent — deliberately snake_case on the wire (its own
+// #[derive(Serialize)] emits Rust field names verbatim, inconsistent with the rest of this
+// surface's camelCase, but left as-is since a real shipped frontend reads these exact keys; see
+// routes_workflow_events.go's own doc comment).
 type WorkflowEvent struct {
-	ID        uuid.UUID
-	Entity    string
-	RecordID  uuid.UUID
-	Action    string
-	FromState string
-	ToState   string
-	Actor     *uuid.UUID
-	CreatedAt time.Time
+	ID        uuid.UUID  `json:"id"`
+	Entity    string     `json:"entity"`
+	RecordID  uuid.UUID  `json:"record_id"`
+	Action    string     `json:"action"`
+	FromState string     `json:"from_state"`
+	ToState   string     `json:"to_state"`
+	Actor     *uuid.UUID `json:"actor,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // ListEvents returns the chronological transition history for one record — tenant-scoped like
@@ -169,7 +173,10 @@ func ListEvents(ctx context.Context, db DBTX, tenantID uuid.UUID, entity string,
 	}
 	defer rows.Close()
 
-	var events []WorkflowEvent
+	// make(..., 0), not var events []WorkflowEvent — a nil Go slice marshals to JSON null, not
+	// [], diverging from the Rust Vec<WorkflowEvent> wire shape a REST client expects on a
+	// record with no transition history yet.
+	events := make([]WorkflowEvent, 0)
 	for rows.Next() {
 		var e WorkflowEvent
 		if err := rows.Scan(&e.ID, &e.Entity, &e.RecordID, &e.Action, &e.FromState, &e.ToState, &e.Actor, &e.CreatedAt); err != nil {

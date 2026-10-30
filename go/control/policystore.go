@@ -60,7 +60,10 @@ func scanPolicyRow(row pgx.Row) (permission.PolicyRow, error) {
 
 func scanPolicyRows(rows pgx.Rows) ([]permission.PolicyRow, error) {
 	defer rows.Close()
-	var out []permission.PolicyRow
+	// make(..., 0), not var out []permission.PolicyRow — a nil Go slice marshals to JSON null,
+	// not [], diverging from the Rust Vec<PolicyRow> wire shape GET /admin/policies' caller
+	// expects when an entity has no policies at all.
+	out := make([]permission.PolicyRow, 0)
 	for rows.Next() {
 		p, err := scanPolicyRow(rows)
 		if err != nil {
@@ -223,7 +226,7 @@ func (s *PostgresPolicyStore) SyncBasicPolicies(ctx context.Context, tenantID uu
 		return nil, err
 	}
 
-	var out []permission.PolicyRow
+	out := make([]permission.PolicyRow, 0)
 	for _, g := range grants {
 		var rolesJSON []byte
 		if g.HasRole {

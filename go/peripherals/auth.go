@@ -108,7 +108,9 @@ func ListTenantUsers(ctx context.Context, db DBTX, tenantID uuid.UUID) ([]*AuthU
 	}
 	defer rows.Close()
 
-	var out []*AuthUser
+	// make(..., 0), not var out []*AuthUser — a nil Go slice marshals to JSON null, not [],
+	// diverging from the Rust Vec<T> wire shape GET /users' caller expects on an empty tenant.
+	out := make([]*AuthUser, 0)
 	for rows.Next() {
 		var u AuthUser
 		if err := rows.Scan(&u.ID, &u.TenantID, &u.Email); err != nil {

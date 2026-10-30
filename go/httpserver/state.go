@@ -23,6 +23,8 @@ import (
 	"github.com/metap-org/metap-go/metadata"
 	"github.com/metap-org/metap-go/peripherals"
 	"github.com/metap-org/metap-go/permission"
+	"github.com/metap-org/metap-go/runtime"
+	"github.com/metap-org/metap-go/storage"
 )
 
 // AppState mirrors the Rust AppState — the subset this core wave's routes actually touch.
@@ -64,6 +66,17 @@ type AppState struct {
 	// MetadataResolver is opt-in per-tenant metadata resolution — nil means every tenant shares
 	// the single Metadata snapshot above, today's behavior.
 	MetadataResolver metadata.MetadataResolver
+
+	// ObjectStore backs /api/{entity}/{id}/attachments* — nil (the default) means every
+	// attachment route degrades to a 503, same shape any other optional feature not configured.
+	ObjectStore storage.ObjectStore
+	// AttachmentTables maps an entity name to its own dedicated attachments table; an entity
+	// absent from this map uses the shared default table ("attachments").
+	AttachmentTables map[string]string
+
+	// Metrics backs GET /metrics — always present (same "always-on, like /health" posture the
+	// Rust original's AppState.metrics_handle has), not an opt-in field.
+	Metrics *runtime.MetricsRegistry
 }
 
 // NewAppState mirrors the Rust AppState::new. router is built by the caller (same reasoning as
@@ -78,6 +91,7 @@ func NewAppState(pool *pgxpool.Pool, metadataBase *metadata.MetadataRegistry, md
 		ContextAttributesCache: control.NewContextAttributesCache(30 * time.Second),
 		Config:                 config.Unloaded(pool),
 		CookieSecure:           true,
+		Metrics:                runtime.NewMetricsRegistry(),
 	}
 }
 

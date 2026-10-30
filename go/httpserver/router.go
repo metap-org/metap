@@ -18,11 +18,11 @@ import (
 // stack rather than bypassing it.
 //
 // Core entity CRUD + auth + the admin/platform surface (users, admin roles/policies, cron-jobs,
-// dashboards, preferences, platform/tenant/public config) are wired below. Still deferred vs.
-// the Rust original: metrics (/metrics, axum-prometheus), attachments/workflow-events/
-// audit-events, and the OAuth2 authorization server's 5 RFC routes plus its admin client CRUD —
-// none are needed to exercise CRUD or admin configuration, and each is additive (a later wave
-// adds its own mountX function here without touching this wiring).
+// dashboards, preferences, platform/tenant/public config) + attachments/workflow-events/
+// audit-events/metrics are wired below. Still deferred vs. the Rust original: the OAuth2
+// authorization server's 5 RFC routes plus its admin client CRUD — not needed to exercise CRUD
+// or admin configuration, and additive (a later wave adds its own mountX function here without
+// touching this wiring).
 func BuildRouter(state *AppState, corsOrigins []string, extraRoutes func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
 
@@ -41,12 +41,14 @@ func BuildRouter(state *AppState, corsOrigins []string, extraRoutes func(chi.Rou
 	// Rust original's reversed .layer() chain.
 	r.Use(runtime.GenerateRequestIDs)
 	r.Use(runtime.Trace)
+	r.Use(state.Metrics.Middleware)
 	r.Use(runtime.SecurityHeaders)
 	r.Use(runtime.RequestContext)
 	r.Use(rateLimit)
 	r.Use(cors)
 
 	mountHealth(r)
+	mountMetrics(r, state)
 	mountMetadata(r)
 	mountAuth(r, state)
 	mountRecords(r, state)
@@ -57,6 +59,9 @@ func BuildRouter(state *AppState, corsOrigins []string, extraRoutes func(chi.Rou
 	mountPreferences(r, state)
 	mountPlatformConfig(r, state)
 	mountTenantConfig(r, state)
+	mountAttachments(r, state)
+	mountWorkflowEvents(r, state)
+	mountAuditEvents(r, state)
 	if extraRoutes != nil {
 		extraRoutes(r)
 	}

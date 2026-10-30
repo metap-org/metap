@@ -120,7 +120,9 @@ func ListAttachments(ctx context.Context, e executor, tableName string, tenantID
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*Record
+	// make(..., 0), not var out []*Record — see peripherals.ListTenantUsers's own comment on
+	// why this matters for the wire shape of an empty result.
+	out := make([]*Record, 0)
 	for rows.Next() {
 		r, err := rowToRecord(rows)
 		if err != nil {

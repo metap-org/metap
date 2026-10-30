@@ -55,7 +55,9 @@ func (s *PostgresStore) ListForRecord(ctx context.Context, tenantID uuid.UUID, e
 	}
 	defer rows.Close()
 
-	var out []Row
+	// make(..., 0), not var out []Row — see peripherals.ListTenantUsers's own comment on why
+	// this matters for the wire shape of an empty result.
+	out := make([]Row, 0)
 	for rows.Next() {
 		var r Row
 		if err := rows.Scan(&r.ID, &r.TenantID, &r.Entity, &r.RecordID, &r.Action, &r.TransitionAction,

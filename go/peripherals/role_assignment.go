@@ -73,7 +73,9 @@ func ListUsers(ctx context.Context, db DBTX, tenantID uuid.UUID) ([]*UserRoles, 
 	}
 	defer rows.Close()
 
-	var grouped []*UserRoles
+	// make(..., 0), not var grouped []*UserRoles — see ListTenantUsers's own comment on why
+	// this matters for the wire shape of an empty result.
+	grouped := make([]*UserRoles, 0)
 	index := make(map[uuid.UUID]*UserRoles)
 	for rows.Next() {
 		var userID uuid.UUID

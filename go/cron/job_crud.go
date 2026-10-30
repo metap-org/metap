@@ -44,7 +44,10 @@ func ListJobs(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID) ([]*C
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*CronJob
+	// make(..., 0), not var out []*CronJob — an empty Go nil slice marshals to JSON null, not
+	// [], diverging from the Rust Vec<CronJob> wire shape a REST client (iterating the result
+	// with .map()) would otherwise break on. Same fix applied to every list function below.
+	out := make([]*CronJob, 0)
 	for rows.Next() {
 		j, err := jobFromRow(rows)
 		if err != nil {
@@ -213,7 +216,7 @@ func ListJobRuns(ctx context.Context, pool *pgxpool.Pool, tenantID, jobID uuid.U
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*CronJobRun
+	out := make([]*CronJobRun, 0)
 	for rows.Next() {
 		r, err := runFromRow(rows)
 		if err != nil {

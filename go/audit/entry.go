@@ -54,19 +54,21 @@ type Entry struct {
 }
 
 // Row is one row read back from metadata.audit_trail_entries — the read side of Store.Record's
-// write.
+// write. Mirrors the Rust AuditTrailEntryRow's #[serde(rename_all = "camelCase")] wire shape —
+// JSON tags matter here, not just documentation, since this struct is what
+// /api/{entity}/{id}/audit-events serializes directly.
 type Row struct {
-	ID               uuid.UUID
-	TenantID         uuid.UUID
-	Entity           string
-	RecordID         uuid.UUID
-	Action           string
-	TransitionAction *string
-	ActorUserID      *uuid.UUID
-	Reason           *string
-	Diff             json.RawMessage
-	VersionAfter     *int32
-	OccurredAt       time.Time
+	ID               uuid.UUID       `json:"id"`
+	TenantID         uuid.UUID       `json:"tenantId"`
+	Entity           string          `json:"entity"`
+	RecordID         uuid.UUID       `json:"recordId"`
+	Action           string          `json:"action"`
+	TransitionAction *string         `json:"transitionAction,omitempty"`
+	ActorUserID      *uuid.UUID      `json:"actorUserId,omitempty"`
+	Reason           *string         `json:"reason,omitempty"`
+	Diff             json.RawMessage `json:"diff"`
+	VersionAfter     *int32          `json:"versionAfter,omitempty"`
+	OccurredAt       time.Time       `json:"occurredAt"`
 }
 
 // RedactedMarker is the key of the marker that stands in for a redacted field's
