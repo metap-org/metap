@@ -1,11 +1,13 @@
 name: CodeQL
 
-# testing/security/checklist.md — logic-code SAST, distinct from `cargo audit` (which only
+# testing/security/checklist.md — logic-code SAST, distinct from `govulncheck` (which only
 # scans dependency CVEs, never code this repo actually wrote). Native GitHub Actions, no
 # third-party service — results land in the repo's Security tab as code-scanning alerts, not as
 # a build-failing gate (CodeQL's own convention: alerts are triaged, not auto-blocking, since a
 # fresh ruleset on an existing codebase commonly needs a first pass of review before anything is
-# strict enough to fail CI on). Backend (Rust) only, matching this initiative's stated scope.
+# strict enough to fail CI on). Backend (Go, `go/`) only, matching this initiative's stated
+# scope — Rust-era, this job scanned `crates/`; both the language and the build command changed
+# the same pass `crates/` was removed from the repo.
 on:
   push:
     branches: [main, master]
@@ -17,23 +19,23 @@ on:
 
 jobs:
   analyze:
-    name: CodeQL analysis (Rust)
+    name: CodeQL analysis (Go)
     runs-on: ubuntu-latest
     permissions:
       security-events: write
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
       - uses: github/codeql-action/init@v3
         with:
-          languages: rust
+          languages: go
           config-file: ./.github/codeql/codeql-config.yml
-      # `.cargo/config.toml` hard-requires the mold linker (2026-09-03) and isn't vendored/
-      # auto-installed by design — see `ci.yml`'s `rust` job for the same install step.
-      - run: sudo apt-get update && sudo apt-get install -y mold
-      # CodeQL's Rust support builds the code to extract its database — same command CI's
-      # `rust` job already uses, so this sees exactly what actually compiles.
-      - run: cargo build --workspace --all-targets --locked
+      # CodeQL's Go support builds the code to extract its database — same command CI's `go`
+      # job already uses, so this sees exactly what actually compiles.
+      - working-directory: go
+        run: go build ./...
       - uses: github/codeql-action/analyze@v3

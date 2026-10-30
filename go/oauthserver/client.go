@@ -23,7 +23,7 @@ type OAuthClient struct {
 	IsConfidential bool
 	RevokedAt      *time.Time
 	// ServiceUserID is the users row this client acts as for the client_credentials grant — nil
-	// only for a client registered before that grant existed (crates/migrations/
+	// only for a client registered before that grant existed (migrations/
 	// 0036_oauth2_client_credentials.sql's own doc comment); every client CreateClient mints today
 	// gets one eagerly. Starts with zero role grants like any other principal — this column makes
 	// the identity exist, it grants nothing by itself (deny-by-default, same as every other user in

@@ -5,13 +5,13 @@
 // FINDING, carried over faithfully from the Rust original rather than silently fixed: this
 // module's DDL unconditionally targets a table literally named "records" with a WHERE entity =
 // '<name>' predicate — the shared generic JSONB table from before table-per-entity. That table
-// was dropped entirely by crates/migrations/0033_drop_records_table.sql, and
+// was dropped entirely by migrations/0033_drop_records_table.sql, and
 // metap-metadata's compiler has rejected table_name == "records" for any entity since before
 // that migration landed. So in the current schema, every CREATE INDEX this module issues fails
 // with "relation records does not exist" — caught and logged by the same per-field error
 // handling this file already has for other failures (a missing pg_trgm extension, a name
 // collision), so it never crashes a boot, but it also never builds a real index today. This is
-// pre-existing dead code in the Rust crate, confirmed by reading crates/migrations/0033_*.sql and
+// pre-existing dead code in the Rust crate, confirmed by reading migrations/0033_*.sql and
 // crates/metap-metadata/src/compiler.rs's table_name_ok check — not a bug introduced by this
 // port, and not fixed here, since fixing a pre-existing, unrelated issue is out of scope for a
 // faithful port. metap-reconciler's own compile/diff/executor pipeline is what actually builds

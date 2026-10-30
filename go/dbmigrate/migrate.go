@@ -1,4 +1,4 @@
-// Package dbmigrate applies crates/migrations/*.sql — ported from metap's Rust metap-db-migrate
+// Package dbmigrate applies migrations/*.sql — ported from metap's Rust metap-db-migrate
 // binary. The Rust version is a thin wrapper around sqlx::migrate!, a compile-time proc macro
 // that embeds the migrations directory and tracks applied versions in its own _sqlx_migrations
 // table (SHA-384 checksums, a private sqlx implementation detail).
@@ -30,7 +30,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// migration is one parsed crates/migrations/NNNN_description.sql file.
+// migration is one parsed migrations/NNNN_description.sql file.
 type migration struct {
 	Version     int64
 	Description string

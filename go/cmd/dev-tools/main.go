@@ -96,12 +96,12 @@ func argOr(args []string, i int, def string) string {
 }
 
 // migrationsDir mirrors cmd/db-migrate's own fallback (MIGRATIONS_DIR env override, else
-// "../crates/migrations" relative to this binary's conventional go/ invocation directory).
+// "../migrations" relative to this binary's conventional go/ invocation directory).
 func migrationsDir() string {
 	if dir, ok := runtime.Optional("MIGRATIONS_DIR"); ok {
 		return dir
 	}
-	return "../crates/migrations"
+	return "../migrations"
 }
 
 // connectShared loads .env (if present) and opens a pool against DATABASE_URL with maxConns

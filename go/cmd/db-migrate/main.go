@@ -1,4 +1,4 @@
-// db-migrate applies crates/migrations/*.sql — ported from metap's Rust metap-db-migrate
+// db-migrate applies migrations/*.sql — ported from metap's Rust metap-db-migrate
 // binary. See the dbmigrate package's doc comment for why this tracks applied versions in its
 // own table rather than sqlx's _sqlx_migrations.
 package main
@@ -25,11 +25,9 @@ func main() {
 	migrationsDir := os.Getenv("MIGRATIONS_DIR")
 	if migrationsDir == "" {
 		// Relative to this binary's conventional invocation directory (the go/ module root,
-		// e.g. `go run ./cmd/db-migrate` from go/) — "../migrations" never resolved to a real
-		// directory from there (nor from go/cmd/db-migrate/ itself); there is no top-level
-		// migrations/ in this repo, only crates/migrations/. Found while auditing this binary,
-		// never previously exercised with MIGRATIONS_DIR unset.
-		migrationsDir = "../crates/migrations"
+		// e.g. `go run ./cmd/db-migrate` from go/) — migrations/ lives at the repo root,
+		// alongside go/, not inside it.
+		migrationsDir = "../migrations"
 	}
 
 	ctx := context.Background()

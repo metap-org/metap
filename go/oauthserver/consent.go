@@ -1,6 +1,6 @@
 // Real interactive consent for the (not yet ported) authorize endpoint — before this existed,
 // any already-authenticated caller silently "approved" any registered client's requested scope
-// with no screen shown at all. See crates/migrations/0035_oauth2_consent.sql for the two tables
+// with no screen shown at all. See migrations/0035_oauth2_consent.sql for the two tables
 // this owns and why they're shaped the way they are; metap-http's oauth2 routes (not yet ported)
 // render the actual consent screen, since this package has no HTTP of its own.
 package oauthserver

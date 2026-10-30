@@ -1,20 +1,13 @@
 name: CI
 
-# Phase 8 Hardening ("CI checks", docs/roadmap.md) — the first workflow in the repo. Three
-# independent jobs, none needing external services: Rust unit tests (see metap-query/tests'
-# doc comment convention: unit tests never touch a DB) and a dependency/secrets/SAST scan. The
-# `#[ignore]`d Rust e2e suite (real Postgres/RabbitMQ/Redis/Vault) used to run here too as a 4th
-# job (`rust-e2e`) on every push/PR — moved to its own manual-only workflow (2026-08-28,
-# `e2e-manual.yml` — see that file's doc comment for why: speed + CI-specific flakiness
-# unrelated to most diffs). Treated the same as `testing/`'s security checklist and
-# performance/benchmark suites now: real coverage, run deliberately, not an automatic gate on
-# every commit.
-#
-# A 4th job used to run here too — `frontend` (typecheck/lint/format/test via pnpm) — removed
-# 2026-08-31 when `apps/crm-fe`/`apps/jira-fe` (this repo's only pnpm workspace members) moved
-# out to their own sibling repos (`../metap-demo-crm`, `../metap-demo-jira`) alongside their
-# backend counterparts; this repo has had no frontend workspace content since. Each sibling
-# repo owns its own CI for its own frontend.
+# The backend moved from Rust to Go (feature/go-migration-wave-1) — this workflow was rewritten
+# the same pass to build/test the Go module instead of the Rust workspace it used to. Three
+# independent jobs, none needing external services for the `go` job (unit tests only — see
+# dbmigrate/migrate_test.go's own doc comment convention: an e2e test that needs a real Postgres
+# skips cleanly when one isn't reachable rather than failing the job). The e2e suite (real
+# Postgres/RabbitMQ) used to run here too as a 4th job on every push/PR, same as the Rust-era
+# `rust-e2e` job — not yet re-wired for Go; `e2e-manual.yml` is a placeholder until it is (see
+# that file's own doc comment).
 
 on:
   push:
@@ -26,45 +19,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  rust:
-    name: Rust — build, unit tests, clippy
+  go:
+    name: Go — build, vet, unit tests, fmt
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
         with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      # `.cargo/config.toml` hard-requires the mold linker (2026-09-03) and isn't vendored/
-      # auto-installed by design (see that file's own comment) — every `cargo build`/`test`/
-      # `clippy` step below fails at the link step ("cannot find 'ld'") without this.
-      - run: sudo apt-get update && sudo apt-get install -y mold
-      - run: cargo build --workspace --all-targets --locked
-      # Unit tests only — no DATABASE_URL/RABBITMQ_URL set, so every #[ignore]'d e2e test
-      # is skipped automatically (see crates/metap-query/tests/*.rs's doc comment).
-      - run: cargo test --workspace --locked
-      # `rustfmt.toml` committed and the whole workspace reformatted to it (2026-08-16) —
-      # a real merge gate now, not just informational.
-      - run: cargo fmt --all --check
-      # `-D warnings`: warnings were cleaned up (2026-08-16, docs/roadmap.md Phase 8) — a real
-      # merge gate now, not just informational.
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      # Unit tests only — no DATABASE_URL/RABBITMQ_URL set, so every e2e test that dials a real
+      # Postgres/RabbitMQ skips itself cleanly (each package's own testPool-style helper calls
+      # t.Skipf on a connection failure rather than failing the test).
+      - run: go test ./...
+      # `gofmt -l` prints the files that would change; a non-empty list fails the step.
+      - run: |
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "$files"
+            exit 1
+          fi
 
   security:
-    name: Rust — dependency vulnerability audit
+    name: Go — dependency vulnerability audit
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      # Plain `cargo audit` (not the `rustsec/audit-check` action) — that action files a GitHub
-      # issue per advisory by default, a side effect nobody asked for here. This just fails the
-      # job; the log is the report. `.cargo/audit.toml` ignore-lists one known, unfixable,
-      # not-actually-compiled advisory (see that file's comment) so this stays a real gate for
-      # new/fixable issues instead of permanently red. `testing/security/checklist.md` tracks
-      # what this does and doesn't cover.
-      - run: cargo install cargo-audit --locked
-      - run: cargo audit
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
 
   semgrep:
     name: Semgrep — logic/secrets scan (SAST)
@@ -73,9 +67,6 @@ jobs:
       - uses: actions/checkout@v4
       # Same command as the local dev workflow (`.semgrep.yml`'s doc comment) — registry packs
       # can't be referenced from the file's own `rules:` list, they're passed on the command
-      # line and merged with it. Was local-only by original request; wired into CI once the one
-      # known finding (`crates/metap-dev-tools/src/main.rs`'s CLI-arg dispatch, not security-sensitive)
-      # was suppressed inline with `# nosemgrep`, so this is a real 0-findings gate, not
-      # permanently red.
+      # line and merged with it.
       - run: pip install semgrep
-      - run: semgrep scan --config p/rust --config p/secrets --config .semgrep.yml --error
+      - run: semgrep scan --config p/golang --config p/secrets --config .semgrep.yml --error

@@ -82,7 +82,7 @@ func ProvisionSchemaTenant(ctx context.Context, sharedPool *pgxpool.Pool, regist
 }
 
 // ProvisionDedicatedDbTenant is the paid tier — migrates dedicatedDatabaseURL (a fresh Postgres
-// database) with the same crates/migrations/*.sql the main database runs, so
+// database) with the same migrations/*.sql the main database runs, so
 // records/users/... exist there too, then writes the control.tenants row and creates the admin
 // user on the dedicated database. The caller is responsible for making dsnSecretRef resolvable
 // (EnvStore reads it as an env var name) before this tenant is actually routed to — this

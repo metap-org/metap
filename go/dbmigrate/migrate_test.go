@@ -29,7 +29,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-const realMigrationsDir = "../../crates/migrations"
+const realMigrationsDir = "../../migrations"
 
 func TestLoadMigrationsParsesEveryRealMigrationFileInOrder(t *testing.T) {
 	migrations, err := LoadMigrations(realMigrationsDir)
