@@ -135,7 +135,10 @@ func ListClients(ctx context.Context, db DBTX, tenantID uuid.UUID) ([]*OAuthClie
 	}
 	defer rows.Close()
 
-	var out []*OAuthClient
+	// make(..., 0), not var out []*OAuthClient — a nil Go slice marshals to JSON null, not [],
+	// diverging from the Rust Vec<OAuthClient> wire shape GET /admin/oauth/clients' caller
+	// expects when a tenant has registered no clients yet.
+	out := make([]*OAuthClient, 0)
 	for rows.Next() {
 		c, err := scanClient(rows)
 		if err != nil {

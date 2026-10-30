@@ -19,10 +19,8 @@ import (
 //
 // Core entity CRUD + auth + the admin/platform surface (users, admin roles/policies, cron-jobs,
 // dashboards, preferences, platform/tenant/public config) + attachments/workflow-events/
-// audit-events/metrics are wired below. Still deferred vs. the Rust original: the OAuth2
-// authorization server's 5 RFC routes plus its admin client CRUD — not needed to exercise CRUD
-// or admin configuration, and additive (a later wave adds its own mountX function here without
-// touching this wiring).
+// audit-events/metrics + the OAuth2 authorization server (5 RFC routes + admin client CRUD) are
+// all wired below — this is the full route surface.
 func BuildRouter(state *AppState, corsOrigins []string, extraRoutes func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
 
@@ -62,6 +60,7 @@ func BuildRouter(state *AppState, corsOrigins []string, extraRoutes func(chi.Rou
 	mountAttachments(r, state)
 	mountWorkflowEvents(r, state)
 	mountAuditEvents(r, state)
+	mountOAuth2(r, state)
 	if extraRoutes != nil {
 		extraRoutes(r)
 	}

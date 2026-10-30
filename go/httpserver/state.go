@@ -106,6 +106,13 @@ func (s *AppState) MintToken(tenantID, userID uuid.UUID, ttlSeconds uint64) (str
 	return peripherals.MintJWT(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds)
 }
 
+// MintOAuthToken mints an access token carrying the OAuth2 grant's scope/clientId claims — the
+// Rust original dual-dispatches through an optional metap-jwks TokenSigner first; this port
+// only has the static-RSA-keypair path (same deferral VerifyToken/MintToken already document).
+func (s *AppState) MintOAuthToken(tenantID, userID uuid.UUID, ttlSeconds uint64, scope, clientID string) (string, error) {
+	return peripherals.MintOAuthAccessToken(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds, scope, clientID)
+}
+
 // MetadataFor is the registry tenantID should see right now.
 func (s *AppState) MetadataFor(ctx context.Context, tenantID uuid.UUID) (*metadata.MetadataRegistry, error) {
 	if s.MetadataResolver != nil {
