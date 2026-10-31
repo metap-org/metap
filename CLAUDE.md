@@ -19,7 +19,41 @@ resolves relative to `../metap-docs` instead of this repo, i.e. `docs/roadmap.md
 
 **Docs language policy (set 2026-08-10, all of `docs/` translated to Vietnamese same day):** write docs and project artifacts in Vietnamese for now — this is a deliberate temporary policy while the team is still small, revisit and switch to English once the project takes on non-Vietnamese-speaking contributors. Technical terms stay in English inside Vietnamese prose: code identifiers (crate/package/function/type names, file paths, commands, flags), proper nouns/product names (PostgreSQL, RabbitMQ, axum, sqlx, Rust, React, TypeScript, Docker, JWT, ...), and this project's own glossary/framework vocabulary (`docs/architectures/12-glossary/00-index.md`'s entries — Entity, Tenant, Outbox pattern, EventBus, Workflow transition, Keyset pagination, RBAC/ABAC, etc. — plus arc42/C4 section-name vocabulary like "Building Block View", "ADR"). Code identifiers, comments, commit messages, and CLAUDE.md itself stay in English regardless of this policy.
 
-**Backend stack (2026-08-07 on): Rust — axum + sqlx + PostgreSQL + RabbitMQ** (outbox pattern for reliable event publishing), replacing the original TypeScript backend (Fastify + Zod + Drizzle) in full — see `docs/architectures/09-adr/00-index.md` for the decision record and `docs/roadmap.md`'s Phase 12 for status. `docs/why.md` explains the *unchanged* choices (PostgreSQL, RabbitMQ, the outbox pattern) plus the historical TS-era reasoning for what's since been replaced. `docs/architectures/05-building-blocks/00-index.md` documents the target layering (start at `docs/architectures/index.md` for the full architecture doc set) — the layering is unchanged by the language migration, only the implementation is. `docs/roadmap.md` tracks phased goals. The frontend stack (`@metap/platform-ui`) is unaffected — React/TypeScript, talks to the backend over HTTP only, was never coupled to the backend's implementation language; it has no in-repo consumer app anymore (see the "No example apps in this repo" note below), only its own sibling repo.
+**Backend stack (2026-08-07 to 2026-10-30): Rust — axum + sqlx + PostgreSQL + RabbitMQ** (outbox pattern for reliable event publishing), replacing the original TypeScript backend (Fastify + Zod + Drizzle) in full — see `docs/architectures/09-adr/00-index.md` for the decision record and `docs/roadmap.md`'s Phase 12 for status. `docs/why.md` explains the *unchanged* choices (PostgreSQL, RabbitMQ, the outbox pattern) plus the historical TS-era reasoning for what's since been replaced. `docs/architectures/05-building-blocks/00-index.md` documents the target layering (start at `docs/architectures/index.md` for the full architecture doc set) — the layering is unchanged by either language migration, only the implementation is. `docs/roadmap.md` tracks phased goals. The frontend stack (`@metap/platform-ui`) is unaffected by either backend-language migration — React/TypeScript, talks to the backend over HTTP only, was never coupled to the backend's implementation language; it has no in-repo consumer app anymore (see the "No example apps in this repo" note below), only its own sibling repo.
+
+**Backend moved from Rust to Go (2026-10-30), `crates/` removed from this repo.** `go/` (Go
+module `github.com/metap-org/metap-go`) is now the *sole* backend implementation — every
+`crates/*.rs`/`Cargo.toml`/`cargo <cmd>` reference anywhere below in this file (and in
+`README.md`) is **historical**, describing the Rust-era codebase this file's own
+"don't rewrite history" convention kept rather than deleted, not a path/command that still works
+in this repo. Read every such reference as "this is what the Rust crate used to do/be called,
+and the Go port under `go/` is its faithful replacement" — the package-layering/boundary rules
+(no `metap-*`/`go/*` library package gets business-entity knowledge, routes never touch
+`sqlx`/sql drivers directly, etc.) are unchanged by the language switch, only the syntax of
+"crate" vs. "package" and `cargo` vs. `go` commands is. The Go package tree mirrors the Rust
+crate tree closely but not 1:1 — notably **no Go equivalent of `metap-graphql`/
+`metap-graphql-http`/`metap-graphql-gateway`/`metap-app`**: this Go port kept REST (the
+Rust-era entity-CRUD-to-GraphQL migration documented later in this file never happened on the
+Go side), and `metap-app`'s bootstrap-wrapper convenience was skipped since no downstream Go
+binary needs it yet. `go/` has its own commands (`go build ./...`, `go vet ./...`, `go test
+./...`, `gofmt -l .`, all run from `go/`) — see `README.md`'s Build/test section, not the
+`cargo`-based "Commands" section below, which is Rust-era history. `.github/workflows/ci.yml`/
+`codeql.yml`/`e2e-manual.yml` were rewritten for Go the same pass; `nightly-benchmark.yml`/
+`performance.yml`/`disruptive.yml`/`pentest.yml` were deleted outright rather than ported —
+each depended on Rust-specific test files (`crates/*/tests/chaos_*.rs`, criterion benchmarks) or
+a sibling demo repo's own still-Rust server (`performance.yml`/`pentest.yml` booted
+`../metap-demo-jira`'s Rust binary via `cargo run`), neither of which has a Go equivalent yet —
+a real, disclosed coverage loss (chaos engineering, performance baselines, DAST pentest), not a
+silent one, until those are rebuilt for Go. `crates/migrations/*.sql` moved to a top-level
+`migrations/` directory (sibling of `go/`, not inside it) in the same pass, since `crates/` no
+longer exists to nest it under — every Go reference to "the migrations directory" (`go/cmd/
+db-migrate`'s `MIGRATIONS_DIR` default, `go/cmd/dev-tools`'s `provision-tenant dedicated_db`
+path) points at `../migrations` now, not `../crates/migrations`. Sibling repos that path-depend
+on this repo's Rust crates (`../metap-demo-crm`, `../metap-demo-jira`, `../metap-demo-waf`,
+`../metap-lowcode`, `templates/metap-app`) will not build against this repo until they are
+themselves migrated onto the Go module — a known, accepted, temporary breakage (project owner's
+explicit call: remove Rust from this repo now rather than wait for every downstream repo to be
+ready first).
 
 **Frontend library moved out of this repo (2026-08-28):** the reusable frontend library — formerly `packages/platform-react` (Mantine-based), now retired/deleted — lives as `@metap/platform-ui` in a separate sibling repo, `../platform-ui`, alongside a second sibling repo `../design-system` (`@metap/ui`, Tailwind + Radix + shadcn-style components) that it's built on. Neither is a member of this repo's pnpm workspace (which has had no members of its own since the "No example apps in this repo" change below — see that note for what still consumes them via `link:`). `@metap/platform-ui`'s own `README.md` documents its module list and port status; treat that repo, not this section, as the source of truth for what's in it.
 
@@ -158,6 +192,12 @@ Backend library (`crates/`, a Cargo workspace — see `docs/architectures/09-adr
 `testing/` (repo root) — the backend test-kit control tower (regression/performance/security): docs, a living security checklist, performance baselines, orchestration scripts. No Rust code lives here — actual tests/benchmarks stay in each crate's own `tests/`/`benches/` per normal Cargo convention; `testing/README.md` is the index.
 
 ## Commands
+
+**Historical (Rust era) — see the "Backend moved from Rust to Go" note above.** `crates/` no
+longer exists in this repo; every `cargo`-based command below describes what the removed Rust
+workspace used to do, kept for history rather than deleted. The Go equivalents live in
+`README.md`'s Build/test section (`go build ./...`/`go vet ./...`/`go test ./...`/`gofmt -l .`,
+all run from `go/`) — use that section to actually build/test this repo today.
 
 This repo has no runnable app of its own anymore (see "No example apps in this repo" above) —
 these commands build/test the `crates/` library workspace itself. To actually run something end
