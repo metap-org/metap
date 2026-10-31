@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	grpcmd "google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -45,7 +46,15 @@ var _ crud.RecordBackend = (*GrpcBackend)(nil)
 // a deployment that terminates TLS between services passes grpc.WithTransportCredentials
 // accordingly by building its own grpc.ClientConn and calling NewGrpcBackend instead).
 func ConnectGrpcBackend(addr string, serviceToken *runtime.ServiceTokenSource, dialOpts ...grpc.DialOption) (*GrpcBackend, error) {
-	conn, err := grpc.NewClient(addr, dialOpts...)
+	// Plaintext by default, per this function's own doc comment above — found missing
+	// entirely (grpc.NewClient refuses to dial with no transport credentials configured at
+	// all, "no transport security set") the first time a real caller (the WAF demo's
+	// graphql-gateway) actually exercised this path end to end; every earlier caller's own
+	// e2e coverage happened to never trigger a real connection attempt through this exact
+	// function. A caller's own dialOpts are appended after this default, so passing a real
+	// grpc.WithTransportCredentials(...) still overrides it for a TLS deployment.
+	opts := append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, dialOpts...)
+	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to gRPC upstream at %s: %w", addr, err)
 	}
