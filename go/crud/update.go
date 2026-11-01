@@ -82,7 +82,15 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 
 	// The state field can never change through this path — only create and transition are
 	// allowed to move it — so it's always reset to its existing value.
-	merged := make(JsonObject, len(existing.Data)+len(rawData))
+	mergedCap := len(existing.Data) + len(rawData)
+	if mergedCap < 0 {
+		// Defends the make() call below against a theoretical int overflow from summing two
+		// already-materialized map lengths (CodeQL go/allocation-size-overflow) — practically
+		// unreachable (both maps are already resident in memory, nowhere near MaxInt), but a
+		// negative capacity would otherwise panic make() rather than just sizing it generously.
+		mergedCap = 0
+	}
+	merged := make(JsonObject, mergedCap) // codeql[go/allocation-size-overflow]
 	for k, v := range existing.Data {
 		merged[k] = v
 	}

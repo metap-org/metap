@@ -99,7 +99,15 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 	// A transition's payload goes through the same writable-fields check and field-metadata
 	// validation as Update — the state field itself is always driven by toState, never by the
 	// caller.
-	merged := make(JsonObject, len(existing.Data)+len(payload))
+	mergedCap := len(existing.Data) + len(payload)
+	if mergedCap < 0 {
+		// Defends the make() call below against a theoretical int overflow from summing two
+		// already-materialized map lengths (CodeQL go/allocation-size-overflow) — practically
+		// unreachable (both maps are already resident in memory, nowhere near MaxInt), but a
+		// negative capacity would otherwise panic make() rather than just sizing it generously.
+		mergedCap = 0
+	}
+	merged := make(JsonObject, mergedCap) // codeql[go/allocation-size-overflow]
 	for k, v := range existing.Data {
 		merged[k] = v
 	}

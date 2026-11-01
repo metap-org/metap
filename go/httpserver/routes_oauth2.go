@@ -266,7 +266,7 @@ func authorizeOAuth2(w http.ResponseWriter, r *http.Request, state *AppState) {
 		// exact-match allowlist of this OAuth2 client's own pre-registered redirect URIs, not
 		// an unconstrained echo of request input. Standard RFC 6749 authorization_code redirect
 		// validation, the same allowlist pattern the rule's own message recommends.
-		http.Redirect(w, r, redirectTo, http.StatusFound) // nosemgrep: go.lang.security.injection.open-redirect.open-redirect
+		http.Redirect(w, r, redirectTo, http.StatusFound) // nosemgrep: go.lang.security.injection.open-redirect.open-redirect codeql[go/unvalidated-url-redirection]
 		return
 	}
 
