@@ -18,6 +18,12 @@ const sessionStartedAtCookieName = "metap_session_started_at"
 // top-level navigation into the app from an external link, which would silently look like "not
 // logged in" instead of an actual security boundary.
 func baseCookie(name, value string, httpOnly, secure bool, maxAgeSeconds int) *http.Cookie {
+	// nosemgrep: go.lang.security.audit.net.cookie-missing-httponly.cookie-missing-httponly
+	// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure
+	// False positive: httpOnly/secure are this function's own parameters, not hardcoded false.
+	// Every real caller passes true for both except the CSRF cookie's deliberate httpOnly=false
+	// (see this file's module doc comment for why) — AppState.New defaults CookieSecure to true,
+	// and only a plain-http dev binary opts out explicitly.
 	return &http.Cookie{
 		Name: name, Value: value, Path: "/", SameSite: http.SameSiteLaxMode,
 		Secure: secure, HttpOnly: httpOnly, MaxAge: maxAgeSeconds,

@@ -1,6 +1,6 @@
 module github.com/metap-org/metap-go
 
-go 1.26.0
+go 1.26.9
 
 require (
 	cloud.google.com/go/secretmanager v1.23.1

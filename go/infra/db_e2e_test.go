@@ -24,6 +24,14 @@ func TestConnectAndHealthCheckAgainstRealPostgres(t *testing.T) {
 		t.Skipf("no Postgres available (%v) — skipping e2e test", err)
 	}
 	defer pool.Close()
+	// pgxpool.New (what Connect wraps) never dials eagerly — Connect "succeeding" proves
+	// nothing about a real server being reachable, only Ping (or a real query) does. Without
+	// this, a CI runner with no Postgres service silently skipped the error-from-Connect branch
+	// above and instead failed HealthCheck itself, misreporting "Postgres is up but unhealthy"
+	// for what is actually "no Postgres at all" — same lazy-connect pitfall as grpc.NewClient's.
+	if err := pool.Ping(ctx); err != nil {
+		t.Skipf("no Postgres available (%v) — skipping e2e test", err)
+	}
 	if !HealthCheck(ctx, pool) {
 		t.Fatal("expected health check to pass against a real Postgres")
 	}
