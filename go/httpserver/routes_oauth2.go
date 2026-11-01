@@ -226,6 +226,13 @@ func authorizeOAuth2(w http.ResponseWriter, r *http.Request, state *AppState) {
 	registered := false
 	for _, u := range client.RedirectURIs {
 		if u == redirectURI {
+			// Rebind redirectURI to the trusted, pre-registered copy rather than the raw query
+			// value it happens to equal — every later use (including the eventual
+			// http.Redirect) then flows from this client's own config, not from request input,
+			// which is what actually breaks the taint path a static analyzer follows (equality
+			// against an allowlist entry doesn't, on its own, make the analyzer stop treating the
+			// original query value as tainted).
+			redirectURI = u
 			registered = true
 			break
 		}
