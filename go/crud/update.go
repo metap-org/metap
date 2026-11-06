@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/metap-org/metap-go/audit"
+	"github.com/metap-org/metap-go/metadata"
 	"github.com/metap-org/metap-go/permission"
 	"github.com/metap-org/metap-go/workflow"
 )
@@ -69,6 +70,10 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 	recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(enriched), permission.ActionUpdate)
 	if !recordDecision.Allowed {
 		return forbidden[RecordDto](recordDecision), nil
+	}
+
+	if fe := rejectSystemFields(entity, rawData); fe != nil {
+		return ResultErrWithFieldErrors[RecordDto](400, "validation_failed", fe), nil
 	}
 
 	keys := make([]string, 0, len(rawData))
@@ -130,12 +135,20 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 		tx.Rollback(ctx) //nolint:errcheck
 		return ServiceResult[RecordDto]{}, err
 	}
+	// System fields keep whatever is stored *now*, not the value read at precheck: a concurrent
+	// SetSystemFields does not bump version, so the version check alone would not stop this
+	// UPDATE from writing a stale system value back.
+	systemFields := metadata.SystemFieldNames(entity)
 	updateSQL := fmt.Sprintf(
-		`UPDATE %s SET data = $1, code = $2, version = version + 1, updated_at = now(), updated_by = $3
+		`UPDATE %s SET data = ($1::jsonb - $7::text[]) || COALESCE((SELECT jsonb_object_agg(key, value) FROM jsonb_each(data) WHERE key = ANY($7::text[])), '{}'::jsonb),
+		 code = $2, version = version + 1, updated_at = now(), updated_by = $3
 		 WHERE id = $4 AND tenant_id = $5 AND version = $6 AND deleted = false RETURNING %s`,
 		entity.TableName, recordColumns,
 	)
-	row := tx.QueryRow(ctx, updateSQL, json.RawMessage(dataJSON), code, userID, id, tenantID, expectedVersion)
+	if systemFields == nil {
+		systemFields = []string{}
+	}
+	row := tx.QueryRow(ctx, updateSQL, json.RawMessage(dataJSON), code, userID, id, tenantID, expectedVersion, systemFields)
 	record, err := scanRecordRow(row, entity.Name)
 	if err != nil {
 		if r, ok := uniqueViolation[RecordDto](entity, err); ok {

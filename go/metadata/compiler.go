@@ -292,8 +292,38 @@ func Validate(entity EntityDefinition) error {
 			"tableName %q must be a schema-qualified ^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$ name", entity.TableName))
 	}
 
+	for _, field := range entity.Fields {
+		if !boolVal(field.System) {
+			continue
+		}
+		if boolVal(field.Required) {
+			issues = append(issues, fmt.Sprintf("system field %q cannot be required: users never write it", field.Name))
+		}
+		if field.Computed != nil {
+			issues = append(issues, fmt.Sprintf("field %q cannot be both system and computed", field.Name))
+		}
+		if entity.Workflow != nil && entity.Workflow.StateField == field.Name {
+			issues = append(issues, fmt.Sprintf("workflow state field %q cannot be a system field", field.Name))
+		}
+	}
+
+	for _, field := range entity.Fields {
+		if field.UniqueScope == nil {
+			continue
+		}
+		if *field.UniqueScope != UniqueScopeTenant && *field.UniqueScope != UniqueScopeGlobal {
+			issues = append(issues, fmt.Sprintf("field %q uniqueScope %q must be \"tenant\" or \"global\"", field.Name, *field.UniqueScope))
+		}
+		if !boolVal(field.Unique) {
+			issues = append(issues, fmt.Sprintf("field %q sets uniqueScope without unique: true", field.Name))
+		}
+	}
+
 	seenFieldSets := map[string]bool{}
 	for _, constraint := range entity.UniqueConstraints {
+		if constraint.Scope != nil && *constraint.Scope != UniqueScopeTenant && *constraint.Scope != UniqueScopeGlobal {
+			issues = append(issues, fmt.Sprintf("uniqueConstraints entry %v scope %q must be \"tenant\" or \"global\"", constraint.Fields, *constraint.Scope))
+		}
 		if len(constraint.Fields) < 2 {
 			issues = append(issues, fmt.Sprintf(
 				"uniqueConstraints entry %v needs >= 2 fields — a single field belongs on that field's own \"unique\" flag instead", constraint.Fields))

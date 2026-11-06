@@ -35,6 +35,38 @@ const (
 // unique", distinct from EntityField.Unique (one field, unique on its own).
 type EntityUniqueConstraint struct {
 	Fields []string `json:"fields"`
+	// Scope: see UniqueScope. nil means UniqueScopeTenant.
+	Scope *UniqueScope `json:"scope,omitempty"`
+}
+
+// UniqueScope is how far a uniqueness guarantee reaches inside one physical table. Every
+// table-per-entity table is shared by every tenant routed to it (a Schema-strategy tenant on
+// the default schema, or many tenants on one product schema), so "unique" has to say whether it
+// means "unique among this tenant's own rows" or "unique across every tenant in the table".
+//
+//   - UniqueScopeTenant (the default): the partial unique index leads with tenant_id, so two
+//     tenants can each have a project with key "WEB". This is what almost every business field
+//     wants.
+//   - UniqueScopeGlobal: the index covers the field alone, so the value is unique across every
+//     tenant sharing the table — for values that identify something outside the tenant
+//     (a hostname served by the edge, an API-key prefix looked up before the tenant is known).
+//
+// Note that "global" only reaches as far as the table: a DedicatedDb tenant has its own copy of
+// the table, so platform-wide uniqueness across databases needs a registry outside the entity
+// layer.
+type UniqueScope string
+
+const (
+	UniqueScopeTenant UniqueScope = "tenant"
+	UniqueScopeGlobal UniqueScope = "global"
+)
+
+// ResolveUniqueScope returns the effective scope of an optional scope pointer (nil → tenant).
+func ResolveUniqueScope(scope *UniqueScope) UniqueScope {
+	if scope == nil {
+		return UniqueScopeTenant
+	}
+	return *scope
 }
 
 // ComputedSpec: see EntityField.Computed's doc comment. Expression is a minimal string
@@ -54,6 +86,7 @@ type EntityField struct {
 	Required        *bool         `json:"required,omitempty"`
 	Indexed         *bool         `json:"indexed,omitempty"`
 	Unique          *bool         `json:"unique,omitempty"`
+	UniqueScope     *UniqueScope  `json:"uniqueScope,omitempty"`
 	EnumValues      []string      `json:"enumValues,omitempty"`
 	RefEntity       *string       `json:"refEntity,omitempty"`
 	RefDisplayField *string       `json:"refDisplayField,omitempty"`
@@ -66,6 +99,23 @@ type EntityField struct {
 	MinLength       *uint32       `json:"minLength,omitempty"`
 	MaxLength       *uint32       `json:"maxLength,omitempty"`
 	Computed        *ComputedSpec `json:"computed,omitempty"`
+	// System marks a field the platform writes, never the user: e.g. an API key's lastUsedAt,
+	// a heartbeat, a counter. Create and Update reject it in a payload and Update preserves its
+	// current stored value; it is written only through CrudService.SetSystemFields, which does
+	// not bump version (so it never causes a version_conflict for a user editing the record),
+	// does not emit an outbox event, and does not write an audit entry.
+	System *bool `json:"system,omitempty"`
+}
+
+// SystemFieldNames returns the names of every System field of an entity, in declaration order.
+func SystemFieldNames(entity EntityDefinition) []string {
+	var names []string
+	for _, f := range entity.Fields {
+		if boolVal(f.System) {
+			names = append(names, f.Name)
+		}
+	}
+	return names
 }
 
 // FieldStorageTier is the storage tier a field is promoted to under table-per-entity.

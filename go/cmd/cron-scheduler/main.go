@@ -1,6 +1,6 @@
 // cron-scheduler is the dispatch loop for the cron package's job definitions — ported from
 // metap's Rust metap-cron-scheduler binary. Runs 3 loops concurrently (ticker, executor, trigger
-// listener) plus the OAuth2 expired-token cleanup sweep.
+// listener) plus the OAuth2 expired-token cleanup sweep and audit partition maintenance.
 package main
 
 import (
@@ -140,6 +140,26 @@ func main() {
 		}
 	}
 
+	// AUDIT_PARTITION_INTERVAL_SECONDS=0 turns audit partition maintenance off. It runs against
+	// the main DATABASE_URL, where metadata.audit_trail_entries lives (audit.PostgresStore's pool).
+	auditPartitionSecs := uint64(runtime.EnvOr("AUDIT_PARTITION_INTERVAL_SECONDS", 86400))
+	auditMonthsAhead := int(runtime.EnvOr("AUDIT_PARTITION_MONTHS_AHEAD", 3))
+	var auditPool *pgxpool.Pool
+	if auditPartitionSecs != 0 {
+		switch {
+		case oauthPool != nil:
+			auditPool = oauthPool
+		case config.OutboxDatabaseURLOrDefault() == config.DatabaseURL:
+			auditPool = pool
+		default:
+			auditPool, err = pgxpool.New(ctx, config.DatabaseURL)
+			if err != nil {
+				slog.Error("connecting to postgres for audit partition maintenance", "error", err)
+				os.Exit(1)
+			}
+		}
+	}
+
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return cronscheduler.RunTicker(gctx, pool, executorConfig, tickerConfig) })
 	g.Go(func() error { return cronscheduler.RunExecutor(gctx, executorConnect, pool, executorConfig) })
@@ -151,7 +171,18 @@ func main() {
 		})
 	}
 
+	if auditPool != nil {
+		g.Go(func() error {
+			cronscheduler.RunAuditPartitionMaintenance(gctx, auditPool, time.Duration(auditPartitionSecs)*time.Second, auditMonthsAhead)
+			return nil
+		})
+	}
+
 	runErr := g.Wait()
+
+	if auditPool != nil && auditPool != pool && auditPool != oauthPool {
+		auditPool.Close()
+	}
 
 	if oauthPool != nil && oauthPool != pool {
 		oauthPool.Close()

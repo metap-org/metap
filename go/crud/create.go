@@ -48,6 +48,9 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 		return forbiddenWithField[RecordDto](writeDecision), nil
 	}
 
+	if fe := rejectSystemFields(entity, rawData); fe != nil {
+		return ResultErrWithFieldErrors[RecordDto](400, "validation_failed", fe), nil
+	}
 	data, fieldErrors := ValidatePayload(entity, rawData)
 	if fieldErrors != nil {
 		return ResultErrWithFieldErrors[RecordDto](400, "validation_failed", fieldErrors), nil
