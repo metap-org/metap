@@ -177,7 +177,12 @@ func buildSQL(table string, op DdlOp) []string {
 	case OpCreateIndexConcurrently:
 		return []string{buildCreateIndexSQL(table, op.IndexName, op.IndexSpec)}
 	case OpDropIndexConcurrently:
-		return []string{fmt.Sprintf("DROP INDEX CONCURRENTLY IF EXISTS %s", quoteIdent(op.IndexName))}
+		// The index name must be schema-qualified: table-per-entity tables live in a product
+		// schema (entities, waf, jira, ...) that is not on the search_path, and an unqualified
+		// DROP ... IF EXISTS against it silently drops nothing. The CREATE ... IF NOT EXISTS that
+		// follows a same-name rebuild then also silently no-ops, so the index never changes and
+		// reconcile never converges.
+		return []string{fmt.Sprintf("DROP INDEX CONCURRENTLY IF EXISTS %s.%s", quoteIdent(schemaOf(table)), quoteIdent(op.IndexName))}
 	case OpAddForeignKeyNotValid:
 		return []string{buildAddFkSQL(table, op.FkName, op.FkSpec)}
 	case OpValidateForeignKey:

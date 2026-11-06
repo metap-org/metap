@@ -179,6 +179,11 @@ func Compile(entity metadata.EntityDefinition) (PhysicalSchema, error) {
 		schema.Columns[c.name] = ColumnSpec{SQLType: c.sqlType, Nullable: c.nullable, Origin: ColumnOrigin{Kind: OriginFramework}}
 	}
 
+	// Every table-per-entity table is shared by every tenant routed to it, and every CrudService/
+	// QueryPlanner query filters tenant_id = $n — without an index leading with tenant_id, a
+	// tenant's list/get on a large shared table is a sequential scan of every tenant's rows.
+	schema.Indexes[indexName(entity.Name, "tenant_id", "idx")] = IndexSpec{Expression: tenantColumnExpr, Valid: true}
+
 	for _, field := range entity.Fields {
 		// "code"/"status" are the two framework columns an EntityField is *expected* to
 		// name-collide with — CrudService already mirrors a code-holding or workflow-state
@@ -192,6 +197,7 @@ func Compile(entity metadata.EntityDefinition) (PhysicalSchema, error) {
 
 		sqlType := metadata.FieldKindSQLType(field.Kind)
 		unique := boolVal(field.Unique)
+		uniqueTenantScoped := unique && metadata.ResolveUniqueScope(field.UniqueScope) == metadata.UniqueScopeTenant
 
 		// Searchable always uses an expression-based GIN index straight over data — a field can
 		// also be Unique (waf.zones.hostname, real-world case), so this doesn't unconditionally
@@ -233,7 +239,11 @@ func Compile(entity metadata.EntityDefinition) (PhysicalSchema, error) {
 				if unique {
 					kind = "uniq"
 				}
-				idx := IndexSpec{Expression: fmt.Sprintf(`"%s"`, field.Name), Unique: unique, Valid: true}
+				col := fmt.Sprintf(`"%s"`, field.Name)
+				// A non-unique FK column keeps a single-column index: Postgres's own FK check on
+				// the referenced row (ON DELETE RESTRICT) looks the column up by itself.
+				leadWithTenant := uniqueTenantScoped || (!unique && !isFkReference)
+				idx := IndexSpec{Expression: withTenantPrefix(col, leadWithTenant), Unique: unique, Valid: true}
 				if unique {
 					idx.WhereClause = "deleted = false"
 				}
@@ -263,7 +273,7 @@ func Compile(entity metadata.EntityDefinition) (PhysicalSchema, error) {
 			if unique {
 				kind = "uniq"
 			}
-			idx := IndexSpec{Expression: expr, Unique: unique, Valid: true}
+			idx := IndexSpec{Expression: withTenantPrefix(expr, uniqueTenantScoped || !unique), Unique: unique, Valid: true}
 			if unique {
 				idx.WhereClause = "deleted = false"
 			}
@@ -283,8 +293,9 @@ func Compile(entity metadata.EntityDefinition) (PhysicalSchema, error) {
 			for i, name := range constraint.Fields {
 				exprs[i] = fieldIndexExpression(fieldByName[name])
 			}
+			tenantScoped := metadata.ResolveUniqueScope(constraint.Scope) == metadata.UniqueScopeTenant
 			schema.Indexes[compositeUniqueIndexName(entity.Name, constraint.Fields)] = IndexSpec{
-				Expression: strings.Join(exprs, ", "), Unique: true, Valid: true, WhereClause: "deleted = false",
+				Expression: withTenantPrefix(strings.Join(exprs, ", "), tenantScoped), Unique: true, Valid: true, WhereClause: "deleted = false",
 			}
 		}
 	}
@@ -293,3 +304,16 @@ func Compile(entity metadata.EntityDefinition) (PhysicalSchema, error) {
 }
 
 func boolVal(p *bool) bool { return p != nil && *p }
+
+// tenantColumnExpr is the tenant_id column as an index expression.
+const tenantColumnExpr = `"tenant_id"`
+
+// withTenantPrefix prepends tenant_id to an index expression so the index serves the
+// tenant_id = $n predicate every query carries (and, for a unique index, makes uniqueness
+// per tenant rather than across every tenant sharing the table).
+func withTenantPrefix(expr string, prefix bool) string {
+	if !prefix {
+		return expr
+	}
+	return tenantColumnExpr + ", " + expr
+}

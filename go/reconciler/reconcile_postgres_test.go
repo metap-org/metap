@@ -382,3 +382,83 @@ func TestReferenceFieldGetsARealFkOnceBothEntitiesAreTables(t *testing.T) {
 		t.Fatal("FK to test_reconciler_departments must exist and be validated")
 	}
 }
+
+// insertRawRow writes one row straight into a reconciled table, bypassing CrudService, so a test
+// can probe what the physical unique indexes allow.
+func insertRawRow(ctx context.Context, pool *pgxpool.Pool, table string, tenantID uuid.UUID, data string) error {
+	_, err := pool.Exec(ctx, fmt.Sprintf(
+		`INSERT INTO %s (id, tenant_id, data, version, deleted, created_at, updated_at)
+		 VALUES ($1, $2, $3::jsonb, 1, false, now(), now())`, table),
+		uuid.New(), tenantID, data)
+	return err
+}
+
+// Unique scope end to end: a tenant-scoped unique field allows the same value in two tenants
+// sharing the table and rejects it twice within one tenant; a global-scoped field rejects it
+// across tenants. Also covers the upgrade path: a table whose unique index still has the old
+// table-wide shape converges to the tenant-scoped shape in one corrective pass.
+func TestUniqueScopeTenantAndGlobalOnASharedTable(t *testing.T) {
+	pool := reconcilerTestPool(t)
+	ctx := context.Background()
+	entityName := "test.reconciler_unique_scope"
+	bare := "test_reconciler_unique_scope"
+	table := "entities." + bare
+	dropReconcilerTableIfExists(t, pool, bare)
+	t.Cleanup(func() { dropReconcilerTableIfExists(t, pool, bare) })
+
+	slug := plainField("slug", metadata.KindString)
+	slug.Unique = boolp(true)
+	host := plainField("host", metadata.KindString)
+	host.Unique = boolp(true)
+	global := metadata.UniqueScopeGlobal
+	host.UniqueScope = &global
+	def := testEntity(entityName, []metadata.EntityField{slug, host})
+
+	if _, err := Reconcile(ctx, pool, uuid.Nil, def, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a table reconciled before unique scopes existed: the slug index is table-wide.
+	slugIdx := indexName(entityName, "slug", "uniq")
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`DROP INDEX "entities".%q`, slugIdx)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf(
+		`CREATE UNIQUE INDEX %q ON %s (((data ->> 'slug')::text)) WHERE deleted = false`, slugIdx, table)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Reconcile(ctx, pool, uuid.Nil, def, nil); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Reconcile(ctx, pool, uuid.Nil, def, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.OpsApplied != 0 {
+		t.Fatalf("must converge within 1 corrective pass, got %d ops", again.OpsApplied)
+	}
+
+	tenantA, tenantB := uuid.New(), uuid.New()
+	if err := insertRawRow(ctx, pool, table, tenantA, `{"slug":"web","host":"a.example.com"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := insertRawRow(ctx, pool, table, tenantB, `{"slug":"web","host":"b.example.com"}`); err != nil {
+		t.Fatalf("same slug in another tenant must be allowed: %v", err)
+	}
+	if err := insertRawRow(ctx, pool, table, tenantA, `{"slug":"web","host":"c.example.com"}`); err == nil {
+		t.Fatal("same slug twice in one tenant must be rejected")
+	}
+	if err := insertRawRow(ctx, pool, table, tenantB, `{"slug":"api","host":"a.example.com"}`); err == nil {
+		t.Fatal("global-scoped host must be rejected across tenants")
+	}
+
+	var tenantIndexes int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM pg_indexes WHERE schemaname = 'entities' AND tablename = $1 AND indexname = $2`,
+		bare, indexName(entityName, "tenant_id", "idx")).Scan(&tenantIndexes); err != nil {
+		t.Fatal(err)
+	}
+	if tenantIndexes != 1 {
+		t.Fatal("tenant_id index must exist")
+	}
+}

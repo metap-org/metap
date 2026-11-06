@@ -31,6 +31,7 @@ const (
 	parentsTable       = "entities.test_parents"
 	childrenTable      = "entities.test_children"
 	peopleTable        = "entities.test_people"
+	apiKeysTable       = "entities.test_api_keys"
 )
 
 func testPool(t *testing.T) *pgxpool.Pool {
@@ -59,7 +60,7 @@ func ensureCoreTestTables(t *testing.T, pool *pgxpool.Pool) {
 	}
 	_, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS entities")
 	must(err)
-	for _, table := range []string{ordersTable, auditedOrdersTable, parentsTable, childrenTable, peopleTable} {
+	for _, table := range []string{ordersTable, auditedOrdersTable, parentsTable, childrenTable, peopleTable, apiKeysTable} {
 		_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS `+table+` (
 			id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 			tenant_id uuid NOT NULL,
@@ -104,12 +105,12 @@ func ensureReferenceSyncTrigger(t *testing.T, pool *pgxpool.Pool, table, field s
 
 func cleanupTenant(t *testing.T, pool *pgxpool.Pool, tenantID uuid.UUID) {
 	ctx := context.Background()
-	for _, table := range []string{ordersTable, auditedOrdersTable, parentsTable, childrenTable, peopleTable} {
+	for _, table := range []string{ordersTable, auditedOrdersTable, parentsTable, childrenTable, peopleTable, apiKeysTable} {
 		pool.Exec(ctx, `DELETE FROM metadata.outbox_events WHERE aggregate_id IN (SELECT id FROM `+table+` WHERE tenant_id = $1)`, tenantID)
 	}
 	pool.Exec(ctx, `DELETE FROM metadata.workflow_events WHERE tenant_id = $1`, tenantID)
 	pool.Exec(ctx, `DELETE FROM metadata.audit_trail_entries WHERE tenant_id = $1`, tenantID)
-	for _, table := range []string{ordersTable, auditedOrdersTable, parentsTable, childrenTable, peopleTable} {
+	for _, table := range []string{ordersTable, auditedOrdersTable, parentsTable, childrenTable, peopleTable, apiKeysTable} {
 		pool.Exec(ctx, `DELETE FROM `+table+` WHERE tenant_id = $1`, tenantID)
 	}
 	pool.Exec(ctx, `DELETE FROM metadata.policies WHERE tenant_id = $1`, tenantID)
@@ -614,5 +615,94 @@ func TestAuditedEntityWritesAreRecordedAndUnauditedEntityWritesAreNot(t *testing
 	}
 	if len(events.Data) != 1 || events.Data[0].Action != "create" {
 		t.Fatalf("got %+v", events.Data)
+	}
+}
+
+func apiKeyEntity() metadata.EntityDefinition {
+	return metadata.EntityDefinition{
+		Name: "test.api_keys", Label: "API key", TableName: apiKeysTable,
+		Fields: []metadata.EntityField{
+			{Name: "name", Label: "Name", Kind: metadata.KindString},
+			{Name: "lastUsedAt", Label: "Last used", Kind: metadata.KindDatetime, System: boolPtr(true)},
+		},
+		Audit: &metadata.EntityAuditConfig{Enabled: true},
+	}
+}
+
+// System fields: users cannot write them, SetSystemFields writes them without bumping version,
+// emitting outbox or auditing, and a later user Update keeps the stored system value.
+func TestSystemFieldsAreWrittenOnlyBySetSystemFieldsWithoutVersionBumpOrAudit(t *testing.T) {
+	pool := testPool(t)
+	tenantID := uuid.New()
+	defer cleanupTenant(t, pool, tenantID)
+	ctx := context.Background()
+	rc := adminContext(tenantID)
+
+	reg := metadata.NewMetadataRegistry()
+	if err := reg.Register(apiKeyEntity()); err != nil {
+		t.Fatal(err)
+	}
+	var ptr atomic.Pointer[metadata.MetadataRegistry]
+	ptr.Store(reg)
+	crud := WithAudit(testRouter(pool), &ptr, testPermissions(pool), audit.NewPostgresStore(pool))
+
+	rejected, err := crud.Create(ctx, "test.api_keys", JsonObject{"name": raw("ci"), "lastUsedAt": raw("2026-01-01T00:00:00Z")}, rc, nil)
+	if err != nil || rejected.IsOk || rejected.FieldErrors["lastUsedAt"] == nil {
+		t.Fatalf("create with a system field must be rejected: %v %+v", err, rejected)
+	}
+	created, err := crud.Create(ctx, "test.api_keys", JsonObject{"name": raw("ci")}, rc, nil)
+	if err != nil || !created.IsOk {
+		t.Fatalf("create failed: %v %+v", err, created)
+	}
+	id, versionBefore := created.Data.ID, created.Data.Version
+
+	countAudit := func() int64 {
+		var n int64
+		pool.QueryRow(ctx, `SELECT count(*) FROM metadata.audit_trail_entries WHERE tenant_id = $1 AND record_id = $2`, tenantID, id).Scan(&n)
+		return n
+	}
+	countOutbox := func() int64 {
+		var n int64
+		pool.QueryRow(ctx, `SELECT count(*) FROM metadata.outbox_events WHERE aggregate_id = $1`, id).Scan(&n)
+		return n
+	}
+	auditBefore, outboxBefore := countAudit(), countOutbox()
+
+	found, err := crud.SetSystemFields(ctx, tenantID, "test.api_keys", id, JsonObject{"lastUsedAt": raw("2026-11-06T10:00:00Z")})
+	if err != nil || !found {
+		t.Fatalf("SetSystemFields: found=%v err=%v", found, err)
+	}
+	if _, err := crud.SetSystemFields(ctx, tenantID, "test.api_keys", id, JsonObject{"name": raw("x")}); err == nil {
+		t.Fatal("SetSystemFields must refuse a non-system field")
+	}
+	got, err := crud.Get(ctx, "test.api_keys", id, rc)
+	if err != nil || !got.IsOk {
+		t.Fatalf("get failed: %v %+v", err, got)
+	}
+	if got.Data.Record.Version != versionBefore {
+		t.Fatalf("version must not change: before %d after %d", versionBefore, got.Data.Record.Version)
+	}
+	if string(got.Data.Record.Data["lastUsedAt"]) != `"2026-11-06T10:00:00Z"` {
+		t.Fatalf("got %s", got.Data.Record.Data["lastUsedAt"])
+	}
+	if countAudit() != auditBefore || countOutbox() != outboxBefore {
+		t.Fatal("SetSystemFields must not audit or emit outbox events")
+	}
+
+	if r, _ := crud.Update(ctx, "test.api_keys", id, versionBefore, JsonObject{"lastUsedAt": raw("2020-01-01T00:00:00Z")}, rc, nil); r.IsOk {
+		t.Fatal("update with a system field must be rejected")
+	}
+	// A system write before the user's update must survive it. (The interleaved case, a system
+	// write landing between Update's precheck read and its UPDATE, is covered by the UPDATE's own
+	// SQL re-reading system keys from the stored row; it is not deterministic enough to race here.)
+	if _, err := crud.SetSystemFields(ctx, tenantID, "test.api_keys", id, JsonObject{"lastUsedAt": raw("2026-11-06T11:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := crud.Update(ctx, "test.api_keys", id, versionBefore, JsonObject{"name": raw("ci-renamed")}, rc, nil)
+	if err != nil || !updated.IsOk {
+		t.Fatalf("update failed: %v %+v", err, updated)
+	}
+	if string(updated.Data.Data["lastUsedAt"]) != `"2026-11-06T11:00:00Z"` {
+		t.Fatalf("user update must keep the stored system value, got %s", updated.Data.Data["lastUsedAt"])
 	}
 }

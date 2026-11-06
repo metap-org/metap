@@ -66,8 +66,8 @@ func TestUnpromotedFieldGetsNoColumnAndNoIndex(t *testing.T) {
 	if len(schema.Columns) != len(frameworkColumns) {
 		t.Fatalf("got %d columns", len(schema.Columns))
 	}
-	if len(schema.Indexes) != 0 {
-		t.Fatalf("expected no indexes, got %d", len(schema.Indexes))
+	if len(fieldIdx(schema)) != 0 {
+		t.Fatalf("expected no indexes, got %d", len(fieldIdx(schema)))
 	}
 }
 
@@ -81,11 +81,11 @@ func TestIndexedFieldGetsExpressionIndexNotAColumn(t *testing.T) {
 	if len(schema.Columns) != len(frameworkColumns) {
 		t.Fatal("no new column expected")
 	}
-	if len(schema.Indexes) != 1 {
-		t.Fatalf("got %d indexes", len(schema.Indexes))
+	if len(fieldIdx(schema)) != 1 {
+		t.Fatalf("got %d indexes", len(fieldIdx(schema)))
 	}
-	for _, idx := range schema.Indexes {
-		if idx.Expression != "((data ->> 'departmentId')::text)" {
+	for _, idx := range fieldIdx(schema) {
+		if idx.Expression != `"tenant_id", ((data ->> 'departmentId')::text)` {
 			t.Fatalf("got %q", idx.Expression)
 		}
 		if idx.Unique {
@@ -101,11 +101,11 @@ func TestIndexedDateFieldGetsAnUncastTextExpressionIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(schema.Indexes) != 1 {
-		t.Fatalf("got %d", len(schema.Indexes))
+	if len(fieldIdx(schema)) != 1 {
+		t.Fatalf("got %d", len(fieldIdx(schema)))
 	}
-	for _, idx := range schema.Indexes {
-		if idx.Expression != "(data ->> 'dueDate')" {
+	for _, idx := range fieldIdx(schema) {
+		if idx.Expression != `"tenant_id", (data ->> 'dueDate')` {
 			t.Fatalf("got %q", idx.Expression)
 		}
 	}
@@ -130,8 +130,8 @@ func TestStorageColumnOverridePromotesToARealColumn(t *testing.T) {
 	if col.Origin.Kind != OriginGenerated {
 		t.Fatal("expected Generated origin")
 	}
-	if len(schema.Indexes) != 1 {
-		t.Fatalf("got %d", len(schema.Indexes))
+	if len(fieldIdx(schema)) != 1 {
+		t.Fatalf("got %d", len(fieldIdx(schema)))
 	}
 }
 
@@ -147,10 +147,10 @@ func TestUniqueStorageColumnGetsASinglePartialUniqueIndexNotABlanketConstraint(t
 	if len(schema.Uniques) != 0 {
 		t.Fatal("expected no blanket unique constraints")
 	}
-	if len(schema.Indexes) != 1 {
-		t.Fatalf("got %d", len(schema.Indexes))
+	if len(fieldIdx(schema)) != 1 {
+		t.Fatalf("got %d", len(fieldIdx(schema)))
 	}
-	for _, idx := range schema.Indexes {
+	for _, idx := range fieldIdx(schema) {
 		if !idx.Unique {
 			t.Fatal("expected unique")
 		}
@@ -178,10 +178,10 @@ func TestReferenceFieldGetsFkRegardlessOfIndexedFlag(t *testing.T) {
 			t.Fatalf("got %q", fk.RefColumn)
 		}
 	}
-	if len(schema.Indexes) != 1 {
-		t.Fatalf("got %d", len(schema.Indexes))
+	if len(fieldIdx(schema)) != 1 {
+		t.Fatalf("got %d", len(fieldIdx(schema)))
 	}
-	for _, idx := range schema.Indexes {
+	for _, idx := range fieldIdx(schema) {
 		if idx.Expression != `"departmentId"` {
 			t.Fatalf("got %q", idx.Expression)
 		}
@@ -196,7 +196,7 @@ func TestSearchableFtsFieldGetsGinTsvectorExpressionIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, idx := range schema.Indexes {
+	for _, idx := range fieldIdx(schema) {
 		if !strings.Contains(idx.Expression, "to_tsvector") {
 			t.Fatalf("got %q", idx.Expression)
 		}
@@ -213,7 +213,7 @@ func TestSearchableSubstringFieldGetsGinTrgmExpressionIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, idx := range schema.Indexes {
+	for _, idx := range fieldIdx(schema) {
 		if !strings.Contains(idx.Expression, "gin_trgm_ops") {
 			t.Fatalf("got %q", idx.Expression)
 		}
@@ -228,11 +228,11 @@ func TestSearchableAndUniqueFieldGetsBothAGinIndexAndAPartialUniqueIndex(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(schema.Indexes) != 2 {
-		t.Fatalf("expected 2 indexes, got %d", len(schema.Indexes))
+	if len(fieldIdx(schema)) != 2 {
+		t.Fatalf("expected 2 indexes, got %d", len(fieldIdx(schema)))
 	}
 	var foundGin, foundUnique bool
-	for _, idx := range schema.Indexes {
+	for _, idx := range fieldIdx(schema) {
 		if strings.Contains(idx.Expression, "gin_trgm_ops") {
 			foundGin = true
 			if idx.Unique {
@@ -258,10 +258,10 @@ func TestCompositeUniqueConstraintBuildsOnePartialUniqueIndexOverBothFields(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(schema.Indexes) != 1 {
-		t.Fatalf("expected exactly 1 index, got %d", len(schema.Indexes))
+	if len(fieldIdx(schema)) != 1 {
+		t.Fatalf("expected exactly 1 index, got %d", len(fieldIdx(schema)))
 	}
-	for _, idx := range schema.Indexes {
+	for _, idx := range fieldIdx(schema) {
 		if !idx.Unique {
 			t.Fatal("expected unique")
 		}
@@ -311,5 +311,80 @@ func TestCompileRejectsAnEntityWhoseTableNameWouldBeTooLong(t *testing.T) {
 	_, err := Compile(testEntity(longName, nil))
 	if err == nil || !strings.Contains(err.Error(), "63-byte") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// fieldIdx is the schema's indexes minus the tenant_id index every table gets, so per-field
+// tests can count only the indexes their field produced.
+func fieldIdx(schema PhysicalSchema) map[string]IndexSpec {
+	out := map[string]IndexSpec{}
+	for name, idx := range schema.Indexes {
+		if strings.HasPrefix(name, "idx_") && strings.HasSuffix(name, "_tenant_id") {
+			continue
+		}
+		out[name] = idx
+	}
+	return out
+}
+
+func TestEveryTableGetsATenantIDIndex(t *testing.T) {
+	schema, err := Compile(testEntity("t.e", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, ok := schema.Indexes[indexName("t.e", "tenant_id", "idx")]
+	if !ok || idx.Expression != `"tenant_id"` || idx.Unique {
+		t.Fatalf("got %+v (present=%v)", idx, ok)
+	}
+}
+
+func TestUniqueScopeTenantByDefaultGlobalWhenAsked(t *testing.T) {
+	tenantF := plainField("slug", metadata.KindString)
+	tenantF.Unique = boolp(true)
+	globalF := plainField("hostname", metadata.KindString)
+	globalF.Unique = boolp(true)
+	g := metadata.UniqueScopeGlobal
+	globalF.UniqueScope = &g
+	schema, err := Compile(testEntity("t.e", []metadata.EntityField{tenantF, globalF}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := schema.Indexes[indexName("t.e", "slug", "uniq")].Expression; got != `"tenant_id", ((data ->> 'slug')::text)` {
+		t.Fatalf("tenant-scoped unique: got %q", got)
+	}
+	if got := schema.Indexes[indexName("t.e", "hostname", "uniq")].Expression; got != `((data ->> 'hostname')::text)` {
+		t.Fatalf("global unique: got %q", got)
+	}
+}
+
+func TestCompositeUniqueConstraintLeadsWithTenantUnlessGlobal(t *testing.T) {
+	e := testEntity("t.e", []metadata.EntityField{plainField("type", metadata.KindString), plainField("value", metadata.KindString)})
+	e.UniqueConstraints = []metadata.EntityUniqueConstraint{{Fields: []string{"type", "value"}}}
+	schema, err := Compile(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := compositeUniqueIndexName("t.e", []string{"type", "value"})
+	if got := schema.Indexes[name].Expression; !strings.HasPrefix(got, `"tenant_id", `) {
+		t.Fatalf("got %q", got)
+	}
+	g := metadata.UniqueScopeGlobal
+	e.UniqueConstraints[0].Scope = &g
+	schema, _ = Compile(e)
+	if got := schema.Indexes[name].Expression; strings.Contains(got, "tenant_id") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestNonUniqueFkColumnKeepsSingleColumnIndex(t *testing.T) {
+	f := plainField("projectId", metadata.KindReference)
+	ref := "t.p"
+	f.RefEntity = &ref
+	schema, err := Compile(testEntity("t.e", []metadata.EntityField{f}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := schema.Indexes[indexName("t.e", "projectId", "idx")].Expression; got != `"projectId"` {
+		t.Fatalf("got %q", got)
 	}
 }

@@ -16,6 +16,8 @@ func EntityFieldJSONSchema() map[string]any {
 			"required":        map[string]any{"type": "boolean"},
 			"indexed":         map[string]any{"type": "boolean"},
 			"unique":          map[string]any{"type": "boolean"},
+			"uniqueScope":     map[string]any{"type": "string", "enum": []string{"tenant", "global"}},
+			"system":          map[string]any{"type": "boolean"},
 			"enumValues":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"refEntity":       map[string]any{"type": "string"},
 			"refDisplayField": map[string]any{"type": "string"},
