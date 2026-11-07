@@ -2,22 +2,20 @@ name: E2E (manual)
 
 # Runs the full Go e2e suite (real Postgres/RabbitMQ/Redis) — moved out of `ci.yml` and into its
 # own manual-only workflow, same "own file, own trigger" convention this file established back
-# in the Rust era (2026-08-28) for a job too slow/service-dependent for every push/PR. Unlike
-# Rust's `#[ignore]` attribute, Go has no language-level "only run with a flag" marker — every
-# e2e test here is a plain `TestXxx` function whose own `testPool`-style helper tries to connect
-# and calls `t.Skip` on failure, so the *same* `go test ./...` command `ci.yml`'s `go` job runs
-# becomes the e2e suite the moment DATABASE_URL/RABBITMQ_URL/REDIS_URL are set and reachable —
-# this workflow is that same command, with real services attached instead of none.
+# in the Rust era (2026-08-28) for a job too slow/service-dependent for every push/PR. Since
+# 2026-11-07 integration tests carry `//go:build integration` (so `ci.yml`'s plain `go test ./...`
+# never compiles them) and use `pkg/testkit`, which fails — never skips — when a service is
+# unreachable.
 #
 # Rust-era history (kept, not rewritten): this workflow used to also provision a dev Vault
 # server with 3 AppRole roles for `metap-control`'s `vault_store.rs` e2e tests — no Go
-# equivalent of those tests exists yet (`go/control/vaultstore.go` has no e2e test file), so
+# equivalent of those tests exists yet (`pkg/control/vaultstore.go` has no e2e test file), so
 # Vault isn't provisioned here. Add it back the same way (a `vault:` services entry + an
 # AppRole-provisioning step) if/when that gap is closed.
 #
-# Run locally: `go test ./...` from `go/` (needs `docker compose up -d postgres rabbitmq` first,
-# per CLAUDE.md's Commands section; REDIS_URL additionally needs a real Redis/DragonflyDB
-# server). Run in CI: trigger this workflow manually (Actions tab → "E2E (manual)" → "Run
+# Run locally from the repo root: `docker compose up -d postgres dragonfly`, then
+# `REDIS_URL=redis://127.0.0.1:6379 go test -tags integration ./...` (testkit defaults to the
+# compose Postgres on localhost:5433; override with METAP_TEST_DATABASE_URL or DATABASE_URL). Run in CI: trigger this workflow manually (Actions tab → "E2E (manual)" → "Run
 # workflow", or `gh workflow run e2e-manual.yml`).
 
 on:
@@ -51,7 +49,7 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-      # go/cache's RedisCache e2e test needs a real RESP-protocol server. Plain `redis:7-alpine`
+      # pkg/cache's RedisCache e2e test needs a real RESP-protocol server. Plain `redis:7-alpine`
       # rather than the DragonflyDB image `docker-compose.yml` runs for local dev — same wire
       # protocol (that package's own doc comment: "works unmodified against any of them"), and
       # `redis:` is the image GitHub Actions' own docs use for a services-block Redis.
@@ -67,18 +65,14 @@ jobs:
       DATABASE_URL: postgres://metap:metap@localhost:5432/metap
       RABBITMQ_URL: amqp://metap:metap@localhost:5672
       REDIS_URL: redis://127.0.0.1:6379
-    defaults:
-      run:
-        working-directory: go
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-      # A fresh DB, no prior schema to reconcile with — the service container above starts empty
-      # every run.
-      - name: Apply migrations
-        run: go run ./cmd/db-migrate
-      - name: Run e2e tests
-        run: go test ./... -timeout 10m
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # No separate migrate step: pkg/testkit builds a migrated template database from the
+      # embedded migrations itself and clones a fresh database per test. Integration tests FAIL
+      # (never skip) when Postgres/Redis is unreachable, so a green run means they really ran.
+      - name: Run integration tests
+        run: go test -tags integration ./... -timeout 10m

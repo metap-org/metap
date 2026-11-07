@@ -22,21 +22,23 @@ jobs:
   go:
     name: Go — build, vet, unit tests, fmt
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: go
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - run: go build ./...
       - run: go vet ./...
-      # Unit tests only — no DATABASE_URL/RABBITMQ_URL set, so every e2e test that dials a real
-      # Postgres/RabbitMQ skips itself cleanly (each package's own testPool-style helper calls
-      # t.Skipf on a connection failure rather than failing the test).
+      # Unit tests only — integration tests carry `//go:build integration` and aren't compiled
+      # without that tag (see e2e-manual.yml, which runs them against real Postgres/Redis).
       - run: go test ./...
+      # The integration build must at least compile and vet, even though it isn't run here.
+      - run: go vet -tags integration ./...
+      # Architecture guard (.golangci.yml): pkg/kit must stay standard-library-only.
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
       # `gofmt -l` prints the files that would change; a non-empty list fails the step.
       - run: |
           files=$(gofmt -l .)
@@ -48,15 +50,12 @@ jobs:
   security:
     name: Go — dependency vulnerability audit
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: go
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
 

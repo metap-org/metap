@@ -1,0 +1,30 @@
+# Architecture guard only (not a style linter): `golangci-lint run ./...` from the repo root.
+# Enable more linters deliberately, in their own change — turning on the defaults here would
+# bury this rule's signal under unrelated findings.
+version: "2"
+linters:
+  default: none
+  enable:
+    - depguard
+  settings:
+    depguard:
+      rules:
+        # pkg/kit is imported by code outside the management plane (../waap's control-plane and
+        # edge-plane) — it must stay standard-library-only so importing it never pulls in pgx,
+        # chi, prometheus or any platform package.
+        kit:
+          list-mode: strict
+          files:
+            - "**/pkg/kit/**"
+            - "!$test"
+          allow:
+            - $gostd
+            - github.com/metap-org/metap/pkg/kit
+        kit-tests:
+          list-mode: strict
+          files:
+            - "**/pkg/kit/**/*_test.go"
+          allow:
+            - $gostd
+            - github.com/metap-org/metap/pkg/kit
+            - github.com/stretchr/testify

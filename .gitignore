@@ -4,11 +4,11 @@ keys/
 .claude/settings.local.json
 tmp/
 
-# Compiled Go binaries from go/cmd/* (e.g. `go build -o dev-tools ./cmd/dev-tools` or a bare
-# `go build` from inside a cmd/ directory) — found live, 2026-10-30: a stray 17.5MB `go/db-migrate`
+# Compiled Go binaries from cmd/* (e.g. `go build -o dev-tools ./cmd/dev-tools` or a bare
+# `go build` from inside a cmd/ directory) — found live, 2026-10-30: a stray 17.5MB `db-migrate`
 # binary almost got committed.
-/go/dev-tools
-/go/db-migrate
-/go/cron-scheduler
-/go/notification-worker
-/go/outbox-publisher
+/dev-tools
+/db-migrate
+/cron-scheduler
+/notification-worker
+/outbox-publisher
