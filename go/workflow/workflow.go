@@ -163,7 +163,9 @@ func ConditionAttributes(c permission.PolicyCondition) []string {
 // guard or validator to evaluate against. The copy is never written back: `$workflow` exists
 // only while a condition is evaluated.
 func WithWorkflowContext(data JSONObject, actors map[string]string) JSONObject {
-	out := make(JSONObject, len(data)+1)
+	// No capacity hint: CodeQL flags a computed allocation size (len+1) as a possible overflow,
+	// same as the note in crud/transition.go; an un-sized map just grows.
+	out := make(JSONObject)
 	for k, v := range data {
 		out[k] = v
 	}
