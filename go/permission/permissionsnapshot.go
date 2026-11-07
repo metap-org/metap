@@ -15,6 +15,10 @@ type JsonObject map[string]json.RawMessage
 type PermissionSnapshot struct {
 	fieldPolicies          []PolicyRow
 	recordPoliciesByAction map[string][]PolicyRow
+	// contextPoliciesByAction holds the entity-level (context-subject, no field) policies, so a
+	// read path that already loaded the snapshot can answer "may this caller take action X on
+	// this entity at all" for capabilities without another round trip per action.
+	contextPoliciesByAction map[string][]PolicyRow
 }
 
 func LoadPermissionSnapshot(ctx context.Context, store PolicyStore, tenantID uuid.UUID, entity string) (*PermissionSnapshot, error) {
@@ -28,6 +32,7 @@ func LoadPermissionSnapshot(ctx context.Context, store PolicyStore, tenantID uui
 func PermissionSnapshotFromRows(rows []PolicyRow) *PermissionSnapshot {
 	var fieldPolicies []PolicyRow
 	recordPoliciesByAction := map[string][]PolicyRow{}
+	contextPoliciesByAction := map[string][]PolicyRow{}
 	for _, row := range rows {
 		if row.Field != "" {
 			fieldPolicies = append(fieldPolicies, row)
@@ -35,8 +40,39 @@ func PermissionSnapshotFromRows(rows []PolicyRow) *PermissionSnapshot {
 		if row.Field == "" && row.Subject == "record" {
 			recordPoliciesByAction[row.Action] = append(recordPoliciesByAction[row.Action], row)
 		}
+		if row.Field == "" && row.Subject == "context" {
+			contextPoliciesByAction[row.Action] = append(contextPoliciesByAction[row.Action], row)
+		}
 	}
-	return &PermissionSnapshot{fieldPolicies: fieldPolicies, recordPoliciesByAction: recordPoliciesByAction}
+	return &PermissionSnapshot{fieldPolicies: fieldPolicies, recordPoliciesByAction: recordPoliciesByAction,
+		contextPoliciesByAction: contextPoliciesByAction}
+}
+
+// CanPerformEntityAction answers the entity-level check for action from the snapshot, with the
+// same rules as PermissionService.checkAction (OAuth2 scope first, then admin bypass, then
+// policies, default deny). Used for capabilities, so a caller is never shown an action the
+// write path would then reject at the entity level.
+func (s *PermissionSnapshot) CanPerformEntityAction(ctx *RequestContext, entityName string, action EntityAction) PermissionDecision {
+	if !ctx.ScopePermits(entityName, action) {
+		return Forbidden()
+	}
+	if ctx.IsAdmin() {
+		return Allowed()
+	}
+	return contextVerdict(s.contextPoliciesByAction[action.String()], ctx)
+}
+
+// CanTransitionAction is the snapshot counterpart of PermissionService.CanTransitionAction.
+func (s *PermissionSnapshot) CanTransitionAction(ctx *RequestContext, entityName, action string) PermissionDecision {
+	if !ctx.ScopePermits(entityName, ActionTransition) {
+		return Forbidden()
+	}
+	if ctx.IsAdmin() {
+		return Allowed()
+	}
+	rows := append(append([]PolicyRow{}, s.contextPoliciesByAction[ActionTransition.String()]...),
+		s.contextPoliciesByAction[TransitionActionPolicy(action)]...)
+	return contextVerdict(rows, ctx)
 }
 
 func (s *PermissionSnapshot) GetRecordPolicies(action EntityAction) []PolicyRow {

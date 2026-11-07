@@ -73,9 +73,11 @@ func workflowTransitionJSONSchema() map[string]any {
 			// PolicyCondition (permission package) is a recursive untagged shape — left
 			// untyped rather than hand-modeling the recursion here, same reasoning as Json
 			// below: this generator describes entity data shape, not permission's wire format.
-			"guard":     map[string]any{},
-			"validator": map[string]any{},
-			"setFields": map[string]any{"type": "object"},
+			"guard":            map[string]any{},
+			"validator":        map[string]any{},
+			"setFields":        map[string]any{"type": "object"},
+			"guardMessage":     map[string]any{"type": "string"},
+			"validatorMessage": map[string]any{"type": "string"},
 		},
 		"required": []string{"action", "from", "to", "label"},
 	}

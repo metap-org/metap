@@ -91,6 +91,43 @@ func (s *PermissionService) CanTransitionEntity(ctx context.Context, rc *Request
 	return s.checkAction(ctx, rc, entity, ActionTransition)
 }
 
+// CanTransitionAction is the entity-level check for one workflow action: policies on the plain
+// `transition` action grant (or deny) every action, as before; policies on
+// TransitionActionPolicy(action), e.g. `transition:approve`, grant or deny only that one. Both
+// sets are evaluated together, so an explicit deny on either wins, and a role holding only
+// `transition:submit` can submit but not approve. Same OAuth2-scope-first, admin-bypass order
+// as checkAction.
+func (s *PermissionService) CanTransitionAction(goCtx context.Context, ctx *RequestContext, entityName, action string) (PermissionDecision, error) {
+	if !ctx.ScopePermits(entityName, ActionTransition) {
+		return Forbidden(), nil
+	}
+	if ctx.IsAdmin() {
+		return Allowed(), nil
+	}
+	tenantID, err := s.ScopedTenant(ctx)
+	if err != nil {
+		return PermissionDecision{}, err
+	}
+	generic, err := s.store.FindContextPolicies(goCtx, tenantID, entityName, ActionTransition.String())
+	if err != nil {
+		return PermissionDecision{}, err
+	}
+	specific, err := s.store.FindContextPolicies(goCtx, tenantID, entityName, TransitionActionPolicy(action))
+	if err != nil {
+		return PermissionDecision{}, err
+	}
+	return contextVerdict(append(generic, specific...), ctx), nil
+}
+
+// contextVerdict turns a set of context-subject policies into a decision: allow only on an
+// explicit allow with no matching deny; anything else is the default deny.
+func contextVerdict(rows []PolicyRow, ctx *RequestContext) PermissionDecision {
+	if EvaluatePolicies(rows, ctx, nil, false) == VerdictAllow {
+		return Allowed()
+	}
+	return Forbidden()
+}
+
 func (s *PermissionService) LoadSnapshot(ctx context.Context, tenantID uuid.UUID, entity string) (*PermissionSnapshot, error) {
 	if s.cache == nil {
 		return LoadPermissionSnapshot(ctx, s.store, tenantID, entity)

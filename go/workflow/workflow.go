@@ -73,6 +73,9 @@ func RunGuard(transition *metadata.WorkflowTransition, data JSONObject, context 
 	if result.IsPassed() {
 		return nil
 	}
+	if transition.GuardMessage != "" {
+		return fmt.Errorf("%s", transition.GuardMessage)
+	}
 	reason, ok := result.Reason()
 	if !ok {
 		reason = "guard failed"
@@ -94,11 +97,114 @@ func RunValidator(transition *metadata.WorkflowTransition, nextData JSONObject, 
 	if result.IsPassed() {
 		return nil
 	}
+	if transition.ValidatorMessage != "" {
+		return fmt.Errorf("%s", transition.ValidatorMessage)
+	}
 	reason, ok := result.Reason()
 	if !ok {
 		reason = "validator failed"
 	}
 	return fmt.Errorf("%s", reason)
+}
+
+// workflowContextKey is the reserved subject key guards and validators read
+// `$workflow.actors.<action>` from (permission.WorkflowAttributePrefix without the dot).
+const workflowContextKey = "$workflow"
+
+// UsesWorkflowContext reports whether any guard or validator of entity reads `$workflow.` —
+// only then is the workflow_events lookup worth doing on a read or a transition.
+func UsesWorkflowContext(entity metadata.EntityDefinition) bool {
+	if entity.Workflow == nil {
+		return false
+	}
+	for _, t := range entity.Workflow.Transitions {
+		if conditionUsesPrefix(t.Guard, permission.WorkflowAttributePrefix) || conditionUsesPrefix(t.Validator, permission.WorkflowAttributePrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func conditionUsesPrefix(c *permission.PolicyCondition, prefix string) bool {
+	if c == nil {
+		return false
+	}
+	for _, attribute := range ConditionAttributes(*c) {
+		if len(attribute) >= len(prefix) && attribute[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
+}
+
+// ConditionAttributes lists every leaf attribute of c, depth-first.
+func ConditionAttributes(c permission.PolicyCondition) []string {
+	var out []string
+	var walk func(permission.PolicyCondition)
+	walk = func(c permission.PolicyCondition) {
+		switch {
+		case c.All != nil:
+			for _, inner := range c.All {
+				walk(inner)
+			}
+		case c.Any != nil:
+			for _, inner := range c.Any {
+				walk(inner)
+			}
+		default:
+			out = append(out, c.Attribute)
+		}
+	}
+	walk(c)
+	return out
+}
+
+// WithWorkflowContext returns a copy of data with `$workflow` set to {"actors": actors}, for a
+// guard or validator to evaluate against. The copy is never written back: `$workflow` exists
+// only while a condition is evaluated.
+func WithWorkflowContext(data JSONObject, actors map[string]string) JSONObject {
+	out := make(JSONObject, len(data)+1)
+	for k, v := range data {
+		out[k] = v
+	}
+	if actors == nil {
+		actors = map[string]string{}
+	}
+	b, _ := json.Marshal(map[string]any{"actors": actors})
+	out[workflowContextKey] = b
+	return out
+}
+
+// LastActors returns, per record, the user who most recently performed each action on it
+// (action -> user ID), from the append-only workflow_events ledger. Events without an actor
+// (system transitions) are skipped. Records with no events are absent from the map.
+func LastActors(ctx context.Context, db DBTX, tenantID uuid.UUID, entity string, recordIDs []uuid.UUID) (map[uuid.UUID]map[string]string, error) {
+	out := map[uuid.UUID]map[string]string{}
+	if len(recordIDs) == 0 {
+		return out, nil
+	}
+	rows, err := db.Query(ctx,
+		`SELECT DISTINCT ON (record_id, action) record_id, action, actor
+		 FROM workflow_events
+		 WHERE tenant_id = $1 AND entity = $2 AND record_id = ANY($3) AND actor IS NOT NULL
+		 ORDER BY record_id, action, created_at DESC, id DESC`,
+		tenantID, entity, recordIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var recordID, actor uuid.UUID
+		var action string
+		if err := rows.Scan(&recordID, &action, &actor); err != nil {
+			return nil, err
+		}
+		if out[recordID] == nil {
+			out[recordID] = map[string]string{}
+		}
+		out[recordID][action] = actor.String()
+	}
+	return out, rows.Err()
 }
 
 // ApplySetFields is the declarative post-function: writes transition.SetFields into data in

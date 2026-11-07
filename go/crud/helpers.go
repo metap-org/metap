@@ -392,7 +392,12 @@ func maskRecordForRead(entity metadata.EntityDefinition, rc *permission.RequestC
 	return row
 }
 
-func computeCapabilities(entity metadata.EntityDefinition, rc *permission.RequestContext, snapshot *permission.PermissionSnapshot, existingData JsonObject) RecordCapabilities {
+// computeCapabilities: what this caller may do with this record, so a UI can show each user only
+// the actions (and workflow transitions) they can actually take. Every flag is the conjunction of
+// the same checks the write path makes — entity-level policy, record-level policy, and for a
+// transition the per-action policy and the guard — so a capability is never offered and then
+// refused. actors is `$workflow.actors` for this record (nil when no guard reads it).
+func computeCapabilities(entity metadata.EntityDefinition, rc *permission.RequestContext, snapshot *permission.PermissionSnapshot, existingData JsonObject, actors map[string]string) RecordCapabilities {
 	allFieldNames := make([]string, len(entity.Fields))
 	for i, f := range entity.Fields {
 		allFieldNames[i] = f.Name
@@ -400,10 +405,11 @@ func computeCapabilities(entity metadata.EntityDefinition, rc *permission.Reques
 	writableFields := snapshot.WritableFields(rc, allFieldNames, permission.JsonObject(existingData), true)
 
 	recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(existingData), permission.ActionUpdate)
-	canUpdate := recordDecision.Allowed
+	canUpdate := recordDecision.Allowed && snapshot.CanPerformEntityAction(rc, entity.Name, permission.ActionUpdate).Allowed
 	transitionDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(existingData), permission.ActionTransition)
 	deleteDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(existingData), permission.ActionDelete)
-	canDelete := deleteDecision.Allowed
+	canDelete := deleteDecision.Allowed && snapshot.CanPerformEntityAction(rc, entity.Name, permission.ActionDelete).Allowed
+	guardSubject := workflow.WithWorkflowContext(existingData, actors)
 
 	var transitions []TransitionAvailability
 	var currentState string
@@ -427,7 +433,12 @@ func computeCapabilities(entity metadata.EntityDefinition, rc *permission.Reques
 				transitions = append(transitions, TransitionAvailability{Action: transition.Action, Available: false, Reason: reason})
 				continue
 			}
-			guardErr := workflow.RunGuard(&transition, permission.JsonObject(existingData), rc)
+			if actionDecision := snapshot.CanTransitionAction(rc, entity.Name, transition.Action); !actionDecision.Allowed {
+				r := actionDecision.Reason
+				transitions = append(transitions, TransitionAvailability{Action: transition.Action, Available: false, Reason: &r})
+				continue
+			}
+			guardErr := workflow.RunGuard(&transition, guardSubject, rc)
 			var reason *string
 			if guardErr != nil {
 				r := guardErr.Error()

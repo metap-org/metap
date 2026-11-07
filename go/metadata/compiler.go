@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/metap-org/metap-go/permission"
 )
 
 // implicitSystemFields are always present on every entity's underlying row regardless of
@@ -216,8 +218,41 @@ func Validate(entity EntityDefinition) error {
 			}
 		}
 
+		transitionActions := map[string]bool{}
+		for _, transition := range workflow.Transitions {
+			transitionActions[transition.Action] = true
+		}
+
 		seenTransitionKeys := map[string]bool{}
 		for _, transition := range workflow.Transitions {
+			if transition.GuardMessage != "" && transition.Guard == nil {
+				issues = append(issues, fmt.Sprintf("transition %q has guardMessage but no guard", transition.Action))
+			}
+			if transition.ValidatorMessage != "" && transition.Validator == nil {
+				issues = append(issues, fmt.Sprintf("transition %q has validatorMessage but no validator", transition.Action))
+			}
+			for _, condition := range []*permission.PolicyCondition{transition.Guard, transition.Validator} {
+				if condition == nil {
+					continue
+				}
+				for _, attribute := range conditionAttributes(*condition) {
+					rest, ok := strings.CutPrefix(attribute, permission.WorkflowAttributePrefix)
+					if !ok {
+						continue
+					}
+					action, ok := strings.CutPrefix(rest, "actors.")
+					if !ok || action == "" || strings.Contains(action, ".") {
+						issues = append(issues, fmt.Sprintf(
+							"transition %q condition attribute %q: only %sactors.<action> is supported",
+							transition.Action, attribute, permission.WorkflowAttributePrefix))
+					} else if !transitionActions[action] {
+						issues = append(issues, fmt.Sprintf(
+							"transition %q condition attribute %q references unknown workflow action %q",
+							transition.Action, attribute, action))
+					}
+				}
+			}
+
 			if transition.From == "" || transition.To == "" || transition.Action == "" {
 				issues = append(issues, fmt.Sprintf(
 					"workflow transition is missing from/to/action: {\"from\":%q,\"to\":%q,\"action\":%q}",
@@ -375,4 +410,25 @@ func Validate(entity EntityDefinition) error {
 		return nil
 	}
 	return &ValidationError{Entity: entity.Name, Issues: issues}
+}
+
+// conditionAttributes lists every leaf attribute of c (a local walk: metadata cannot import the
+// workflow package, which imports metadata).
+func conditionAttributes(c permission.PolicyCondition) []string {
+	switch {
+	case c.All != nil:
+		var out []string
+		for _, inner := range c.All {
+			out = append(out, conditionAttributes(inner)...)
+		}
+		return out
+	case c.Any != nil:
+		var out []string
+		for _, inner := range c.Any {
+			out = append(out, conditionAttributes(inner)...)
+		}
+		return out
+	default:
+		return []string{c.Attribute}
+	}
 }

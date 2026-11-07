@@ -331,3 +331,35 @@ func TestAuditRedactedFieldsListingTheSameFieldTwiceIsRejected(t *testing.T) {
 	err := Validate(e)
 	mustHaveIssueContaining(t, err, "more than once")
 }
+
+func workflowEntity(transitions ...WorkflowTransition) EntityDefinition {
+	e := validEntity(f("status", KindString))
+	e.Workflow = &EntityWorkflow{StateField: "status", InitialState: "draft", Transitions: transitions}
+	return e
+}
+
+func TestWorkflowAttributeMustNameAKnownAction(t *testing.T) {
+	ok := permission.AttributeCondition("$workflow.actors.submit", permission.OpNeq, permission.FromContextValue("userId"))
+	err := Validate(workflowEntity(
+		WorkflowTransition{Action: "submit", From: "draft", To: "pending", Label: "s"},
+		WorkflowTransition{Action: "approve", From: "pending", To: "done", Label: "a", Guard: &ok},
+	))
+	if err != nil {
+		t.Fatalf("a known action should validate: %v", err)
+	}
+
+	unknown := permission.AttributeCondition("$workflow.actors.review", permission.OpNeq, permission.FromContextValue("userId"))
+	err = Validate(workflowEntity(WorkflowTransition{Action: "approve", From: "pending", To: "done", Label: "a", Guard: &unknown}))
+	mustHaveIssueContaining(t, err, `unknown workflow action "review"`)
+
+	badShape := permission.AttributeCondition("$workflow.history", permission.OpEq, permission.FromContextValue("userId"))
+	err = Validate(workflowEntity(WorkflowTransition{Action: "approve", From: "pending", To: "done", Label: "a", Validator: &badShape}))
+	mustHaveIssueContaining(t, err, "only $workflow.actors.<action> is supported")
+}
+
+func TestMessageWithoutConditionIsRejected(t *testing.T) {
+	err := Validate(workflowEntity(WorkflowTransition{Action: "approve", From: "pending", To: "done", Label: "a", GuardMessage: "x"}))
+	mustHaveIssueContaining(t, err, "has guardMessage but no guard")
+	err = Validate(workflowEntity(WorkflowTransition{Action: "approve", From: "pending", To: "done", Label: "a", ValidatorMessage: "x"}))
+	mustHaveIssueContaining(t, err, "has validatorMessage but no validator")
+}

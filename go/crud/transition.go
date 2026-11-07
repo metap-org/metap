@@ -31,7 +31,9 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 		return ResultErr[RecordDto](404, "entity_not_found"), nil
 	}
 
-	decision, err := s.permissions.CanTransitionEntity(ctx, rc, entity.Name)
+	// Per-action entity check: `transition` covers every action, `transition:<action>` only
+	// this one (permission.TransitionActionPolicy).
+	decision, err := s.permissions.CanTransitionAction(ctx, rc, entity.Name, action)
 	if err != nil {
 		return ServiceResult[RecordDto]{}, err
 	}
@@ -54,6 +56,15 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 	if existing == nil {
 		precheckTx.Rollback(ctx) //nolint:errcheck
 		return ResultErr[RecordDto](404, "record_not_found"), nil
+	}
+	var actors map[string]string
+	if workflow.UsesWorkflowContext(entity) {
+		byRecord, err := workflow.LastActors(ctx, precheckTx, tenantID, entity.Name, []uuid.UUID{id})
+		if err != nil {
+			precheckTx.Rollback(ctx) //nolint:errcheck
+			return ServiceResult[RecordDto]{}, err
+		}
+		actors = byRecord[id]
 	}
 	if err := precheckTx.Commit(ctx); err != nil {
 		return ServiceResult[RecordDto]{}, err
@@ -91,7 +102,7 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 		return ResultErr[RecordDto](409, "invalid_transition"), nil
 	}
 
-	if guardErr := workflow.RunGuard(transition, existing.Data, rc); guardErr != nil {
+	if guardErr := workflow.RunGuard(transition, workflow.WithWorkflowContext(existing.Data, actors), rc); guardErr != nil {
 		return ResultErrWithMessage[RecordDto](422, "guard_failed", guardErr.Error()), nil
 	}
 	toState := transition.To
@@ -127,7 +138,7 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 		return ResultErrWithFieldErrors[RecordDto](400, "validation_failed", fieldErrors), nil
 	}
 
-	if validatorErr := workflow.RunValidator(transition, nextData, rc); validatorErr != nil {
+	if validatorErr := workflow.RunValidator(transition, workflow.WithWorkflowContext(nextData, actors), rc); validatorErr != nil {
 		return ResultErrWithMessage[RecordDto](422, "validator_failed", validatorErr.Error()), nil
 	}
 

@@ -155,6 +155,12 @@ const (
 
 var AllEntityActions = [5]EntityAction{ActionRead, ActionCreate, ActionUpdate, ActionDelete, ActionTransition}
 
+// TransitionActionPolicy is the policy action name that grants or denies a single workflow
+// action, e.g. `transition:approve`. A policy on the plain `transition` action still covers
+// every action. (Unrelated to the OAuth2 scope grammar `transition:<entity>`, which narrows a
+// token by entity, not by workflow action.)
+func TransitionActionPolicy(action string) string { return ActionTransition.String() + ":" + action }
+
 func (a EntityAction) String() string {
 	switch a {
 	case ActionRead:

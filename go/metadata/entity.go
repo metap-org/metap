@@ -186,7 +186,11 @@ type EntityListView struct {
 }
 
 // WorkflowTransition mirrors the Rust WorkflowTransition. Guard/Validator are
-// permission.PolicyCondition — the same declarative type policies use.
+// permission.PolicyCondition — the same declarative type policies use. Besides record fields,
+// a guard or validator can read the caller (`$ctx.roles`, `$ctx.userId`, any context attribute)
+// and who last performed each action on the record (`$workflow.actors.<action>`), which is what
+// separation of duties ("the approver is not the submitter") and per-account modes ("this
+// account requires approval") are written with.
 type WorkflowTransition struct {
 	Action    string                            `json:"action"`
 	From      string                            `json:"from"`
@@ -195,6 +199,11 @@ type WorkflowTransition struct {
 	Guard     *permission.PolicyCondition       `json:"guard,omitempty"`
 	Validator *permission.PolicyCondition       `json:"validator,omitempty"`
 	SetFields map[string]permission.PolicyValue `json:"setFields,omitempty"`
+	// GuardMessage / ValidatorMessage replace the evaluator's technical reason
+	// ("condition failed: …") in the error and in capabilities, so a user is told
+	// "the approver must differ from the submitter", not the condition's internals.
+	GuardMessage     string `json:"guardMessage,omitempty"`
+	ValidatorMessage string `json:"validatorMessage,omitempty"`
 }
 
 type EntityWorkflow struct {

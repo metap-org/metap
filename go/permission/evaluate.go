@@ -203,7 +203,7 @@ func EvaluateCondition(condition PolicyCondition, subject json.RawMessage, ctx *
 		}
 		return failed(lastFailure)
 	default:
-		actual := resolveAttributePath(subject, condition.Attribute)
+		actual := resolveAttribute(subject, condition.Attribute, ctx)
 		expected := ResolveValue(condition.Value, ctx)
 		if matchOperator(condition.Op, actual, expected) {
 			return passed()

@@ -221,3 +221,25 @@ func TestDenyOnlyRowsWithNoAllowStillYieldFalseNotUnrestricted(t *testing.T) {
 		t.Fatalf("got %q ok=%v err=%v", sql, ok, err)
 	}
 }
+
+func TestContextAttributeFoldsToAConstant(t *testing.T) {
+	approver := &permission.RequestContext{TenantID: uuid.NewString(), UserID: "u1", Roles: []string{"approver"}, HasRoles: true}
+	cond := literalCondition("$ctx.roles", permission.OpContains, "approver")
+	params := NewParamBuilder()
+	sql, err := ConditionToSQL(cond, approver, params)
+	if err != nil || sql != "true" {
+		t.Fatalf("got %q, %v; want true", sql, err)
+	}
+	other := &permission.RequestContext{TenantID: uuid.NewString(), UserID: "u2", Roles: []string{"author"}, HasRoles: true}
+	sql, err = ConditionToSQL(cond, other, NewParamBuilder())
+	if err != nil || sql != "false" {
+		t.Fatalf("got %q, %v; want false", sql, err)
+	}
+}
+
+func TestWorkflowAttributeIsRejectedInRecordPolicies(t *testing.T) {
+	cond := literalCondition("$workflow.actors.submit", permission.OpEq, "u1")
+	if _, err := ConditionToSQL(cond, condTestContext(nil, false), NewParamBuilder()); err == nil || !strings.Contains(err.Error(), "$workflow.") {
+		t.Fatalf("expected a $workflow. error, got %v", err)
+	}
+}

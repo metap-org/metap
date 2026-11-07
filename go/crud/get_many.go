@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/metap-org/metap-go/permission"
+	"github.com/metap-org/metap-go/workflow"
 )
 
 // GetManyResult is one row of CrudService.GetMany's result.
@@ -55,6 +56,19 @@ func (s *CrudService) GetMany(ctx context.Context, entityName string, ids []uuid
 		tx.Rollback(ctx) //nolint:errcheck
 		return ServiceResult[[]GetManyResult]{}, err
 	}
+	// One workflow_events query for the whole batch, and only when a guard reads `$workflow.`.
+	var actorsByRecord map[uuid.UUID]map[string]string
+	if workflow.UsesWorkflowContext(entity) {
+		recordIDs := make([]uuid.UUID, 0, len(existing))
+		for _, record := range existing {
+			recordIDs = append(recordIDs, record.ID)
+		}
+		actorsByRecord, err = workflow.LastActors(ctx, tx, tenantID, entity.Name, recordIDs)
+		if err != nil {
+			tx.Rollback(ctx) //nolint:errcheck
+			return ServiceResult[[]GetManyResult]{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return ServiceResult[[]GetManyResult]{}, err
 	}
@@ -76,7 +90,7 @@ func (s *CrudService) GetMany(ctx context.Context, entityName string, ids []uuid
 		if !recordDecision.Allowed {
 			continue
 		}
-		capabilities := computeCapabilities(entity, rc, snapshot, enriched)
+		capabilities := computeCapabilities(entity, rc, snapshot, enriched, actorsByRecord[record.ID])
 		id := record.ID
 		masked := maskRecordForRead(entity, rc, snapshot, record)
 		byID[id] = GetManyResult{ID: id, Record: masked, Capabilities: capabilities}
