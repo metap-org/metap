@@ -96,5 +96,8 @@ func authenticate(ctx context.Context, config AuthConfig) (*permission.RequestCo
 		}
 		rc.ApplyOAuthGrant(*claims.Scope, clientID, hasClientID)
 	}
+	// Downstream gRPC calls made while serving this one (e.g. a cross-service reference check)
+	// forward the caller's own token rather than minting one.
+	rc.ForwardedBearerToken = token
 	return rc, nil
 }

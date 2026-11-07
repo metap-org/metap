@@ -21,8 +21,8 @@ import (
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  dev-tools gen-keys [dir]                         (default dir: ./keys)")
-	fmt.Fprintln(os.Stderr, "  dev-tools gen-jwks-key [dir] [kid]                (EdDSA via jwks, default dir: ./keys, default kid: a fresh UUID)")
-	fmt.Fprintln(os.Stderr, "  dev-tools mint-token [tenantId] [userId]         (RS256, reads ./keys/dev-jwt-private.pem)")
+	fmt.Fprintln(os.Stderr, "  dev-tools gen-jwks-key [dir] [kid]                (add an EdDSA key to a JWKS key dir, default dir: ./keys/jwks, default kid: a fresh UUID)")
+	fmt.Fprintln(os.Stderr, "  dev-tools mint-token [tenantId] [userId]         (EdDSA if JWKS_KEYS_DIR is set, else RS256 from ./keys/dev-jwt-private.pem)")
 	fmt.Fprintln(os.Stderr, "  dev-tools seed-admin <tenantId> <userId>")
 	fmt.Fprintln(os.Stderr, "  dev-tools create-user <tenantId> <email> <password>  (local login, argon2id)")
 	fmt.Fprintln(os.Stderr, "  dev-tools provision-tenant <tenantId> schema <adminEmail> <adminPassword>")
@@ -51,7 +51,7 @@ func main() {
 	case "gen-keys":
 		err = genKeys(argOr(args, 2, "keys"))
 	case "gen-jwks-key":
-		err = genJwksKey(argOr(args, 2, "keys"), argOr(args, 3, uuid.New().String()))
+		err = genJwksKey(argOr(args, 2, "keys/jwks"), argOr(args, 3, uuid.New().String()))
 	case "mint-token":
 		err = mintToken(args)
 	case "seed-admin":

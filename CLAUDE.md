@@ -130,6 +130,21 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   `if` whose failure message has side effects, e.g. reads a response body, keeps its `if` with
   `require.FailNow` inside so the side effect still only runs on failure). Don't reintroduce
   bare `t.Fatal`.
+- **Token auth: one JWKS issuer, everyone else verifies** (2026-11-08). `pkg/app`'s
+  `BuildTokenAuth` resolves 3 modes from config: issuer (`JWKS_KEYS_DIR`: signs EdDSA with the
+  key dir's `signing-kid`, publishes `/.well-known/jwks.json`, `jwks_uri` in OAuth2 discovery),
+  verifier (`JWKS_URL`: never signs; `/auth/login` and `/auth/token` answer `501
+  not_token_issuer` before checking credentials), legacy static RSA (neither set; unchanged).
+  `AUTH_JWT_PUBLIC_KEY_PATH` alongside either JWKS mode keeps kid-less RS256 tokens verifying —
+  `jwks.VerifierAuto` routes by the token's `kid` header — for a zero-downtime cutover. HTTP and
+  gRPC use the same verifier. Both auth paths now set `RequestContext.ForwardedBearerToken`, so a
+  service calling a sibling (`grpcapi.GrpcBackend`) acts as the caller — never mint a token on a
+  caller's behalf. Rotation needs no restart: `jwks.WatchKeyDir` re-reads the key dir,
+  `jwks.SignerStore` always signs with the current signing key, `JwksClient` refetches on an
+  unknown kid (at most every 5s — it used to refetch on every unknown kid, an amplification
+  vector) and replaces its whole key snapshot on refresh (a retired key used to stay trusted until
+  its cache entry expired). Key dir tooling: `dev-tools gen-jwks-key <dir> [kid]`;
+  `JWKS_KEYS_DIR=<dir> dev-tools mint-token` mints an EdDSA token.
 - **`pkg/app` — the service bootstrap** (`app.Main(app.Options{Name, Entities, GRPCPort,
   WrapBackend, Routes, Configure})`): config → pool → router → permissions → JWT keys → metadata
   → reconcile `Entities` in order (`ScopeAllTenants`) → peripherals → CRUD+audit → optional gRPC →

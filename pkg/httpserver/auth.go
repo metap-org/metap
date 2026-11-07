@@ -73,7 +73,7 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 
 	// 20s leeway (project owner decision) — no revocation list exists, so exp+leeway is the
 	// only bound on how long a leaked token stays usable past its stated expiry.
-	claims, err := state.VerifyToken(token, 20*time.Second)
+	claims, err := state.VerifyToken(r.Context(), token, 20*time.Second)
 	if err != nil {
 		return nil, unauthorized("Invalid or expired token.")
 	}
@@ -108,6 +108,9 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 		}
 		rc.ApplyOAuthGrant(*claims.Scope, clientID, hasClientID)
 	}
+	// Calls this request makes to sibling services (grpcapi.GrpcBackend) carry the caller's own
+	// token, so they run as the caller — no service ever mints a token on someone's behalf.
+	rc.ForwardedBearerToken = token
 
 	return rc, nil
 }

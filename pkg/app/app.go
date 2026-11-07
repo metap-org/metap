@@ -19,10 +19,8 @@ package app
 
 import (
 	"context"
-	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -116,14 +114,11 @@ func Run(ctx context.Context, opts Options) error {
 	router := control.NewRouter(pool, control.NewRegistryCache(control.NewPostgresTenantRegistry(pool)), secretStore)
 	permissions := permission.NewPermissionService(control.NewPostgresPolicyStore(router))
 
-	privPEM, err := os.ReadFile(config.AuthJWTPrivateKeyPath)
+	tokens, err := BuildTokenAuth(ctx, config)
 	if err != nil {
-		return fmt.Errorf("reading AUTH_JWT_PRIVATE_KEY_PATH: %w", err)
+		return fmt.Errorf("configuring token auth: %w", err)
 	}
-	pubKey, err := ReadPublicKey(config.AuthJWTPublicKeyPath)
-	if err != nil {
-		return fmt.Errorf("reading AUTH_JWT_PUBLIC_KEY_PATH: %w", err)
-	}
+	slog.Info("token auth", "mode", tokens.Mode())
 
 	registry := metadata.NewMetadataRegistry()
 	if err := registry.RegisterAllSubmitted(); err != nil {
@@ -147,7 +142,12 @@ func Run(ctx context.Context, opts Options) error {
 	var mdPtr atomic.Pointer[metadata.MetadataRegistry]
 	mdPtr.Store(registry)
 
-	state := httpserver.NewAppState(pool, registry, &mdPtr, permissions, string(privPEM), pubKey, router)
+	var publicKey any
+	if tokens.PublicKey != nil {
+		publicKey = tokens.PublicKey
+	}
+	state := httpserver.NewAppState(pool, registry, &mdPtr, permissions, tokens.PrivateKeyPEM, publicKey, router)
+	state.TokenSigner, state.TokenVerifier, state.JwksKeys = tokens.Signer, tokens.Verifier, tokens.Keys
 	state.Crud = crud.WithAudit(state.Router, state.Metadata, state.Permissions, audit.NewPostgresStore(state.Pool))
 	state.CookieSecure = false
 	if opts.Configure != nil {
@@ -163,12 +163,9 @@ func Run(ctx context.Context, opts Options) error {
 				return fmt.Errorf("building gRPC backend: %w", err)
 			}
 		}
-		rsaPubKey, ok := pubKey.(*rsa.PublicKey)
-		if !ok {
-			return errors.New("AUTH_JWT_PUBLIC_KEY_PATH did not parse as an RSA public key (required for gRPC)")
-		}
+		// gRPC verifies exactly like HTTP: the JWKS verifier when configured, else the static key.
 		grpcServer, err := grpcapi.OptionalServe(config.Host, opts.GRPCPort, grpcapi.OptionalServeConfig{
-			Backend: backend, Router: state.Router, JWTPublicKey: rsaPubKey,
+			Backend: backend, Router: state.Router, JWTPublicKey: tokens.PublicKey, TokenVerifierOverride: tokens.Verifier,
 			AuthContextEntity: state.AuthContextEntity, Metadata: state.Metadata, ContextAttributesCache: state.ContextAttributesCache,
 		})
 		if err != nil {

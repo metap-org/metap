@@ -13,6 +13,9 @@ type TokenSignerKind int
 const (
 	SignerStatic TokenSignerKind = iota
 	SignerJwks
+	// SignerStore signs with Store's current signing key, so a rotation applied to the store
+	// (e.g. by WatchKeyDir) takes effect without a restart.
+	SignerStore
 )
 
 type TokenSigner struct {
@@ -23,6 +26,15 @@ type TokenSigner struct {
 
 	// Jwks
 	Key *JwksKeyPair
+	// Store: SignerStore's key set.
+	Store *SharedKeyStore
+}
+
+func (s *TokenSigner) jwksKey() *JwksKeyPair {
+	if s.Kind == SignerStore {
+		return s.Store.SigningKey()
+	}
+	return s.Key
 }
 
 // MintWithSigner mints a token via whichever trust root signer names — see DecodeWithVerifier
@@ -32,7 +44,7 @@ func MintWithSigner(signer *TokenSigner, tenantID, userID uuid.UUID, functionID 
 	case SignerStatic:
 		return peripherals.MintJWT(signer.PrivateKeyPEM, tenantID, userID, ttlSeconds)
 	default:
-		return MintServiceOrUserJWT(signer.Key, tenantID, userID, functionID, ttlSeconds)
+		return MintServiceOrUserJWT(signer.jwksKey(), tenantID, userID, functionID, ttlSeconds)
 	}
 }
 
@@ -42,6 +54,6 @@ func MintOAuthTokenWithSigner(signer *TokenSigner, tenantID, userID uuid.UUID, t
 	case SignerStatic:
 		return peripherals.MintOAuthAccessToken(signer.PrivateKeyPEM, tenantID, userID, ttlSeconds, scope, clientID)
 	default:
-		return MintScopedServiceOrUserJWT(signer.Key, tenantID, userID, ttlSeconds, scope, clientID)
+		return MintScopedServiceOrUserJWT(signer.jwksKey(), tenantID, userID, ttlSeconds, scope, clientID)
 	}
 }

@@ -8,6 +8,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -35,6 +36,11 @@ type loginBody struct {
 }
 
 func login(w http.ResponseWriter, r *http.Request, state *AppState) {
+	// Checked before the credentials, so a non-issuer never acts as a password oracle.
+	if !state.CanIssueTokens() {
+		writeServiceError(w, http.StatusNotImplemented, "not_token_issuer", ErrNotTokenIssuer.Error(), nil)
+		return
+	}
 	var body loginBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
@@ -81,6 +87,10 @@ func login(w http.ResponseWriter, r *http.Request, state *AppState) {
 	ttl := sessionTTLSeconds(r, state, user.TenantID)
 	token, err := state.MintToken(user.TenantID, user.ID, ttl)
 	if err != nil {
+		if errors.Is(err, ErrNotTokenIssuer) {
+			writeServiceError(w, http.StatusNotImplemented, "not_token_issuer", err.Error(), nil)
+			return
+		}
 		writeInternalError(w, err)
 		return
 	}
@@ -180,6 +190,10 @@ func tryRefreshSession(w http.ResponseWriter, r *http.Request, state *AppState, 
 // cookie of its own to send (e.g. a separate gateway deployment). Additionally CSRF-gated
 // despite being a GET, since it mints a credential.
 func issueToken(w http.ResponseWriter, r *http.Request, state *AppState) {
+	if !state.CanIssueTokens() {
+		writeServiceError(w, http.StatusNotImplemented, "not_token_issuer", ErrNotTokenIssuer.Error(), nil)
+		return
+	}
 	rc, ok := requireAuth(w, r, state)
 	if !ok {
 		return
@@ -200,6 +214,10 @@ func issueToken(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 	token, err := state.MintToken(tenantID, userID, sessionTTLSeconds(r, state, tenantID))
 	if err != nil {
+		if errors.Is(err, ErrNotTokenIssuer) {
+			writeServiceError(w, http.StatusNotImplemented, "not_token_issuer", err.Error(), nil)
+			return
+		}
 		writeInternalError(w, err)
 		return
 	}

@@ -17,7 +17,10 @@
 package jwks
 
 import (
+	"context"
+	"crypto/ed25519"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 )
@@ -53,6 +56,34 @@ func (s *SharedKeyStore) Mutate(fn func(*JwksKeyStore) error) error {
 
 // Handler serves the current JwkSet as JSON — a direct read-and-encode, no logic of its own
 // beyond that, matching the Rust original's own "3-line handler" framing.
+// SigningKey is the key the issuer signs new tokens with right now.
+func (s *SharedKeyStore) SigningKey() *JwksKeyPair {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.store.SigningKey()
+}
+
+// PublicKeyFor implements KeySource over every key currently published (signing or not), so an
+// issuer verifies its own tokens — including ones signed by a key it is rotating away from —
+// without an HTTP round trip to itself.
+func (s *SharedKeyStore) PublicKeyFor(_ context.Context, kid string) (ed25519.PublicKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, k := range s.store.keys {
+		if k.Kid == kid {
+			return k.PublicKey(), nil
+		}
+	}
+	return nil, fmt.Errorf("kid %s is not published by this issuer", kid)
+}
+
+// Replace swaps in a whole new key set at once (e.g. re-read from the key directory).
+func (s *SharedKeyStore) Replace(store *JwksKeyStore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.store = store
+}
+
 func Handler(store *SharedKeyStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

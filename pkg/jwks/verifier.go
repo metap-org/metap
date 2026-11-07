@@ -20,6 +20,12 @@ type TokenVerifierKind int
 const (
 	VerifierStatic TokenVerifierKind = iota
 	VerifierJwks
+	// VerifierAuto: a token whose header names a kid is verified against Keys (EdDSA/JWKS);
+	// one without a kid falls back to PublicKey (static RS256) when that is set, and is
+	// rejected when it isn't. Lets services move from the shared RSA keypair to a single JWKS
+	// issuer without invalidating sessions already issued: keep PublicKey set for one token
+	// lifetime after the cutover, then drop it.
+	VerifierAuto
 )
 
 // TokenVerifier is either verification path an issuing deployment might configure — exactly one
@@ -33,6 +39,9 @@ type TokenVerifier struct {
 
 	// Jwks
 	Client *JwksClient
+	// Keys: VerifierAuto's EdDSA key source — the issuer's own *SharedKeyStore, or a
+	// *JwksClient everywhere else.
+	Keys KeySource
 }
 
 // DecodeWithVerifier verifies token against whichever trust root verifier names — the one place
@@ -43,6 +52,25 @@ func DecodeWithVerifier(ctx context.Context, token string, verifier *TokenVerifi
 		leeway = *leewayOverride
 	}
 	switch verifier.Kind {
+	case VerifierAuto:
+		if HasKid(token) {
+			if verifier.Keys == nil {
+				return nil, fmt.Errorf("invalid or expired token: no JWKS key source configured")
+			}
+			claims, err := DecodeEdDSA(ctx, token, verifier.Keys, leeway)
+			if err != nil {
+				return nil, fmt.Errorf("invalid or expired token: %w", err)
+			}
+			return claims, nil
+		}
+		if verifier.PublicKey == nil {
+			return nil, fmt.Errorf("invalid or expired token: token has no kid and static RSA verification is disabled")
+		}
+		claims, err := peripherals.DecodeAccessToken(token, verifier.PublicKey, leeway)
+		if err != nil {
+			return nil, fmt.Errorf("invalid or expired token: %w", err)
+		}
+		return claims, nil
 	case VerifierStatic:
 		claims, err := peripherals.DecodeAccessToken(token, verifier.PublicKey, leeway)
 		if err != nil {

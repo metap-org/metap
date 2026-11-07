@@ -32,32 +32,19 @@ func genKeys(dir string) error {
 	return nil
 }
 
-// genJwksKey generates an Ed25519 keypair for jwks's trust root — the multi-service alternative
-// to genKeys's per-app static RS256 keypair. Writes 2 files a host binary reads back at boot:
-// the raw 64-byte Ed25519 private key (dev-jwks-private.bin — a divergence from the Rust
-// original's dev-jwks-private.der: this port's jwks.FromPrivateKeyBytes works directly with
-// ed25519.PrivateKey's raw bytes, no PKCS8 DER encoding step, see that package's own doc comment)
-// and the key id, plain text (dev-jwks-kid.txt).
+// genJwksKey adds a new Ed25519 key to a JWKS key directory (the issuer's JWKS_KEYS_DIR, see
+// jwks.LoadKeyDir for the layout). The first key in a directory becomes the signing key; a later
+// one is only published until signing-kid is pointed at it — rotation step 1.
 func genJwksKey(dir, kid string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if _, err := jwks.GenerateKeyFile(dir, kid); err != nil {
 		return err
 	}
-	privatePath := dir + "/dev-jwks-private.bin"
-	kidPath := dir + "/dev-jwks-kid.txt"
-
-	key, err := jwks.GenerateJwksKeyPair(kid)
+	signing, err := os.ReadFile(dir + "/signing-kid")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(privatePath, key.PrivateKeyBytes(), 0o600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(kidPath, []byte(kid), 0o644); err != nil {
-		return err
-	}
-
-	fmt.Printf("Generated dev JWKS Ed25519 key (kid=%s) in ./%s (gitignored).\n", kid, dir)
-	fmt.Printf("Set in .env: JWKS_PRIVATE_KEY_PATH=./%s/dev-jwks-private.bin, JWKS_KID_PATH=./%s/dev-jwks-kid.txt\n", dir, dir)
+	fmt.Printf("Added JWKS Ed25519 key %s to %s (gitignored). Signing key: %s", kid, dir, signing)
+	fmt.Printf("Issuer: JWKS_KEYS_DIR=%s. To rotate: wait past every verifier's JWKS_CACHE_TTL_SECONDS, then `echo %s > %s/signing-kid`.\n", dir, kid, dir)
 	return nil
 }
 
@@ -91,6 +78,20 @@ func mintToken(args []string) error {
 	user, err := parseUUID(userID)
 	if err != nil {
 		return err
+	}
+
+	// JWKS_KEYS_DIR (the issuer's key directory) mints an EdDSA token exactly as the issuer would.
+	if dir, ok := runtime.Optional("JWKS_KEYS_DIR"); ok {
+		store, err := jwks.LoadKeyDir(dir)
+		if err != nil {
+			return err
+		}
+		token, err := jwks.MintWithSigner(&jwks.TokenSigner{Kind: jwks.SignerStore, Store: jwks.NewSharedKeyStore(store)}, tenant, user, nil, 3600)
+		if err != nil {
+			return err
+		}
+		fmt.Println(token)
+		return nil
 	}
 
 	// AUTH_JWT_PRIVATE_KEY_PATH, if set, wins over the plain keys/dev-jwt-private.pem relative-

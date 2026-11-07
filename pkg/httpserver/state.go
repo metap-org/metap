@@ -11,6 +11,7 @@ package httpserver
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
@@ -27,12 +29,10 @@ import (
 	"github.com/metap-org/metap/pkg/storage"
 )
 
-// AppState mirrors the Rust AppState — the subset this core wave's routes actually touch.
-// Fields matching the Rust original's "None unless the host binary opts in" shape (TokenVerifier/
-// TokenSigner for the metap-jwks trust root, MetadataResolver, AttachmentTables, object storage)
-// are intentionally not ported yet — every field here starts at the same default the Rust
-// AppState::new produces, and a caller may still set CookieSecure/AuthContextEntity/
-// MetadataResolver directly (all fields exported) once those features are needed.
+// AppState mirrors the Rust AppState. Optional features (TokenSigner/TokenVerifier/JwksKeys for
+// the JWKS trust root, MetadataResolver, AttachmentTables, ObjectStore) start unset — every field
+// starts at the same default the Rust AppState::new produces — and the composition root (pkg/app)
+// sets them when configured.
 type AppState struct {
 	Pool *pgxpool.Pool
 	// Router is the multi-tenant seam — every tenant-scoped query goes through
@@ -47,11 +47,21 @@ type AppState struct {
 	Permissions *permission.PermissionService
 	Crud        *crud.CrudService
 
-	// JWTPrivateKeyPEM/JWTPublicKey back MintToken/VerifyToken's static-RSA-keypair path — the
-	// only path this core wave wires (the Rust original's metap-jwks dual-dispatch TokenVerifier/
-	// TokenSigner opt-in is deferred).
+	// JWTPrivateKeyPEM/JWTPublicKey: the legacy static-RSA keypair. Used only when
+	// TokenSigner/TokenVerifier below are nil. JWTPrivateKeyPEM "" means this service never mints
+	// RS256 tokens.
 	JWTPrivateKeyPEM string
 	JWTPublicKey     any
+
+	// TokenSigner, when set, mints every token (login, refresh, OAuth2) — set only on the one
+	// service that is the token issuer. A service with neither TokenSigner nor JWTPrivateKeyPEM
+	// is not an issuer: MintToken returns ErrNotTokenIssuer and /auth/login answers 501.
+	TokenSigner *jwks.TokenSigner
+	// TokenVerifier, when set, verifies every inbound token (typically jwks.VerifierAuto: EdDSA
+	// via the issuer's JWKS, optionally still accepting legacy RS256 during a cutover).
+	TokenVerifier *jwks.TokenVerifier
+	// JwksKeys, when set, makes this service publish GET /.well-known/jwks.json (the issuer).
+	JwksKeys *jwks.SharedKeyStore
 
 	// AuthContextEntity: opt-in AUTH_CONTEXT_ENTITY name, "" means unset (the default).
 	AuthContextEntity      string
@@ -95,22 +105,43 @@ func NewAppState(pool *pgxpool.Pool, metadataBase *metadata.MetadataRegistry, md
 	}
 }
 
-// VerifyToken verifies a Bearer/session token against the static RSA keypair — the one place
-// AuthContext decodes a token.
-func (s *AppState) VerifyToken(token string, leeway time.Duration) (*peripherals.AccessClaims, error) {
+// ErrNotTokenIssuer: this service verifies tokens but does not issue them (single-issuer JWKS
+// deployments) — log in at the issuer instead.
+var ErrNotTokenIssuer = errors.New("this service does not issue tokens; log in at the token issuer")
+
+// VerifyToken verifies a Bearer/session token — the one place AuthContext decodes a token.
+func (s *AppState) VerifyToken(ctx context.Context, token string, leeway time.Duration) (*peripherals.AccessClaims, error) {
+	if s.TokenVerifier != nil {
+		return jwks.DecodeWithVerifier(ctx, token, s.TokenVerifier, &leeway)
+	}
 	return peripherals.DecodeAccessToken(token, s.JWTPublicKey, leeway)
 }
 
-// MintToken is the mint-side counterpart to VerifyToken.
+// CanIssueTokens reports whether this service mints tokens (TokenSigner or an RSA private key).
+func (s *AppState) CanIssueTokens() bool { return s.TokenSigner != nil || s.JWTPrivateKeyPEM != "" }
+
+// MintToken mints a session token (TokenSigner first, else the static RSA key).
 func (s *AppState) MintToken(tenantID, userID uuid.UUID, ttlSeconds uint64) (string, error) {
-	return peripherals.MintJWT(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds)
+	switch {
+	case s.TokenSigner != nil:
+		return jwks.MintWithSigner(s.TokenSigner, tenantID, userID, nil, ttlSeconds)
+	case s.JWTPrivateKeyPEM != "":
+		return peripherals.MintJWT(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds)
+	default:
+		return "", ErrNotTokenIssuer
+	}
 }
 
-// MintOAuthToken mints an access token carrying the OAuth2 grant's scope/clientId claims — the
-// Rust original dual-dispatches through an optional metap-jwks TokenSigner first; this port
-// only has the static-RSA-keypair path (same deferral VerifyToken/MintToken already document).
+// MintOAuthToken mints an access token carrying the OAuth2 grant's scope/clientId claims.
 func (s *AppState) MintOAuthToken(tenantID, userID uuid.UUID, ttlSeconds uint64, scope, clientID string) (string, error) {
-	return peripherals.MintOAuthAccessToken(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds, scope, clientID)
+	switch {
+	case s.TokenSigner != nil:
+		return jwks.MintOAuthTokenWithSigner(s.TokenSigner, tenantID, userID, ttlSeconds, scope, clientID)
+	case s.JWTPrivateKeyPEM != "":
+		return peripherals.MintOAuthAccessToken(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds, scope, clientID)
+	default:
+		return "", ErrNotTokenIssuer
+	}
 }
 
 // MetadataFor is the registry tenantID should see right now.

@@ -622,7 +622,7 @@ func revokeEndpoint(w http.ResponseWriter, r *http.Request, state *httpserver.Ap
 // whatever origin it already reached this document on, which is what every real client actually
 // does in practice.
 func discoveryMetadata(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	httpserver.WriteJSON(w, http.StatusOK, map[string]any{
+	doc := map[string]any{
 		"issuer":                                peripherals.JWTIssuer,
 		"authorization_endpoint":                "/oauth/authorize",
 		"token_endpoint":                        "/oauth/token",
@@ -631,7 +631,12 @@ func discoveryMetadata(w http.ResponseWriter, r *http.Request, state *httpserver
 		"grant_types_supported":                 []string{"authorization_code", "refresh_token", "client_credentials"},
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
-	})
+	}
+	// Only the JWKS issuer can tell a resource server where to fetch verification keys.
+	if state.JwksKeys != nil {
+		doc["jwks_uri"] = "/.well-known/jwks.json"
+	}
+	httpserver.WriteJSON(w, http.StatusOK, doc)
 }
 
 // -------------------------------------------------------------------------------------------

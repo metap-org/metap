@@ -33,7 +33,13 @@ type AppConfig struct {
 	CORSOrigins           []string
 	AuthJWTPublicKeyPath  string
 	AuthJWTPrivateKeyPath string
-	StaticDir             string
+	// JWKSKeysDir (JWKS_KEYS_DIR): this service is the token issuer — it signs with the key dir's
+	// signing key and publishes /.well-known/jwks.json. JWKSURL (JWKS_URL): this service verifies
+	// against that issuer. With either set, AuthJWT*KeyPath become optional (a public key path
+	// then only keeps legacy RS256 tokens verifying during a cutover).
+	JWKSKeysDir string
+	JWKSURL     string
+	StaticDir   string
 
 	VaultAddr         string
 	VaultToken        string
@@ -129,13 +135,18 @@ func LoadConfig() (*AppConfig, error) {
 		}
 	}
 
+	jwksKeysDir := os.Getenv("JWKS_KEYS_DIR")
+	jwksURL := os.Getenv("JWKS_URL")
 	authJWTPublicKeyPath := os.Getenv("AUTH_JWT_PUBLIC_KEY_PATH")
-	if authJWTPublicKeyPath == "" {
-		return nil, errors.New("AUTH_JWT_PUBLIC_KEY_PATH is required")
-	}
 	authJWTPrivateKeyPath := os.Getenv("AUTH_JWT_PRIVATE_KEY_PATH")
-	if authJWTPrivateKeyPath == "" {
-		return nil, errors.New("AUTH_JWT_PRIVATE_KEY_PATH is required")
+	if jwksKeysDir == "" && jwksURL == "" {
+		// Legacy static-RSA mode: every service signs and verifies with the shared keypair.
+		if authJWTPublicKeyPath == "" {
+			return nil, errors.New("AUTH_JWT_PUBLIC_KEY_PATH is required (or configure JWKS_KEYS_DIR / JWKS_URL)")
+		}
+		if authJWTPrivateKeyPath == "" {
+			return nil, errors.New("AUTH_JWT_PRIVATE_KEY_PATH is required (or configure JWKS_KEYS_DIR / JWKS_URL)")
+		}
 	}
 
 	staticDir, _ := runtime.Optional("STATIC_DIR")
@@ -168,6 +179,7 @@ func LoadConfig() (*AppConfig, error) {
 		DatabaseURL: databaseURL, OutboxDatabaseURL: outboxDatabaseURL, RabbitMQURL: rabbitmqURL,
 		CORSOrigins:          corsOrigins,
 		AuthJWTPublicKeyPath: authJWTPublicKeyPath, AuthJWTPrivateKeyPath: authJWTPrivateKeyPath,
+		JWKSKeysDir: jwksKeysDir, JWKSURL: jwksURL,
 		StaticDir: staticDir,
 		VaultAddr: vaultAddr, VaultToken: vaultToken, VaultRoleID: vaultRoleID,
 		VaultSecretID: vaultSecretID, VaultApproleMount: vaultApproleMount,

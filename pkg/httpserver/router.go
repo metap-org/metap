@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/metap-org/metap/pkg/config"
+	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/runtime"
 )
 
@@ -44,6 +45,9 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 	r.Use(cors)
 
 	mountHealth(r)
+	if state.JwksKeys != nil {
+		r.Get("/.well-known/jwks.json", jwks.Handler(state.JwksKeys))
+	}
 	mountMetrics(r, state)
 	mountMetadata(r)
 	mountAuth(r, state)
