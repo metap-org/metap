@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/metap-org/metap-go/permission"
+	"github.com/metap-org/metap-go/workflow"
 )
 
 type GetResult struct {
@@ -51,6 +52,15 @@ func (s *CrudService) Get(ctx context.Context, entityName string, id uuid.UUID, 
 		tx.Rollback(ctx) //nolint:errcheck
 		return ResultErr[GetResult](404, "record_not_found"), nil
 	}
+	var actors map[string]string
+	if workflow.UsesWorkflowContext(entity) {
+		byRecord, err := workflow.LastActors(ctx, tx, tenantID, entity.Name, []uuid.UUID{id})
+		if err != nil {
+			tx.Rollback(ctx) //nolint:errcheck
+			return ServiceResult[GetResult]{}, err
+		}
+		actors = byRecord[id]
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return ServiceResult[GetResult]{}, err
 	}
@@ -72,7 +82,7 @@ func (s *CrudService) Get(ctx context.Context, entityName string, id uuid.UUID, 
 		return forbidden[GetResult](recordDecision), nil
 	}
 
-	capabilities := computeCapabilities(entity, rc, snapshot, enriched)
+	capabilities := computeCapabilities(entity, rc, snapshot, enriched, actors)
 	masked := maskRecordForRead(entity, rc, snapshot, *existing)
 	return ResultOk(GetResult{Record: masked, Capabilities: capabilities}), nil
 }

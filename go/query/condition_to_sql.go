@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/metap-org/metap-go/permission"
@@ -182,6 +183,17 @@ func ConditionToSQL(condition *permission.PolicyCondition, context *permission.R
 		}
 		return "(" + joinSQL(clauses, " OR ") + ")", nil
 	default:
+		// A `$ctx.` attribute is the same value for every row of this request, so it is evaluated
+		// here and folded to a constant instead of becoming a column reference.
+		if permission.IsContextAttribute(condition.Attribute) {
+			if permission.EvaluateCondition(*condition, nil, context).IsPassed() {
+				return "true", nil
+			}
+			return "false", nil
+		}
+		if strings.HasPrefix(condition.Attribute, permission.WorkflowAttributePrefix) {
+			return "", fmt.Errorf("%s attributes are only available to workflow guards and validators, not to record policies", permission.WorkflowAttributePrefix)
+		}
 		expr, ct, err := fieldExpression(condition.Attribute, params)
 		if err != nil {
 			return "", err
