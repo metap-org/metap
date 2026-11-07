@@ -1,0 +1,28 @@
+# mockery v3 (testify template). Regenerate: `go generate ./...` from the repo root — the
+# //go:generate line in pkg/crud/deps.go pins the mockery version via `go run`, so no tool
+# dependency enters go.mod (which downstream modules would inherit through MVS).
+#
+# Convention:
+#   - mocks a package only needs for its own tests -> mocks_test.go next to the interface
+#     (package-private, never shipped);
+#   - mocks downstream repos need (e.g. ../waap faking crud.RecordBackend) -> an exported
+#     <pkg>mock package.
+# Mock at interface seams we own. Never mock pgx/SQL: anything whose correctness lives in the
+# database is an integration test (pkg/testkit).
+template: testify
+formatter: goimports
+dir: "{{.InterfaceDir}}"
+filename: mocks_test.go
+pkgname: "{{.SrcPackageName}}"
+structname: "Mock{{.InterfaceName}}"
+packages:
+  github.com/metap-org/metap/pkg/crud:
+    interfaces:
+      TxBeginner: {}
+      PermissionChecker: {}
+      RecordBackend:
+        config:
+          dir: "{{.InterfaceDir}}/crudmock"
+          filename: mocks.go
+          pkgname: crudmock
+          structname: "{{.InterfaceName}}"

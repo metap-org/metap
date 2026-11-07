@@ -4,7 +4,7 @@ Metap is a metadata-driven platform core.
 
 Stack:
 
-- Go (`go/`), chi for the HTTP runtime.
+- Go (module at the repo root, packages under `pkg/`), chi for the HTTP runtime.
 - pgx for PostgreSQL access.
 - PostgreSQL as the system of record.
 - RabbitMQ for integration events.
@@ -18,25 +18,34 @@ parity** — `go/` is the sole backend implementation from that point on. A sibl
 the Rust `metap` as a path dependency needs its own migration to the Go module before it will
 build against this repo again.
 
-This repo is a single Go module (`go/`, module `github.com/metap-org/metap-go`) — `go/` holds the
-reusable `metap-go` library packages plus the `outbox-publisher`/`db-migrate`/`dev-tools`/
-`cron-scheduler`/`notification-worker` ops binaries built on them (`go/cmd/*`). No example app, no
+This repo is a single Go module at the repo root (module `github.com/metap-org/metap`; it lived
+under `go/` as `github.com/metap-org/metap-go` until 2026-11-07). Layout: `pkg/*` — the reusable
+library packages (import as `github.com/metap-org/metap/pkg/crud` etc.); `cmd/*` — the
+`outbox-publisher`/`db-migrate`/`dev-tools`/`cron-scheduler`/`notification-worker` ops binaries;
+`migrations/` — the SQL migrations, also embedded into binaries as `migrations.FS`
+(`cmd/db-migrate` applies the embedded set unless `MIGRATIONS_DIR` is set). No example app, no
 SaaS low-code control-plane, no frontend, no Node/pnpm live here (see `CLAUDE.md`'s "No example
 apps in this repo" and "No SaaS low-code control-plane crates in this repo" notes) —
 `../metap-demo-crm`/`../metap-demo-jira`/`../metap-demo-waf` are real, running sibling-repo
 examples, and `../metap-lowcode` is the low-code entity builder + self-service tenant provisioning
-layer. Every command below runs from `go/`.
+layer. Every command below runs from the repo root.
 
 Build/test:
 
 ```bash
-docker compose up -d postgres rabbitmq   # needed for the e2e tests below
-cd go
 go build ./...
-go vet ./...
+go vet ./... && go vet -tags integration ./...
 gofmt -l .                                # should print nothing
-go test ./...                             # unit + e2e tests against DATABASE_URL (defaults to
-                                           # postgres://metap:metap@localhost:5432/metap if unset)
+golangci-lint run ./...                   # depguard: pkg/kit stays standard-library-only
+go test ./...                             # unit tests only — no services needed
+
+docker compose up -d postgres dragonfly   # integration tests: real Postgres + Redis
+REDIS_URL=redis://127.0.0.1:6379 go test -tags integration ./...
+# pkg/testkit gives every test its own freshly migrated database on the compose Postgres
+# (localhost:5433; override with METAP_TEST_DATABASE_URL) and FAILS — never skips — when it
+# can't reach it.
+
+go generate ./pkg/crud/...                # regenerate mockery mocks (.mockery.yml)
 ```
 
 To actually run something end to end (mint a token, migrate a DB, serve HTTP), go to

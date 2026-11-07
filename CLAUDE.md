@@ -55,6 +55,87 @@ themselves migrated onto the Go module — a known, accepted, temporary breakage
 explicit call: remove Rust from this repo now rather than wait for every downstream repo to be
 ready first).
 
+**Go module moved to the repo root, packages under `pkg/` (2026-11-07).** `go/` no longer
+exists: `go.mod`/`go.sum` sit at the repo root, module path `github.com/metap-org/metap`
+(matches the GitHub remote, so `go get github.com/metap-org/metap@vX.Y.Z` works once tagged —
+the old `github.com/metap-org/metap-go` path never resolved to a real repo, which is why every
+consumer needed a `replace`). Library packages live at `pkg/<name>` (import
+`github.com/metap-org/metap/pkg/crud`), binaries at `cmd/*`, and `migrations/` is now also a Go
+package (`migrations.FS`, `//go:embed *.sql`) — `cmd/db-migrate` applies the embedded set by
+default, `MIGRATIONS_DIR` still overrides with an on-disk dir; `cmd/dev-tools`'s default is
+`migrations` relative to the repo root. Every `go/...` path and "run from `go/`" instruction in
+this file above or below is pre-2026-11-07 history: read `go/<pkg>` as `pkg/<pkg>`, `go/cmd` as
+`cmd`, and run every Go command from the repo root. `pkg/grpcapi/pb/metap_crud.pb.go`'s raw
+descriptor was hand-patched for the new `go_package` (2 length bytes, `B*Z(` → `B+Z)`) since no
+`protoc` was installed — regenerate it from `pkg/grpcapi/proto/metap_crud.proto` next time the
+proto changes; a naive find/replace of the import path inside a `.pb.go` corrupts the
+descriptor (panics at `init`) unless those length prefixes are fixed too.
+
+**Go conventions added the same pass (2026-11-07) — follow these for new code:**
+- **Tests: unit vs. integration.** Anything needing real Postgres/Redis carries
+  `//go:build integration` and gets its database from `pkg/testkit` (`testkit.NewPostgres(t)` —
+  a fresh database per call, cloned from a template migrated with the embedded `migrations.FS`;
+  `WithSearchPath(...)` option; `NewDatabaseURL`/`NewEmptyDatabaseURL`; `RedisURL`; `SeedRole`).
+  testkit **fails, never skips**, when the service is unreachable. `go test ./...` = unit only (no
+  services needed); `go test -tags integration ./...` = everything (`docker compose up -d postgres
+  dragonfly`, `REDIS_URL=redis://127.0.0.1:6379`; testkit defaults to the compose Postgres on
+  `localhost:5433`, override with `METAP_TEST_DATABASE_URL`/`DATABASE_URL`). Never hand-roll a
+  per-package `testPool` again, and never rely on another test having created a table — each
+  test's database starts from migrations only (the move to per-test databases surfaced exactly
+  one such hidden dependency, `httpserver`'s OAuth2 test needing `entities.test_orders`).
+  Gotcha baked into testkit: `CREATE DATABASE ... TEMPLATE` does not copy `ALTER DATABASE ... SET`
+  settings (migration 0028's `search_path`), so testkit re-applies them to each clone.
+- **Assertions: testify** (`require`/`assert`) for new and touched tests; no bulk rewrite of
+  existing ones.
+- **Mocks: mockery v3, testify template** (`.mockery.yml`, `go generate ./pkg/crud/...`; the
+  version is pinned in the `//go:generate go run ...@v3.8.1` line so no tool dependency enters
+  `go.mod`). Package-private mocks → `mocks_test.go` beside the interface; mocks downstream repos
+  need → an exported `<pkg>mock` package (`pkg/crud/crudmock.RecordBackend`, used by `../waap`).
+  Define small interfaces at the consumer (`crud.TxBeginner`, `crud.PermissionChecker`,
+  `query.TenantScoper`) and accept them in constructors — concrete types still satisfy them.
+  Never mock pgx/SQL; database behavior is an integration test.
+- **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
+  including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
+  import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
+  non-stdlib import there. `pkg/runtime`'s env/serve/shutdown/http-client functions are now thin
+  aliases onto kit. Behavior change: `Serve` now returns a listener error (e.g. port in use)
+  immediately — the old loop only checked it after a shutdown signal, so a bind failure idled
+  until Ctrl-C.
+- **`pkg/secrets` — the cloud secret stores** (AWS Secrets Manager, GCP Secret Manager, Vault)
+  and the factory (`secrets.Build(ctx, secrets.ConfigFromAppConfig(cfg))`, was
+  `control.BuildSecretStore`). `control` keeps only the `SecretStore` interface, `DbCreds` and the
+  stdlib `EnvStore`, so `control`/`crud`/`httpserver`/`grpcapi` no longer link three cloud SDKs
+  into every binary — only a binary that calls `secrets.Build` does.
+- **Optional HTTP route groups are their own packages**: `pkg/httpserver/{oauth2routes,
+  cronroutes,dashboardroutes,attachmentroutes}`, each exposing `Mount` (an `httpserver.Mount`).
+  `httpserver.BuildRouter(state, cors, mounts...)` serves only the core groups (health, metrics,
+  metadata, auth, records, users, admin, preferences, platform/tenant config, workflow/audit
+  events) plus whatever is passed; `pkg/app` passes `app.DefaultModules()` (all four — the
+  previous behavior) unless `Options.Modules` says otherwise. Core `httpserver` no longer imports
+  `oauthserver`/`cron`/`dashboards`/`attachments`. Route modules outside the package use the
+  exported helpers in `pkg/httpserver/api.go` (`RequireAuth`, `WriteJSON`,
+  `WriteCrudServiceError`, ...). `httpserver`'s own tests are an external `httpserver_test`
+  package that mounts all four, so they exercise the composed server through exported API only.
+- **`pkg/storage` is the `ObjectStore` interface only; S3 lives in `pkg/storage/s3store`.**
+  Before this, `httpserver` imported `storage` and so linked the AWS SDK (69 packages) into every
+  service, although nothing constructs an S3 store yet. `storage.ScopedKey` is the shared
+  tenant-prefixing rule every `ObjectStore` implementation must use.
+- **`peripherals.Reconcile` (the records-table index reconciler) is deleted** — it targeted the
+  generic `records` table dropped in migration 0033, so every boot logged one
+  `relation "records" does not exist` WARN per indexed field and built nothing. Indexes on
+  dedicated tables come from `reconciler`. `peripherals.Check` (metadata drift) stays.
+- **All tests use testify** — every `t.Fatal`/`t.Fatalf`/`t.Error`/`t.Errorf` was rewritten to
+  `require`/`assert` (2026-11-07, by a type-aware AST rewrite: `error` → `NoError`/`Error`,
+  untyped constants → `EqualValues`, pointers → `Same`, `a || b` → sequential `require`s; an
+  `if` whose failure message has side effects, e.g. reads a response body, keeps its `if` with
+  `require.FailNow` inside so the side effect still only runs on failure). Don't reintroduce
+  bare `t.Fatal`.
+- **`pkg/app` — the service bootstrap** (`app.Main(app.Options{Name, Entities, GRPCPort,
+  WrapBackend, Routes, Configure})`): config → pool → router → permissions → JWT keys → metadata
+  → reconcile `Entities` in order (`ScopeAllTenants`) → peripherals → CRUD+audit → optional gRPC →
+  HTTP. This *is* the `metap-app` equivalent the paragraph above says was skipped — `../waap`'s
+  three data-plane services needed it (each `main.go` was ~150 copied lines, now ~20).
+
 **Frontend library moved out of this repo (2026-08-28):** the reusable frontend library — formerly `packages/platform-react` (Mantine-based), now retired/deleted — lives as `@metap/platform-ui` in a separate sibling repo, `../platform-ui`, alongside a second sibling repo `../design-system` (`@metap/ui`, Tailwind + Radix + shadcn-style components) that it's built on. Neither is a member of this repo's pnpm workspace (which has had no members of its own since the "No example apps in this repo" change below — see that note for what still consumes them via `link:`). `@metap/platform-ui`'s own `README.md` documents its module list and port status; treat that repo, not this section, as the source of truth for what's in it.
 
 **No example apps in this repo (2026-08-31):** `apps/crm-server`/`apps/crm-fe`/`apps/jira-server`/`apps/jira-fe` — the sample/example consumers this section used to document in detail — moved out to their own sibling repos, `../metap-demo-crm` and `../metap-demo-jira`, same pattern `../metap-demo-waf` already established (a `metap` dependency, in `../metap-demo-crm`'s/`../metap-demo-jira`'s own `Cargo.toml`, as a `path` dependency into `../metap/crates/metap` for local dev, swappable to `git`/version for CI/deploy). This repo (`metap`) is now a pure library workspace: `crates/` (the reusable `metap-*` surface plus the ops binaries built on it) and `templates/metap-app/` (a `cargo generate` scaffold — see its own `README.md` for first-time setup) are the only things here a downstream project touches; there is no runnable example app, no pnpm workspace member, and no frontend workspace content left in this repo at all. Root `package.json` was trimmed right after the split (`gateway:rs`/`test:rs`/`test:rs:e2e` only — everything that used to `cd apps/crm-server`/`cd apps/jira-server` for its own `.env`/`keys/` was removed) and then, same day once it was clear the 3 remaining scripts were pure `cargo` wrappers with zero actual `dependencies` to install, deleted outright along with `pnpm-workspace.yaml`/`pnpm-lock.yaml`/`node_modules/` — **no Node/pnpm in this repo at all now**, see the "Commands" section below for the plain `cargo` equivalents. `.github/workflows/ci.yml`'s frontend CI job was removed for the same underlying reason (nothing left to typecheck/lint/format/test). `crates/metap-graphql-gateway/README.md`'s local walkthrough now points at the sibling demo repos instead of in-repo `apps/*` paths.
