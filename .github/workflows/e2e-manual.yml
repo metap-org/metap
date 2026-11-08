@@ -8,13 +8,14 @@ name: E2E (manual)
 # unreachable.
 #
 # Rust-era history (kept, not rewritten): this workflow used to also provision a dev Vault
-# server with 3 AppRole roles for `metap-control`'s `vault_store.rs` e2e tests — no Go
-# equivalent of those tests exists yet (`pkg/control/vaultstore.go` has no e2e test file), so
-# Vault isn't provisioned here. Add it back the same way (a `vault:` services entry + an
-# AppRole-provisioning step) if/when that gap is closed.
+# server with 3 AppRole roles for `metap-control`'s `vault_store.rs` e2e tests. The Go port
+# (2026-11-08) runs `pkg/secrets/vaultstore_integration_test.go` against a dev-mode OpenBao
+# (MPL-2.0 fork of Vault, same API) instead; the tests provision their own AppRole roles with
+# the root token, so there is no separate provisioning step.
 #
-# Run locally from the repo root: `docker compose up -d postgres dragonfly`, then
-# `REDIS_URL=redis://127.0.0.1:6379 go test -tags integration ./...` (testkit defaults to the
+# Run locally from the repo root: `docker compose up -d postgres dragonfly vault`, then
+# `REDIS_URL=redis://127.0.0.1:6379 VAULT_ADDR=http://127.0.0.1:8200
+# VAULT_TOKEN=metap-dev-root-token go test -tags integration ./...` (testkit defaults to the
 # compose Postgres on localhost:5433; override with METAP_TEST_DATABASE_URL or DATABASE_URL). Run in CI: trigger this workflow manually (Actions tab → "E2E (manual)" → "Run
 # workflow", or `gh workflow run e2e-manual.yml`).
 
@@ -61,10 +62,26 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # pkg/secrets' VaultStore integration tests. The image's default command is dev mode
+      # (in-memory, unsealed, KV v2 at secret/, fixed root token below).
+      openbao:
+        image: openbao/openbao:2.4.3
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: metap-dev-root-token
+          BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports: ["8200:8200"]
+        options: >-
+          --cap-add IPC_LOCK
+          --health-cmd "wget -q -O /dev/null http://127.0.0.1:8200/v1/sys/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgres://metap:metap@localhost:5432/metap
       RABBITMQ_URL: amqp://metap:metap@localhost:5672
       REDIS_URL: redis://127.0.0.1:6379
+      VAULT_ADDR: http://127.0.0.1:8200
+      VAULT_TOKEN: metap-dev-root-token
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

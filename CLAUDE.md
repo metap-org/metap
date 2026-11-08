@@ -106,6 +106,13 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   `control.BuildSecretStore`). `control` keeps only the `SecretStore` interface, `DbCreds` and the
   stdlib `EnvStore`, so `control`/`crud`/`httpserver`/`grpcapi` no longer link three cloud SDKs
   into every binary — only a binary that calls `secrets.Build` does.
+  **`VaultStore` targets OpenBao (2026-11-08)**: client is `github.com/openbao/openbao/api/v2`
+  (MPL-2.0; `hashicorp/vault/api` is gone from `go.mod`) and the compose `vault` service runs
+  `openbao/openbao` in dev mode — same HTTP API, so a HashiCorp Vault server still works. The
+  type name and the `VAULT_*` env vars were kept on purpose (OpenBao's CLI reads them too), so no
+  caller or deployment config changed. `vaultstore_integration_test.go` (`-tags integration`,
+  needs `VAULT_ADDR`/`VAULT_TOKEN`, run by `e2e-manual.yml`) covers KV round trips, AppRole
+  renewal with a single-use secret_id, and the re-login fallback.
 - **Optional HTTP route groups are their own packages**: `pkg/httpserver/{oauth2routes,
   cronroutes,dashboardroutes,attachmentroutes}`, each exposing `Mount` (an `httpserver.Mount`).
   `httpserver.BuildRouter(state, cors, mounts...)` serves only the core groups (health, metrics,
@@ -149,7 +156,7 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   WrapBackend, Routes, Configure})`): config → pool → router → permissions → JWT keys → metadata
   → reconcile `Entities` in order (`ScopeAllTenants`) → peripherals → CRUD+audit → optional gRPC →
   HTTP. This *is* the `metap-app` equivalent the paragraph above says was skipped — `../waap`'s
-  three data-plane services needed it (each `main.go` was ~150 copied lines, now ~20).
+  three management-plane services needed it (each `main.go` was ~150 copied lines, now ~20).
 
 **Frontend library moved out of this repo (2026-08-28):** the reusable frontend library — formerly `packages/platform-react` (Mantine-based), now retired/deleted — lives as `@metap/platform-ui` in a separate sibling repo, `../platform-ui`, alongside a second sibling repo `../design-system` (`@metap/ui`, Tailwind + Radix + shadcn-style components) that it's built on. Neither is a member of this repo's pnpm workspace (which has had no members of its own since the "No example apps in this repo" change below — see that note for what still consumes them via `link:`). `@metap/platform-ui`'s own `README.md` documents its module list and port status; treat that repo, not this section, as the source of truth for what's in it.
 

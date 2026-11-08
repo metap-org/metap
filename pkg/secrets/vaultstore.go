@@ -1,5 +1,8 @@
-// Second SecretStore impl, after EnvStore. Static KV v2 secrets over Vault's HTTP API via
-// github.com/hashicorp/vault/api. Two auth methods: a plain token (NewVaultStore) and AppRole
+// Second SecretStore impl, after EnvStore. Static KV v2 secrets over the Vault HTTP API, served
+// by OpenBao (the MPL-2.0 fork of Vault, chosen over Vault's BSL releases — see waap's
+// ADR-0017/ADR-0024) via github.com/openbao/openbao/api/v2. The wire API is the same, so a
+// HashiCorp Vault server still works too; the type keeps the VaultStore name and the VAULT_*
+// env vars (which OpenBao's own CLI also reads) so existing config is unchanged. Two auth methods: a plain token (NewVaultStore) and AppRole
 // (NewVaultStoreWithAppRole) — not Vault's dynamic database-credentials engine, still a real
 // gap, left for when a real production deployment target exists to need it.
 //
@@ -15,7 +18,7 @@
 // problem.
 //
 // Divergence from the Rust original: that version rebuilds a fresh VaultClient per call outside
-// the lock (ring's own vaultrs client doesn't implement Clone). Go's vault/api Client.SetToken
+// the lock (ring's own vaultrs client doesn't implement Clone). Go's openbao/api Client.SetToken
 // is just a field mutation on a client that's otherwise safe for concurrent use for read/write
 // calls, so this port mutates the token under the lock and reads the client without rebuilding
 // it — simpler, same net effect (concurrent calls for different tenants don't serialize behind
@@ -31,7 +34,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/control"
 
-	vaultapi "github.com/hashicorp/vault/api"
+	vaultapi "github.com/openbao/openbao/api/v2"
 )
 
 const (

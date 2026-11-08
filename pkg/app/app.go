@@ -13,7 +13,7 @@
 //	}
 //
 // It is the Go counterpart of the Rust-era metap-app builder (skipped in the Go port until a
-// downstream service needed it — ../waap's three data-plane services were hand-copying ~150
+// downstream service needed it — ../waap's three management-plane services were hand-copying ~150
 // identical lines each).
 package app
 
