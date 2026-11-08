@@ -49,7 +49,7 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 		r.Get("/.well-known/jwks.json", jwks.Handler(state.JwksKeys))
 	}
 	mountMetrics(r, state)
-	mountMetadata(r)
+	mountMetadata(r, state)
 	mountAuth(r, state)
 	mountRecords(r, state)
 	mountUsers(r, state)
