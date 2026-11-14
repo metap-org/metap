@@ -27,14 +27,10 @@ func listRecordAuditEvents(w http.ResponseWriter, r *http.Request, state *AppSta
 
 	result, err := state.Crud.ListAuditEvents(r.Context(), entity, recordID, rc)
 	if err != nil {
-		writeInternalError(w, err)
+		writeCrudError(w, err)
 		return
 	}
-	if !result.IsOk {
-		writeCrudServiceError(w, result.Status, result.ErrorCode, result.Message, result.FieldErrors)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": result.Data})
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
 }
 
 func mountAuditEvents(r chi.Router, state *AppState) {

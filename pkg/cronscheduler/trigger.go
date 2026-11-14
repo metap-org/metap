@@ -8,9 +8,8 @@ package cronscheduler
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/metap-org/metap/pkg/events"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,7 +21,7 @@ import (
 
 const (
 	TriggerQueue      = "cron.workflow-trigger"
-	TriggerRoutingKey = "#"
+	TriggerRoutingKey = events.All
 )
 
 // triggerRetryPolicy: a trigger-match attempt failing is (almost always) a transient DB error,
@@ -33,38 +32,6 @@ func triggerRetryPolicy() *eventbus.RetryPolicy {
 	return &eventbus.RetryPolicy{Delays: []time.Duration{5 * time.Second, 30 * time.Second, 120 * time.Second}}
 }
 
-type topicKind int
-
-const (
-	topicNone topicKind = iota
-	topicTransitioned
-	topicRecordEvent
-)
-
-// topic is what kind of trigger-worthy event a routing key names — topicNone for anything else
-// (not an error, just not this listener's concern).
-type topic struct {
-	kind   topicKind
-	entity string
-	event  string // only set for topicRecordEvent
-}
-
-func classifyTopic(routingKey string) topic {
-	if entity, ok := strings.CutSuffix(routingKey, ".workflow.transitioned"); ok {
-		return topic{kind: topicTransitioned, entity: entity}
-	}
-	for _, pair := range [...]struct{ suffix, event string }{
-		{".record.created", "created"},
-		{".record.updated", "updated"},
-		{".record.deleted", "deleted"},
-	} {
-		if entity, ok := strings.CutSuffix(routingKey, pair.suffix); ok {
-			return topic{kind: topicRecordEvent, entity: entity, event: pair.event}
-		}
-	}
-	return topic{kind: topicNone}
-}
-
 // RunTriggerListener runs the consume-dispatch loop until ctx is canceled — a thin wrapper
 // around eventbus.RunResilientConsumer. This and RunExecutor each reconnect independently
 // (separate EventBus connections) rather than sharing one, so one consumer reconnecting doesn't
@@ -73,80 +40,38 @@ func RunTriggerListener(ctx context.Context, connect func() (eventbus.EventBus, 
 	policy := triggerRetryPolicy()
 	return eventbus.RunResilientConsumer(ctx, TriggerQueue, TriggerRoutingKey, policy, connect,
 		func(ctx context.Context, event *eventbus.ConsumedEvent) {
-			t := classifyTopic(event.RoutingKey)
-			switch t.kind {
-			case topicTransitioned:
-				tenantID, okT := parseTenantID(event)
-				recordID, okR := parseRecordID(event)
-				if !okT || !okR {
+			t := events.ParseTopic(event.RoutingKey)
+			switch t.Kind {
+			case events.KindTransitioned:
+				p, err := events.Decode[events.Transitioned](event.Payload)
+				if err != nil || p.TenantID == uuid.Nil || p.RecordID == uuid.Nil {
 					rejectMalformed(event, "missing/invalid `tenantId`/`recordId`")
 					return
 				}
-				action, ok := parsePayloadString(event, "action")
-				if !ok {
+				if p.Action == "" {
 					rejectMalformed(event, "missing/invalid `action`")
 					return
 				}
-				dispatchTransition(ctx, pool, config, policy, event, tenantID, t.entity, action, recordID)
-			case topicRecordEvent:
-				tenantID, okT := parseTenantID(event)
-				recordID, okR := parseRecordID(event)
-				if !okT || !okR {
+				dispatchTransition(ctx, pool, config, policy, event, p.TenantID, t.Entity, p.Action, p.RecordID)
+			case events.KindRecord:
+				p, err := events.Decode[events.Envelope](event.Payload)
+				if err != nil || p.TenantID == uuid.Nil || p.RecordID == uuid.Nil {
 					rejectMalformed(event, "missing/invalid `tenantId`/`recordId`")
 					return
 				}
-				dispatchRecordEvent(ctx, pool, config, policy, event, tenantID, t.entity, t.event, recordID)
+				dispatchRecordEvent(ctx, pool, config, policy, event, p.TenantID, t.Entity, string(t.Action), p.RecordID)
 			default:
 				// Not a topic this listener cares about — acking is correct here, not a
 				// fallback: under a catch-all subscription, receiving other topics is the
 				// expected case.
-				_ = event.Ack()
+				event.AckLogged()
 			}
 		})
 }
 
 func rejectMalformed(event *eventbus.ConsumedEvent, reason string) {
 	slog.Warn("malformed trigger-worthy payload, routed to dead-letter queue", "routing_key", event.RoutingKey, "reason", reason)
-	_ = event.Nack(false)
-}
-
-// parseTenantID: tenantId is the one field every trigger-worthy payload carries, shared
-// regardless of which topic the routing key classified as.
-func parseTenantID(event *eventbus.ConsumedEvent) (uuid.UUID, bool) {
-	s, ok := parsePayloadString(event, "tenantId")
-	if !ok {
-		return uuid.UUID{}, false
-	}
-	id, err := uuid.Parse(s)
-	return id, err == nil
-}
-
-// parseRecordID: recordId is likewise present on every trigger-worthy payload — threaded
-// through to CronJobDuePayload.TriggerRecordID so a target can reference which record actually
-// caused the firing.
-func parseRecordID(event *eventbus.ConsumedEvent) (uuid.UUID, bool) {
-	s, ok := parsePayloadString(event, "recordId")
-	if !ok {
-		return uuid.UUID{}, false
-	}
-	id, err := uuid.Parse(s)
-	return id, err == nil
-}
-
-func parsePayloadString(event *eventbus.ConsumedEvent, key string) (string, bool) {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(event.Payload, &m); err != nil {
-		return "", false
-	}
-	raw, ok := m[key]
-	if !ok {
-		return "", false
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return "", false
-	}
-	return s, true
+	event.NackLogged(false)
 }
 
 func dispatchTransition(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, policy *eventbus.RetryPolicy,
@@ -206,5 +131,5 @@ func finishDispatch(ctx context.Context, pool *pgxpool.Pool, config *ExecutorCon
 		}
 	}
 
-	_ = event.Ack()
+	event.AckLogged()
 }

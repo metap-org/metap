@@ -1,4 +1,4 @@
-// Maps a crud.ServiceResult's error onto a grpc.Status and back — the gRPC counterpart to
+// Maps a crud.ServiceError onto a grpc.Status and back — the gRPC counterpart to
 // metap-http's writeServiceError, so the same CrudService failure reads the same regardless of
 // which transport a caller used. Ported from crates/metap-grpc/src/status.rs.
 //
@@ -9,7 +9,7 @@
 // convention tonic::Status::with_details uses (a caller that ignores it, or an older/non-metap
 // server that never sets it, still sees the same Code+message). JSON rather than a
 // google.rpc.Status/protobuf Any deliberately: the envelope is already the exact shape REST's
-// error body and ServiceResult use, so one representation covers every transport without a
+// error body and ServiceError use, so one representation covers every transport without a
 // second proto to keep in sync, and it stays byte-compatible with any Rust metap-grpc service
 // still running during a mixed-language deployment.
 package grpcapi
@@ -27,7 +27,7 @@ import (
 // Rust side), so application code here only ever handles the raw bytes.
 const statusDetailsTrailer = "grpc-status-details-bin"
 
-// ErrorDetails is the ServiceResult error payload, carried verbatim in a Status's details.
+// ErrorDetails is the ServiceError payload, carried verbatim in a Status's details.
 // Field names are camelCase to match the REST error body.
 type ErrorDetails struct {
 	Status      uint16              `json:"status"`
@@ -67,7 +67,7 @@ func errorDetailsTrailerBytes(details ErrorDetails) (metadata.MD, bool) {
 	return metadata.Pairs(statusDetailsTrailer, string(b)), true
 }
 
-// errorToStatus builds the (grpc error, trailer metadata) pair for a ServiceResult::Err shape.
+// errorToStatus builds the (grpc error, trailer metadata) pair for a crud.ServiceError.
 // The caller must call grpc.SetTrailer(ctx, md) (server side) before returning err, or pass
 // grpc.Trailer(&md) as a CallOption and read it back (client side) — see service.go/client.go.
 func errorToStatus(httpStatus uint16, errorCode string, message *string, fieldErrors map[string][]string) (error, metadata.MD) {

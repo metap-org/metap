@@ -74,7 +74,7 @@ func (r *HandlerRegistry) Run(ctx context.Context, queue string, retryPolicy *Re
 			}
 		}
 		if len(matched) == 0 {
-			_ = event.Ack()
+			event.AckLogged()
 			return
 		}
 
@@ -96,7 +96,7 @@ func (r *HandlerRegistry) Run(ctx context.Context, queue string, retryPolicy *Re
 			}
 		}
 		if len(failures) == 0 {
-			_ = event.Ack()
+			event.AckLogged()
 			return
 		}
 		for _, err := range failures {
@@ -105,7 +105,7 @@ func (r *HandlerRegistry) Run(ctx context.Context, queue string, retryPolicy *Re
 		if retryPolicy != nil {
 			_ = event.RetryOrGiveUp(ctx, retryPolicy)
 		} else {
-			_ = event.Nack(false)
+			event.NackLogged(false)
 		}
 	})
 }

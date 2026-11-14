@@ -11,18 +11,18 @@ import (
 // an *existing* record — entity-level then record-level (ABAC) — without reading, writing, or
 // returning the record itself. Exists for a resource that isn't itself a metadata-driven entity
 // but is attached to one (attachments, workflow-events history).
-func (s *CrudService) CheckRecordPermission(ctx context.Context, entityName string, id uuid.UUID, action permission.EntityAction, rc *permission.RequestContext) (ServiceResult[struct{}], error) {
+func (s *CrudService) CheckRecordPermission(ctx context.Context, entityName string, id uuid.UUID, action permission.EntityAction, rc *permission.RequestContext) error {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {
-		return ServiceResult[struct{}]{}, err
+		return err
 	}
 	registry, err := s.registryFor(ctx, tenantID)
 	if err != nil {
-		return ServiceResult[struct{}]{}, err
+		return err
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return ResultErr[struct{}](404, "entity_not_found"), nil
+		return NewServiceError(404, "entity_not_found")
 	}
 
 	var decision permission.PermissionDecision
@@ -37,44 +37,44 @@ func (s *CrudService) CheckRecordPermission(ctx context.Context, entityName stri
 		panic("CheckRecordPermission only supports Read/Update/Delete")
 	}
 	if err != nil {
-		return ServiceResult[struct{}]{}, err
+		return err
 	}
 	if !decision.Allowed {
-		return forbidden[struct{}](decision), nil
+		return forbidden(decision)
 	}
 
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
-		if r, ok := routerUnavailable[struct{}](err); ok {
-			return r, nil
+		if r, ok := routerUnavailable(err); ok {
+			return r
 		}
-		return ServiceResult[struct{}]{}, err
+		return err
 	}
 	existing, err := fetchExisting(ctx, tx, id, tenantID, entity)
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[struct{}]{}, err
+		return err
 	}
 	if existing == nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ResultErr[struct{}](404, "record_not_found"), nil
+		return NewServiceError(404, "record_not_found")
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return ServiceResult[struct{}]{}, err
+		return err
 	}
 
 	snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, entity.Name)
 	if err != nil {
-		return ServiceResult[struct{}]{}, err
+		return err
 	}
 	enriched, err := s.enrichRecordForActions(ctx, entity, snapshot, []permission.EntityAction{action}, tenantID, registry, existing.Data)
 	if err != nil {
-		return ServiceResult[struct{}]{}, err
+		return err
 	}
 	recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(enriched), action)
 	if !recordDecision.Allowed {
-		return forbidden[struct{}](recordDecision), nil
+		return forbidden(recordDecision)
 	}
 
-	return ResultOk(struct{}{}), nil
+	return nil
 }

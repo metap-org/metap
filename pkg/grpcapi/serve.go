@@ -19,8 +19,8 @@ import (
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/grpcapi/pb"
 	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/metadata"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 // logUnaryInterceptor is the per-RPC access log every REST route already gets via
@@ -89,10 +89,10 @@ type OptionalServeConfig struct {
 // calls Serve/NewServer directly instead. The returned *grpc.Server lets the caller
 // GracefulStop() it on shutdown.
 func OptionalServe(host string, defaultPort int, cfg OptionalServeConfig) (*grpc.Server, error) {
-	if !runtime.FlagEnabled("GRPC_ENABLED") {
+	if !env.Bool("GRPC_ENABLED") {
 		return nil, nil
 	}
-	port := runtime.EnvOr("GRPC_PORT", defaultPort)
+	port := env.Int("GRPC_PORT", defaultPort)
 	addr := fmt.Sprintf("%s:%d", host, port)
 
 	verifier := cfg.TokenVerifierOverride

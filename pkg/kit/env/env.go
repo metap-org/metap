@@ -1,12 +1,15 @@
 // Package env reads configuration from environment variables. A variable that is set but empty
-// counts as unset everywhere here except Require, matching how a blank line in a .env file or a
-// compose `FOO:` entry is meant to read.
+// counts as unset everywhere here, Require included, matching how a blank line in a .env file or a
+// compose `FOO:` entry is meant to read. A value that is set but cannot be parsed falls back to the
+// default and logs a warning naming the variable, so a typo is visible instead of silently ignored.
 package env
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -36,9 +39,11 @@ func String(name, def string) string {
 // Int returns the variable parsed as an int, or def when it is unset, empty or unparseable.
 func Int(name string, def int) int {
 	if v, ok := Lookup(name); ok {
-		if n, err := strconv.Atoi(v); err == nil {
+		n, err := strconv.Atoi(v)
+		if err == nil {
 			return n
 		}
+		warnUnparseable(name, v, "an integer")
 	}
 	return def
 }
@@ -63,17 +68,33 @@ func Millis(name string, def time.Duration) time.Duration {
 // Duration reads a Go duration string (e.g. "1m30s"), or def when unset, empty or unparseable.
 func Duration(name string, def time.Duration) time.Duration {
 	if v, ok := Lookup(name); ok {
-		if d, err := time.ParseDuration(v); err == nil {
+		d, err := time.ParseDuration(v)
+		if err == nil {
 			return d
 		}
+		warnUnparseable(name, v, "a duration such as 30s")
 	}
 	return def
 }
 
-// Require returns the variable's value, or an error when it is not set at all. A set-but-empty
-// variable is returned as "" without error.
+// List splits a comma-separated variable into trimmed, non-empty items; nil when unset or empty.
+func List(name string) []string {
+	v, ok := Lookup(name)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// Require returns the variable's value, or an error when it is unset or empty.
 func Require(name string) (string, error) {
-	v, ok := os.LookupEnv(name)
+	v, ok := Lookup(name)
 	if !ok {
 		return "", fmt.Errorf("%s is required", name)
 	}
@@ -82,9 +103,16 @@ func Require(name string) (string, error) {
 
 func units(name string, def, unit time.Duration) time.Duration {
 	if v, ok := Lookup(name); ok {
-		if n, err := strconv.ParseUint(v, 10, 63); err == nil {
+		n, err := strconv.ParseUint(v, 10, 63)
+		if err == nil {
 			return time.Duration(n) * unit
 		}
+		warnUnparseable(name, v, "a non-negative whole number")
 	}
 	return def
+}
+
+func warnUnparseable(name, value, want string) {
+	slog.Warn("ignoring environment variable: value is not "+want+", using the default",
+		"variable", name, "value", value)
 }

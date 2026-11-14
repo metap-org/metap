@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -243,4 +244,52 @@ func (r *MetadataRegistry) toSummary(entity EntityDefinition) EntitySummary {
 		Workflow: entity.Workflow, RelatedViews: r.relatedViews[entity.Name], FieldDisplayHints: r.fieldDisplayHints[entity.Name],
 		UniqueConstraints: entity.UniqueConstraints, Audit: entity.Audit, Version: version,
 	}
+}
+
+// Definitions returns every registered entity definition ordered so that an entity comes after
+// every entity its Reference fields point at (ties broken by name, so the order is
+// deterministic). A reference cycle or a reference to an entity outside the registry does not
+// block ordering: the remaining entities are appended by name, and ValidateReferences is the
+// check that reports a dangling reference.
+func (r *MetadataRegistry) Definitions() []EntityDefinition {
+	names := make([]string, 0, len(r.entities))
+	for name := range r.entities {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]EntityDefinition, 0, len(names))
+	placed := map[string]bool{}
+	for len(out) < len(names) {
+		progressed := false
+		for _, name := range names {
+			if placed[name] {
+				continue
+			}
+			ready := true
+			for _, f := range r.entities[name].Fields {
+				if f.RefEntity == nil || *f.RefEntity == name || placed[*f.RefEntity] {
+					continue
+				}
+				if _, inRegistry := r.entities[*f.RefEntity]; inRegistry {
+					ready = false
+					break
+				}
+			}
+			if ready {
+				out = append(out, r.entities[name])
+				placed[name] = true
+				progressed = true
+			}
+		}
+		if !progressed { // reference cycle: place the rest by name
+			for _, name := range names {
+				if !placed[name] {
+					out = append(out, r.entities[name])
+					placed[name] = true
+				}
+			}
+		}
+	}
+	return out
 }

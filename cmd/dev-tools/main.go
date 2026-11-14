@@ -15,7 +15,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/metap-org/metap/pkg/control"
-	"github.com/metap-org/metap/pkg/runtime"
+	"github.com/metap-org/metap/pkg/kit/env"
 )
 
 func usage() {
@@ -104,7 +104,7 @@ func argOr(args []string, i int, def string) string {
 // migrationsDir: MIGRATIONS_DIR env override, else "migrations" relative to the repo root (the
 // module root, where `go run ./cmd/dev-tools` is invoked from).
 func migrationsDir() string {
-	if dir, ok := runtime.Optional("MIGRATIONS_DIR"); ok {
+	if dir, ok := env.Lookup("MIGRATIONS_DIR"); ok {
 		return dir
 	}
 	return "migrations"
@@ -118,7 +118,7 @@ func migrationsDir() string {
 // a fresh one).
 func connectShared(ctx context.Context, maxConns int32) (*pgxpool.Pool, error) {
 	_ = godotenv.Load()
-	databaseURL, err := runtime.RequireEnv("DATABASE_URL")
+	databaseURL, err := env.Require("DATABASE_URL")
 	if err != nil {
 		return nil, err
 	}

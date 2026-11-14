@@ -68,9 +68,8 @@ func availability(t *testing.T, svc *CrudService, id uuid.UUID, rc *permission.R
 	t.Helper()
 	res, err := svc.Get(context.Background(), "test.change_requests", id, rc)
 	require.NoError(t, err)
-	require.True(t, res.IsOk, "get failed: %d %s", res.Status, res.ErrorCode)
 	out := map[string]TransitionAvailability{}
-	for _, tr := range res.Data.Capabilities.Transitions {
+	for _, tr := range res.Capabilities.Transitions {
 		out[tr.Action] = tr
 	}
 	return out
@@ -80,8 +79,7 @@ func createDraft(t *testing.T, svc *CrudService, rc *permission.RequestContext) 
 	t.Helper()
 	res, err := svc.Create(context.Background(), "test.change_requests", JsonObject{"title": raw("Block /wp-login.php")}, rc, nil)
 	require.NoError(t, err)
-	require.True(t, res.IsOk, "create failed: %d %s", res.Status, res.ErrorCode)
-	return res.Data
+	return res
 }
 
 func TestOneWorkflowShowsEachCallerOnlyTheTransitionsTheyCanTake(t *testing.T) {
@@ -117,8 +115,7 @@ func TestOneWorkflowShowsEachCallerOnlyTheTransitionsTheyCanTake(t *testing.T) {
 		require.False(t, got["submit"].Available, "submit should not be offered when the account needs no approval: %+v", got["submit"])
 		res, err := svc.Transition(ctx, "test.change_requests", draft.ID, "publish", draft.Version, nil, author, nil)
 		require.NoError(t, err)
-		require.True(t, res.IsOk, "publish failed: %d %s", res.Status, res.ErrorCode)
-		require.Equal(t, "published", *res.Data.Status, "publish failed: %d %s", res.Status, res.ErrorCode)
+		require.Equal(t, "published", *res.Status)
 	})
 
 	t.Run("enterprise author must submit; approver must be someone else", func(t *testing.T) {
@@ -130,40 +127,38 @@ func TestOneWorkflowShowsEachCallerOnlyTheTransitionsTheyCanTake(t *testing.T) {
 		require.True(t, got["submit"].Available, "enterprise author should see submit, not publish: %+v", got)
 		require.NotNil(t, got["publish"].Reason, "publish should carry the guard message, got %+v", got["publish"].Reason)
 		require.Equal(t, "This account requires approval; submit the change instead", *got["publish"].Reason, "publish should carry the guard message, got %+v", got["publish"].Reason)
-		direct, err := svc.Transition(ctx, "test.change_requests", draft.ID, "publish", draft.Version, nil, author, nil)
-		require.NoError(t, err)
-		require.False(t, direct.IsOk, "direct publish should be refused by the guard, got ok=%v status=%d", direct.IsOk, direct.Status)
-		require.EqualValues(t, 422, direct.Status, "direct publish should be refused by the guard, got ok=%v status=%d", direct.IsOk, direct.Status)
+		_, err := svc.Transition(ctx, "test.change_requests", draft.ID, "publish", draft.Version, nil, author, nil)
+		var directErr *ServiceError
+		require.ErrorAs(t, err, &directErr)
+		require.EqualValues(t, 422, directErr.Status)
 
 		submitted, err := svc.Transition(ctx, "test.change_requests", draft.ID, "submit", draft.Version, nil, author, nil)
 		require.NoError(t, err)
-		require.True(t, submitted.IsOk, "submit failed: %d %s", submitted.Status, submitted.ErrorCode)
-		require.Equal(t, "pending", *submitted.Data.Status, "submit failed: %d %s", submitted.Status, submitted.ErrorCode)
+		require.Equal(t, "pending", *submitted.Status)
 
 		// Separation of duties: holding the approver role is not enough to approve one's own submission.
 		self := availability(t, svc, draft.ID, author)
 		require.False(t, self["approve"].Available, "the submitter must not be offered approve: %+v", self["approve"])
 		require.NotNil(t, self["approve"].Reason, "approve should carry the guard message, got %+v", self["approve"].Reason)
 		require.Equal(t, "The approver must be someone other than the submitter", *self["approve"].Reason, "approve should carry the guard message, got %+v", self["approve"].Reason)
-		ownApproval, err := svc.Transition(ctx, "test.change_requests", draft.ID, "approve", submitted.Data.Version, nil, author, nil)
-		require.NoError(t, err)
-		require.False(t, ownApproval.IsOk, "self-approval should be refused, got ok=%v status=%d", ownApproval.IsOk, ownApproval.Status)
-		require.EqualValues(t, 422, ownApproval.Status, "self-approval should be refused, got ok=%v status=%d", ownApproval.IsOk, ownApproval.Status)
+		_, err = svc.Transition(ctx, "test.change_requests", draft.ID, "approve", submitted.Version, nil, author, nil)
+		var ownApprovalErr *ServiceError
+		require.ErrorAs(t, err, &ownApprovalErr)
+		require.EqualValues(t, 422, ownApprovalErr.Status)
 
 		// A second author has no transition:approve policy: not offered, and refused at the entity level.
 		otherAuthor := member(tenantID, true, "author")
 		require.False(t, availability(t, svc, draft.ID, otherAuthor)["approve"].Available, "a caller without transition:approve must not be offered approve")
-		noPolicy, err := svc.Transition(ctx, "test.change_requests", draft.ID, "approve", submitted.Data.Version, nil, otherAuthor, nil)
-		require.NoError(t, err)
-		require.False(t, noPolicy.IsOk, "approve without transition:approve should be 403, got ok=%v status=%d", noPolicy.IsOk, noPolicy.Status)
-		require.EqualValues(t, 403, noPolicy.Status, "approve without transition:approve should be 403, got ok=%v status=%d", noPolicy.IsOk, noPolicy.Status)
+		_, err = svc.Transition(ctx, "test.change_requests", draft.ID, "approve", submitted.Version, nil, otherAuthor, nil)
+		var noPolicyErr *ServiceError
+		require.ErrorAs(t, err, &noPolicyErr)
+		require.EqualValues(t, 403, noPolicyErr.Status)
 
 		approver := member(tenantID, true, "approver")
 		require.True(t, availability(t, svc, draft.ID, approver)["approve"].Available, "a different approver should be offered approve")
-		approved, err := svc.Transition(ctx, "test.change_requests", draft.ID, "approve", submitted.Data.Version, nil, approver, nil)
+		approved, err := svc.Transition(ctx, "test.change_requests", draft.ID, "approve", submitted.Version, nil, approver, nil)
 		require.NoError(t, err)
-		require.True(t, approved.IsOk, "approve by a different approver failed: %d %s", approved.Status, approved.ErrorCode)
-		require.Equal(t, "published", *approved.Data.Status, "approve by a different approver failed: %d %s", approved.Status, approved.ErrorCode)
+		require.Equal(t, "published", *approved.Status)
 	})
 
 	t.Run("a role with no transition policy is offered no transition", func(t *testing.T) {

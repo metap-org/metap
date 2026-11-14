@@ -257,3 +257,41 @@ func TestMetricsEndpointExposesPrometheusTextFormat(t *testing.T) {
 		require.Contains(t, text, want, "expected %q in /metrics output", want)
 	}
 }
+
+func TestAttachmentUploadOverTheLimitIsRefusedWith413(t *testing.T) {
+	t.Setenv("ATTACHMENT_MAX_BYTES", "100")
+	pool := httpTestPool(t)
+	ctx := context.Background()
+	tenantID := uuid.New()
+	userID := uuid.New()
+
+	_, err := pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')", tenantID, userID)
+	require.NoError(t, err)
+	ensureTestOrdersTable(t, pool)
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), "DELETE FROM attachments WHERE tenant_id = $1", tenantID)
+		pool.Exec(context.Background(), "DELETE FROM metadata.outbox_events WHERE aggregate_type = 'test.orders'")
+		pool.Exec(context.Background(), fmt.Sprintf("DELETE FROM %s WHERE tenant_id = $1", testOrdersTable), tenantID)
+		pool.Exec(context.Background(), "DELETE FROM metadata.user_roles WHERE tenant_id = $1", tenantID)
+	})
+
+	state, privPEM := newTestAppState(t, pool, httpTestEntity())
+	store := newFakeObjectStore()
+	state.ObjectStore = store
+	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	require.NoError(t, err)
+	base := startTestServer(t, state, nil)
+
+	createRes := doRequest(t, "POST", base+"/api/test.orders", token, map[string]any{"data": map[string]any{"name": "First"}})
+	require.Equal(t, 201, createRes.StatusCode)
+	recordID := decodeJSON(t, createRes)["data"].(map[string]any)["id"].(string)
+	url := base + "/api/test.orders/" + recordID + "/attachments"
+
+	big := doMultipartUpload(t, url, token, "big.bin", "application/octet-stream", bytes.Repeat([]byte("x"), 200))
+	require.Equal(t, 413, big.StatusCode)
+	require.Equal(t, "payload_too_large", decodeJSON(t, big)["error"].(map[string]any)["code"])
+	require.Empty(t, store.data, "an oversized upload must not reach the object store")
+
+	ok := doMultipartUpload(t, url, token, "small.bin", "application/octet-stream", bytes.Repeat([]byte("x"), 50))
+	require.Equal(t, 201, ok.StatusCode)
+}

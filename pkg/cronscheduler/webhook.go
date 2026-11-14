@@ -51,6 +51,9 @@ var (
 	webhookClient     *http.Client
 )
 
+// maxWebhookResponseBytes caps how much of a webhook response is read into memory.
+const maxWebhookResponseBytes = 1 << 20
+
 func webhookHTTPClient() *http.Client {
 	webhookClientOnce.Do(func() {
 		webhookClient = &http.Client{
@@ -154,7 +157,9 @@ func RunWebhook(ctx context.Context, policy WebhookPolicy, secrets control.Secre
 		return nil, err
 	}
 	defer resp.Body.Close()
-	bodyText, _ := io.ReadAll(resp.Body)
+	// The URL is tenant-supplied: only the first maxWebhookResponseBytes are ever read, since just
+	// 2000 characters of it are kept.
+	bodyText, _ := io.ReadAll(io.LimitReader(resp.Body, maxWebhookResponseBytes))
 	// Everything below reaches cron_job_runs, which the tenant admin reads back. An upstream that
 	// echoes the request would otherwise hand the credential straight back through that surface.
 	text := redact(string(bodyText), credential, hasCredential)

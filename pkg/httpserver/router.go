@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
 	"time"
 
@@ -41,6 +42,11 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 	r.Use(state.Metrics.Middleware)
 	r.Use(runtime.SecurityHeaders)
 	r.Use(runtime.RequestContext)
+	// Recover sits just inside RequestContext on purpose: a handler panic becomes a logged 500 in
+	// the standard envelope that still passes back through RequestContext (so it carries
+	// x-request-id and requestId/traceId), SecurityHeaders and the metrics, instead of a dropped
+	// connection. Outermost would skip all three.
+	r.Use(httpx.Recover)
 	r.Use(rateLimit)
 	r.Use(cors)
 

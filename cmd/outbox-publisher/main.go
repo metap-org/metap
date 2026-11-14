@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/outboxpublisher"
 	"github.com/metap-org/metap/pkg/runtime"
 )
@@ -22,8 +23,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	pollMs := uint64(runtime.EnvOr("OUTBOX_POLL_MS", 1000))
-	batchSize := int64(runtime.EnvOr("OUTBOX_BATCH_SIZE", 100))
+	pollMs := uint64(env.Int("OUTBOX_POLL_MS", 1000))
+	batchSize := int64(env.Int("OUTBOX_BATCH_SIZE", 100))
 
 	slog.Info("connecting to postgres...")
 	ctx, cancel := signalContext()

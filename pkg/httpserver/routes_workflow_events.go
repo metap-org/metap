@@ -26,13 +26,9 @@ func listWorkflowEvents(w http.ResponseWriter, r *http.Request, state *AppState)
 		return
 	}
 
-	checkResult, cerr := state.Crud.CheckRecordPermission(r.Context(), entity, recordID, permission.ActionRead, rc)
+	cerr := state.Crud.CheckRecordPermission(r.Context(), entity, recordID, permission.ActionRead, rc)
 	if cerr != nil {
-		writeInternalError(w, cerr)
-		return
-	}
-	if !checkResult.IsOk {
-		writeCrudServiceError(w, checkResult.Status, checkResult.ErrorCode, checkResult.Message, checkResult.FieldErrors)
+		writeCrudError(w, cerr)
 		return
 	}
 

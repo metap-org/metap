@@ -98,6 +98,10 @@ func (s *S3ObjectStore) Put(
 	return err
 }
 
+// MaxGetBytes bounds Get, which returns the whole object in memory. A caller that needs larger
+// objects needs a streaming API, not a bigger limit.
+const MaxGetBytes = 256 << 20
+
 func (s *S3ObjectStore) Get(ctx context.Context, tenantID uuid.UUID, key string) ([]byte, bool, error) {
 	scoped, err := storage.ScopedKey(tenantID, key)
 	if err != nil {
@@ -111,9 +115,15 @@ func (s *S3ObjectStore) Get(ctx context.Context, tenantID uuid.UUID, key string)
 		return nil, false, err
 	}
 	defer out.Body.Close()
-	data, err := io.ReadAll(out.Body)
+	if out.ContentLength != nil && *out.ContentLength > MaxGetBytes {
+		return nil, false, fmt.Errorf("object %q is %d bytes, over the %d byte limit for a whole-object read", key, *out.ContentLength, int64(MaxGetBytes))
+	}
+	data, err := io.ReadAll(io.LimitReader(out.Body, MaxGetBytes+1))
 	if err != nil {
 		return nil, false, err
+	}
+	if int64(len(data)) > MaxGetBytes {
+		return nil, false, fmt.Errorf("object %q is over the %d byte limit for a whole-object read", key, int64(MaxGetBytes))
 	}
 	return data, true, nil
 }

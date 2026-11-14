@@ -195,8 +195,7 @@ func createCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.App
 		return
 	}
 	var body createCronJobBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !httpserver.DecodeJSONBody(w, r, &body) {
 		return
 	}
 	body.applyDefaults()
@@ -315,8 +314,7 @@ func updateCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.App
 		return
 	}
 	var body updateCronJobBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !httpserver.DecodeJSONBody(w, r, &body) {
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)

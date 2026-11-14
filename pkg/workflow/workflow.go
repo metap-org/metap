@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/events"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 )
@@ -327,65 +327,25 @@ func EmitTransitioned(
 	action, fromState, toState string,
 	actor *uuid.UUID,
 ) error {
-	payload, _ := json.Marshal(map[string]any{
-		"tenantId": tenantID, "recordId": recordID, "action": action, "from": fromState, "to": toState, "actor": actor,
+	return events.EmitTransitioned(ctx, db, entity.Name, events.Transitioned{
+		TenantID: tenantID, RecordID: recordID, Action: action, From: fromState, To: toState, Actor: actor,
 	})
-	event := &infra.OutboxEvent{
-		Topic:         entity.Name + ".workflow.transitioned",
-		AggregateType: entity.Name,
-		AggregateID:   recordID,
-		Payload:       payload,
-	}
-	return infra.EnqueueOutboxEvent(ctx, db, event)
 }
 
-// EmitCreated: tenantId in the payload — needed for metap-cron's on_record_event trigger (not
-// yet ported) to scope its cron_jobs lookup by tenant; without it a record-event consumer would
-// have no tenant-safe way to know which tenant's jobs to match.
-func EmitCreated(
-	ctx context.Context,
-	db DBTX,
-	entity metadata.EntityDefinition,
-	tenantID, recordID uuid.UUID,
-	data JSONObject,
-) error {
-	payload, _ := json.Marshal(map[string]any{"tenantId": tenantID, "recordId": recordID, "data": data})
-	event := &infra.OutboxEvent{
-		Topic:         entity.Name + ".record.created",
-		AggregateType: entity.Name,
-		AggregateID:   recordID,
-		Payload:       payload,
-	}
-	return infra.EnqueueOutboxEvent(ctx, db, event)
+// EmitCreated: tenantId in the payload — needed for metap-cron's on_record_event trigger to scope
+// its cron_jobs lookup by tenant; without it a record-event consumer would have no tenant-safe way
+// to know which tenant's jobs to match.
+func EmitCreated(ctx context.Context, db DBTX, entity metadata.EntityDefinition, tenantID, recordID uuid.UUID, data JSONObject) error {
+	return events.EmitRecord(ctx, db, entity.Name, events.RecordCreated,
+		events.RecordEvent{TenantID: tenantID, RecordID: recordID, Data: data})
 }
 
 func EmitDeleted(ctx context.Context, db DBTX, entity metadata.EntityDefinition, tenantID, recordID uuid.UUID) error {
-	payload, _ := json.Marshal(map[string]any{"tenantId": tenantID, "recordId": recordID})
-	event := &infra.OutboxEvent{
-		Topic:         entity.Name + ".record.deleted",
-		AggregateType: entity.Name,
-		AggregateID:   recordID,
-		Payload:       payload,
-	}
-	return infra.EnqueueOutboxEvent(ctx, db, event)
+	return events.EmitRecord(ctx, db, entity.Name, events.RecordDeleted,
+		events.RecordEvent{TenantID: tenantID, RecordID: recordID})
 }
 
-func EmitUpdated(
-	ctx context.Context,
-	db DBTX,
-	entity metadata.EntityDefinition,
-	tenantID, recordID uuid.UUID,
-	data JSONObject,
-	version int32,
-) error {
-	payload, _ := json.Marshal(
-		map[string]any{"tenantId": tenantID, "recordId": recordID, "data": data, "version": version},
-	)
-	event := &infra.OutboxEvent{
-		Topic:         entity.Name + ".record.updated",
-		AggregateType: entity.Name,
-		AggregateID:   recordID,
-		Payload:       payload,
-	}
-	return infra.EnqueueOutboxEvent(ctx, db, event)
+func EmitUpdated(ctx context.Context, db DBTX, entity metadata.EntityDefinition, tenantID, recordID uuid.UUID, data JSONObject, version int32) error {
+	return events.EmitRecord(ctx, db, entity.Name, events.RecordUpdated,
+		events.RecordEvent{TenantID: tenantID, RecordID: recordID, Data: data, RecordVersion: &version})
 }

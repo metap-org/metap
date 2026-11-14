@@ -7,18 +7,16 @@ package notificationworker
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/metap-org/metap/pkg/events"
 	"log/slog"
-	"strings"
 
 	"github.com/metap-org/metap/pkg/infra/eventbus"
 )
 
 const Queue = "notification.workflow-transitioned"
 
-// RoutingKey: "#" matches any number of dot-separated words, so this binds every entity's
-// transition topic regardless of how domain-namespaced its name is.
-const RoutingKey = "#.workflow.transitioned"
+// RoutingKey binds every entity's transition topic regardless of how domain-namespaced its name is.
+const RoutingKey = events.AnyTransition
 
 // Run runs the consume loop until ctx is canceled — a thin wrapper around
 // eventbus.RunResilientConsumer supplying the notification-specific handler (notify, always
@@ -26,25 +24,15 @@ const RoutingKey = "#.workflow.transitioned"
 func Run(ctx context.Context, connect func() (eventbus.EventBus, error)) error {
 	return eventbus.RunResilientConsumer(ctx, Queue, RoutingKey, nil, connect, func(ctx context.Context, event *eventbus.ConsumedEvent) {
 		notify(event)
-		_ = event.Ack()
+		event.AckLogged()
 	})
 }
 
 func notify(event *eventbus.ConsumedEvent) {
-	entity := strings.TrimSuffix(event.RoutingKey, ".workflow.transitioned")
-	var payload map[string]json.RawMessage
-	_ = json.Unmarshal(event.Payload, &payload)
-	recordID := jsonStringOr(payload["recordId"], "?")
-	action := jsonStringOr(payload["action"], "?")
-	from := jsonStringOr(payload["from"], "?")
-	to := jsonStringOr(payload["to"], "?")
-	slog.Info("notification", "entity", entity, "record_id", recordID, "action", action, "from", from, "to", to)
-}
-
-func jsonStringOr(raw json.RawMessage, def string) string {
-	var s string
-	if raw == nil || json.Unmarshal(raw, &s) != nil {
-		return def
+	t := events.ParseTopic(event.RoutingKey)
+	p, err := events.Decode[events.Transitioned](event.Payload)
+	if err != nil {
+		slog.Warn("notification: unreadable transition payload", "routing_key", event.RoutingKey, "error", err)
 	}
-	return s
+	slog.Info("notification", "entity", t.Entity, "record_id", p.RecordID, "action", p.Action, "from", p.From, "to", p.To)
 }

@@ -25,29 +25,6 @@ func serviceContext() *permission.RequestContext {
 	return &permission.RequestContext{}
 }
 
-// unwrapResult unwraps a crud.ServiceResult into a plain error, since every caller in this file
-// already treats a business-level error (permission denied, validation failed, version
-// conflict, ...) the same way it treats a transport-level one: fail this job/step with a
-// message, nothing typed to recover from downstream.
-func unwrapResult[T any](result crud.ServiceResult[T], err error) (T, error) {
-	if err != nil {
-		var zero T
-		return zero, err
-	}
-	if result.IsOk {
-		return result.Data, nil
-	}
-	msg := result.ErrorCode
-	if result.Message != nil {
-		msg = fmt.Sprintf("%s: %s", result.ErrorCode, *result.Message)
-	}
-	if result.FieldErrors != nil {
-		msg = fmt.Sprintf("%s (field_errors: %v)", msg, result.FieldErrors)
-	}
-	var zero T
-	return zero, fmt.Errorf("%d %s", result.Status, msg)
-}
-
 func targetGRPCBackend(backend crud.RecordBackend) (crud.RecordBackend, error) {
 	if backend == nil {
 		return nil, fmt.Errorf("CRON_TARGET_GRPC_ADDR is unset or the initial connection to it failed — workflow_transition/bulk_query_action jobs cannot run")
@@ -99,10 +76,11 @@ func RunBulkQueryAction(ctx context.Context, backend crud.RecordBackend, targetC
 		filters = append(filters, [2]string{k, v})
 	}
 	input := query.ListInput{Limit: 200, Filters: filters}
-	records, err := unwrapResult(b.List(ctx, cfg.Entity, input, serviceContext()))
+	page, err := b.List(ctx, cfg.Entity, input, serviceContext())
 	if err != nil {
 		return nil, err
 	}
+	records := page.Data
 
 	succeeded := 0
 	failed := make([]map[string]any, 0)
@@ -126,9 +104,9 @@ func transitionOne(ctx context.Context, backend crud.RecordBackend, entity strin
 		return crud.RecordDto{}, err
 	}
 	rc := serviceContext()
-	getResult, err := unwrapResult(b.Get(ctx, entity, recordID, rc))
+	getResult, err := b.Get(ctx, entity, recordID, rc)
 	if err != nil {
 		return crud.RecordDto{}, err
 	}
-	return unwrapResult(b.Transition(ctx, entity, recordID, action, getResult.Record.Version, nil, rc, nil))
+	return b.Transition(ctx, entity, recordID, action, getResult.Record.Version, nil, rc, nil)
 }

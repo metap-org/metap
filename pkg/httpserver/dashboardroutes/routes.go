@@ -75,8 +75,7 @@ func saveMyDashboard(w http.ResponseWriter, r *http.Request, state *httpserver.A
 		return
 	}
 	var body saveLayoutBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !httpserver.DecodeJSONBody(w, r, &body) {
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)
@@ -138,8 +137,7 @@ func saveTenantDefaultDashboard(w http.ResponseWriter, r *http.Request, state *h
 		return
 	}
 	var body saveLayoutBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !httpserver.DecodeJSONBody(w, r, &body) {
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)

@@ -52,22 +52,22 @@ func (_m *RecordBackend) EXPECT() *RecordBackend_Expecter {
 }
 
 // Aggregate provides a mock function for the type RecordBackend
-func (_mock *RecordBackend) Aggregate(ctx context.Context, entity string, spec query.AggregateSpec, rc *permission.RequestContext) (crud.ServiceResult[[]json.RawMessage], error) {
+func (_mock *RecordBackend) Aggregate(ctx context.Context, entity string, spec query.AggregateSpec, rc *permission.RequestContext) ([]json.RawMessage, error) {
 	ret := _mock.Called(ctx, entity, spec, rc)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Aggregate")
 	}
 
-	var r0 crud.ServiceResult[[]json.RawMessage]
+	var r0 []json.RawMessage
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, query.AggregateSpec, *permission.RequestContext) (crud.ServiceResult[[]json.RawMessage], error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, query.AggregateSpec, *permission.RequestContext) ([]json.RawMessage, error)); ok {
 		return returnFunc(ctx, entity, spec, rc)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, query.AggregateSpec, *permission.RequestContext) crud.ServiceResult[[]json.RawMessage]); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, query.AggregateSpec, *permission.RequestContext) []json.RawMessage); ok {
 		r0 = returnFunc(ctx, entity, spec, rc)
 	} else {
-		r0 = ret.Get(0).(crud.ServiceResult[[]json.RawMessage])
+		r0 = ret.Get(0).([]json.RawMessage)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, query.AggregateSpec, *permission.RequestContext) error); ok {
 		r1 = returnFunc(ctx, entity, spec, rc)
@@ -119,33 +119,33 @@ func (_c *RecordBackend_Aggregate_Call) Run(run func(ctx context.Context, entity
 	return _c
 }
 
-func (_c *RecordBackend_Aggregate_Call) Return(serviceResult crud.ServiceResult[[]json.RawMessage], err error) *RecordBackend_Aggregate_Call {
+func (_c *RecordBackend_Aggregate_Call) Return(serviceResult []json.RawMessage, err error) *RecordBackend_Aggregate_Call {
 	_c.Call.Return(serviceResult, err)
 	return _c
 }
 
-func (_c *RecordBackend_Aggregate_Call) RunAndReturn(run func(ctx context.Context, entity string, spec query.AggregateSpec, rc *permission.RequestContext) (crud.ServiceResult[[]json.RawMessage], error)) *RecordBackend_Aggregate_Call {
+func (_c *RecordBackend_Aggregate_Call) RunAndReturn(run func(ctx context.Context, entity string, spec query.AggregateSpec, rc *permission.RequestContext) ([]json.RawMessage, error)) *RecordBackend_Aggregate_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Create provides a mock function for the type RecordBackend
-func (_mock *RecordBackend) Create(ctx context.Context, entity string, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error) {
+func (_mock *RecordBackend) Create(ctx context.Context, entity string, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.RecordDto, error) {
 	ret := _mock.Called(ctx, entity, data, rc, reason)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Create")
 	}
 
-	var r0 crud.ServiceResult[crud.RecordDto]
+	var r0 crud.RecordDto
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, crud.JsonObject, *permission.RequestContext, *string) (crud.ServiceResult[crud.RecordDto], error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, crud.JsonObject, *permission.RequestContext, *string) (crud.RecordDto, error)); ok {
 		return returnFunc(ctx, entity, data, rc, reason)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, crud.JsonObject, *permission.RequestContext, *string) crud.ServiceResult[crud.RecordDto]); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, crud.JsonObject, *permission.RequestContext, *string) crud.RecordDto); ok {
 		r0 = returnFunc(ctx, entity, data, rc, reason)
 	} else {
-		r0 = ret.Get(0).(crud.ServiceResult[crud.RecordDto])
+		r0 = ret.Get(0).(crud.RecordDto)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, crud.JsonObject, *permission.RequestContext, *string) error); ok {
 		r1 = returnFunc(ctx, entity, data, rc, reason)
@@ -203,33 +203,33 @@ func (_c *RecordBackend_Create_Call) Run(run func(ctx context.Context, entity st
 	return _c
 }
 
-func (_c *RecordBackend_Create_Call) Return(serviceResult crud.ServiceResult[crud.RecordDto], err error) *RecordBackend_Create_Call {
+func (_c *RecordBackend_Create_Call) Return(serviceResult crud.RecordDto, err error) *RecordBackend_Create_Call {
 	_c.Call.Return(serviceResult, err)
 	return _c
 }
 
-func (_c *RecordBackend_Create_Call) RunAndReturn(run func(ctx context.Context, entity string, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error)) *RecordBackend_Create_Call {
+func (_c *RecordBackend_Create_Call) RunAndReturn(run func(ctx context.Context, entity string, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.RecordDto, error)) *RecordBackend_Create_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Delete provides a mock function for the type RecordBackend
-func (_mock *RecordBackend) Delete(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error) {
+func (_mock *RecordBackend) Delete(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, rc *permission.RequestContext, reason *string) (crud.RecordDto, error) {
 	ret := _mock.Called(ctx, entity, id, expectedVersion, rc, reason)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Delete")
 	}
 
-	var r0 crud.ServiceResult[crud.RecordDto]
+	var r0 crud.RecordDto
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, int32, *permission.RequestContext, *string) (crud.ServiceResult[crud.RecordDto], error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, int32, *permission.RequestContext, *string) (crud.RecordDto, error)); ok {
 		return returnFunc(ctx, entity, id, expectedVersion, rc, reason)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, int32, *permission.RequestContext, *string) crud.ServiceResult[crud.RecordDto]); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, int32, *permission.RequestContext, *string) crud.RecordDto); ok {
 		r0 = returnFunc(ctx, entity, id, expectedVersion, rc, reason)
 	} else {
-		r0 = ret.Get(0).(crud.ServiceResult[crud.RecordDto])
+		r0 = ret.Get(0).(crud.RecordDto)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, uuid.UUID, int32, *permission.RequestContext, *string) error); ok {
 		r1 = returnFunc(ctx, entity, id, expectedVersion, rc, reason)
@@ -293,33 +293,33 @@ func (_c *RecordBackend_Delete_Call) Run(run func(ctx context.Context, entity st
 	return _c
 }
 
-func (_c *RecordBackend_Delete_Call) Return(serviceResult crud.ServiceResult[crud.RecordDto], err error) *RecordBackend_Delete_Call {
+func (_c *RecordBackend_Delete_Call) Return(serviceResult crud.RecordDto, err error) *RecordBackend_Delete_Call {
 	_c.Call.Return(serviceResult, err)
 	return _c
 }
 
-func (_c *RecordBackend_Delete_Call) RunAndReturn(run func(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error)) *RecordBackend_Delete_Call {
+func (_c *RecordBackend_Delete_Call) RunAndReturn(run func(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, rc *permission.RequestContext, reason *string) (crud.RecordDto, error)) *RecordBackend_Delete_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Get provides a mock function for the type RecordBackend
-func (_mock *RecordBackend) Get(ctx context.Context, entity string, id uuid.UUID, rc *permission.RequestContext) (crud.ServiceResult[crud.GetResult], error) {
+func (_mock *RecordBackend) Get(ctx context.Context, entity string, id uuid.UUID, rc *permission.RequestContext) (crud.GetResult, error) {
 	ret := _mock.Called(ctx, entity, id, rc)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Get")
 	}
 
-	var r0 crud.ServiceResult[crud.GetResult]
+	var r0 crud.GetResult
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, *permission.RequestContext) (crud.ServiceResult[crud.GetResult], error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, *permission.RequestContext) (crud.GetResult, error)); ok {
 		return returnFunc(ctx, entity, id, rc)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, *permission.RequestContext) crud.ServiceResult[crud.GetResult]); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, *permission.RequestContext) crud.GetResult); ok {
 		r0 = returnFunc(ctx, entity, id, rc)
 	} else {
-		r0 = ret.Get(0).(crud.ServiceResult[crud.GetResult])
+		r0 = ret.Get(0).(crud.GetResult)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, uuid.UUID, *permission.RequestContext) error); ok {
 		r1 = returnFunc(ctx, entity, id, rc)
@@ -371,33 +371,33 @@ func (_c *RecordBackend_Get_Call) Run(run func(ctx context.Context, entity strin
 	return _c
 }
 
-func (_c *RecordBackend_Get_Call) Return(serviceResult crud.ServiceResult[crud.GetResult], err error) *RecordBackend_Get_Call {
+func (_c *RecordBackend_Get_Call) Return(serviceResult crud.GetResult, err error) *RecordBackend_Get_Call {
 	_c.Call.Return(serviceResult, err)
 	return _c
 }
 
-func (_c *RecordBackend_Get_Call) RunAndReturn(run func(ctx context.Context, entity string, id uuid.UUID, rc *permission.RequestContext) (crud.ServiceResult[crud.GetResult], error)) *RecordBackend_Get_Call {
+func (_c *RecordBackend_Get_Call) RunAndReturn(run func(ctx context.Context, entity string, id uuid.UUID, rc *permission.RequestContext) (crud.GetResult, error)) *RecordBackend_Get_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetMany provides a mock function for the type RecordBackend
-func (_mock *RecordBackend) GetMany(ctx context.Context, entity string, ids []uuid.UUID, rc *permission.RequestContext) (crud.ServiceResult[[]crud.GetManyResult], error) {
+func (_mock *RecordBackend) GetMany(ctx context.Context, entity string, ids []uuid.UUID, rc *permission.RequestContext) ([]crud.GetManyResult, error) {
 	ret := _mock.Called(ctx, entity, ids, rc)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetMany")
 	}
 
-	var r0 crud.ServiceResult[[]crud.GetManyResult]
+	var r0 []crud.GetManyResult
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, []uuid.UUID, *permission.RequestContext) (crud.ServiceResult[[]crud.GetManyResult], error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, []uuid.UUID, *permission.RequestContext) ([]crud.GetManyResult, error)); ok {
 		return returnFunc(ctx, entity, ids, rc)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, []uuid.UUID, *permission.RequestContext) crud.ServiceResult[[]crud.GetManyResult]); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, []uuid.UUID, *permission.RequestContext) []crud.GetManyResult); ok {
 		r0 = returnFunc(ctx, entity, ids, rc)
 	} else {
-		r0 = ret.Get(0).(crud.ServiceResult[[]crud.GetManyResult])
+		r0 = ret.Get(0).([]crud.GetManyResult)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, []uuid.UUID, *permission.RequestContext) error); ok {
 		r1 = returnFunc(ctx, entity, ids, rc)
@@ -449,33 +449,33 @@ func (_c *RecordBackend_GetMany_Call) Run(run func(ctx context.Context, entity s
 	return _c
 }
 
-func (_c *RecordBackend_GetMany_Call) Return(serviceResult crud.ServiceResult[[]crud.GetManyResult], err error) *RecordBackend_GetMany_Call {
+func (_c *RecordBackend_GetMany_Call) Return(serviceResult []crud.GetManyResult, err error) *RecordBackend_GetMany_Call {
 	_c.Call.Return(serviceResult, err)
 	return _c
 }
 
-func (_c *RecordBackend_GetMany_Call) RunAndReturn(run func(ctx context.Context, entity string, ids []uuid.UUID, rc *permission.RequestContext) (crud.ServiceResult[[]crud.GetManyResult], error)) *RecordBackend_GetMany_Call {
+func (_c *RecordBackend_GetMany_Call) RunAndReturn(run func(ctx context.Context, entity string, ids []uuid.UUID, rc *permission.RequestContext) ([]crud.GetManyResult, error)) *RecordBackend_GetMany_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // List provides a mock function for the type RecordBackend
-func (_mock *RecordBackend) List(ctx context.Context, entity string, input query.ListInput, rc *permission.RequestContext) (crud.ServiceResult[[]crud.RecordDto], error) {
+func (_mock *RecordBackend) List(ctx context.Context, entity string, input query.ListInput, rc *permission.RequestContext) (crud.ListResult, error) {
 	ret := _mock.Called(ctx, entity, input, rc)
 
 	if len(ret) == 0 {
 		panic("no return value specified for List")
 	}
 
-	var r0 crud.ServiceResult[[]crud.RecordDto]
+	var r0 crud.ListResult
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, query.ListInput, *permission.RequestContext) (crud.ServiceResult[[]crud.RecordDto], error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, query.ListInput, *permission.RequestContext) (crud.ListResult, error)); ok {
 		return returnFunc(ctx, entity, input, rc)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, query.ListInput, *permission.RequestContext) crud.ServiceResult[[]crud.RecordDto]); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, query.ListInput, *permission.RequestContext) crud.ListResult); ok {
 		r0 = returnFunc(ctx, entity, input, rc)
 	} else {
-		r0 = ret.Get(0).(crud.ServiceResult[[]crud.RecordDto])
+		r0 = ret.Get(0).(crud.ListResult)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, query.ListInput, *permission.RequestContext) error); ok {
 		r1 = returnFunc(ctx, entity, input, rc)
@@ -527,33 +527,33 @@ func (_c *RecordBackend_List_Call) Run(run func(ctx context.Context, entity stri
 	return _c
 }
 
-func (_c *RecordBackend_List_Call) Return(serviceResult crud.ServiceResult[[]crud.RecordDto], err error) *RecordBackend_List_Call {
+func (_c *RecordBackend_List_Call) Return(serviceResult crud.ListResult, err error) *RecordBackend_List_Call {
 	_c.Call.Return(serviceResult, err)
 	return _c
 }
 
-func (_c *RecordBackend_List_Call) RunAndReturn(run func(ctx context.Context, entity string, input query.ListInput, rc *permission.RequestContext) (crud.ServiceResult[[]crud.RecordDto], error)) *RecordBackend_List_Call {
+func (_c *RecordBackend_List_Call) RunAndReturn(run func(ctx context.Context, entity string, input query.ListInput, rc *permission.RequestContext) (crud.ListResult, error)) *RecordBackend_List_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Transition provides a mock function for the type RecordBackend
-func (_mock *RecordBackend) Transition(ctx context.Context, entity string, id uuid.UUID, action string, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error) {
+func (_mock *RecordBackend) Transition(ctx context.Context, entity string, id uuid.UUID, action string, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.RecordDto, error) {
 	ret := _mock.Called(ctx, entity, id, action, expectedVersion, data, rc, reason)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Transition")
 	}
 
-	var r0 crud.ServiceResult[crud.RecordDto]
+	var r0 crud.RecordDto
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, string, int32, crud.JsonObject, *permission.RequestContext, *string) (crud.ServiceResult[crud.RecordDto], error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, string, int32, crud.JsonObject, *permission.RequestContext, *string) (crud.RecordDto, error)); ok {
 		return returnFunc(ctx, entity, id, action, expectedVersion, data, rc, reason)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, string, int32, crud.JsonObject, *permission.RequestContext, *string) crud.ServiceResult[crud.RecordDto]); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, string, int32, crud.JsonObject, *permission.RequestContext, *string) crud.RecordDto); ok {
 		r0 = returnFunc(ctx, entity, id, action, expectedVersion, data, rc, reason)
 	} else {
-		r0 = ret.Get(0).(crud.ServiceResult[crud.RecordDto])
+		r0 = ret.Get(0).(crud.RecordDto)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, uuid.UUID, string, int32, crud.JsonObject, *permission.RequestContext, *string) error); ok {
 		r1 = returnFunc(ctx, entity, id, action, expectedVersion, data, rc, reason)
@@ -629,33 +629,33 @@ func (_c *RecordBackend_Transition_Call) Run(run func(ctx context.Context, entit
 	return _c
 }
 
-func (_c *RecordBackend_Transition_Call) Return(serviceResult crud.ServiceResult[crud.RecordDto], err error) *RecordBackend_Transition_Call {
+func (_c *RecordBackend_Transition_Call) Return(serviceResult crud.RecordDto, err error) *RecordBackend_Transition_Call {
 	_c.Call.Return(serviceResult, err)
 	return _c
 }
 
-func (_c *RecordBackend_Transition_Call) RunAndReturn(run func(ctx context.Context, entity string, id uuid.UUID, action string, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error)) *RecordBackend_Transition_Call {
+func (_c *RecordBackend_Transition_Call) RunAndReturn(run func(ctx context.Context, entity string, id uuid.UUID, action string, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.RecordDto, error)) *RecordBackend_Transition_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Update provides a mock function for the type RecordBackend
-func (_mock *RecordBackend) Update(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error) {
+func (_mock *RecordBackend) Update(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.RecordDto, error) {
 	ret := _mock.Called(ctx, entity, id, expectedVersion, data, rc, reason)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Update")
 	}
 
-	var r0 crud.ServiceResult[crud.RecordDto]
+	var r0 crud.RecordDto
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, int32, crud.JsonObject, *permission.RequestContext, *string) (crud.ServiceResult[crud.RecordDto], error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, int32, crud.JsonObject, *permission.RequestContext, *string) (crud.RecordDto, error)); ok {
 		return returnFunc(ctx, entity, id, expectedVersion, data, rc, reason)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, int32, crud.JsonObject, *permission.RequestContext, *string) crud.ServiceResult[crud.RecordDto]); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uuid.UUID, int32, crud.JsonObject, *permission.RequestContext, *string) crud.RecordDto); ok {
 		r0 = returnFunc(ctx, entity, id, expectedVersion, data, rc, reason)
 	} else {
-		r0 = ret.Get(0).(crud.ServiceResult[crud.RecordDto])
+		r0 = ret.Get(0).(crud.RecordDto)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, uuid.UUID, int32, crud.JsonObject, *permission.RequestContext, *string) error); ok {
 		r1 = returnFunc(ctx, entity, id, expectedVersion, data, rc, reason)
@@ -725,12 +725,12 @@ func (_c *RecordBackend_Update_Call) Run(run func(ctx context.Context, entity st
 	return _c
 }
 
-func (_c *RecordBackend_Update_Call) Return(serviceResult crud.ServiceResult[crud.RecordDto], err error) *RecordBackend_Update_Call {
+func (_c *RecordBackend_Update_Call) Return(serviceResult crud.RecordDto, err error) *RecordBackend_Update_Call {
 	_c.Call.Return(serviceResult, err)
 	return _c
 }
 
-func (_c *RecordBackend_Update_Call) RunAndReturn(run func(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error)) *RecordBackend_Update_Call {
+func (_c *RecordBackend_Update_Call) RunAndReturn(run func(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.RecordDto, error)) *RecordBackend_Update_Call {
 	_c.Call.Return(run)
 	return _c
 }

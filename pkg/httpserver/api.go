@@ -53,11 +53,10 @@ func SessionCookies(token, csrfValue string, ttlSeconds int, secure bool) (*http
 	return sessionCookies(token, csrfValue, ttlSeconds, secure)
 }
 
-// WriteCrudServiceError is the exported form of writeCrudServiceError (crud.ServiceResult's
-// error shape -> the standard {"error":{...}} response).
-func WriteCrudServiceError(w http.ResponseWriter, status uint16, errorCode string, message *string, fieldErrors map[string][]string) {
-	writeCrudServiceError(w, status, errorCode, message, fieldErrors)
-}
+// WriteCrudError answers a CrudService/RecordBackend failure: a *crud.ServiceError becomes the
+// standard {"error":{...}} envelope with its status, code and field errors; anything else is an
+// internal error. Custom routes use this instead of mapping the error themselves.
+func WriteCrudError(w http.ResponseWriter, err error) { writeCrudError(w, err) }
 
 // ParseOptionalUUID is the exported form of parseOptionalUUID: nil for "" or a malformed id.
 func ParseOptionalUUID(s string) *uuid.UUID { return parseOptionalUUID(s) }
@@ -65,3 +64,11 @@ func ParseOptionalUUID(s string) *uuid.UUID { return parseOptionalUUID(s) }
 // Mount adds a group of routes to the router BuildRouter builds. Optional route groups
 // (OAuth2 server, cron jobs, dashboards, attachments) and a service's own routes are Mounts.
 type Mount func(r chi.Router, state *AppState)
+
+// DecodeJSONBody decodes the request's JSON body into dst, bounded by httpx.DefaultMaxBodyBytes,
+// and writes the failure response itself (413 payload_too_large, or 400 validation_failed). It
+// reports whether the handler may continue. Every handler that takes a JSON body uses this, so
+// no route reads an unbounded body or swallows a decode error.
+func DecodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	return decodeJSONBody(w, r, dst)
+}

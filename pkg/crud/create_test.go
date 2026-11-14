@@ -66,11 +66,11 @@ func TestCreateUnknownEntityIs404WithoutCheckingPermissions(t *testing.T) {
 	f := newCreateFixture(t, widgetEntity())
 	f.perms.EXPECT().ScopedTenant(f.rc).Return(f.tenantID, nil)
 
-	res, err := f.svc.Create(context.Background(), "test.nope", vobj(map[string]any{"name": "x"}), f.rc, nil)
-	require.NoError(t, err)
-	assert.False(t, res.IsOk)
-	assert.EqualValues(t, 404, res.Status)
-	assert.Equal(t, "entity_not_found", res.ErrorCode)
+	_, err := f.svc.Create(context.Background(), "test.nope", vobj(map[string]any{"name": "x"}), f.rc, nil)
+	var resErr *ServiceError
+	require.ErrorAs(t, err, &resErr)
+	assert.EqualValues(t, 404, resErr.Status)
+	assert.Equal(t, "entity_not_found", resErr.Code)
 }
 
 func TestCreateDeniedByEntityPolicyIs403AndNeverOpensATransaction(t *testing.T) {
@@ -79,33 +79,36 @@ func TestCreateDeniedByEntityPolicyIs403AndNeverOpensATransaction(t *testing.T) 
 	f.perms.EXPECT().CanCreateEntity(mock.Anything, f.rc, "test.widgets").
 		Return(permission.PermissionDecision{Allowed: false, Reason: "no_create_policy"}, nil)
 
-	res, err := f.svc.Create(context.Background(), "test.widgets", vobj(map[string]any{"name": "x"}), f.rc, nil)
-	require.NoError(t, err)
-	assert.EqualValues(t, 403, res.Status)
-	assert.Equal(t, "no_create_policy", res.ErrorCode)
+	_, err := f.svc.Create(context.Background(), "test.widgets", vobj(map[string]any{"name": "x"}), f.rc, nil)
+	var resErr *ServiceError
+	require.ErrorAs(t, err, &resErr)
+	assert.EqualValues(t, 403, resErr.Status)
+	assert.Equal(t, "no_create_policy", resErr.Code)
 }
 
 func TestCreateRejectsAClientSuppliedSystemField(t *testing.T) {
 	f := newCreateFixture(t, widgetEntity())
 	f.allowUpToBegin("test.widgets")
 
-	res, err := f.svc.Create(context.Background(), "test.widgets",
+	_, err := f.svc.Create(context.Background(), "test.widgets",
 		vobj(map[string]any{"name": "x", "lastUsedAt": "2026-01-01"}), f.rc, nil)
-	require.NoError(t, err)
-	assert.EqualValues(t, 400, res.Status)
-	assert.Equal(t, "validation_failed", res.ErrorCode)
-	assert.Equal(t, []string{"system_field"}, res.FieldErrors["lastUsedAt"])
+	var resErr *ServiceError
+	require.ErrorAs(t, err, &resErr)
+	assert.EqualValues(t, 400, resErr.Status)
+	assert.Equal(t, "validation_failed", resErr.Code)
+	assert.Equal(t, []string{"system_field"}, resErr.FieldErrors["lastUsedAt"])
 }
 
 func TestCreateWithAnInvalidPayloadIs400AndNeverOpensATransaction(t *testing.T) {
 	f := newCreateFixture(t, widgetEntity())
 	f.allowUpToBegin("test.widgets")
 
-	res, err := f.svc.Create(context.Background(), "test.widgets", JsonObject{}, f.rc, nil)
-	require.NoError(t, err)
-	assert.EqualValues(t, 400, res.Status)
-	assert.Equal(t, "validation_failed", res.ErrorCode)
-	assert.Equal(t, []string{"required"}, res.FieldErrors["name"])
+	_, err := f.svc.Create(context.Background(), "test.widgets", JsonObject{}, f.rc, nil)
+	var resErr *ServiceError
+	require.ErrorAs(t, err, &resErr)
+	assert.EqualValues(t, 400, resErr.Status)
+	assert.Equal(t, "validation_failed", resErr.Code)
+	assert.Equal(t, []string{"required"}, resErr.FieldErrors["name"])
 }
 
 func TestCreateMapsAnUnavailableTenantToAClientFacingStatus(t *testing.T) {
@@ -126,10 +129,11 @@ func TestCreateMapsAnUnavailableTenantToAClientFacingStatus(t *testing.T) {
 			f.allowUpToBegin("test.widgets")
 			f.router.EXPECT().Begin(mock.Anything, f.tenantID).Return(nil, &control.RouterError{Kind: tc.kind})
 
-			res, err := f.svc.Create(context.Background(), "test.widgets", vobj(map[string]any{"name": "x"}), f.rc, nil)
-			require.NoError(t, err)
-			assert.Equal(t, tc.status, res.Status)
-			assert.Equal(t, tc.code, res.ErrorCode)
+			_, err := f.svc.Create(context.Background(), "test.widgets", vobj(map[string]any{"name": "x"}), f.rc, nil)
+			var resErr *ServiceError
+			require.ErrorAs(t, err, &resErr)
+			assert.Equal(t, tc.status, resErr.Status)
+			assert.Equal(t, tc.code, resErr.Code)
 		})
 	}
 }

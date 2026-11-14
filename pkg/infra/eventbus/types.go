@@ -46,6 +46,22 @@ func (e *ConsumedEvent) Nack(requeue bool) error {
 	return e.delivery.Nack(false, requeue)
 }
 
+// AckLogged acks and logs a failure instead of dropping it. A failed ack means the channel is
+// gone and the broker will redeliver, so there is nothing more to do here — but it must be
+// visible, because it is the sign of duplicate deliveries a handler should be idempotent against.
+func (e *ConsumedEvent) AckLogged() {
+	if err := e.Ack(); err != nil {
+		slog.Warn("event ack failed; the broker will redeliver it", "routing_key", e.RoutingKey, "error", err)
+	}
+}
+
+// NackLogged is Nack with the same failure logging as AckLogged.
+func (e *ConsumedEvent) NackLogged(requeue bool) {
+	if err := e.Nack(requeue); err != nil {
+		slog.Warn("event nack failed; the broker will redeliver it", "routing_key", e.RoutingKey, "requeue", requeue, "error", err)
+	}
+}
+
 // RetryCount reads straight from the AMQP x-death header RabbitMQ itself maintains (one entry
 // per distinct queue a message has been dead-lettered from), so it stays correct even across a
 // process restart mid-retry.

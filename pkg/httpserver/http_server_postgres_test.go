@@ -15,8 +15,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"github.com/go-chi/chi/v5"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -300,4 +302,26 @@ func ensureTestOrdersTable(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := reconciler.ReconcileWithScope(context.Background(), pool, uuid.Nil, httpTestEntity(), nil, reconciler.ScopeAllTenants)
 	require.NoError(t, err)
+}
+
+// A panic in a mounted route must come back as the standard 500 with the request ids, through the
+// real BuildRouter middleware chain (not a hand-built copy of it).
+func TestAPanickingRouteIsAnEnvelopedInternalErrorThroughBuildRouter(t *testing.T) {
+	pool := httpTestPool(t)
+	state, _ := newTestAppState(t, pool, httpTestEntity())
+	boom := func(r chi.Router, _ *httpserver.AppState) {
+		r.Get("/boom", func(http.ResponseWriter, *http.Request) { panic("boom") })
+	}
+	srv := httptest.NewServer(httpserver.BuildRouter(state, nil, boom))
+	defer srv.Close()
+
+	res, err := http.Get(srv.URL + "/boom")
+	require.NoError(t, err)
+	defer res.Body.Close()
+	require.Equal(t, 500, res.StatusCode)
+	require.NotEmpty(t, res.Header.Get("x-request-id"))
+	errObj := decodeJSON(t, res)["error"].(map[string]any)
+	require.Equal(t, "internal_error", errObj["code"])
+	require.NotEmpty(t, errObj["requestId"])
+	require.NotEmpty(t, errObj["traceId"])
 }

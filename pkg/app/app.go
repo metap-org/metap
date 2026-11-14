@@ -3,10 +3,12 @@
 // reconcile the service's own dedicated tables -> metadata drift check -> CRUD (+audit) -> optional gRPC
 // -> HTTP. A service's main shrinks to its entity list, its port numbers, and its own routes:
 //
+//	import _ "example.com/scanning/entities"
+//
 //	func main() {
 //		app.Main(app.Options{
 //			Name:     "scanning-service",
-//			Entities: []metadata.EntityDefinition{entities.ScanJobEntity(), entities.ScanFindingEntity()},
+//			// entities come from the blank-imported entities package's init() (metadata.SubmitEntity)
 //			GRPCPort: 3011,
 //			Routes:   scanningservice.MountRoutes,
 //		})
@@ -53,9 +55,11 @@ type Options struct {
 	// Name labels log lines, e.g. "zones-service".
 	Name string
 
-	// Entities are this service's own dedicated-table entities, reconciled at boot in this order
-	// (put a Reference target before the entities that point at it). Shared Schema-strategy
-	// tables are backfilled across every tenant (reconciler.ScopeAllTenants).
+	// Entities is normally left empty: every entity the service's packages declare with
+	// metadata.SubmitEntity (from an init(), next to the definition) is registered and reconciled
+	// at boot, referenced entities first. Set it only to reconcile a different set or order
+	// explicitly — those are then reconciled instead of the submitted ones. Shared
+	// Schema-strategy tables are backfilled across every tenant (reconciler.ScopeAllTenants).
 	Entities []metadata.EntityDefinition
 
 	// GRPCPort, when non-zero, serves the generic CRUD gRPC API on config.Host:GRPCPort (if the
@@ -127,7 +131,11 @@ func Run(ctx context.Context, opts Options) error {
 	if err := registry.ValidateReferences(); err != nil {
 		return fmt.Errorf("validating entity references: %w", err)
 	}
-	for _, entity := range opts.Entities {
+	toReconcile := opts.Entities
+	if len(toReconcile) == 0 {
+		toReconcile = registry.Definitions()
+	}
+	for _, entity := range toReconcile {
 		outcome, err := reconciler.ReconcileWithScope(ctx, pool, control.PlatformTenantID, entity, nil, reconciler.ScopeAllTenants)
 		if err != nil {
 			return fmt.Errorf("reconciling %s: %w", entity.Name, err)

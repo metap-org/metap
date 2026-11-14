@@ -12,6 +12,8 @@ package httpserver
 
 import (
 	"encoding/json"
+	"errors"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
 	"strconv"
 
@@ -79,17 +81,10 @@ func listRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 
 	result, err := state.Crud.List(r.Context(), entity, input, rc)
 	if err != nil {
-		writeInternalError(w, err)
+		writeCrudError(w, err)
 		return
 	}
-	if !result.IsOk {
-		writeCrudServiceError(w, result.Status, result.ErrorCode, result.Message, result.FieldErrors)
-		return
-	}
-	var page any
-	if result.Page != nil {
-		page = map[string]any{"limit": result.Page.Limit, "nextCursor": result.Page.NextCursor}
-	}
+	page := map[string]any{"limit": result.Page.Limit, "nextCursor": result.Page.NextCursor}
 	writeJSON(w, http.StatusOK, map[string]any{"data": result.Data, "page": page})
 }
 
@@ -107,17 +102,13 @@ func getRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 
 	result, err := state.Crud.Get(r.Context(), entity, id, rc)
 	if err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	if !result.IsOk {
-		writeCrudServiceError(w, result.Status, result.ErrorCode, result.Message, result.FieldErrors)
+		writeCrudError(w, err)
 		return
 	}
 
 	// The record plus a "capabilities" key merged in at the top level, matching the Rust
 	// handler's own serde_json::Value splice.
-	recordJSON, err := json.Marshal(result.Data.Record)
+	recordJSON, err := json.Marshal(result.Record)
 	if err != nil {
 		writeInternalError(w, err)
 		return
@@ -127,7 +118,7 @@ func getRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeInternalError(w, err)
 		return
 	}
-	capsJSON, _ := json.Marshal(result.Data.Capabilities)
+	capsJSON, _ := json.Marshal(result.Capabilities)
 	data["capabilities"] = capsJSON
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
@@ -144,21 +135,16 @@ func createRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 	entity := chi.URLParam(r, "entity")
 	var body recordBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 
 	result, err := state.Crud.Create(r.Context(), entity, body.Data, rc, body.Reason)
 	if err != nil {
-		writeInternalError(w, err)
+		writeCrudError(w, err)
 		return
 	}
-	if !result.IsOk {
-		writeCrudServiceError(w, result.Status, result.ErrorCode, result.Message, result.FieldErrors)
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"data": result.Data})
+	writeJSON(w, http.StatusCreated, map[string]any{"data": result})
 }
 
 type updateBody struct {
@@ -179,21 +165,16 @@ func updateRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	var body updateBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 
 	result, err := state.Crud.Update(r.Context(), entity, id, body.Version, body.Data, rc, body.Reason)
 	if err != nil {
-		writeInternalError(w, err)
+		writeCrudError(w, err)
 		return
 	}
-	if !result.IsOk {
-		writeCrudServiceError(w, result.Status, result.ErrorCode, result.Message, result.FieldErrors)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": result.Data})
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
 }
 
 type deleteBody struct {
@@ -213,21 +194,16 @@ func deleteRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	var body deleteBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 
 	result, err := state.Crud.Delete(r.Context(), entity, id, body.Version, rc, body.Reason)
 	if err != nil {
-		writeInternalError(w, err)
+		writeCrudError(w, err)
 		return
 	}
-	if !result.IsOk {
-		writeCrudServiceError(w, result.Status, result.ErrorCode, result.Message, result.FieldErrors)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": result.Data})
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
 }
 
 type transitionBody struct {
@@ -249,21 +225,16 @@ func transitionRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 	action := chi.URLParam(r, "action")
 	var body transitionBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 
 	result, err := state.Crud.Transition(r.Context(), entity, id, action, body.Version, body.Data, rc, body.Reason)
 	if err != nil {
-		writeInternalError(w, err)
+		writeCrudError(w, err)
 		return
 	}
-	if !result.IsOk {
-		writeCrudServiceError(w, result.Status, result.ErrorCode, result.Message, result.FieldErrors)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": result.Data})
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
 }
 
 // aggregateRecords: POST /api/{entity}/aggregate's body is query.AggregateSpec directly — the
@@ -276,21 +247,21 @@ func aggregateRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 	entity := chi.URLParam(r, "entity")
 	var spec query.AggregateSpec
-	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+	if err := httpx.DecodeJSON(w, r, &spec, 0); err != nil {
+		if errors.Is(err, httpx.ErrBodyTooLarge) {
+			writeServiceError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "Request body is too large.", nil)
+			return
+		}
 		writeServiceError(w, http.StatusBadRequest, "invalid_aggregate", "Invalid request body.", nil)
 		return
 	}
 
 	result, err := state.Crud.Aggregate(r.Context(), entity, spec, rc)
 	if err != nil {
-		writeInternalError(w, err)
+		writeCrudError(w, err)
 		return
 	}
-	if !result.IsOk {
-		writeCrudServiceError(w, result.Status, result.ErrorCode, result.Message, result.FieldErrors)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": result.Data})
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
 }
 
 // mountRecords registers /api/{entity}* exactly as the recovered Rust router did — the

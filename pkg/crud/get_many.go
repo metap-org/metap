@@ -18,43 +18,43 @@ type GetManyResult struct {
 // GetMany mirrors the Rust CrudService::get_many — batched counterpart to Get. An id that
 // doesn't exist, or that record-level permission denies, is simply absent from the result — not
 // an error.
-func (s *CrudService) GetMany(ctx context.Context, entityName string, ids []uuid.UUID, rc *permission.RequestContext) (ServiceResult[[]GetManyResult], error) {
+func (s *CrudService) GetMany(ctx context.Context, entityName string, ids []uuid.UUID, rc *permission.RequestContext) ([]GetManyResult, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {
-		return ServiceResult[[]GetManyResult]{}, err
+		return nil, err
 	}
 	registry, err := s.registryFor(ctx, tenantID)
 	if err != nil {
-		return ServiceResult[[]GetManyResult]{}, err
+		return nil, err
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return ResultErr[[]GetManyResult](404, "entity_not_found"), nil
+		return nil, NewServiceError(404, "entity_not_found")
 	}
 
 	decision, err := s.permissions.CanReadEntity(ctx, rc, entity.Name)
 	if err != nil {
-		return ServiceResult[[]GetManyResult]{}, err
+		return nil, err
 	}
 	if !decision.Allowed {
-		return forbidden[[]GetManyResult](decision), nil
+		return nil, forbidden(decision)
 	}
 
 	if len(ids) == 0 {
-		return ResultOk([]GetManyResult{}), nil
+		return []GetManyResult{}, nil
 	}
 
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
-		if r, ok := routerUnavailable[[]GetManyResult](err); ok {
-			return r, nil
+		if r, ok := routerUnavailable(err); ok {
+			return nil, r
 		}
-		return ServiceResult[[]GetManyResult]{}, err
+		return nil, err
 	}
 	existing, err := fetchExistingBatch(ctx, tx, ids, tenantID, entity)
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[[]GetManyResult]{}, err
+		return nil, err
 	}
 	// One workflow_events query for the whole batch, and only when a guard reads `$workflow.`.
 	var actorsByRecord map[uuid.UUID]map[string]string
@@ -66,16 +66,16 @@ func (s *CrudService) GetMany(ctx context.Context, entityName string, ids []uuid
 		actorsByRecord, err = workflow.LastActors(ctx, tx, tenantID, entity.Name, recordIDs)
 		if err != nil {
 			tx.Rollback(ctx) //nolint:errcheck
-			return ServiceResult[[]GetManyResult]{}, err
+			return nil, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return ServiceResult[[]GetManyResult]{}, err
+		return nil, err
 	}
 
 	snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, entity.Name)
 	if err != nil {
-		return ServiceResult[[]GetManyResult]{}, err
+		return nil, err
 	}
 
 	byID := map[uuid.UUID]GetManyResult{}
@@ -84,7 +84,7 @@ func (s *CrudService) GetMany(ctx context.Context, entityName string, ids []uuid
 			[]permission.EntityAction{permission.ActionRead, permission.ActionUpdate, permission.ActionTransition, permission.ActionDelete},
 			tenantID, registry, record.Data)
 		if err != nil {
-			return ServiceResult[[]GetManyResult]{}, err
+			return nil, err
 		}
 		recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(enriched), permission.ActionRead)
 		if !recordDecision.Allowed {
@@ -103,5 +103,5 @@ func (s *CrudService) GetMany(ctx context.Context, entityName string, ids []uuid
 		}
 	}
 
-	return ResultOk(ordered), nil
+	return ordered, nil
 }

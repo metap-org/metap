@@ -30,11 +30,11 @@ func RunExecutor(ctx context.Context, connect func() (eventbus.EventBus, error),
 			var payload cron.CronJobDuePayload
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				slog.Warn("malformed cron.job.due payload, routed to dead-letter queue", "error", err)
-				_ = event.Nack(false)
+				event.NackLogged(false)
 				return
 			}
 			Execute(ctx, pool, config, &payload)
-			_ = event.Ack()
+			event.AckLogged()
 		})
 }
 

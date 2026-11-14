@@ -2,14 +2,13 @@ package cron
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/events"
 )
 
 // ClaimResult mirrors the Rust ClaimResult.
@@ -285,11 +284,5 @@ func dispatchClaimed(ctx context.Context, tx pgx.Tx, job *CronJob, runID uuid.UU
 		Attempt: attempt, MaxAttempts: job.MaxAttempts, RetryBackoffSeconds: job.RetryBackoffSeconds,
 		DispatchMode: job.DispatchMode, TriggerRecordID: triggerRecordID, TriggerEntity: triggerEntity,
 	}
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	return infra.EnqueueOutboxEvent(ctx, tx, &infra.OutboxEvent{
-		Topic: RoutingKey, AggregateType: "cron_job", AggregateID: job.ID, Payload: payloadJSON,
-	})
+	return events.EmitRaw(ctx, tx, RoutingKey, "cron_job", job.ID, payload)
 }

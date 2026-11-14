@@ -1,10 +1,11 @@
 package httpserver
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/metap-org/metap/pkg/kit/httpx"
 )
 
 func mountHealth(r chi.Router) {
@@ -14,8 +15,5 @@ func mountHealth(r chi.Router) {
 	})
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
+// writeJSON is the shared kit helper; kept as a local name for the route handlers.
+var writeJSON = httpx.WriteJSON

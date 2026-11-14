@@ -5,7 +5,6 @@
 package httpserver
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -61,8 +60,7 @@ func updatePreferences(w http.ResponseWriter, r *http.Request, state *AppState) 
 		return
 	}
 	var body updatePreferencesBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	if !isSupportedLocale(body.Locale) {

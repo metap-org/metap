@@ -7,7 +7,6 @@
 package httpserver
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -42,8 +41,7 @@ func login(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	var body loginBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 

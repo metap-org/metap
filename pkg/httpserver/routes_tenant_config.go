@@ -22,7 +22,6 @@
 package httpserver
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -65,8 +64,7 @@ func setTenantConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 	key := chi.URLParam(r, "key")
 	var body setConfigBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)

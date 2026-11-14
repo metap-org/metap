@@ -38,8 +38,7 @@ func createUserAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	var body createUserBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)
@@ -150,8 +149,7 @@ func assignRoleAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	var body assignRoleBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)
@@ -271,8 +269,7 @@ func createPolicyAdmin(w http.ResponseWriter, r *http.Request, state *AppState) 
 		return
 	}
 	var body createPolicyBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)
@@ -336,8 +333,7 @@ func seedDefaultPoliciesAdmin(w http.ResponseWriter, r *http.Request, state *App
 		return
 	}
 	var body seedDefaultPoliciesBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)
@@ -418,8 +414,7 @@ func syncMatrixPoliciesAdmin(w http.ResponseWriter, r *http.Request, state *AppS
 		return
 	}
 	var body syncMatrixBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)
@@ -468,8 +463,7 @@ func explainPolicyAdmin(w http.ResponseWriter, r *http.Request, state *AppState)
 		return
 	}
 	var body explainBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	field := ""

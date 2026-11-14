@@ -15,63 +15,63 @@ import (
 )
 
 // Update mirrors the Rust CrudService::update.
-func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUID, expectedVersion int32, rawData JsonObject, rc *permission.RequestContext, reason *string) (ServiceResult[RecordDto], error) {
+func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUID, expectedVersion int32, rawData JsonObject, rc *permission.RequestContext, reason *string) (RecordDto, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	registry, err := s.registryFor(ctx, tenantID)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return ResultErr[RecordDto](404, "entity_not_found"), nil
+		return RecordDto{}, NewServiceError(404, "entity_not_found")
 	}
 
 	decision, err := s.permissions.CanUpdateEntity(ctx, rc, entity.Name)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	if !decision.Allowed {
-		return forbidden[RecordDto](decision), nil
+		return RecordDto{}, forbidden(decision)
 	}
 
 	precheckTx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
-		if r, ok := routerUnavailable[RecordDto](err); ok {
-			return r, nil
+		if r, ok := routerUnavailable(err); ok {
+			return RecordDto{}, r
 		}
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	existing, err := fetchExisting(ctx, precheckTx, id, tenantID, entity)
 	if err != nil {
 		precheckTx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	if existing == nil {
 		precheckTx.Rollback(ctx) //nolint:errcheck
-		return ResultErr[RecordDto](404, "record_not_found"), nil
+		return RecordDto{}, NewServiceError(404, "record_not_found")
 	}
 	if err := precheckTx.Commit(ctx); err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, entity.Name)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	enriched, err := s.enrichRecordForActions(ctx, entity, snapshot, []permission.EntityAction{permission.ActionUpdate}, tenantID, registry, existing.Data)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(enriched), permission.ActionUpdate)
 	if !recordDecision.Allowed {
-		return forbidden[RecordDto](recordDecision), nil
+		return RecordDto{}, forbidden(recordDecision)
 	}
 
 	if fe := rejectSystemFields(entity, rawData); fe != nil {
-		return ResultErrWithFieldErrors[RecordDto](400, "validation_failed", fe), nil
+		return RecordDto{}, NewServiceErrorFields(400, "validation_failed", fe)
 	}
 
 	keys := make([]string, 0, len(rawData))
@@ -80,7 +80,7 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 	}
 	writeDecision := snapshot.AssertWritableFields(rc, keys, permission.JsonObject(existing.Data), true)
 	if !writeDecision.Allowed {
-		return forbiddenWithField[RecordDto](writeDecision), nil
+		return RecordDto{}, forbiddenWithField(writeDecision)
 	}
 
 	// The state field can never change through this path — only create and transition are
@@ -104,7 +104,7 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 
 	data, fieldErrors := ValidatePayload(entity, merged)
 	if fieldErrors != nil {
-		return ResultErrWithFieldErrors[RecordDto](400, "validation_failed", fieldErrors), nil
+		return RecordDto{}, NewServiceErrorFields(400, "validation_failed", fieldErrors)
 	}
 	recomputeFields(entity, data)
 
@@ -117,21 +117,21 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 	}
 	userID, err := parseUserID(rc)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
-		if r, ok := routerUnavailable[RecordDto](err); ok {
-			return r, nil
+		if r, ok := routerUnavailable(err); ok {
+			return RecordDto{}, r
 		}
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	// System fields are not part of the write (see writableFields): they keep whatever is stored
 	// now, so a concurrent SetSystemFields cannot be overwritten by this update.
@@ -142,23 +142,23 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 	row := tx.QueryRow(ctx, buildUpdateSQL(entity, extraSet), json.RawMessage(dataJSON), userID, id, tenantID, expectedVersion, code)
 	record, err := scanRecordRow(row, entity.Name)
 	if err != nil {
-		if r, ok := uniqueViolation[RecordDto](entity, err); ok {
+		if r, ok := uniqueViolation(entity, err); ok {
 			tx.Rollback(ctx) //nolint:errcheck
-			return r, nil
+			return RecordDto{}, r
 		}
 		tx.Rollback(ctx) //nolint:errcheck
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ResultErr[RecordDto](409, "version_conflict"), nil
+			return RecordDto{}, NewServiceError(409, "version_conflict")
 		}
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	if err := workflow.EmitUpdated(ctx, tx, entity, tenantID, record.ID, data, record.Version); err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	s.invalidateContextCacheIfConfigured(entity.Name, tenantID, data)
@@ -176,5 +176,5 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 		OccurredAt:   time.Now().UTC(),
 	})
 
-	return ResultOk(maskRecordForRead(entity, rc, snapshot, record)), nil
+	return maskRecordForRead(entity, rc, snapshot, record), nil
 }

@@ -10,31 +10,31 @@ import (
 )
 
 // List mirrors the Rust CrudService::list.
-func (s *CrudService) List(ctx context.Context, entityName string, input query.ListInput, rc *permission.RequestContext) (ServiceResult[[]RecordDto], error) {
+func (s *CrudService) List(ctx context.Context, entityName string, input query.ListInput, rc *permission.RequestContext) (ListResult, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {
-		return ServiceResult[[]RecordDto]{}, err
+		return ListResult{}, err
 	}
 	md, err := s.registryFor(ctx, tenantID)
 	if err != nil {
-		return ServiceResult[[]RecordDto]{}, err
+		return ListResult{}, err
 	}
 	entity, ok := md.GetEntity(entityName)
 	if !ok {
-		return ResultErr[[]RecordDto](404, "entity_not_found"), nil
+		return ListResult{}, NewServiceError(404, "entity_not_found")
 	}
 
 	decision, err := s.permissions.CanReadEntity(ctx, rc, entity.Name)
 	if err != nil {
-		return ServiceResult[[]RecordDto]{}, err
+		return ListResult{}, err
 	}
 	if !decision.Allowed {
-		return forbidden[[]RecordDto](decision), nil
+		return ListResult{}, forbidden(decision)
 	}
 
 	snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, entity.Name)
 	if err != nil {
-		return ServiceResult[[]RecordDto]{}, err
+		return ListResult{}, err
 	}
 	recordPolicies := snapshot.GetRecordPolicies(permission.ActionRead)
 
@@ -47,15 +47,15 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 		var unsupportedContains *query.UnsupportedContainsConditionInListError
 		switch {
 		case errors.As(err, &invalidCursor):
-			return ResultErrWithMessage[[]RecordDto](400, "invalid_cursor", err.Error()), nil
+			return ListResult{}, NewServiceErrorMsg(400, "invalid_cursor", err.Error())
 		case errors.As(err, &unknownListView):
-			return ResultErrWithMessage[[]RecordDto](400, "unknown_list_view", err.Error()), nil
+			return ListResult{}, NewServiceErrorMsg(400, "unknown_list_view", err.Error())
 		case errors.As(err, &invalidJql):
-			return ResultErrWithMessage[[]RecordDto](400, "invalid_jql", err.Error()), nil
+			return ListResult{}, NewServiceErrorMsg(400, "invalid_jql", err.Error())
 		case errors.As(err, &crossRecord), errors.As(err, &unsupportedContains):
-			return ResultErrWithMessage[[]RecordDto](500, "unsupported_policy_condition", err.Error()), nil
+			return ListResult{}, NewServiceErrorMsg(500, "unsupported_policy_condition", err.Error())
 		}
-		return ServiceResult[[]RecordDto]{}, err
+		return ListResult{}, err
 	}
 
 	sql := fmt.Sprintf("SELECT %s FROM %s t WHERE %s ORDER BY %s LIMIT %d",
@@ -63,29 +63,29 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
-		if r, ok := routerUnavailable[[]RecordDto](err); ok {
-			return r, nil
+		if r, ok := routerUnavailable(err); ok {
+			return ListResult{}, r
 		}
-		return ServiceResult[[]RecordDto]{}, err
+		return ListResult{}, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	rows, err := tx.Query(ctx, sql, query.ArgsOf(planned.Params)...)
 	if err != nil {
-		return ServiceResult[[]RecordDto]{}, err
+		return ListResult{}, err
 	}
 	var pageDtos []RecordDto
 	for rows.Next() {
 		dto, err := scanRecordRow(rows, entity.Name)
 		if err != nil {
 			rows.Close()
-			return ServiceResult[[]RecordDto]{}, err
+			return ListResult{}, err
 		}
 		pageDtos = append(pageDtos, dto)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return ServiceResult[[]RecordDto]{}, err
+		return ListResult{}, err
 	}
 
 	hasMore := int64(len(pageDtos)) > planned.Limit
@@ -115,11 +115,11 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 	}
 	data, err = s.hydrateRelatedDisplay(ctx, entity, rc, tenantID, md, tx, data)
 	if err != nil {
-		return ServiceResult[[]RecordDto]{}, err
+		return ListResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return ServiceResult[[]RecordDto]{}, err
+		return ListResult{}, err
 	}
 
-	return ResultOkWithPage(data, PageInfo{Limit: planned.Limit, NextCursor: nextCursor}), nil
+	return ListResult{Data: data, Page: PageInfo{Limit: planned.Limit, NextCursor: nextCursor}}, nil
 }

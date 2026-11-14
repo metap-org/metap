@@ -19,6 +19,7 @@ import (
 	"github.com/metap-org/metap/pkg/grpcapi"
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/runtime"
 	"github.com/metap-org/metap/pkg/secrets"
 )
@@ -34,9 +35,9 @@ func main() {
 	ctx, cancel := signalContext()
 	defer cancel()
 
-	tickMs := time.Duration(runtime.EnvOr("CRON_TICK_MS", 5000)) * time.Millisecond
-	batchSize := int64(runtime.EnvOr("CRON_BATCH_SIZE", 50))
-	targetBaseURL, ok := runtime.Optional("CRON_TARGET_BASE_URL")
+	tickMs := time.Duration(env.Int("CRON_TICK_MS", 5000)) * time.Millisecond
+	batchSize := int64(env.Int("CRON_BATCH_SIZE", 50))
+	targetBaseURL, ok := env.Lookup("CRON_TARGET_BASE_URL")
 	if !ok {
 		targetBaseURL = fmt.Sprintf("http://localhost:%d", config.Port)
 	}
@@ -47,12 +48,12 @@ func main() {
 	// job types (webhook, email) that don't need this credential at all, so a missing/failing
 	// login degrades to an empty token (workflow_transition/bulk_query_action jobs then fail,
 	// logged per-job) rather than refusing to start.
-	loginURL, ok := runtime.Optional("CRON_LOGIN_URL")
+	loginURL, ok := env.Lookup("CRON_LOGIN_URL")
 	if !ok {
 		loginURL = strings.TrimSuffix(targetBaseURL, "/") + "/auth/login"
 	}
-	serviceEmail, hasEmail := runtime.Optional("CRON_SERVICE_EMAIL")
-	servicePassword, hasPassword := runtime.Optional("CRON_SERVICE_PASSWORD")
+	serviceEmail, hasEmail := env.Lookup("CRON_SERVICE_EMAIL")
+	servicePassword, hasPassword := env.Lookup("CRON_SERVICE_PASSWORD")
 
 	var serviceToken *runtime.ServiceTokenSource
 	switch {
@@ -73,7 +74,7 @@ func main() {
 	// metap-http no longer serves a REST /api/:entity* surface for these to call. Same
 	// degrade-gracefully shape as service_token above — a missing/unreachable gRPC endpoint only
 	// fails these two job types, everything else is unaffected.
-	grpcAddr, hasGRPC := runtime.Optional("CRON_TARGET_GRPC_ADDR")
+	grpcAddr, hasGRPC := env.Lookup("CRON_TARGET_GRPC_ADDR")
 	var targetGRPCBackend crud.RecordBackend
 	if hasGRPC {
 		backend, err := grpcapi.ConnectGrpcBackend(grpcAddr, serviceToken)
@@ -126,7 +127,7 @@ func main() {
 	// OAUTH_CLEANUP_INTERVAL_SECONDS=0 turns the OAuth2 expired-token sweep off. Its pool is the
 	// main DATABASE_URL one (where /oauth/token writes), which only differs from pool above when
 	// OUTBOX_DATABASE_URL points the outbox somewhere else.
-	oauthCleanupSecs := uint64(runtime.EnvOr("OAUTH_CLEANUP_INTERVAL_SECONDS", 3600))
+	oauthCleanupSecs := uint64(env.Int("OAUTH_CLEANUP_INTERVAL_SECONDS", 3600))
 	var oauthPool *pgxpool.Pool
 	if oauthCleanupSecs != 0 {
 		if config.OutboxDatabaseURLOrDefault() == config.DatabaseURL {
@@ -142,8 +143,8 @@ func main() {
 
 	// AUDIT_PARTITION_INTERVAL_SECONDS=0 turns audit partition maintenance off. It runs against
 	// the main DATABASE_URL, where metadata.audit_trail_entries lives (audit.PostgresStore's pool).
-	auditPartitionSecs := uint64(runtime.EnvOr("AUDIT_PARTITION_INTERVAL_SECONDS", 86400))
-	auditMonthsAhead := int(runtime.EnvOr("AUDIT_PARTITION_MONTHS_AHEAD", 3))
+	auditPartitionSecs := uint64(env.Int("AUDIT_PARTITION_INTERVAL_SECONDS", 86400))
+	auditMonthsAhead := int(env.Int("AUDIT_PARTITION_MONTHS_AHEAD", 3))
 	var auditPool *pgxpool.Pool
 	if auditPartitionSecs != 0 {
 		switch {

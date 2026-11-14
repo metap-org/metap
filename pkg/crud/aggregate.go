@@ -12,31 +12,31 @@ import (
 // Aggregate mirrors the Rust CrudService::aggregate — the GROUP BY/COUNT/SUM sibling of List.
 // Permission is the same gate List uses: entity-level Read must be allowed, and the caller's
 // record-level (ABAC) read policies are applied to the rows *before* they are aggregated.
-func (s *CrudService) AggregateWithInput(ctx context.Context, entityName string, input query.AggregateInput, rc *permission.RequestContext) (ServiceResult[[]json.RawMessage], error) {
+func (s *CrudService) AggregateWithInput(ctx context.Context, entityName string, input query.AggregateInput, rc *permission.RequestContext) ([]json.RawMessage, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {
-		return ServiceResult[[]json.RawMessage]{}, err
+		return nil, err
 	}
 	md, err := s.registryFor(ctx, tenantID)
 	if err != nil {
-		return ServiceResult[[]json.RawMessage]{}, err
+		return nil, err
 	}
 	entity, ok := md.GetEntity(entityName)
 	if !ok {
-		return ResultErr[[]json.RawMessage](404, "entity_not_found"), nil
+		return nil, NewServiceError(404, "entity_not_found")
 	}
 
 	decision, err := s.permissions.CanReadEntity(ctx, rc, entity.Name)
 	if err != nil {
-		return ServiceResult[[]json.RawMessage]{}, err
+		return nil, err
 	}
 	if !decision.Allowed {
-		return forbidden[[]json.RawMessage](decision), nil
+		return nil, forbidden(decision)
 	}
 
 	snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, entity.Name)
 	if err != nil {
-		return ServiceResult[[]json.RawMessage]{}, err
+		return nil, err
 	}
 	recordPolicies := snapshot.GetRecordPolicies(permission.ActionRead)
 
@@ -47,24 +47,24 @@ func (s *CrudService) AggregateWithInput(ctx context.Context, entityName string,
 		var unsupportedContains *query.UnsupportedContainsConditionInListError
 		switch {
 		case errors.As(err, &invalidAggregate):
-			return ResultErrWithMessage[[]json.RawMessage](400, "invalid_aggregate", err.Error()), nil
+			return nil, NewServiceErrorMsg(400, "invalid_aggregate", err.Error())
 		case errors.As(err, &crossRecord), errors.As(err, &unsupportedContains):
-			return ResultErrWithMessage[[]json.RawMessage](500, "unsupported_policy_condition", err.Error()), nil
+			return nil, NewServiceErrorMsg(500, "unsupported_policy_condition", err.Error())
 		}
-		return ServiceResult[[]json.RawMessage]{}, err
+		return nil, err
 	}
 
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
-		if r, ok := routerUnavailable[[]json.RawMessage](err); ok {
-			return r, nil
+		if r, ok := routerUnavailable(err); ok {
+			return nil, r
 		}
-		return ServiceResult[[]json.RawMessage]{}, err
+		return nil, err
 	}
 	rows, err := tx.Query(ctx, planned.SQL, query.ArgsOf(planned.Params)...)
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[[]json.RawMessage]{}, err
+		return nil, err
 	}
 	// One jsonb column per row (to_jsonb(agg)), so the projection's shape — caller-defined,
 	// unknown at compile time — never has to be described as typed columns.
@@ -74,18 +74,18 @@ func (s *CrudService) AggregateWithInput(ctx context.Context, entityName string,
 		if err := rows.Scan(&raw); err != nil {
 			rows.Close()
 			tx.Rollback(ctx) //nolint:errcheck
-			return ServiceResult[[]json.RawMessage]{}, err
+			return nil, err
 		}
 		data = append(data, raw)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[[]json.RawMessage]{}, err
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return ServiceResult[[]json.RawMessage]{}, err
+		return nil, err
 	}
 
-	return ResultOk(data), nil
+	return data, nil
 }

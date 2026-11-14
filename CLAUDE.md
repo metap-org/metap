@@ -94,6 +94,33 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   Define small interfaces at the consumer (`crud.TxBeginner`, `crud.PermissionChecker`,
   `query.TenantScoper`) and accept them in constructors — concrete types still satisfy them.
   Never mock pgx/SQL; database behavior is an integration test.
+- **`pkg/kit/httpx` is the one HTTP baseline (2026-11-14, audit P0):** `NewServer`/`ServeContext` apply read-header/read/idle timeouts (slowloris), `DecodeJSON`/`DecodeJSONOrFail` bound a JSON body (1 MiB default, 413 `payload_too_large`), `WriteJSON`/`WriteError` are the one `{"error":{code,message}}` shape, `Recover` and `MaxBody` are middleware, `SecretEqual` compares shared secrets in constant time and `BearerToken` parses the header. Any listener — including ones not built on `pkg/httpserver` — uses these rather than a local copy; `httpserver.DecodeJSONBody` is the handler-side form and every route that takes a JSON body goes through it (never `json.NewDecoder(r.Body)` directly). `Recover` sits just inside `runtime.RequestContext` in `BuildRouter`, so a recovered panic still carries `x-request-id`/`requestId`. Attachment uploads are capped by `ATTACHMENT_MAX_BYTES` (default 25 MiB, 413 beyond), webhook responses are read at most 1 MiB, and `S3ObjectStore.Get` refuses an object over `MaxGetBytes` (256 MiB) — never `io.ReadAll` an untrusted or unbounded body without a limit.
+- **Errors: `*crud.ServiceError`, not a result struct (2026-11-14, audit P1).** `CrudService`/`RecordBackend` return `(T, error)`; a business failure (404, 403, 409, 400 with field errors, ...) is a `*crud.ServiceError{Status, Code, Message, FieldErrors}` that implements `error`, and a plain error is an internal one. `crud.ServiceResult`/`IsOk` no longer exist. Handlers map the error once: `httpserver.WriteCrudError(w, err)` (REST), `grpcapi`'s `rpcError` (gRPC, carries the ServiceError in a trailer and `GrpcBackend` restores it), and `crud.AsServiceError(err)` for anything else; never hand-roll a status/code switch or a `Message *string` unwrap. `List` returns `crud.ListResult{Data, Page}`; `CheckRecordPermission` returns only `error`.
+- **Entity declaration: one DSL, one registration path (2026-11-14, audit P1).** Declare fields with
+  `pkg/metadata/dsl.go` — `metadata.NewField/EnumField/RefField(...)` plus chainable `.Require().Index().Sort().Search().Uniq()`
+  (each returns a copy), `metadata.Transition(...)` for an unguarded workflow transition, `metadata.Ptr(v)` for optional
+  members. Never write a local `field/enumField/refField/boolPtr/strPtr` helper again (four divergent copies existed in
+  `../waap`). Register an entity once, from an `init()` next to its definition (`metadata.SubmitEntity`); `app.Main`
+  registers every submitted entity and reconciles them in dependency order (`MetadataRegistry.Definitions()`: a Reference
+  target first, ties by name) — `app.Options.Entities` is now only an explicit override, normally empty. A service's
+  `main.go` therefore blank-imports its entities package instead of listing entities by hand.
+- **Events: `pkg/events` is the one place that knows a topic or a payload (2026-11-14, audit P1).** Build a topic with
+  `events.WorkflowTransitioned(entity)` / `events.Record(entity, action)` and subscribe with `events.AnyTransition` /
+  `events.RecordPattern("waf.*", "")`; classify a received routing key with `events.ParseTopic` and decode with the typed
+  payloads (`events.Transitioned`, `events.RecordEvent`, `events.Envelope`, `events.Decode[T]`) — never concatenate or
+  `CutSuffix` a topic, never unmarshal into `map[string]any`. Platform payloads carry `"v"` (`PayloadVersion`); adding a
+  field is not a bump, renaming/removing is. A service publishes its own domain event with `events.Emit(ctx, tx, events.Event{
+  Topic, AggregateType, AggregateID, Payload})` in the business transaction (topic validated: namespaced, no wildcards, not a
+  platform lifecycle topic) — never `infra.OutboxEvent` by hand, never RabbitMQ directly. In a consumer use
+  `event.AckLogged()` / `NackLogged(requeue)`, never `_ = event.Ack()`: a failed ack means redelivery, so handlers stay idempotent.
+- **`pkg/graphqlgateway` — the generic GraphQL BFF (2026-11-14, audit P1.4; moved from `../waap`).** Builds the schema at
+  runtime from a `MetadataRegistry` over any `map[entity]crud.RecordBackend` (normally one `grpcapi.GrpcBackend` per upstream):
+  typed CRUD fields, the `Json` scalar, `aggregate`, depth/complexity limits, decode-only auth that forwards the caller's token,
+  `ReadOnly() bool` backends get no mutations. `BuildSchema(registry, backends, opts...)`: `WithPlatformBase(url)` adds the
+  platform admin/settings fields (forwarded to that metap service's REST routes), `WithExtensions(fn)` is where a product adds its
+  own non-CRUD fields using `ForwardPost`/`IDArg`/`JSONScalar`/`RequestContextFrom`. A product keeps only its extensions and its
+  `main` (`../waap`: `management-plane/wafgateway` + `cmd/waf-graphql-gateway`) — never copy the engine again. Its tests use a
+  self-declared `shop.*` registry, not a product's entities.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
