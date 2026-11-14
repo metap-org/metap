@@ -4,10 +4,9 @@
 // signed identity token to decode, so identity is resolved by calling a configured userinfo
 // endpoint with the freshly obtained access token and reading two fields out of whatever JSON it
 // returns.
-//
 // Reuses the same VerifiedIdentity{Email, ExternalSubject} shape oidc.go produces, so a callback
-// handler (not yet ported) and FindExternalUser/JitProvisionExternalUser serve both providers
-// without a second code path.
+// handler and FindExternalUser/JitProvisionExternalUser serve both providers without a second code
+// path.
 package tenantauth
 
 import (
@@ -45,9 +44,6 @@ type OAuth2LoginConfig struct {
 	EmailField string `json:"emailField"`
 }
 
-// UnmarshalJSON applies the subjectField="id"/emailField="email" defaults the Rust
-// #[serde(default = "...")] attributes give OAuth2LoginConfig, so a tenant config that omits
-// them still parses the same way.
 func (c *OAuth2LoginConfig) UnmarshalJSON(data []byte) error {
 	type raw OAuth2LoginConfig
 	aux := raw{SubjectField: "id", EmailField: "email"}
@@ -184,9 +180,8 @@ func jsonScalarToString(v any) string {
 	case string:
 		return val
 	case float64:
-		// encoding/json decodes a JSON number into Go's float64 by default; GitHub's own
-		// numeric id field has no fractional part, so an integer format matches what the Rust
-		// original's serde_json::Value::to_string() produces for a JSON integer.
+		// encoding/json decodes a JSON number into Go's float64 by default; GitHub's own numeric id field
+		// has no fractional part.
 		if val == float64(int64(val)) {
 			return strconv.FormatInt(int64(val), 10)
 		}

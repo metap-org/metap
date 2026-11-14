@@ -1,9 +1,8 @@
 // Consumes every event on the shared exchange (routing key "#") and dispatches any cron_jobs row
-// whose trigger matches — trigger_type "on_transition" for a <entity>.workflow.transitioned
-// event, or "on_record_event" for a <entity>.record.{created,updated,deleted} event. A routing
-// key that matches neither shape (e.g. cron.job.due, meant for RunExecutor's own queue) is acked
-// silently — receiving it is expected under a catch-all subscription, not a data error worth a
-// dead-letter. Ported from metap-cron-scheduler's trigger.rs.
+// whose trigger matches — trigger_type "on_transition" for a <entity>.workflow.transitioned event,
+// or "on_record_event" for a <entity>.record.{created,updated,deleted} event. A routing key that
+// matches neither shape (e.g. cron.job.due, meant for RunExecutor's own queue) is acked silently —
+// receiving it is expected under a catch-all subscription, not a data error worth a dead-letter.
 package cronscheduler
 
 import (

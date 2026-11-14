@@ -53,8 +53,8 @@ func NewHandlerRegistry() *HandlerRegistry {
 	return &HandlerRegistry{}
 }
 
-// On registers handler to run for every event whose routing key matches pattern (AMQP wildcards
-// */# allowed). Returns the registry for chaining, matching the Rust builder style.
+// On registers handler to run for every event whose routing key matches pattern (AMQP wildcards */#
+// allowed).
 func (r *HandlerRegistry) On(pattern string, handler handlerFn) *HandlerRegistry {
 	r.handlers = append(r.handlers, registeredHandler{pattern: pattern, handler: handler})
 	return r

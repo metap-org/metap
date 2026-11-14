@@ -44,9 +44,7 @@ func DiffJSONObjects(before, after JsonObject) JsonObject {
 	return out
 }
 
-// jsonRawEqual compares two json.RawMessage values by decoded value, not by byte formatting —
-// matches serde_json::Value's PartialEq, which the Rust diff_json_objects relies on (two
-// differently-whitespaced encodings of the same value must count as unchanged).
+// jsonRawEqual compares two json.RawMessage values by decoded value, not by byte formatting.
 func jsonRawEqual(a, b json.RawMessage) bool {
 	var av, bv any
 	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {

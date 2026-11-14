@@ -83,7 +83,6 @@ func (s *PermissionSnapshot) RequiredRelationFields(action EntityAction) []strin
 	return RequiredRelationFields(s.GetRecordPolicies(action))
 }
 
-// matchStability mirrors the Rust MatchStability enum.
 type matchStability int
 
 const (

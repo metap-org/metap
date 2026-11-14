@@ -1,7 +1,5 @@
 package query
 
-// Ported from the Rust metap-query crate's src/jql.rs test module.
-
 import (
 	"testing"
 

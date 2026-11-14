@@ -1,7 +1,5 @@
 package workflow
 
-// Ported from the Rust metap-workflow crate's src/lib.rs test module.
-
 import (
 	"encoding/json"
 	"testing"

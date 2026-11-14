@@ -1,7 +1,5 @@
 package control
 
-// Ported from the Rust metap-control crate's src/hostname.rs test module.
-
 import (
 	"testing"
 

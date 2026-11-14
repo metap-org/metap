@@ -23,7 +23,7 @@ func TestConnectAndHealthCheckAgainstRealPostgres(t *testing.T) {
 func TestEnqueueOutboxEventWritesARealRow(t *testing.T) {
 	ctx := context.Background()
 	// outbox_events is a "metadata"-schema table referenced bare — search_path is set on every
-	// pooled connection the same way Router::begin does in the real deployment.
+	// pooled connection the same way Router.Begin does in the real deployment.
 	pool := testkit.NewPostgres(t, testkit.WithSearchPath("metadata", "public"))
 
 	aggregateID := uuid.New()

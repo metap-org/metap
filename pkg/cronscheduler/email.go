@@ -1,13 +1,9 @@
 // "email" targets — sent via SMTP, auto-appending which record triggered the firing for an
-// on_transition/on_record_event-triggered job. Ported from metap-cron-scheduler's
-// executor/email.rs.
-//
-// Divergence from the Rust original: lettre distinguishes a TLS "relay" builder from a
-// "builder_dangerous" plaintext one (local dev against Mailhog, which speaks plain SMTP with no
-// STARTTLS/auth). Go's net/smtp.SendMail negotiates STARTTLS opportunistically when the server
-// advertises it and skips auth entirely when no Auth is passed, which is the same two cases
-// (authenticated relay vs. plaintext dev target) reached through stdlib's own single code path
-// instead of two explicit builders.
+// on_transition/on_record_event-triggered job.
+// Go's net/smtp.SendMail negotiates STARTTLS opportunistically when the server advertises it and
+// skips auth entirely when no Auth is passed, which is the same two cases (authenticated relay vs.
+// plaintext dev target) reached through stdlib's own single code path instead of two explicit
+// builders.
 package cronscheduler
 
 import (

@@ -10,7 +10,7 @@ func quoteIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-// quoteQualifiedIdent: every physical table this crate manages lives in a schema-qualified name
+// quoteQualifiedIdent: every physical table this package manages lives in a schema-qualified name
 // (e.g. "entities.jira_issues") — quoteIdent alone would (correctly, but unhelpfully) quote the
 // whole string as one identifier containing a literal dot instead of "entities"."jira_issues".
 func quoteQualifiedIdent(name string) string {

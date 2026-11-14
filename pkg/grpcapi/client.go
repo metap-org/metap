@@ -1,13 +1,10 @@
 // GrpcBackend implements crud.RecordBackend by calling a remote RecordService over gRPC — the
-// client-side counterpart to service.go's server implementation, and the concrete "remote" arm
-// of the local-vs-remote dispatch seam crud.RecordBackend exists for. Ported from
-// crates/metap-grpc/src/client.rs.
-//
+// client-side counterpart to service.go's server implementation, and the concrete "remote" arm of
+// the local-vs-remote dispatch seam crud.RecordBackend exists for.
 // Auth prefers the caller's own forwarded identity, falling back to a self-refreshing service
 // account token per upstream — see pickToken's doc comment.
-//
-// No batch RPC exists on the wire (RecordService's proto has no GetMany) — GetMany is
-// implemented as one Get call per id, sequentially, same as the Rust original.
+// No batch RPC exists on the wire (RecordService's proto has no GetMany) — GetMany is implemented
+// as one Get call per id, sequentially.
 package grpcapi
 
 import (
@@ -15,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -29,23 +27,18 @@ import (
 	"github.com/metap-org/metap/pkg/grpcapi/pb"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 // GrpcBackend implements crud.RecordBackend by calling a remote RecordService over gRPC.
 type GrpcBackend struct {
 	client       pb.RecordServiceClient
 	conn         *grpc.ClientConn
-	serviceToken *runtime.ServiceTokenSource
+	serviceToken *httpx.ServiceTokenSource
 }
 
 var _ crud.RecordBackend = (*GrpcBackend)(nil)
 
-// ConnectGrpcBackend dials addr (a plain "host:port" target — this package's own Serve/
-// OptionalServe only ever run plaintext gRPC, matching the Rust original's TLS-optional default;
-// a deployment that terminates TLS between services passes grpc.WithTransportCredentials
-// accordingly by building its own grpc.ClientConn and calling NewGrpcBackend instead).
-func ConnectGrpcBackend(addr string, serviceToken *runtime.ServiceTokenSource, dialOpts ...grpc.DialOption) (*GrpcBackend, error) {
+func ConnectGrpcBackend(addr string, serviceToken *httpx.ServiceTokenSource, dialOpts ...grpc.DialOption) (*GrpcBackend, error) {
 	// Plaintext by default, per this function's own doc comment above — found missing
 	// entirely (grpc.NewClient refuses to dial with no transport credentials configured at
 	// all, "no transport security set") the first time a real caller (the WAF demo's
@@ -63,7 +56,7 @@ func ConnectGrpcBackend(addr string, serviceToken *runtime.ServiceTokenSource, d
 
 // NewGrpcBackend wraps an already-built *grpc.ClientConn — the escape hatch for a caller that
 // needs its own dial options (TLS, keepalive, ...) not covered by ConnectGrpcBackend.
-func NewGrpcBackend(conn *grpc.ClientConn, serviceToken *runtime.ServiceTokenSource) *GrpcBackend {
+func NewGrpcBackend(conn *grpc.ClientConn, serviceToken *httpx.ServiceTokenSource) *GrpcBackend {
 	return &GrpcBackend{client: pb.NewRecordServiceClient(conn), conn: conn, serviceToken: serviceToken}
 }
 
@@ -74,7 +67,7 @@ func (b *GrpcBackend) Close() error {
 // pickToken picks which bearer token an outbound RPC authenticates with: the caller's own
 // forwarded token when rc carries one, else serviceToken's current value. A free function, not
 // inlined into outgoingContext, so this precedence is unit-testable without a real connection.
-func pickToken(rc *permission.RequestContext, serviceToken *runtime.ServiceTokenSource) string {
+func pickToken(rc *permission.RequestContext, serviceToken *httpx.ServiceTokenSource) string {
 	if rc.ForwardedBearerToken != "" {
 		return rc.ForwardedBearerToken
 	}
@@ -87,13 +80,13 @@ func pickToken(rc *permission.RequestContext, serviceToken *runtime.ServiceToken
 }
 
 // outgoingContext attaches the bearer token (via pickToken) and, if ctx is running inside a
-// traced call (runtime.CurrentTrace), the W3C traceparent — the one choke point every outbound
+// traced call (httpx.CurrentTrace), the W3C traceparent — the one choke point every outbound
 // RPC goes through, so a caller running inside an incoming request automatically propagates its
 // trace context to whichever upstream microservice this backend calls.
 func (b *GrpcBackend) outgoingContext(ctx context.Context, rc *permission.RequestContext) context.Context {
 	token := pickToken(rc, b.serviceToken)
 	md := grpcmd.Pairs("authorization", "Bearer "+token)
-	if tc, ok := runtime.CurrentTrace(ctx); ok {
+	if tc, ok := httpx.CurrentTrace(ctx); ok {
 		md.Append("traceparent", tc.ToTraceparentHeader())
 	}
 	return grpcmd.NewOutgoingContext(ctx, md)

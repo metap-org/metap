@@ -3,13 +3,8 @@
 // entity created directly on a dedicated table from day one. Reconcile already builds/maintains
 // the *target* table's structure for either case identically; this file adds the one thing that
 // case doesn't need: moving rows that already exist on a *different* physical table onto it.
-//
-// Historical note (kept, not rewritten, per this port's own "faithful port" convention): the
-// shared generic "records" table this module's source_table parameter was built for was dropped
-// entirely by the Rust original's own migration 0033 — every entity in this codebase has been
-// table-per-entity since. This module is therefore dead code in practice today, preserved as the
-// one-time escape hatch it always was for a deployment that still has a legacy entity on it.
-//
+// This module is therefore dead code in practice today, preserved as the one-time escape hatch it always
+// was for a deployment that still has a legacy entity on it.
 // Downtime-acceptable by design: no dual-write, no shadow-read. The caller is responsible for
 // stopping the service that owns the entity before calling MigrateGenericToDedicated — this
 // assumes no concurrent writer to sourceTable for the migrated (tenant, entity).

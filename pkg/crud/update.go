@@ -14,7 +14,6 @@ import (
 	"github.com/metap-org/metap/pkg/workflow"
 )
 
-// Update mirrors the Rust CrudService::update.
 func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUID, expectedVersion int32, rawData JsonObject, rc *permission.RequestContext, reason *string) (RecordDto, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {

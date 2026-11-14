@@ -21,13 +21,6 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// ErrorBody is the one error shape every service returns: {"error":{"code":...,"message":...}}.
-type ErrorBody struct {
-	Code        string              `json:"code"`
-	Message     string              `json:"message"`
-	FieldErrors map[string][]string `json:"fieldErrors,omitempty"`
-}
-
 // WriteError writes the standard error envelope. code is a stable machine-readable identifier
 // (snake_case), message is for a human.
 func WriteError(w http.ResponseWriter, status int, code, message string) {

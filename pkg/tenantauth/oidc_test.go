@@ -1,9 +1,7 @@
 package tenantauth
 
-// Ported from the Rust metap-auth crate's tests/oidc_e2e.rs (the wire-protocol tests; the
-// DB-touching JIT-provisioning test is ported in tenantauth_postgres_test.go instead). A
-// hand-signed RS256 id_token (via golang-jwt/jwt + a freshly generated RSA keypair) stands in for
-// what a real IdP would return, same approach the Rust original takes with jsonwebtoken+rsa.
+// A hand-signed RS256 id_token (via golang-jwt/jwt + a freshly generated RSA keypair) stands in for
+// what a real IdP would return.
 
 import (
 	"context"

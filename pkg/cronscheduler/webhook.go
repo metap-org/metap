@@ -1,10 +1,8 @@
 // "webhook" targets — calls an external URL, injecting jobId/runId (always) and entity/recordId
 // (when the firing came from an on_transition/on_record_event trigger — a plain schedule job has
-// neither) into a JSON body. Ported from metap-cron-scheduler's executor/webhook.rs.
-//
+// neither) into a JSON body.
 // The URL, method, headers and body all come from a tenant admin, so every one of them goes
 // through ssrfguard.go first.
-//
 // Uses its own *http.Client, not a shared one, for one reason the guard can't cover on its own:
 // redirects. An allowed public host answering "302 Location: http://169.254.169.254/" would walk
 // straight past a check that only ever saw the first URL. CheckRedirect returning
@@ -18,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"io"
 	"net/http"
 	"strings"
@@ -25,7 +24,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/metap-org/metap/pkg/control"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 // webhookAuthorizationKey is the config key whose credential a webhook may present
@@ -57,7 +55,7 @@ const maxWebhookResponseBytes = 1 << 20
 func webhookHTTPClient() *http.Client {
 	webhookClientOnce.Do(func() {
 		webhookClient = &http.Client{
-			Timeout: runtime.DefaultTimeout,
+			Timeout: httpx.DefaultClientTimeout,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -150,7 +148,7 @@ func RunWebhook(ctx context.Context, policy WebhookPolicy, secrets control.Secre
 	if hasCredential {
 		req.Header.Set("Authorization", credential)
 	}
-	runtime.AttachTraceContext(ctx, req)
+	httpx.AttachTraceContext(ctx, req)
 
 	resp, err := webhookHTTPClient().Do(req)
 	if err != nil {

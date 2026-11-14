@@ -1,9 +1,7 @@
 // Runs oauthserver's expired-token sweep alongside the cron loops, so
-// oauth_authorization_codes/oauth_refresh_tokens/oauth_pending_authorizations stop growing
-// without bound. oauthserver ships the sweep as a plain function (Run) rather than its own
-// binary — this process already runs for exactly this kind of periodic housekeeping, so it
-// hosts it. Ported from metap-cron-scheduler's oauth_cleanup.rs.
-//
+// oauth_authorization_codes/oauth_refresh_tokens/oauth_pending_authorizations stop growing without
+// bound. oauthserver ships the sweep as a plain function (Run) rather than its own binary — this
+// process already runs for exactly this kind of periodic housekeeping, so it hosts it.
 // The pool passed in must be the one POST /oauth/token itself writes through (the platform's
 // main DATABASE_URL) — not necessarily the outbox pool, which cmd/cron-scheduler's main resolves
 // separately, since the OAuth tables are deliberately not tenant-schema-split and live wherever

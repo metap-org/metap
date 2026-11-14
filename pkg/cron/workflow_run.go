@@ -22,7 +22,7 @@ func workflowRunFromRow(row pgx.Row) (*WorkflowRun, error) {
 const workflowRunColumns = `id, tenant_id, job_id, cron_job_run_id, status, current_step_index, total_steps,
 	context, error, wait_entity, wait_action, wait_record_event, started_at, finished_at, created_at`
 
-// StartWorkflowRun creates the workflow_runs row for a TargetType::Steps firing — called once
+// StartWorkflowRun creates the workflow_runs row for a TargetType "steps" firing — called once
 // at the start of the executor's run_steps, before the first step executes.
 func StartWorkflowRun(ctx context.Context, pool *pgxpool.Pool, tenantID, jobID, cronJobRunID uuid.UUID, totalSteps int32) (uuid.UUID, error) {
 	var id uuid.UUID
@@ -66,7 +66,7 @@ func GetWorkflowRunByCronJobRun(ctx context.Context, pool *pgxpool.Pool, tenantI
 	return w, err
 }
 
-// PauseWorkflowRun pauses a TargetType::Steps chain at a wait_event step — marks both
+// PauseWorkflowRun pauses a TargetType "steps" chain at a wait_event step — marks both
 // workflow_runs (status = "waiting") and cron_job_runs (status = "waiting") in one transaction.
 func PauseWorkflowRun(ctx context.Context, pool *pgxpool.Pool, workflowRunID, cronJobRunID uuid.UUID, stepIndex int32, wait WaitEventTargetConfig) error {
 	tx, err := pool.Begin(ctx)

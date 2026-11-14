@@ -1,10 +1,8 @@
 //go:build integration
 
 // E2E test: a real httpserver.BuildRouter server, bound to a real socket, hit with real HTTP
-// requests over a real network stack — auth included (a real RS256 JWT, minted and verified,
-// not stubbed). Recovered from the Rust metap-http crate's git history (tests/http_server.rs,
-// the commit before REST entity CRUD was removed) and ported essentially unchanged for the
-// lifecycle/rate-limit assertions that still apply to this Go port's reinstated REST surface.
+// requests over a real network stack — auth included (a real RS256 JWT, minted and verified, not
+// stubbed).
 package httpserver_test
 
 import (

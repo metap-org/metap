@@ -8,13 +8,12 @@ import (
 	"github.com/metap-org/metap/pkg/metadata"
 )
 
-// mountMetadata wires the /metadata/* surface, ported from crates/metap-http/src/routes/metadata.rs
-// (recovered from git history). GET /metadata/openapi.json is deliberately public — it only
-// describes API shape, never tenant data. The other three require a session (requireAuth) but not
-// per-entity read permission: every registered entity's shape is visible to any authenticated
-// user of the tenant (same as the Rust original; see that file's doc comment for the audit note).
-// They are what @metap/platform-ui's useEntities/useEntity/graphqlRecords and the permission
-// matrix read, so a service without them renders no entity screen at all.
+// mountMetadata wires the /metadata/* surface. GET /metadata/openapi.json is deliberately public
+// — it only describes API shape, never tenant data. The other three require a session (requireAuth)
+// but not per-entity read permission: every registered entity's shape is visible to any
+// authenticated user of the tenant. They are
+// what @metap/platform-ui's useEntities/useEntity/graphqlRecords and the permission matrix read, so
+// a service without them renders no entity screen at all.
 func mountMetadata(r chi.Router, state *AppState) {
 	r.Get("/metadata/openapi.json", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, metadata.GenerateOpenAPIDocument())

@@ -1,13 +1,11 @@
 // Package dashboardroutes is the optional dashboard layout endpoints (/dashboards/*) route group,
 // mounted with httpserver.BuildRouter(state, cors, dashboardroutes.Mount, ...). It lives outside package
 // httpserver so a service that doesn't serve it doesn't link its dependencies.
-//
-// GET/PUT /dashboards/me (any authenticated user, their own personal layout) and
-// GET/PUT /dashboards/tenant-default (requireAdmin for the write, same posture routes_admin.go
-// takes) — the HTTP surface for the dashboards package. Generic across every app/entity: a
-// layout is an opaque JSON blob to this package and to dashboards itself, interpreted only by the
-// frontend's widget catalog. Ported from crates/metap-http/src/routes/dashboards.rs (recovered
-// from git history, see routes_admin.go's own doc comment for why).
+// GET/PUT /dashboards/me (any authenticated user, their own personal layout) and GET/PUT
+// /dashboards/tenant-default (requireAdmin for the write, same posture routes_admin.go takes) — the
+// HTTP surface for the dashboards package. Generic across every app/entity: a layout is an opaque
+// JSON blob to this package and to dashboards itself, interpreted only by the frontend's widget
+// catalog.
 package dashboardroutes
 
 import (

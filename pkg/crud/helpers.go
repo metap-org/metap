@@ -110,9 +110,8 @@ func forbiddenWithField(decision permission.PermissionDecision) *ServiceError {
 	return NewServiceError(403, reason)
 }
 
-// compositeUniqueIndexName mirrors metap_reconciler::compile::composite_unique_index_name's
-// naming exactly for any name that didn't need that function's 63-byte truncate-with-hash
-// fallback — duplicated here rather than depended on, same "duplicate the trivial pure naming
+// compositeUniqueIndexName reproduces the reconciler's composite unique index naming exactly for
+// any name that didn't need its 63-byte truncate-with-hash fallback — duplicated here rather than depended on, same "duplicate the trivial pure naming
 // logic" convention metap-peripherals's own index naming already uses.
 func compositeUniqueIndexName(prefix string, fields []string) string {
 	return prefix + strings.Join(fields, "_")
@@ -452,8 +451,7 @@ func computeCapabilities(entity metadata.EntityDefinition, rc *permission.Reques
 }
 
 // sortFieldValue: nil when the field is genuinely unset (missing key or explicit JSON null) —
-// distinct from a real empty string. Collapsing the two was the root cause of a real
-// keyset-pagination data-loss bug in the Rust original.
+// distinct from a real empty string.
 func sortFieldValue(row RecordDto, field string) *string {
 	switch field {
 	case "createdAt":

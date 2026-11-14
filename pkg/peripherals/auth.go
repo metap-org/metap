@@ -4,7 +4,7 @@
 //
 //   - CreateUser/VerifyCredentials: the users table (argon2id password hashing).
 //   - MintJWT: the only JWT-encoding implementation in this package — both a CLI mint-token
-//     command and an HTTP login handler (not yet ported) should call this instead of each
+//     command and an HTTP login handler should call this instead of each
 //     hand-rolling their own Claims struct, so the two paths can't drift on claim shape.
 package peripherals
 
@@ -19,19 +19,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// JWTIssuer/JWTAudience: iss/aud claim values every token this package mints carries, and the
-// only values a decode-side Validation should accept — the HTTP auth layer (not yet ported)
-// should import these same constants rather than duplicating the literals, so mint and verify
-// can't drift.
+// JWTIssuer/JWTAudience: iss/aud claim values every token this package mints carries, and the only
+// values a decode-side Validation should accept — the HTTP auth layer should import these same
+// constants rather than duplicating the literals, so mint and verify can't drift.
 const (
 	JWTIssuer   = "metap"
 	JWTAudience = "metap-api"
 )
 
-// argon2idParams mirrors the Rust argon2 crate's Params::DEFAULT (v0.5.3): m_cost=19456 KiB,
-// t_cost=2, p_cost=1, 32-byte output — chosen so a password hash is encoded in the same
-// PHC string format ($argon2id$v=19$m=...,t=...,p=...$salt$hash) either implementation produces,
-// should this service and the Rust original ever need to read each other's users table.
 var argon2idParams = &argon2id.Params{
 	Memory:      19456,
 	Iterations:  2,
@@ -108,8 +103,7 @@ func ListTenantUsers(ctx context.Context, db DBTX, tenantID uuid.UUID) ([]*AuthU
 	}
 	defer rows.Close()
 
-	// make(..., 0), not var out []*AuthUser — a nil Go slice marshals to JSON null, not [],
-	// diverging from the Rust Vec<T> wire shape GET /users' caller expects on an empty tenant.
+	// make(..., 0), not var out []*AuthUser — a nil Go slice marshals to JSON null, not [].
 	out := make([]*AuthUser, 0)
 	for rows.Next() {
 		var u AuthUser
@@ -123,10 +117,7 @@ func ListTenantUsers(ctx context.Context, db DBTX, tenantID uuid.UUID) ([]*AuthU
 
 // VerifyCredentials returns (nil, nil) for either "no user with this email" or "wrong password"
 // — deliberately not distinguished, so a caller can't use this to enumerate registered emails.
-//
-// Looks up email globally, not (tenant_id, email) — deliberate, matching the Rust original's own
-// audit finding: a login request has no tenant picker, a user types only email+password, and
-// this lookup is what resolves which tenant they belong to. One email means one account
+// Looks up email globally, not (tenant_id, email) — deliberate. One email means one account
 // platform-wide, by design, until a real tenant-picker UI exists.
 func VerifyCredentials(ctx context.Context, db DBTX, email, password string) (*AuthUser, error) {
 	var u AuthUser
@@ -155,8 +146,6 @@ func VerifyCredentials(ctx context.Context, db DBTX, email, password string) (*A
 	return &u, nil
 }
 
-// claims mirrors the Rust Claims struct exactly — the HTTP auth layer's decode side (not yet
-// ported) must keep matching this shape.
 type claims struct {
 	jwt.RegisteredClaims
 	TenantID string `json:"tenantId"`

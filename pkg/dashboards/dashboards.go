@@ -1,7 +1,5 @@
-// Package dashboards holds customizable dashboard layouts — ported from metap's Rust
-// metap-dashboards crate. A plain ops-config table (dashboard_configs), no HTTP, no
-// business-entity knowledge.
-//
+// Package dashboards holds customizable dashboard layouts. A plain ops-config table
+// (dashboard_configs), no HTTP, no business-entity knowledge.
 // Two levels, resolved by GetEffectiveDashboard: a tenant default (ownerUserID == uuid.Nil, one
 // per tenant, meant to be admin-write-only — that check belongs at the HTTP layer, this package
 // has no concept of roles) and a personal override (ownerUserID == <user>, any authenticated user
@@ -18,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// DashboardConfig mirrors metap-dashboards::DashboardConfig. OwnerUserID is uuid.Nil for the
+// DashboardConfig is one stored layout. OwnerUserID is uuid.Nil for the
 // tenant default row — ownerUserID IS NULL in SQL — never a real zero-value user id in practice.
 type DashboardConfig struct {
 	ID          uuid.UUID

@@ -9,9 +9,8 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 )
 
-// MemoryCache is an in-process Cache (ported from metap-cache's MokaCache) — fine for a
-// single-instance deployment; a horizontally scaled one should use RedisCache instead, with no
-// change to any caller.
+// MemoryCache is an in-process Cache — fine for a single-instance deployment; a horizontally scaled
+// one should use RedisCache instead, with no change to any caller.
 type MemoryCache struct {
 	inner *gocache.Cache
 }

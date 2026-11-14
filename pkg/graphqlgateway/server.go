@@ -1,11 +1,8 @@
 // HTTP surface: POST /graphql (the only real endpoint) and GET /health.
-//
-// Auth here is decode-only, same as the Rust gateway: a caller needs a token that verifies
-// against the TokenVerifier it was built with (JWKS or a static key) to reach any resolver at all. The SAME raw token is then forwarded verbatim to
-// whichever upstream a resolver calls (gRPC metadata or an HTTP Authorization header) — that
-// upstream re-verifies and does the real, tenant/role-aware authorization. Decoding locally
-// first is defense in depth and a cleaner error for an obviously-bad token; it is not the
-// authorization check.
+// The SAME raw token is then forwarded verbatim to whichever upstream a resolver calls (gRPC
+// metadata or an HTTP Authorization header) — that upstream re-verifies and does the real,
+// tenant/role-aware authorization. Decoding locally first is defense in depth and a cleaner error
+// for an obviously-bad token; it is not the authorization check.
 package graphqlgateway
 
 import (
@@ -23,7 +20,6 @@ import (
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 type Server struct {
@@ -158,9 +154,6 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// A JSON array is a batch (@metap/platform-ui's graphqlClient.ts coalesces every query issued
-	// in one microtask into one request, the same GraphQLBatchRequest shape the Rust gateway
-	// accepted): run each in order, answer with an array of results in the same order.
 	if trimmed := bytes.TrimLeft(raw, " \t\r\n"); len(trimmed) > 0 && trimmed[0] == '[' {
 		var batch []graphqlRequestBody
 		if err := json.Unmarshal(trimmed, &batch); err != nil || len(batch) == 0 {
@@ -201,23 +194,23 @@ const (
 // header. Returns "" plus an error message when neither yields a usable token.
 func requestToken(r *http.Request) (string, string) {
 	if header := r.Header.Get("Authorization"); header != "" {
-		token, ok := runtime.ParseBearer(header)
+		token, ok := httpx.BearerToken(header)
 		if !ok {
 			return "", "missing or malformed Authorization header"
 		}
 		return token, ""
 	}
-	session, err := r.Cookie(runtime.SessionCookieName)
+	session, err := r.Cookie(httpx.SessionCookieName)
 	if err != nil || session.Value == "" {
 		return "", "missing or malformed Authorization header"
 	}
-	if runtime.RequiresCSRFCheck(r.Method) {
+	if httpx.RequiresCSRFCheck(r.Method) {
 		csrfValue, csrfOK := "", false
-		if c, cErr := r.Cookie(runtime.CSRFCookieName); cErr == nil {
+		if c, cErr := r.Cookie(httpx.CSRFCookieName); cErr == nil {
 			csrfValue, csrfOK = c.Value, true
 		}
-		csrfHeader := r.Header.Get(runtime.CSRFHeaderName)
-		if !runtime.CSRFMatches(csrfValue, csrfHeader, csrfOK, csrfHeader != "") {
+		csrfHeader := r.Header.Get(httpx.CSRFHeaderName)
+		if !httpx.CSRFMatches(csrfValue, csrfHeader, csrfOK, csrfHeader != "") {
 			return "", "missing or invalid CSRF token"
 		}
 	}

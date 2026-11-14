@@ -1,9 +1,6 @@
 package query
 
-// Pure unit tests for aggregate planning logic. See query_planner_test.go's doc comment for why
-// this is a reduced-but-real subset of the Rust original's 695-line src/aggregate/tests.rs
-// rather than a full 1:1 port — real e2e coverage (proving the generated SQL actually groups/
-// counts correctly) lives in query_planner_postgres_test.go.
+// Pure unit tests for aggregate planning logic.
 
 import (
 	"fmt"

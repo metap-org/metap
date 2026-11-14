@@ -1,4 +1,4 @@
-package runtime
+package httpx
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +26,7 @@ func TestFailsFastOnARealUnauthorizedResponse(t *testing.T) {
 
 	started := time.Now()
 	_, err := StartServiceTokenSource(context.Background(), server.Client(), server.URL+"/auth/login",
-		"svc@internal.local", uuid.NewString())
+		"svc@internal.local", newUUID())
 	require.Error(t, err, "expected an error")
 	require.False(t, time.Since(started) >= serviceTokenInitialRetryBudget, "a definite 401 must not go through the retry budget")
 }
@@ -52,7 +51,7 @@ func TestRetriesAConnectionRefusedUntilTheUpstreamComesUp(t *testing.T) {
 	}()
 
 	source, err := StartServiceTokenSource(context.Background(), http.DefaultClient, "http://"+addr+"/auth/login",
-		"svc@internal.local", uuid.NewString())
+		"svc@internal.local", newUUID())
 	require.NoError(t, err, "should ride out the boot race and eventually log in")
 	if source.Current() != "fake-token" {
 		require.FailNow(t, fmt.Sprintf("got token %q", source.Current()))

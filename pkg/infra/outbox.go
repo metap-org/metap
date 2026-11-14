@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// OutboxEvent mirrors metap-infra's Rust OutboxEvent.
 type OutboxEvent struct {
 	Topic         string
 	AggregateType string
@@ -22,12 +21,10 @@ type outboxExecutor interface {
 }
 
 // EnqueueOutboxEvent writes one outbox row in the same transaction as the business write — the
-// write half of the outbox pattern. The drain/publish half is a separate worker (ported later,
-// Wave 3's outbox-publisher).
+// write half of the outbox pattern. The drain/publish half is a separate worker.
 func EnqueueOutboxEvent(ctx context.Context, executor outboxExecutor, event *OutboxEvent) error {
 	// Bare table name, deliberately not schema-qualified — relies on the caller's connection
-	// search_path already including "metadata" (Router::begin's convention), matching the Rust
-	// original exactly rather than hardcoding a schema this package shouldn't need to know.
+	// search_path already including "metadata" (Router.Begin's convention).
 	_, err := executor.Exec(ctx,
 		"INSERT INTO outbox_events (topic, aggregate_type, aggregate_id, payload) VALUES ($1, $2, $3, $4)",
 		event.Topic, event.AggregateType, event.AggregateID, event.Payload)

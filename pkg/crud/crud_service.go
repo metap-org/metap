@@ -18,12 +18,9 @@ import (
 // CrudService is the only thing a transport layer calls for record operations. Orchestrates:
 // permission check -> field-metadata-driven validation -> query planning -> DB write -> workflow
 // status assignment -> outbox enqueue.
-//
-// Metadata is an *atomic.Pointer[metadata.MetadataRegistry], the Go equivalent of the Rust
-// ArcSwap<MetadataRegistry> — a DB-authored entity publish/rollback swaps in a new merged
-// registry while the server keeps running, no restart. Every method here loads a snapshot once,
-// synchronously, near the top (via registryFor) and uses that same snapshot for the rest of the
-// call.
+// Metadata is an *atomic.Pointer[metadata.MetadataRegistry]. Every method here loads a snapshot
+// once, synchronously, near the top (via registryFor) and uses that same snapshot for the rest of
+// the call.
 type CrudService struct {
 	router      TxBeginner
 	metadata    *atomic.Pointer[metadata.MetadataRegistry]

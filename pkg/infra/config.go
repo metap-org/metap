@@ -1,6 +1,4 @@
-// Package infra holds the lowest-level plumbing every metap-go binary needs — ported from
-// metap's Rust metap-infra crate: config loading, the Postgres pool, the outbox write-side, and
-// the EventBus (eventbus subpackage).
+// Package infra holds the lowest-level plumbing every metap-go binary needs.
 package infra
 
 import (
@@ -19,8 +17,6 @@ const (
 	NodeEnvProduction
 )
 
-// AppConfig mirrors metap-infra's Rust AppConfig — same env var names, same defaults, same
-// required-vs-optional fields.
 type AppConfig struct {
 	NodeEnv               NodeEnv
 	Host                  string
@@ -77,8 +73,7 @@ func isURLLike(s string) bool {
 	return strings.Contains(s, "://") && strings.TrimSpace(s) != ""
 }
 
-// LoadConfig loads .env (if present) then reads every env var, same required-vs-optional set the
-// Rust version enforces.
+// LoadConfig loads .env (if present) then reads every env var.
 func LoadConfig() (*AppConfig, error) {
 	_ = godotenv.Load()
 

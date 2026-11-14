@@ -1,11 +1,9 @@
-package runtime
+package httpx
 
 import (
 	"context"
 	"net/http"
 	"regexp"
-
-	"github.com/google/uuid"
 )
 
 // RequestIDs is the request_id/trace_id pair generated once per request, the single source
@@ -33,7 +31,7 @@ func headerOrNewUUID(h http.Header, name string) string {
 	if v := h.Get(name); v != "" && isValidOpaqueID(v) {
 		return v
 	}
-	return uuid.New().String()
+	return newUUID()
 }
 
 // GenerateRequestIDs must be the outermost middleware in a router's stack: it mints/propagates

@@ -1,6 +1,5 @@
-// db-migrate applies migrations/*.sql — ported from metap's Rust metap-db-migrate
-// binary. See the dbmigrate package's doc comment for why this tracks applied versions in its
-// own table rather than sqlx's _sqlx_migrations.
+// db-migrate applies migrations/*.sql. See the dbmigrate package's doc comment for why this tracks
+// applied versions in its own table rather than sqlx's _sqlx_migrations.
 package main
 
 import (

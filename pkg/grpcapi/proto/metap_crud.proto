@@ -11,7 +11,6 @@ import "google/protobuf/struct.proto";
 // /metadata/openapi.json are already generic over entity rather than generated per-entity.
 // google.protobuf.Struct (a JSON-shaped map) carries record data instead of a per-entity
 // message, since entities are runtime metadata here, not compile-time Go types.
-// Ported verbatim from crates/metap-grpc/proto/metap_crud.proto.
 service RecordService {
   rpc List(ListRequest) returns (ListResponse);
   rpc Get(GetRequest) returns (GetResponse);

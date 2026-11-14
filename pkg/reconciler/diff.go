@@ -31,7 +31,6 @@ const (
 	OpDropUnique
 )
 
-// DdlOp mirrors the Rust DdlOp enum.
 type DdlOp struct {
 	Kind DdlOpKind
 
@@ -89,10 +88,6 @@ func (op DdlOp) ExecutionMode() ExecutionMode {
 	}
 }
 
-// Diff mirrors the Rust diff(). actual == nil means the table doesn't exist yet — step 0: emit
-// CreateTable, then diff the rest against an empty schema. renames is caller-supplied (there is
-// no way to *infer* a rename from two column sets alone) and is applied first so every step
-// after it never sees the stale name.
 func Diff(desired PhysicalSchema, actual *PhysicalSchema, renames [][2]string) []DdlOp {
 	var ops []DdlOp
 	var actualCopy PhysicalSchema
@@ -238,9 +233,8 @@ func fkMatches(actual, desired FkSpec) bool {
 		actual.RefColumn == desired.RefColumn && actual.OnDelete == desired.OnDelete
 }
 
-// topoSort mirrors the Rust CreateTable -> AddColumn -> ... -> ValidateFK ordering. Every drop
-// in the FK/unique/index family ranks strictly before every create/add in that family — not
-// paired same-rank with its own create/add — because a same-*name* transition from a UNIQUE
+// Every drop in the FK/unique/index family ranks strictly before every create/add in that family —
+// not paired same-rank with its own create/add — because a same-*name* transition from a UNIQUE
 // constraint to a plain index needs its DropUnique to run *before* any
 // DropIndexConcurrently/CreateIndexConcurrently touching that name.
 func topoSort(ops []DdlOp) []DdlOp {

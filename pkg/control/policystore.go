@@ -1,14 +1,7 @@
 // Router-backed permission.PolicyStore implementation. Lives here rather than in the permission
-// package purely to avoid a dependency cycle (same reasoning as the Rust original).
-//
+// package purely to avoid a dependency cycle.
 // Routes every query through Router.Begin(tenantID) instead of a fixed pool — a DedicatedDb-
 // strategy tenant's policies table lives only in that tenant's own database.
-//
-// Divergence from the Rust original: that version runs `SELECT * FROM policies ...` and scans
-// the row by column name (sqlx's try_get("id")/try_get("entity")/...). pgx has no equivalent
-// generic "select star, scan by name" primitive as convenient as sqlx's, so this port uses an
-// explicit column list (matching exactly the policies table's columns) and scans positionally
-// instead — equivalent result, more robust than `SELECT *` either way.
 package control
 
 import (
@@ -60,9 +53,7 @@ func scanPolicyRow(row pgx.Row) (permission.PolicyRow, error) {
 
 func scanPolicyRows(rows pgx.Rows) ([]permission.PolicyRow, error) {
 	defer rows.Close()
-	// make(..., 0), not var out []permission.PolicyRow — a nil Go slice marshals to JSON null,
-	// not [], diverging from the Rust Vec<PolicyRow> wire shape GET /admin/policies' caller
-	// expects when an entity has no policies at all.
+	// make(..., 0), not var out []permission.PolicyRow — a nil Go slice marshals to JSON null, not [].
 	out := make([]permission.PolicyRow, 0)
 	for rows.Next() {
 		p, err := scanPolicyRow(rows)

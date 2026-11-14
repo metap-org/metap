@@ -54,7 +54,6 @@ const (
 	MigRemoveEnum
 )
 
-// MigrationOp mirrors the Rust MigrationOp enum.
 type MigrationOp struct {
 	Kind MigrationOpKind
 

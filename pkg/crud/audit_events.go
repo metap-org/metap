@@ -48,9 +48,6 @@ type diffVisibility struct {
 	fields  map[string]bool
 }
 
-// auditDiffVisibility: see the Rust CrudService's audit_events.rs doc comment for the full
-// reasoning — authorization that depends on mutable record state cannot be used to decide access
-// to values describing states the record no longer has, at two levels (record, then field).
 func (s *CrudService) auditDiffVisibility(ctx context.Context, entityName string, recordID uuid.UUID, rc *permission.RequestContext) (diffVisibility, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {

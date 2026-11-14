@@ -1,8 +1,7 @@
-// "workflow_transition"/"bulk_query_action" targets — both call back into the owning app's
-// entity CRUD via the configured crud.RecordBackend (normally a grpcapi.GrpcBackend), reusing
-// its permission/validation/audit rather than this binary linking metap-crud/metap-metadata
-// directly, which would give an ops binary business-entity knowledge. Ported from
-// metap-cron-scheduler's executor/workflow_transition.rs.
+// "workflow_transition"/"bulk_query_action" targets — both call back into the owning app's entity
+// CRUD via the configured crud.RecordBackend (normally a grpcapi.GrpcBackend), reusing its
+// permission/validation/audit rather than this binary linking metap-crud/metap-metadata directly,
+// which would give an ops binary business-entity knowledge.
 package cronscheduler
 
 import (

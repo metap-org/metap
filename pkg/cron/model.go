@@ -27,7 +27,7 @@ func ParseTargetType(s string) (TargetType, bool) {
 	return "", false
 }
 
-// WaitEventTargetConfig is the target_config shape for a TargetType::WaitEvent step — exactly
+// WaitEventTargetConfig is the target_config shape for a TargetType "wait_event" step — exactly
 // one of Action/Event must be set.
 type WaitEventTargetConfig struct {
 	Entity string  `json:"entity"`
@@ -80,10 +80,6 @@ type OnRecordEventTriggerConfig struct {
 	Event  string `json:"event"` // "created" | "updated" | "deleted"
 }
 
-// CronJob mirrors the Rust CronJob, including its #[serde(rename = "...")] wire shape — JSON
-// tags matter here, not just documentation, since this struct is what the admin REST surface
-// serializes directly (routes_cron.go wraps it in {"data": job} with no further reshaping, same
-// as the Rust handler's own doc comment describes).
 type CronJob struct {
 	ID                  uuid.UUID       `json:"id"`
 	TenantID            uuid.UUID       `json:"tenantId"`
@@ -112,7 +108,7 @@ const (
 	RunEnqueued RunStatus = "enqueued"
 	RunSuccess  RunStatus = "success"
 	RunFailed   RunStatus = "failed"
-	// RunWaiting: a TargetType::Steps firing paused at a wait_event step.
+	// RunWaiting: a TargetType "steps" firing paused at a wait_event step.
 	RunWaiting RunStatus = "waiting"
 )
 
@@ -124,8 +120,6 @@ func ParseRunStatus(s string) (RunStatus, bool) {
 	return "", false
 }
 
-// CronJobRun mirrors the Rust CronJobRun, including its camelCase wire shape — see CronJob's own
-// doc comment for why the JSON tags matter here.
 type CronJobRun struct {
 	ID              uuid.UUID       `json:"id"`
 	TenantID        uuid.UUID       `json:"tenantId"`
@@ -157,7 +151,7 @@ type CronJobDuePayload struct {
 
 const RoutingKey = "cron.job.due"
 
-// ClaimedDirectJob is a job claim_due_jobs claimed with DispatchMode::Direct — returned to the
+// ClaimedDirectJob is a job claim_due_jobs claimed with DispatchMode "direct" — returned to the
 // caller (the ticker) instead of going out via outbox.
 type ClaimedDirectJob struct {
 	RunID               uuid.UUID
@@ -173,7 +167,7 @@ type ClaimedDirectJob struct {
 	TriggerEntity       *string
 }
 
-// WorkflowRunStatus is progress/audit state for one TargetType::Steps firing.
+// WorkflowRunStatus is progress/audit state for one TargetType "steps" firing.
 type WorkflowRunStatus string
 
 const (
@@ -183,8 +177,6 @@ const (
 	WorkflowWaiting WorkflowRunStatus = "waiting"
 )
 
-// WorkflowRun mirrors the Rust WorkflowRun, including its camelCase wire shape — see CronJob's
-// own doc comment for why the JSON tags matter here.
 type WorkflowRun struct {
 	ID               uuid.UUID       `json:"id"`
 	TenantID         uuid.UUID       `json:"tenantId"`

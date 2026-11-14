@@ -1,4 +1,4 @@
-package runtime
+package httpx
 
 import (
 	"encoding/json"
@@ -7,8 +7,7 @@ import (
 )
 
 // The {"error":{"code":...,"message":...}} response shape every metap-go service returns on
-// failure — ported from metap-runtime::http_error so a from-scratch router can return the same
-// shape without depending on a heavier HTTP package.
+// failure.
 
 func defaultMessage(errorCode string) string {
 	switch errorCode {
@@ -37,8 +36,9 @@ func defaultMessage(errorCode string) string {
 	}
 }
 
-// ErrorBody is the decoded shape of a service error response body, exported so middleware (e.g.
-// RequestContext) can inject fields into it before it reaches the client.
+// ErrorBody is the one error shape every service returns: {"error":{"code":...,"message":...}}.
+// Exported so middleware (e.g. RequestContext) can inject the request/trace ids into it before it
+// reaches the client.
 type ErrorBody struct {
 	Status      int                 `json:"-"`
 	Code        string              `json:"code"`
@@ -58,8 +58,8 @@ func (b ErrorBody) MarshalEnvelope() []byte {
 	return out
 }
 
-// BuildServiceError constructs the error body for a known, expected failure. message == "" uses
-// the code's default message (mirrors the Rust Option<&str> default-message behavior).
+// BuildServiceError constructs the error body for a known, expected failure. message == "" uses the
+// code's default message.
 func BuildServiceError(status int, errorCode string, message string, fieldErrors map[string][]string) ErrorBody {
 	if message == "" {
 		message = defaultMessage(errorCode)
@@ -76,7 +76,7 @@ func ServiceErrorResponse(w http.ResponseWriter, status int, errorCode string, m
 }
 
 // InternalErrorResponse logs the real error and writes a body that hides its details from the
-// client — same posture as the Rust internal_error_response.
+// client.
 func InternalErrorResponse(w http.ResponseWriter, err error) {
 	slog.Error("internal error", "error", err)
 	w.Header().Set("Content-Type", "application/json")

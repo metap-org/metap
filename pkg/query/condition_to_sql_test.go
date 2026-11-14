@@ -1,7 +1,5 @@
 package query
 
-// Ported from the Rust metap-query crate's src/condition_to_sql/tests.rs.
-
 import (
 	"encoding/json"
 	"testing"

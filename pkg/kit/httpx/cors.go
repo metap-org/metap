@@ -1,11 +1,10 @@
-package runtime
+package httpx
 
 import (
 	"net/http"
 	"strings"
 )
 
-// CORSOptions mirrors the Rust cors::build's parameters.
 type CORSOptions struct {
 	Origins []string
 	Methods []string
@@ -13,8 +12,7 @@ type CORSOptions struct {
 }
 
 // CORS builds a CORS middleware. Empty Origins means the restrictive default: no
-// Access-Control-* headers are ever set, so a browser denies every cross-origin request — same
-// as tower-http's bare CorsLayer::new(). A non-empty Origins list always sets
+// Access-Control-* headers are ever set, so a browser denies every cross-origin request. A non-empty Origins list always sets
 // Access-Control-Allow-Credentials: true alongside an explicit (never wildcard) origin list,
 // since the CORS spec forbids combining credentials with a wildcard origin.
 func CORS(opts CORSOptions) func(http.Handler) http.Handler {

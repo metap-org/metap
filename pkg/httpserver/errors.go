@@ -7,18 +7,16 @@ import (
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/httpx"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 // writeServiceError and writeInternalError are thin call-site conveniences over
-// runtime.ServiceErrorResponse/InternalErrorResponse — kept as local names so route handlers
-// read the same as the Rust originals' service_error_response/internal_error_response calls.
+// httpx.ServiceErrorResponse/InternalErrorResponse.
 func writeServiceError(w http.ResponseWriter, status int, errorCode, message string, fieldErrors map[string][]string) {
-	runtime.ServiceErrorResponse(w, status, errorCode, message, fieldErrors)
+	httpx.ServiceErrorResponse(w, status, errorCode, message, fieldErrors)
 }
 
 func writeInternalError(w http.ResponseWriter, err error) {
-	runtime.InternalErrorResponse(w, err)
+	httpx.InternalErrorResponse(w, err)
 }
 
 // writeRouterUnavailable maps a control.Router.Begin failure to an HTTP response — same mapping

@@ -24,7 +24,7 @@ func jqlStrValue(s string) jqlValue { return jqlValue{str: s} }
 func jqlBoolValue(b bool) jqlValue  { return jqlValue{isBool: true, b: b} }
 
 // jqlExpr is a tagged union over the 5 JQL expression kinds — exactly one of the typed fields is
-// set per node, mirroring the Rust enum.
+// set per node.
 type jqlExpr struct {
 	kind jqlExprKind
 

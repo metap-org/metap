@@ -1,15 +1,11 @@
 // Package config holds platform configuration stored in Postgres instead of hard-coded in Go or
-// pinned to an env var at boot — ported from metap's Rust metap-config crate.
-//
+// pinned to an env var at boot.
 // Not a free-form key/value bag. Every settable key is declared in Registry with a tier, a
 // default and a validator; an unknown key is rejected rather than stored.
-//
 // Tiering is the security boundary, not a convenience: an Operator key is readable by nobody's
 // API and writable by nobody's API.
-//
 // Three tiers, resolved in one direction: declared default <- platform_configs <- tenant_configs,
 // each tier overriding only the keys it actually stores a row for (EffectiveConfig).
-//
 // Reads never touch the database: ConfigStore loads the table once at boot into an atomic
 // snapshot and swaps a fresh one in after every write.
 package config
@@ -234,7 +230,7 @@ func notWritableErr(key, reason string) error {
 func invalidErr(key, reason string) error { return &Error{Kind: ErrInvalid, Key: key, Reason: reason} }
 func dbErr(cause error) error             { return &Error{Kind: ErrDB, Cause: cause} }
 
-// TenantCacheTTL matches metap_control::RegistryCache's 30s for the same reason.
+// TenantCacheTTL matches control.RegistryCache's 30s for the same reason.
 const TenantCacheTTL = 30 * time.Second
 
 type executor interface {

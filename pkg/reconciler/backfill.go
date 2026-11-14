@@ -137,8 +137,7 @@ func RunBatchedUpdate(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUI
 	return markCompleted(ctx, pool, tenantID, entityName, opID)
 }
 
-// maxUUID returns the largest UUID by byte order — matches Rust's Uuid::Ord (the derived
-// comparison over the 16-byte array), which the original relies on via ids.iter().max().
+// maxUUID returns the largest UUID by byte order.
 func maxUUID(ids []uuid.UUID) uuid.UUID {
 	max := ids[0]
 	for _, id := range ids[1:] {

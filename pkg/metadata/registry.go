@@ -6,7 +6,6 @@ import (
 	"sync"
 )
 
-// EntitySummary mirrors the Rust EntitySummary — what GET /metadata/entities serves.
 type EntitySummary struct {
 	Name              string                   `json:"name"`
 	Label             string                   `json:"label"`
@@ -20,7 +19,6 @@ type EntitySummary struct {
 	Version           string                   `json:"version"`
 }
 
-// RegistryError mirrors the Rust RegistryError.
 type RegistryError struct {
 	AlreadyRegistered string // "" means this is a Validation error instead
 	Validation        *ValidationError
@@ -37,12 +35,10 @@ func alreadyRegisteredErr(name string) *RegistryError   { return &RegistryError{
 func validationErr(err *ValidationError) *RegistryError { return &RegistryError{Validation: err} }
 
 // --- Auto-discovery registration, the Go equivalent of submit_entity!/inventory ---
-//
-// Rust's `inventory` crate collects submissions via linker-section tricks that run before
-// main(). Go's closest native equivalent is a package's own init() function, which the Go
-// runtime guarantees runs (once, in import-dependency order) for every package transitively
-// imported by the binary — the same "declared once, discovered automatically, no explicit call
-// needed in main()" property submit_entity! provides. An entity-defining Go package calls
+// Go's closest native equivalent is a package's own init() function, which the Go runtime
+// guarantees runs (once, in import-dependency order) for every package transitively imported by the
+// binary — the same "declared once, discovered automatically, no explicit call needed in main()"
+// property submit_entity! provides. An entity-defining Go package calls
 // metadata.SubmitEntity(factory) from its own init() instead of using a macro.
 var submissionsMu sync.Mutex
 var submittedEntityFactories []func() EntityDefinition
@@ -235,8 +231,8 @@ func (r *MetadataRegistry) ListEntities() []EntitySummary {
 func (r *MetadataRegistry) toSummary(entity EntityDefinition) EntitySummary {
 	version, err := Hash(entity)
 	if err != nil {
-		// Hashing a plain struct of string/bool/slice fields cannot fail in practice — panic
-		// rather than silently emit a wrong/empty version, matching the Rust .expect().
+		// Hashing a plain struct of string/bool/slice fields cannot fail in practice — panic rather than
+		// silently emit a wrong/empty version.
 		panic(fmt.Sprintf("hashing entity metadata cannot fail: %v", err))
 	}
 	return EntitySummary{

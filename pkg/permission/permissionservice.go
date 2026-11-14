@@ -10,7 +10,6 @@ import (
 	mcache "github.com/metap-org/metap/pkg/cache"
 )
 
-// PermissionService mirrors the Rust PermissionService.
 type PermissionService struct {
 	store PolicyStore
 	cache mcache.Cache // nil by default — every call site queries PolicyStore fresh

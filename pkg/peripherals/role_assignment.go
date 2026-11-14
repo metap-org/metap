@@ -1,7 +1,5 @@
-// Package peripherals is a grab-bag of small platform-identity concerns ported from metap's
-// Rust metap-peripherals crate: index reconciliation, metadata drift check, role assignment,
-// local username/password auth + JWT minting, per-user preferences, and the AUTH_CONTEXT_ENTITY
-// read side. No HTTP, no business-entity knowledge.
+// Package peripherals is a grab-bag of small platform-identity concerns. No HTTP, no
+// business-entity knowledge.
 package peripherals
 
 import (
@@ -13,11 +11,7 @@ import (
 )
 
 // DBTX is satisfied by *pgxpool.Pool and pgx.Tx — most functions in this package work against
-// either a bare pool or an already-open transaction (the Go equivalent of the Rust
-// `impl sqlx::PgExecutor<'e>` genericity): tenant provisioning calls these against a bare pool it
-// just opened (before a control.tenants row exists, so there's nothing to route through yet),
-// while a caller with a resolved tenant calls them against an already-open, tenant-scoped
-// transaction.
+// either a bare pool or an already-open transaction.
 type DBTX interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)

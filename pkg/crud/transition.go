@@ -14,7 +14,6 @@ import (
 	"github.com/metap-org/metap/pkg/workflow"
 )
 
-// Transition mirrors the Rust CrudService::transition.
 func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid.UUID, action string, expectedVersion int32,
 	payload JsonObject, rc *permission.RequestContext, reason *string) (RecordDto, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)

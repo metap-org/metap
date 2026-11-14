@@ -1,13 +1,11 @@
-// Package tenantauth is tenant-selectable auth providers — distinct from the low-code
-// platform's own admin auth, this is how a tenant's own users authenticate. Ported from metap's
-// Rust metap-auth crate. A tenant can enable more than one provider at once, so AuthProviderKind
-// is a discriminant tenant config picks from, not an interface every provider must uniformly
-// implement — Local/Basic/OIDC/OAuth2 take genuinely different inputs.
-//
+// Package tenantauth is tenant-selectable auth providers — distinct from the low-code platform's
+// own admin auth, this is how a tenant's own users authenticate. A tenant can enable more than one
+// provider at once, so AuthProviderKind is a discriminant tenant config picks from, not an
+// interface every provider must uniformly implement — Local/Basic/OIDC/OAuth2 take genuinely
+// different inputs.
 // Bearer (JWT) itself is not a provider here — it's the session mechanism every successful login
 // (regardless of provider) ends in (peripherals.MintJWT), verified per-request by the HTTP auth
-// layer (not yet ported), unchanged by this package.
-//
+// layer, unchanged by this package.
 // No HTTP, no business-entity knowledge — a plain library, same shape as permission.
 package tenantauth
 

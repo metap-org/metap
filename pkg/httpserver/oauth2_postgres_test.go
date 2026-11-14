@@ -252,9 +252,8 @@ func TestOAuth2FullAuthorizationCodeFlowWithPKCEAndScopeEnforcement(t *testing.T
 	secondCode := mustParseQueryParam(t, loc, "code")
 
 	// exchanging a real code without code_verifier is rejected — this burns the code (a code is
-	// single-use regardless of whether the PKCE check that follows passes, same as the Rust
-	// original), so it uses this second, otherwise-unused code rather than the one already
-	// exchanged above.
+	// single-use regardless of whether the PKCE check that follows passes), so it uses this second,
+	// otherwise-unused code rather than the one already exchanged above.
 	missingVerifierRes := oauthFormRequest(t, "POST", base+"/oauth/token", "", url.Values{
 		"grant_type": {"authorization_code"}, "code": {secondCode}, "redirect_uri": {redirectURI},
 	}, clientID, clientSecret)

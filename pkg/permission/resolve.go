@@ -6,7 +6,7 @@ import (
 )
 
 // ResolveValue resolves a PolicyValue against a RequestContext — pub so metap-workflow's
-// set_fields (ported later) can reuse this exact resolution.
+// set_fields.
 func ResolveValue(value PolicyValue, ctx *RequestContext) json.RawMessage {
 	if value.isFromCtx {
 		var m map[string]json.RawMessage

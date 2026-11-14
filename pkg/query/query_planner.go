@@ -26,9 +26,8 @@ type ResolvedSort struct {
 	Descending bool
 }
 
-// ListInput mirrors the Rust ListInput. Filters is a slice of (field, value) pairs, not a map —
-// deterministic iteration order matters here (the generated $N numbering must be reproducible
-// for the same input).
+// Filters is a slice of (field, value) pairs, not a map — deterministic iteration order matters
+// here (the generated $N numbering must be reproducible for the same input).
 type ListInput struct {
 	Limit    int64
 	Sort     *string
@@ -171,8 +170,6 @@ type TenantScoper interface {
 	ScopedTenant(rc *permission.RequestContext) (uuid.UUID, error)
 }
 
-// PlanList has the same signature shape as the Rust plan_list (metadata + permissions injected,
-// not held as struct state).
 func PlanList(metadataRegistry *metadata.MetadataRegistry, permissions TenantScoper, entityName string, input ListInput, context *permission.RequestContext, recordReadPolicies []permission.PolicyRow) (*PlannedListQuery, error) {
 	entity, ok := metadataRegistry.GetEntity(entityName)
 	if !ok {

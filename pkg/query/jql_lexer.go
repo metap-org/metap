@@ -197,9 +197,6 @@ func jqlTokenize(input string) ([]jqlToken, error) {
 	return tokens, nil
 }
 
-// ASCII-only, unlike the Rust original's Unicode-aware is_whitespace/is_alphabetic — every real
-// field name in this codebase is ASCII camelCase, so this is a deliberate, harmless narrowing,
-// not a functional gap.
 func isDigit(c rune) bool { return c >= '0' && c <= '9' }
 func isAlpha(c rune) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
 func isAlnum(c rune) bool { return isAlpha(c) || isDigit(c) }

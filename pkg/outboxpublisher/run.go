@@ -1,7 +1,7 @@
-// Package outboxpublisher is the outbox pattern's read side — ported from metap's Rust
-// metap-outbox-publisher crate. metap-infra's EnqueueOutboxEvent (the write side) writes a row
-// into outbox_events inside the same transaction as a business write; this loop drains that
-// table and publishes each row to an EventBus, so RabbitMQ downtime can't lose an event.
+// Package outboxpublisher is the outbox pattern's read side. metap-infra's EnqueueOutboxEvent (the
+// write side) writes a row into outbox_events inside the same transaction as a business write; this
+// loop drains that table and publishes each row to an EventBus, so RabbitMQ downtime can't lose an
+// event.
 package outboxpublisher
 
 import (
@@ -24,10 +24,8 @@ type outboxRow struct {
 
 // Run runs the poll/publish/sleep loop until ctx is canceled, reconnecting the event bus with
 // backoff after any publish failure.
-//
 // pool must be the same database EnqueueOutboxEvent actually wrote the rows into for whatever
-// tenant this instance is meant to drain — see the Rust doc comment for the DedicatedDb-tenant
-// gap this guards against (pointing this at the wrong pool silently drains nothing, forever).
+// tenant this instance is meant to drain.
 func Run(ctx context.Context, pool *pgxpool.Pool, connect func() (eventbus.EventBus, error), pollMs uint64, batchSize int64) error {
 	var attempt uint32
 
@@ -50,9 +48,8 @@ func Run(ctx context.Context, pool *pgxpool.Pool, connect func() (eventbus.Event
 
 		allPublished, err := publishPending(ctx, pool, bus, batchSize)
 		if err != nil {
-			// A DB-level failure (the transaction/query itself, not an individual row's
-			// publish) isn't retried here either — crashes the process for a process manager
-			// to restart, same contract as the Rust version.
+			// A DB-level failure (the transaction/query itself, not an individual row's publish) isn't
+			// retried here either — crashes the process for a process manager to restart.
 			return err
 		}
 

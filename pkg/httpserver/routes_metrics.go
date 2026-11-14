@@ -1,7 +1,6 @@
-// GET /metrics — mounts state.Metrics' Prometheus exposition handler. The actual recording
-// happens in the runtime.MetricsRegistry.Middleware wired into BuildRouter's middleware stack;
-// this file only mounts the scrape endpoint itself. Ported from
-// crates/metap-http/src/routes/metrics.rs.
+// GET /metrics — mounts state.Metrics' Prometheus exposition handler. The actual recording happens
+// in the runtime.MetricsRegistry.Middleware wired into BuildRouter's middleware stack; this file
+// only mounts the scrape endpoint itself.
 package httpserver
 
 import (

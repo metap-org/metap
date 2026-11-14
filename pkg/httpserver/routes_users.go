@@ -1,9 +1,7 @@
-// GET /users — lightweight {id, email} list of every user in the caller's tenant, the "pick a
-// user" primitive an assignee/reporter picker needs. Deliberately not under /admin/* (requireAuth,
-// not requireAdmin) — assigning an issue to a colleague isn't an admin action, unlike granting a
-// role (GET /admin/users, routes_admin.go, a different shape for a different purpose). Ported
-// from crates/metap-http/src/routes/users.rs (recovered from git history, see routes_admin.go's
-// own doc comment for why).
+// GET /users — lightweight {id, email} list of every user in the caller's tenant, the "pick a user"
+// primitive an assignee/reporter picker needs. Deliberately not under /admin/* (requireAuth, not
+// requireAdmin) — assigning an issue to a colleague isn't an admin action, unlike granting a role
+// (GET /admin/users, routes_admin.go, a different shape for a different purpose).
 package httpserver
 
 import (

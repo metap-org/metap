@@ -316,11 +316,10 @@ type BatchOutcome struct {
 	Err    error
 }
 
-// RunClaimedBatch runs reconcileOne for every claimed entity, at most concurrencyLimit at a
-// time, and in isolation: one entity's error is recorded (RecordFailure) and does not stop or
-// cancel any other entity's work. Success records RecordSuccess with the entity's own
-// DesiredVersion as the newly-applied one. Result order matches completion order, not input
-// order (the same as the Rust original's buffer_unordered).
+// RunClaimedBatch runs reconcileOne for every claimed entity, at most concurrencyLimit at a time,
+// and in isolation: one entity's error is recorded (RecordFailure) and does not stop or cancel any
+// other entity's work. Success records RecordSuccess with the entity's own DesiredVersion as the
+// newly-applied one. Result order matches completion order, not input order.
 func RunClaimedBatch(ctx context.Context, pool *pgxpool.Pool, claimed []ClaimedEntity, concurrencyLimit int, reconcileOne func(context.Context, ClaimedEntity) error) []BatchOutcome {
 	if concurrencyLimit < 1 {
 		concurrencyLimit = 1

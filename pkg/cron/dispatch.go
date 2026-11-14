@@ -11,7 +11,6 @@ import (
 	"github.com/metap-org/metap/pkg/events"
 )
 
-// ClaimResult mirrors the Rust ClaimResult.
 type ClaimResult struct {
 	// Claimed is the total jobs claimed this batch, Outbox and Direct combined.
 	Claimed int

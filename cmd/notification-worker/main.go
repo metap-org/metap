@@ -1,16 +1,15 @@
-// notification-worker logs every workflow transition event — ported from metap's Rust
-// metap-notification-worker binary.
+// notification-worker logs every workflow transition event.
 package main
 
 import (
 	"context"
+	"github.com/metap-org/metap/pkg/kit/shutdown"
 	"log/slog"
 	"os"
 
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
 	"github.com/metap-org/metap/pkg/notificationworker"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 func main() {
@@ -25,7 +24,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		runtime.WaitForShutdownSignal()
+		shutdown.Wait()
 		cancel()
 	}()
 	defer cancel()

@@ -2,8 +2,6 @@
 
 package workflow
 
-// Ported from the Rust metap-workflow crate's tests/workflow_engine_postgres.rs.
-
 import (
 	"context"
 	"encoding/json"
@@ -95,8 +93,6 @@ func TestEmitTransitionedAndEmitCreatedEnqueueOutboxRowsWithCorrectTopics(t *tes
 	require.Equal(t, tenantID.String(), createdPayload["tenantId"], "got tenantId %v", createdPayload["tenantId"])
 }
 
-// ListEvents has no dedicated test in the Rust crate's own e2e file (confirmed by reading it) —
-// new coverage added during the port.
 func TestListEventsReturnsHistoryInChronologicalOrder(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

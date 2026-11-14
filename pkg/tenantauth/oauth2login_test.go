@@ -1,8 +1,5 @@
 package tenantauth
 
-// Ported from the Rust metap-auth crate's tests/oauth2_login_e2e.rs (the wire-protocol tests;
-// the DB-touching JIT-provisioning tests are ported in tenantauth_postgres_test.go instead).
-
 import (
 	"context"
 	"encoding/json"

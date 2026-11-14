@@ -1,4 +1,4 @@
-package runtime
+package httpx
 
 import "net/http"
 
@@ -11,20 +11,18 @@ const defaultCSP = "default-src 'self'; base-uri 'self'; font-src 'self' https: 
 // set, since no Go HTTP framework ships this by default either. A handler that needs a different
 // CSP (e.g. a GraphiQL playground loading third-party scripts) should set its own
 // Content-Security-Policy header before this middleware runs — it only sets headers not already
-// present, same as the Rust `.entry(...).or_insert_with(...)`.
+// present.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Headers from the handler are written during ServeHTTP but not flushed until
-		// WriteHeader/Write — so defaults can still be injected afterward as long as the handler
-		// hasn't called WriteHeader yet. A handler that calls WriteHeader itself must set its own
-		// CSP before doing so, matching the Rust version's ordering requirement.
+		// Headers from the handler are written during ServeHTTP but not flushed until WriteHeader/Write —
+		// so defaults can still be injected afterward as long as the handler hasn't called WriteHeader
+		// yet. A handler that calls WriteHeader itself must set its own CSP before doing so.
 		next.ServeHTTP(&securityHeaderWriter{ResponseWriter: w}, r)
 	})
 }
 
 // securityHeaderWriter defers header defaults until the first WriteHeader/Write call, so a
-// handler's own explicit header (set any time before then) always wins — mirrors axum's
-// `next.run(request).await` returning a Response the Rust middleware then patches afterward.
+// handler's own explicit header (set any time before then) always wins.
 type securityHeaderWriter struct {
 	http.ResponseWriter
 	wrote bool

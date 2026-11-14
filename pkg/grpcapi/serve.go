@@ -1,7 +1,4 @@
-// Runs RecordService on its own listener — a second port alongside a binary's main HTTP
-// listener, matching the Rust original's "second task in the same process" shape (see
-// crates/metap-grpc/src/serve.rs's own doc comment for why not unifying onto one server). Ported
-// from that file.
+// Runs RecordService on its own listener — a second port alongside a binary's main HTTP listener.
 package grpcapi
 
 import (
@@ -23,13 +20,7 @@ import (
 	"github.com/metap-org/metap/pkg/metadata"
 )
 
-// logUnaryInterceptor is the per-RPC access log every REST route already gets via
-// runtime.Trace — found needed live (2026-09-06, see the Rust serve.rs doc comment this ports)
-// after a cross-service gRPC call produced zero log output on the target service's side. Logs
-// the generic RPC method name (e.g. "/metap.crud.v1.RecordService/List") and latency/error —
-// unlike the Rust version's per-entity span field, the handlers here don't thread a logger back
-// out to add the entity name, which is a reasonable later refinement, not required for a working
-// gRPC transport.
+// Logs the generic RPC method name (e.g. "/metap.crud.v1.RecordService/List") and latency/error.
 func logUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	start := time.Now()
 	resp, err := handler(ctx, req)

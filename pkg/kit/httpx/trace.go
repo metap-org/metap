@@ -1,4 +1,4 @@
-package runtime
+package httpx
 
 import (
 	"log/slog"
@@ -7,7 +7,7 @@ import (
 )
 
 // statusCapturingWriter records the status code written so Trace can log it after the handler
-// returns — net/http has no equivalent of tower_http's on_response/on_failure hooks built in.
+// returns — net/http has no built-in response hook.
 type statusCapturingWriter struct {
 	http.ResponseWriter
 	status int
@@ -19,8 +19,8 @@ func (w *statusCapturingWriter) WriteHeader(status int) {
 }
 
 // Trace logs one structured access-log line per request, correlated by the request/trace ids
-// GenerateRequestIDs put in the context — ported from metap-runtime's trace::build. Must run
-// inside (after) GenerateRequestIDs in the middleware chain.
+// GenerateRequestIDs put in the context. Must run inside (after) GenerateRequestIDs in the
+// middleware chain.
 func Trace(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()

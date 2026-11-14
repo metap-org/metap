@@ -1,6 +1,5 @@
-// Tenant provisioning — the two flows a CLI (not yet ported) has always run inline, pulled out
-// here so a future HTTP handler can call the exact same functions instead of a second,
-// hand-copied implementation.
+// Tenant provisioning — the two flows a CLI has always run inline, pulled out here so a future HTTP
+// handler can call the exact same functions instead of a second, hand-copied implementation.
 package control
 
 import (
@@ -123,8 +122,7 @@ func ProvisionDedicatedDbTenant(ctx context.Context, registry *PostgresTenantReg
 	return &ProvisionedTenant{TenantID: tenantID, AdminUserID: user.ID}, nil
 }
 
-// tenantSimpleHex is the 32-lowercase-hex-char form of a UUID (no dashes) — the Go equivalent of
-// Rust's Uuid::simple().
+// tenantSimpleHex is the 32-lowercase-hex-char form of a UUID (no dashes).
 func tenantSimpleHex(id uuid.UUID) string {
 	b := id[:]
 	const hex = "0123456789abcdef"

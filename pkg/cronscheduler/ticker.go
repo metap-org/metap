@@ -1,13 +1,10 @@
-// The polling half: claims due jobs/retries and either writes their cron.job.due outbox event
-// (the default) or — for DispatchMode "direct" jobs — executes them immediately, in-process, in
-// the same tick that claimed them. Ported from metap-cron-scheduler's ticker.rs.
-//
-// Divergence from the Rust original: Rust's loop races a biased tokio::select! against shutdown
-// around the tick() call itself, so a shutdown mid-tick aborts the in-flight future outright.
+// The polling half: claims due jobs/retries and either writes their cron.job.due outbox event (the
+// default) or — for DispatchMode "direct" jobs — executes them immediately, in-process, in the same
+// tick that claimed them.
 // Go's context cancellation doesn't abort an in-flight pgx query the same structural way — this
-// loop instead lets an in-flight tick run to completion (pgx itself still respects ctx
-// cancellation inside its own queries, so a long-stuck query is still interrupted) and checks
-// ctx.Err() before/after each tick, which is a close equivalent rather than byte-identical.
+// loop instead lets an in-flight tick run to completion (pgx itself still respects ctx cancellation
+// inside its own queries, so a long-stuck query is still interrupted) and checks ctx.Err()
+// before/after each tick, which is a close equivalent rather than byte-identical.
 package cronscheduler
 
 import (

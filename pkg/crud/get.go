@@ -13,7 +13,6 @@ type GetResult struct {
 	Capabilities RecordCapabilities
 }
 
-// Get mirrors the Rust CrudService::get.
 func (s *CrudService) Get(ctx context.Context, entityName string, id uuid.UUID, rc *permission.RequestContext) (GetResult, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {

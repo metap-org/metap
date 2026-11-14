@@ -1,17 +1,15 @@
-// Maps a crud.ServiceError onto a grpc.Status and back — the gRPC counterpart to
-// metap-http's writeServiceError, so the same CrudService failure reads the same regardless of
-// which transport a caller used. Ported from crates/metap-grpc/src/status.rs.
-//
-// The Code alone is not the contract; ErrorDetails is. A grpc Status carries only a Code plus
-// free text — this mapping would otherwise throw away the exact numeric HTTP status (400 and 422
-// both collapse into InvalidArgument, 500/503 both into Internal) and, worst, fieldErrors. So the
-// full envelope rides in the "grpc-status-details-bin" trailer as raw JSON bytes — the same wire
+// Maps a crud.ServiceError onto a grpc.Status and back — the gRPC counterpart to metap-http's
+// writeServiceError, so the same CrudService failure reads the same regardless of which transport a
+// caller used.
+// The Code alone is not the contract; ErrorDetails is. A grpc Status carries only a Code plus free
+// text — this mapping would otherwise throw away the exact numeric HTTP status (400 and 422 both
+// collapse into InvalidArgument, 500/503 both into Internal) and, worst, fieldErrors. So the full
+// envelope rides in the "grpc-status-details-bin" trailer as raw JSON bytes — the same wire
 // convention tonic::Status::with_details uses (a caller that ignores it, or an older/non-metap
 // server that never sets it, still sees the same Code+message). JSON rather than a
-// google.rpc.Status/protobuf Any deliberately: the envelope is already the exact shape REST's
-// error body and ServiceError use, so one representation covers every transport without a
-// second proto to keep in sync, and it stays byte-compatible with any Rust metap-grpc service
-// still running during a mixed-language deployment.
+// google.rpc.Status/protobuf Any deliberately: the envelope is already the exact shape REST's error
+// body and ServiceError use, so one representation covers every transport without a second proto to
+// keep in sync.
 package grpcapi
 
 import (
@@ -22,9 +20,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// statusDetailsTrailer is the trailer metadata key carrying ErrorDetails' JSON bytes. Keys
-// ending in "-bin" are base64-encoded on the wire automatically by grpc-go (and by tonic on the
-// Rust side), so application code here only ever handles the raw bytes.
+// statusDetailsTrailer is the trailer metadata key carrying ErrorDetails' JSON bytes. Keys ending
+// in "-bin" are base64-encoded on the wire automatically by grpc-go.
 const statusDetailsTrailer = "grpc-status-details-bin"
 
 // ErrorDetails is the ServiceError payload, carried verbatim in a Status's details.

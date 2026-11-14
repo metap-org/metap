@@ -10,7 +10,6 @@ import (
 	"github.com/metap-org/metap/pkg/workflow"
 )
 
-// Create mirrors the Rust CrudService::create.
 func (s *CrudService) Create(ctx context.Context, entityName string, rawData JsonObject, rc *permission.RequestContext, reason *string) (RecordDto, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {

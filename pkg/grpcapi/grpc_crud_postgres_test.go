@@ -1,11 +1,9 @@
 //go:build integration
 
 // E2E test: a real gRPC server, bound to a real socket, hit with a real gRPC client over a real
-// network stack — auth included (a real RS256 JWT, minted and verified, not stubbed). Ported
-// from crates/metap-grpc/tests/grpc_crud_postgres.rs's
-// full_grpc_lifecycle_over_a_real_server_and_a_real_jwt. Needs a running Postgres
-// (DATABASE_URL, falling back to the dev default) — skips rather than fails when none is
-// reachable, same convention as httpserver's own e2e test.
+// network stack — auth included (a real RS256 JWT, minted and verified, not stubbed). Needs a
+// running Postgres (DATABASE_URL, falling back to the dev default) — skips rather than fails when
+// none is reachable, same convention as httpserver's own e2e test.
 package grpcapi
 
 import (

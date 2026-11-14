@@ -1,16 +1,14 @@
 // Turns an incoming RPC's metadata into a permission.RequestContext — the gRPC counterpart to
-// httpserver's authenticate. Ported from crates/metap-grpc/src/auth.rs.
-//
+// httpserver's authenticate.
 // On-behalf-of-user only, for now — every RPC authenticates via a forwarded bearer token
-// ("authorization" gRPC metadata), either JWKS-verified or the platform's own static per-app
-// key, whichever the caller configured. Pure machine-to-machine calls with no originating user
-// (mTLS-authenticated) are a deliberately deferred extension point, same as the Rust original —
-// a request with no "authorization" metadata is rejected rather than silently treated as some
-// guessed-at service identity.
+// ("authorization" gRPC metadata), either JWKS-verified or the platform's own static per-app key,
+// whichever the caller configured. Pure machine-to-machine calls with no originating user
+// (mTLS-authenticated) are a deliberately deferred extension point.
 package grpcapi
 
 import (
 	"context"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -22,12 +20,9 @@ import (
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
-// AuthConfig bundles everything authenticate needs beyond the request itself — mirrors the Rust
-// AuthConfig struct (one struct rather than loose fields, the same shape AppState's own fields
-// already follow).
+// AuthConfig bundles everything authenticate needs beyond the request itself.
 type AuthConfig struct {
 	Verifier               *jwks.TokenVerifier
 	Router                 *control.Router
@@ -41,7 +36,7 @@ func bearerTokenFromMetadata(md grpcmd.MD) (string, error) {
 	if len(values) == 0 {
 		return "", status.Error(codes.Unauthenticated, "missing authorization metadata")
 	}
-	token, ok := runtime.ParseBearer(values[0])
+	token, ok := httpx.BearerToken(values[0])
 	if !ok {
 		return "", status.Error(codes.Unauthenticated, "authorization metadata must be a Bearer token")
 	}

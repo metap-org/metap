@@ -2,11 +2,6 @@
 
 package oauthserver
 
-// The Rust metap-oauth-server crate's consent.rs has zero tests of its own, unit or e2e
-// (confirmed by reading its source and the crate's tests/ directory) — this is new coverage
-// added during the port, verified against a real Postgres rather than mocked, matching this
-// project's own "verify sống" convention.
-
 import (
 	"context"
 	"fmt"

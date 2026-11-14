@@ -25,9 +25,8 @@ type registryCacheEntry struct {
 type RegistryCache struct {
 	registry TenantRegistry
 	cache    *gocache.Cache
-	// group de-dupes concurrent misses for the same key (thundering herd) — the Go equivalent of
-	// moka::future::Cache::try_get_with's own de-dup guarantee, which go-cache doesn't provide on
-	// its own.
+	// group de-dupes concurrent misses for the same key (thundering herd) — which go-cache
+	// doesn't provide on its own.
 	group singleflight.Group
 }
 

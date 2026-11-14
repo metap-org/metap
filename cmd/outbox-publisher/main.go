@@ -1,9 +1,9 @@
-// outbox-publisher drains metadata.outbox_events and publishes each row to RabbitMQ — ported
-// from metap's Rust metap-outbox-publisher binary.
+// outbox-publisher drains metadata.outbox_events and publishes each row to RabbitMQ.
 package main
 
 import (
 	"context"
+	"github.com/metap-org/metap/pkg/kit/shutdown"
 	"log/slog"
 	"os"
 
@@ -12,7 +12,6 @@ import (
 	"github.com/metap-org/metap/pkg/infra/eventbus"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/outboxpublisher"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 func main() {
@@ -49,7 +48,7 @@ func main() {
 func signalContext() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		runtime.WaitForShutdownSignal()
+		shutdown.Wait()
 		cancel()
 	}()
 	return ctx, cancel

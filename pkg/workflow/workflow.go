@@ -1,8 +1,6 @@
 // Package workflow is metadata-driven workflow: initial-status resolution, transition lookup,
-// guard/validator evaluation, the workflow_events audit write, and outbox emits. Ported from
-// metap's Rust metap-workflow crate. No struct holding state — a plain function module is the
-// faithful equivalent, matching the Rust original's own reasoning (its one constructor
-// dependency was only ever used to reach a function that ignores "self" anyway).
+// guard/validator evaluation, the workflow_events audit write, and outbox emits. No struct holding
+// state — a plain function module is the faithful equivalent.
 package workflow
 
 import (
@@ -19,8 +17,7 @@ import (
 	"github.com/metap-org/metap/pkg/permission"
 )
 
-// DBTX is satisfied by *pgxpool.Pool and pgx.Tx — the Go equivalent of the Rust
-// impl sqlx::PgExecutor<'c> genericity every function here uses.
+// DBTX is satisfied by *pgxpool.Pool and pgx.Tx.
 type DBTX interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
@@ -271,10 +268,6 @@ func RecordEvent(
 
 // WorkflowEvent is one row of workflow_events — the read side of RecordEvent's append-only audit
 // log. Generic across every entity/app (a plain data row, no business meaning attached).
-// WorkflowEvent mirrors the Rust WorkflowEvent — deliberately snake_case on the wire (its own
-// #[derive(Serialize)] emits Rust field names verbatim, inconsistent with the rest of this
-// surface's camelCase, but left as-is since a real shipped frontend reads these exact keys; see
-// routes_workflow_events.go's own doc comment).
 type WorkflowEvent struct {
 	ID        uuid.UUID  `json:"id"`
 	Entity    string     `json:"entity"`
@@ -305,9 +298,7 @@ func ListEvents(
 	}
 	defer rows.Close()
 
-	// make(..., 0), not var events []WorkflowEvent — a nil Go slice marshals to JSON null, not
-	// [], diverging from the Rust Vec<WorkflowEvent> wire shape a REST client expects on a
-	// record with no transition history yet.
+	// make(..., 0), not var events []WorkflowEvent — a nil Go slice marshals to JSON null, not [].
 	events := make([]WorkflowEvent, 0)
 	for rows.Next() {
 		var e WorkflowEvent

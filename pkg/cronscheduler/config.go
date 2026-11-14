@@ -1,20 +1,19 @@
-// Package cronscheduler is the dispatch loop for the cron package's job definitions — ported
-// from metap's Rust metap-cron-scheduler crate. Three loops run concurrently from
-// cmd/cron-scheduler's main: RunTicker polls cron_jobs/cron_job_runs for schedule-due entries
-// (and retries due from a prior failed attempt) and either writes a cron.job.due outbox event
-// per firing (the default) or — for DispatchMode "direct" jobs — executes them immediately,
-// in-process, in the same tick that claimed them; RunExecutor subscribes to that routing key and
-// runs the job; RunTriggerListener subscribes to the catch-all exchange and fires
+// Package cronscheduler is the dispatch loop for the cron package's job definitions. Three loops
+// run concurrently from cmd/cron-scheduler's main: RunTicker polls cron_jobs/cron_job_runs for
+// schedule-due entries (and retries due from a prior failed attempt) and either writes a
+// cron.job.due outbox event per firing (the default) or — for DispatchMode "direct" jobs — executes
+// them immediately, in-process, in the same tick that claimed them; RunExecutor subscribes to that
+// routing key and runs the job; RunTriggerListener subscribes to the catch-all exchange and fires
 // trigger_type "on_transition"/"on_record_event" jobs whose trigger_config matches, resuming any
 // wait_event-paused Steps chain that matches too. A fourth, unrelated housekeeping loop,
-// RunOAuthCleanup, sweeps expired OAuth2 codes/refresh tokens — hosted here because this is the
-// one always-on ops process, not because it has anything to do with cron jobs.
+// RunOAuthCleanup, sweeps expired OAuth2 codes/refresh tokens — hosted here because this is the one
+// always-on ops process, not because it has anything to do with cron jobs.
 package cronscheduler
 
 import (
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
-	"github.com/metap-org/metap/pkg/runtime"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 )
 
 // ExecutorConfig is everything the dispatch handlers need that isn't itself a job's own
@@ -36,7 +35,7 @@ type ExecutorConfig struct {
 	// ServiceToken is a service-account token this process logged into the owning app's own
 	// POST /auth/login with, kept fresh in the background. Its tenantId claim fixes which
 	// tenant's jobs this executor can actually run.
-	ServiceToken *runtime.ServiceTokenSource
+	ServiceToken *httpx.ServiceTokenSource
 
 	// SMTP settings for TargetType "email" jobs (RunEmail).
 	SMTP SmtpConfig

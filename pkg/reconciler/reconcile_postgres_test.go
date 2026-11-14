@@ -1,10 +1,6 @@
 //go:build integration
 
-// E2E tests running Reconcile against a real Postgres. A reduced-but-real subset of the Rust
-// metap-reconciler crate's tests/reconcile_postgres.rs: basic convergence, the historic WAF
-// unique-constraint-to-partial-index transition bug, and (Phase 106) the one-time move of a table
-// whose fields lived in a data jsonb column to native columns: MigrateLegacy, VerifyLegacy,
-// DropLegacyData, including a sentinel-tenant AllTenants run against a shared table.
+// E2E tests running Reconcile against a real Postgres.
 package reconciler
 
 import (

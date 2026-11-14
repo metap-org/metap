@@ -54,9 +54,7 @@ type Entry struct {
 }
 
 // Row is one row read back from metadata.audit_trail_entries — the read side of Store.Record's
-// write. Mirrors the Rust AuditTrailEntryRow's #[serde(rename_all = "camelCase")] wire shape —
-// JSON tags matter here, not just documentation, since this struct is what
-// /api/{entity}/{id}/audit-events serializes directly.
+// write.
 type Row struct {
 	ID               uuid.UUID       `json:"id"`
 	TenantID         uuid.UUID       `json:"tenantId"`

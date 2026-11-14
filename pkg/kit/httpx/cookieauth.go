@@ -1,4 +1,4 @@
-package runtime
+package httpx
 
 const (
 	SessionCookieName = "metap_session"

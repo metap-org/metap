@@ -1,11 +1,7 @@
 // Admin-gated role/policy management over HTTP — the HTTP surface for peripherals.AssignRole/
-// RevokeRole/ListUsers and PermissionService.ListPolicies/CreatePolicy/DeletePolicy/Explain.
-// Every handler here uses requireAdmin, not requireAuth — the admin role check happens once, so
-// it can't be forgotten on a future route added to this file. Ported from
-// crates/metap-http/src/routes/admin.rs (recovered from git history: the commit immediately
-// before "Migrate remaining REST backlog ... to GraphQL", which deleted this file along with
-// cron.rs/dashboards.rs/preferences.rs/platform_config.rs/tenant_config.rs/users.rs — reinstated
-// here per the user's explicit direction to keep REST rather than following that later decision).
+// RevokeRole/ListUsers and PermissionService.ListPolicies/CreatePolicy/DeletePolicy/Explain. Every
+// handler here uses requireAdmin, not requireAuth — the admin role check happens once, so it can't
+// be forgotten on a future route added to this file.
 package httpserver
 
 import (
@@ -101,9 +97,9 @@ func policyToJSON(row permission.PolicyRow) map[string]any {
 	}
 }
 
-// listUsersAdmin is GET /admin/users — role assignments, a different shape from the plain
-// {id, email} picker at GET /users (routes_users.go): operation name differs there too to avoid
-// an OpenAPI/codegen collision, same reason this file's Rust original gives.
+// listUsersAdmin is GET /admin/users — role assignments, a different shape from the plain {id,
+// email} picker at GET /users (routes_users.go): operation name differs there too to avoid an
+// OpenAPI/codegen collision.
 func listUsersAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
 	rc, ok := requireAdmin(w, r, state)
 	if !ok {
