@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/metap-org/metap/pkg/kit/env"
+
 	"github.com/joho/godotenv"
 )
 
@@ -15,7 +17,7 @@ func InitTracing() {
 	_ = godotenv.Load()
 
 	level := slog.LevelInfo
-	switch os.Getenv("LOG_LEVEL") {
+	switch env.String("LOG_LEVEL", "") {
 	case "debug":
 		level = slog.LevelDebug
 	case "warn":

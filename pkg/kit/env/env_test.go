@@ -63,11 +63,25 @@ func TestDurationParsesGoDurationStrings(t *testing.T) {
 	assert.Equal(t, time.Second, env.Duration("KIT_TEST_DUR", time.Second))
 }
 
-func TestRequireErrorsOnlyWhenUnset(t *testing.T) {
+func TestRequireErrorMessageNamesTheVariable(t *testing.T) {
 	_, err := env.Require("KIT_TEST_UNSET")
 	require.ErrorContains(t, err, "KIT_TEST_UNSET is required")
-	t.Setenv("KIT_TEST_EMPTY", "")
-	v, err := env.Require("KIT_TEST_EMPTY")
+}
+
+func TestRequireTreatsEmptyAsMissing(t *testing.T) {
+	_, err := env.Require("KIT_TEST_UNSET")
+	require.Error(t, err)
+	t.Setenv("KIT_TEST_REQ", "")
+	_, err = env.Require("KIT_TEST_REQ")
+	require.Error(t, err)
+	t.Setenv("KIT_TEST_REQ", "v")
+	v, err := env.Require("KIT_TEST_REQ")
 	require.NoError(t, err)
-	assert.Empty(t, v)
+	assert.Equal(t, "v", v)
+}
+
+func TestListSplitsTrimsAndDropsEmpties(t *testing.T) {
+	assert.Nil(t, env.List("KIT_TEST_UNSET"))
+	t.Setenv("KIT_TEST_LIST", " a, b ,,c ")
+	assert.Equal(t, []string{"a", "b", "c"}, env.List("KIT_TEST_LIST"))
 }

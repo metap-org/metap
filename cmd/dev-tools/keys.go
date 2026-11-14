@@ -6,8 +6,8 @@ import (
 	"os/exec"
 
 	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/peripherals"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 // genKeys mirrors generate-dev-jwt-keypair.mjs: an RSA 2048 keypair via the openssl CLI
@@ -81,7 +81,7 @@ func mintToken(args []string) error {
 	}
 
 	// JWKS_KEYS_DIR (the issuer's key directory) mints an EdDSA token exactly as the issuer would.
-	if dir, ok := runtime.Optional("JWKS_KEYS_DIR"); ok {
+	if dir, ok := env.Lookup("JWKS_KEYS_DIR"); ok {
 		store, err := jwks.LoadKeyDir(dir)
 		if err != nil {
 			return err
@@ -96,7 +96,7 @@ func mintToken(args []string) error {
 
 	// AUTH_JWT_PRIVATE_KEY_PATH, if set, wins over the plain keys/dev-jwt-private.pem relative-
 	// to-cwd default — every other binary in this workspace already reads this exact env var.
-	keyPath, ok := runtime.Optional("AUTH_JWT_PRIVATE_KEY_PATH")
+	keyPath, ok := env.Lookup("AUTH_JWT_PRIVATE_KEY_PATH")
 	if !ok {
 		keyPath = "keys/dev-jwt-private.pem"
 	}

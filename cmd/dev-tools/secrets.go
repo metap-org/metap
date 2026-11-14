@@ -9,7 +9,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/infra"
-	"github.com/metap-org/metap/pkg/runtime"
+	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/secrets"
 )
 
@@ -23,11 +23,11 @@ func vaultPutDSN(args []string) error {
 		os.Exit(1)
 	}
 	_ = godotenv.Load()
-	vaultAddr, err := runtime.RequireEnv("VAULT_ADDR")
+	vaultAddr, err := env.Require("VAULT_ADDR")
 	if err != nil {
 		return err
 	}
-	vaultToken, err := runtime.RequireEnv("VAULT_TOKEN")
+	vaultToken, err := env.Require("VAULT_TOKEN")
 	if err != nil {
 		return err
 	}
@@ -53,19 +53,19 @@ func awsSecretsPutDSN(args []string) error {
 		os.Exit(1)
 	}
 	_ = godotenv.Load()
-	region, err := runtime.RequireEnv("AWS_SECRETS_REGION")
+	region, err := env.Require("AWS_SECRETS_REGION")
 	if err != nil {
 		return err
 	}
-	accessKey, err := runtime.RequireEnv("AWS_SECRETS_ACCESS_KEY")
+	accessKey, err := env.Require("AWS_SECRETS_ACCESS_KEY")
 	if err != nil {
 		return err
 	}
-	secretKey, err := runtime.RequireEnv("AWS_SECRETS_SECRET_KEY")
+	secretKey, err := env.Require("AWS_SECRETS_SECRET_KEY")
 	if err != nil {
 		return err
 	}
-	endpointURL, _ := runtime.Optional("AWS_SECRETS_ENDPOINT_URL")
+	endpointURL, _ := env.Lookup("AWS_SECRETS_ENDPOINT_URL")
 	dsnSecretRef, dsn := args[2], args[3]
 
 	ctx := context.Background()
@@ -92,7 +92,7 @@ func gcpSecretsPutDSN(args []string) error {
 		os.Exit(1)
 	}
 	_ = godotenv.Load()
-	projectID, err := runtime.RequireEnv("GCP_SECRETS_PROJECT_ID")
+	projectID, err := env.Require("GCP_SECRETS_PROJECT_ID")
 	if err != nil {
 		return err
 	}

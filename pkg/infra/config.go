@@ -5,12 +5,10 @@ package infra
 
 import (
 	"errors"
-	"os"
-	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
-	"github.com/metap-org/metap/pkg/runtime"
+	"github.com/metap-org/metap/pkg/kit/env"
 )
 
 type NodeEnv int
@@ -85,60 +83,50 @@ func LoadConfig() (*AppConfig, error) {
 	_ = godotenv.Load()
 
 	nodeEnv := NodeEnvDevelopment
-	switch os.Getenv("NODE_ENV") {
+	switch env.String("NODE_ENV", "") {
 	case "test":
 		nodeEnv = NodeEnvTest
 	case "production":
 		nodeEnv = NodeEnvProduction
 	}
 
-	hostStr := os.Getenv("HOST")
-	if hostStr == "" {
-		hostStr = "0.0.0.0"
+	hostStr := env.String("HOST", "0.0.0.0")
+
+	port := env.Int("PORT", 3000)
+	if port <= 0 {
+		port = 3000
 	}
 
-	port := 3000
-	if p, err := strconv.Atoi(os.Getenv("PORT")); err == nil && p > 0 {
-		port = p
-	}
-
-	databaseURL, ok := os.LookupEnv("DATABASE_URL")
-	if !ok {
-		return nil, errors.New("DATABASE_URL is required")
+	databaseURL, err := env.Require("DATABASE_URL")
+	if err != nil {
+		return nil, err
 	}
 	if !isURLLike(databaseURL) {
 		return nil, errors.New("DATABASE_URL must be a valid URL")
 	}
 
 	outboxDatabaseURL := ""
-	if v := os.Getenv("OUTBOX_DATABASE_URL"); v != "" {
+	if v, ok := env.Lookup("OUTBOX_DATABASE_URL"); ok {
 		if !isURLLike(v) {
 			return nil, errors.New("OUTBOX_DATABASE_URL must be a valid URL")
 		}
 		outboxDatabaseURL = v
 	}
 
-	rabbitmqURL, ok := os.LookupEnv("RABBITMQ_URL")
-	if !ok {
-		return nil, errors.New("RABBITMQ_URL is required")
+	rabbitmqURL, err := env.Require("RABBITMQ_URL")
+	if err != nil {
+		return nil, err
 	}
 	if !isURLLike(rabbitmqURL) {
 		return nil, errors.New("RABBITMQ_URL must be a valid URL")
 	}
 
-	var corsOrigins []string
-	if v := os.Getenv("CORS_ORIGINS"); v != "" {
-		for _, o := range strings.Split(v, ",") {
-			if o != "" {
-				corsOrigins = append(corsOrigins, o)
-			}
-		}
-	}
+	corsOrigins := env.List("CORS_ORIGINS")
 
-	jwksKeysDir := os.Getenv("JWKS_KEYS_DIR")
-	jwksURL := os.Getenv("JWKS_URL")
-	authJWTPublicKeyPath := os.Getenv("AUTH_JWT_PUBLIC_KEY_PATH")
-	authJWTPrivateKeyPath := os.Getenv("AUTH_JWT_PRIVATE_KEY_PATH")
+	jwksKeysDir := env.String("JWKS_KEYS_DIR", "")
+	jwksURL := env.String("JWKS_URL", "")
+	authJWTPublicKeyPath := env.String("AUTH_JWT_PUBLIC_KEY_PATH", "")
+	authJWTPrivateKeyPath := env.String("AUTH_JWT_PRIVATE_KEY_PATH", "")
 	if jwksKeysDir == "" && jwksURL == "" {
 		// Legacy static-RSA mode: every service signs and verifies with the shared keypair.
 		if authJWTPublicKeyPath == "" {
@@ -149,30 +137,30 @@ func LoadConfig() (*AppConfig, error) {
 		}
 	}
 
-	staticDir, _ := runtime.Optional("STATIC_DIR")
-	vaultAddr, _ := runtime.Optional("VAULT_ADDR")
-	vaultToken, _ := runtime.Optional("VAULT_TOKEN")
-	vaultRoleID, _ := runtime.Optional("VAULT_ROLE_ID")
-	vaultSecretID, _ := runtime.Optional("VAULT_SECRET_ID")
-	vaultApproleMount, _ := runtime.Optional("VAULT_APPROLE_MOUNT")
+	staticDir, _ := env.Lookup("STATIC_DIR")
+	vaultAddr, _ := env.Lookup("VAULT_ADDR")
+	vaultToken, _ := env.Lookup("VAULT_TOKEN")
+	vaultRoleID, _ := env.Lookup("VAULT_ROLE_ID")
+	vaultSecretID, _ := env.Lookup("VAULT_SECRET_ID")
+	vaultApproleMount, _ := env.Lookup("VAULT_APPROLE_MOUNT")
 
-	awsSecretsRegion, _ := runtime.Optional("AWS_SECRETS_REGION")
-	awsSecretsAccessKey, _ := runtime.Optional("AWS_SECRETS_ACCESS_KEY")
-	awsSecretsSecretKey, _ := runtime.Optional("AWS_SECRETS_SECRET_KEY")
-	awsSecretsEndpointURL, _ := runtime.Optional("AWS_SECRETS_ENDPOINT_URL")
-	gcpSecretsProjectID, _ := runtime.Optional("GCP_SECRETS_PROJECT_ID")
+	awsSecretsRegion, _ := env.Lookup("AWS_SECRETS_REGION")
+	awsSecretsAccessKey, _ := env.Lookup("AWS_SECRETS_ACCESS_KEY")
+	awsSecretsSecretKey, _ := env.Lookup("AWS_SECRETS_SECRET_KEY")
+	awsSecretsEndpointURL, _ := env.Lookup("AWS_SECRETS_ENDPOINT_URL")
+	gcpSecretsProjectID, _ := env.Lookup("GCP_SECRETS_PROJECT_ID")
 
-	authContextEntity, _ := runtime.Optional("AUTH_CONTEXT_ENTITY")
-	authContextCacheTTLSeconds := uint64(runtime.EnvOr("AUTH_CONTEXT_CACHE_TTL_SECONDS", 30))
+	authContextEntity, _ := env.Lookup("AUTH_CONTEXT_ENTITY")
+	authContextCacheTTLSeconds := uint64(env.Int("AUTH_CONTEXT_CACHE_TTL_SECONDS", 30))
 
-	policyCacheRedisURL, _ := runtime.Optional("POLICY_CACHE_REDIS_URL")
-	policyCacheTTLSeconds := uint64(runtime.EnvOr("POLICY_CACHE_TTL_SECONDS", 30))
+	policyCacheRedisURL, _ := env.Lookup("POLICY_CACHE_REDIS_URL")
+	policyCacheTTLSeconds := uint64(env.Int("POLICY_CACHE_TTL_SECONDS", 30))
 
-	smtpHost, _ := runtime.Optional("SMTP_HOST")
-	smtpPort := runtime.EnvOr("SMTP_PORT", 1025)
-	smtpUser, _ := runtime.Optional("SMTP_USER")
-	smtpPassword, _ := runtime.Optional("SMTP_PASSWORD")
-	smtpFrom, _ := runtime.Optional("SMTP_FROM")
+	smtpHost, _ := env.Lookup("SMTP_HOST")
+	smtpPort := env.Int("SMTP_PORT", 1025)
+	smtpUser, _ := env.Lookup("SMTP_USER")
+	smtpPassword, _ := env.Lookup("SMTP_PASSWORD")
+	smtpFrom, _ := env.Lookup("SMTP_FROM")
 
 	return &AppConfig{
 		NodeEnv: nodeEnv, Host: hostStr, Port: port,

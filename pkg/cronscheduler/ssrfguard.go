@@ -31,7 +31,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/metap-org/metap/pkg/runtime"
+	"github.com/metap-org/metap/pkg/kit/env"
 )
 
 // forbiddenHeaders are request headers a tenant may not set as a literal value on a webhook.
@@ -57,7 +57,7 @@ type WebhookPolicy struct {
 
 func WebhookPolicyFromEnv() WebhookPolicy {
 	var allowedHosts []string
-	if raw, ok := runtime.Optional("CRON_WEBHOOK_ALLOWED_HOSTS"); ok {
+	if raw, ok := env.Lookup("CRON_WEBHOOK_ALLOWED_HOSTS"); ok {
 		for _, h := range strings.Split(raw, ",") {
 			h = strings.ToLower(strings.TrimSpace(h))
 			if h != "" {
@@ -67,7 +67,7 @@ func WebhookPolicyFromEnv() WebhookPolicy {
 	}
 	return WebhookPolicy{
 		AllowedHosts:        allowedHosts,
-		AllowPrivateTargets: runtime.FlagEnabled("CRON_WEBHOOK_ALLOW_PRIVATE_TARGETS"),
+		AllowPrivateTargets: env.Bool("CRON_WEBHOOK_ALLOW_PRIVATE_TARGETS"),
 	}
 }
 
