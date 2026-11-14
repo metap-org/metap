@@ -128,8 +128,13 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   (password and roles included) — never turn this into a sync that overwrites or deletes (`SyncBasicPolicies` does that, on purpose
   not used). Wildcard entity patterns (`*`, `waf.*`) are expanded against the registry at apply time into concrete rows; a pattern
   matching nothing is an error. Passwords come only from `PasswordRef` via a `PasswordSource` (env var by default) — no default
-  password; `Production` makes a missing one for a new user abort before anything is written. Not wired into `provision-tenant`/
-  `app.Main`/`dev-tools` yet, and policies carry no `source` marker, so an admin-deleted bootstrap policy comes back on re-run.
+  password; `Production` makes a missing one for a new user abort before anything is written. Wiring: a product ships one tiny binary that
+  blank-imports its services' entity/bootstrap packages and calls `app.BootstrapMain` (one-shot, like `db-migrate`; env
+  `BOOTSTRAP_TENANT_IDS` = ids or `all`, `BOOTSTRAP_FILE` = JSON overlay via `bootstrap.LoadFile`, `NODE_ENV=production` makes a
+  missing password fatal); `app.Run` applies it itself only when `BOOTSTRAP_ON_BOOT=true` (single-service products — with several
+  services two could race and create the same policy); `dev-tools apply-bootstrap <tenant> <file> [entity.json...]` applies a JSON
+  declaration; `provision-tenant` prints the follow-up. `bootstrap.ScopedIdentity` resolves a dedicated_db tenant's own database.
+  Policies carry no `source` marker, so an admin-deleted bootstrap policy comes back on re-run.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

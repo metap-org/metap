@@ -10,7 +10,9 @@
 package bootstrap
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 )
@@ -20,20 +22,20 @@ const AllActions = "*"
 
 // Grant gives one role a set of actions on every entity matching Entities.
 type Grant struct {
-	Role string
+	Role string `json:"role"`
 	// Entities are exact names ("waf.zones"), a prefix wildcard ("waf.*") or "*" for every entity.
-	Entities []string
+	Entities []string `json:"entities"`
 	// Actions are read|create|update|delete|transition, a workflow action as "transition:<name>",
 	// or AllActions.
-	Actions []string
+	Actions []string `json:"actions"`
 }
 
 // User is an initial account. The password is never declared here: PasswordRef names where Apply's
 // PasswordSource finds it (an environment variable by default).
 type User struct {
-	Email       string
-	Roles       []string
-	PasswordRef string
+	Email       string   `json:"email"`
+	Roles       []string `json:"roles"`
+	PasswordRef string   `json:"passwordRef"`
 }
 
 // Bootstrap is one product's (or one service's) declaration. Fragments from several packages are
@@ -41,9 +43,26 @@ type User struct {
 type Bootstrap struct {
 	// Roles are the role names this declaration introduces. A role is just a string in user_roles,
 	// so listing one only lets Validate catch a grant or user naming a role nobody declared.
-	Roles  []string
-	Grants []Grant
-	Users  []User
+	Roles  []string `json:"roles"`
+	Grants []Grant  `json:"grants"`
+	Users  []User   `json:"users"`
+}
+
+// LoadFile reads a JSON declaration — the per-environment overlay merged after the declarations
+// the code submitted. Unknown fields are rejected so a typo is not silently ignored.
+func LoadFile(path string) (Bootstrap, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Bootstrap{}, err
+	}
+	defer f.Close()
+	dec := json.NewDecoder(f)
+	dec.DisallowUnknownFields()
+	var b Bootstrap
+	if err := dec.Decode(&b); err != nil {
+		return Bootstrap{}, fmt.Errorf("bootstrap: parse %s: %w", path, err)
+	}
+	return b, nil
 }
 
 var (

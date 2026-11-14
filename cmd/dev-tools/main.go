@@ -25,6 +25,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  dev-tools mint-token [tenantId] [userId]         (EdDSA if JWKS_KEYS_DIR is set, else RS256 from ./keys/dev-jwt-private.pem)")
 	fmt.Fprintln(os.Stderr, "  dev-tools seed-admin <tenantId> <userId>")
 	fmt.Fprintln(os.Stderr, "  dev-tools create-user <tenantId> <email> <password>  (local login, argon2id)")
+	fmt.Fprintln(os.Stderr, "  dev-tools apply-bootstrap <tenantId> <bootstrap.json> [entity.json ...]")
 	fmt.Fprintln(os.Stderr, "  dev-tools provision-tenant <tenantId> schema <adminEmail> <adminPassword>")
 	fmt.Fprintln(os.Stderr, "  dev-tools provision-tenant <tenantId> dedicated_db <dsnSecretRefName> <dedicatedDatabaseUrl> <adminEmail> <adminPassword>")
 	fmt.Fprintln(os.Stderr, "  dev-tools bootstrap-platform-admin <email> <password>")
@@ -60,6 +61,8 @@ func main() {
 		err = seedAdmin(args)
 	case "create-user":
 		err = createUser(args)
+	case "apply-bootstrap":
+		err = applyBootstrap(args)
 	case "provision-tenant":
 		err = provisionTenant(args)
 	case "bootstrap-platform-admin":

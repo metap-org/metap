@@ -36,6 +36,7 @@ import (
 	"github.com/metap-org/metap/pkg/httpserver/dashboardroutes"
 	"github.com/metap-org/metap/pkg/httpserver/oauth2routes"
 	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/shutdown"
 	"github.com/metap-org/metap/pkg/metadata"
@@ -141,6 +142,23 @@ func Run(ctx context.Context, opts Options) error {
 	// Indexes for dedicated tables are built by the reconcile above; peripherals' old
 	// records-table index reconciler was removed (that table was dropped in migration 0033).
 	peripherals.Check(ctx, pool, registry.ListEntities())
+
+	// Opt-in first-run bootstrap for a single-service product. A product with several services
+	// should run its one-shot bootstrap process (BootstrapMain) instead: each service only knows
+	// its own entities, and two services applying at once could both create the same policy.
+	if env.Bool("BOOTSTRAP_ON_BOOT") {
+		decl, err := declaration(nil)
+		if err != nil {
+			return fmt.Errorf("bootstrap on boot: %w", err)
+		}
+		tenants, err := bootstrapTargets(ctx, pool, os.Getenv("BOOTSTRAP_TENANT_IDS"))
+		if err != nil {
+			return fmt.Errorf("bootstrap on boot: %w", err)
+		}
+		if err := ApplyBootstrap(ctx, registry, permissions, router, tenants, decl, config.NodeEnv == infra.NodeEnvProduction, opts.Name+" bootstrap"); err != nil {
+			return fmt.Errorf("bootstrap on boot: %w", err)
+		}
+	}
 
 	var mdPtr atomic.Pointer[metadata.MetadataRegistry]
 	mdPtr.Store(registry)

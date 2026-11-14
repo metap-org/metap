@@ -219,3 +219,41 @@ func (p PgIdentity) CreateUser(ctx context.Context, tenantID uuid.UUID, email, p
 func (p PgIdentity) AssignRole(ctx context.Context, tenantID, userID uuid.UUID, role string) error {
 	return peripherals.AssignRole(ctx, p.DB, tenantID, userID, role, nil)
 }
+
+// ScopedIdentity is an Identity that resolves the right database per tenant (a dedicated_db tenant
+// keeps its users in its own database), through control.Router.PoolFor.
+type ScopedIdentity struct {
+	Pool func(ctx context.Context, tenantID uuid.UUID) (peripherals.DBTX, error)
+}
+
+func (s ScopedIdentity) at(ctx context.Context, tenantID uuid.UUID) (PgIdentity, error) {
+	db, err := s.Pool(ctx, tenantID)
+	if err != nil {
+		return PgIdentity{}, err
+	}
+	return PgIdentity{DB: db}, nil
+}
+
+func (s ScopedIdentity) FindUserByEmail(ctx context.Context, tenantID uuid.UUID, email string) (uuid.UUID, bool, error) {
+	p, err := s.at(ctx, tenantID)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	return p.FindUserByEmail(ctx, tenantID, email)
+}
+
+func (s ScopedIdentity) CreateUser(ctx context.Context, tenantID uuid.UUID, email, password string) (uuid.UUID, error) {
+	p, err := s.at(ctx, tenantID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return p.CreateUser(ctx, tenantID, email, password)
+}
+
+func (s ScopedIdentity) AssignRole(ctx context.Context, tenantID, userID uuid.UUID, role string) error {
+	p, err := s.at(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	return p.AssignRole(ctx, tenantID, userID, role)
+}

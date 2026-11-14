@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -164,4 +165,19 @@ func TestSubmitCollectMerge(t *testing.T) {
 	Submit(func() Bootstrap { return Bootstrap{Roles: []string{"b", "c"}} })
 	got := Collect()
 	assert.Equal(t, []string{"a", "b", "c"}, got.Roles)
+}
+
+func TestLoadFileRejectsUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	good := dir + "/good.json"
+	require.NoError(t, os.WriteFile(good, []byte(`{"roles":["a"],"grants":[{"role":"a","entities":["x.*"],"actions":["read"]}],"users":[{"email":"a@x.io","roles":["a"],"passwordRef":"P"}]}`), 0o600))
+	b, err := LoadFile(good)
+	require.NoError(t, err)
+	assert.NoError(t, b.Validate())
+	assert.Equal(t, "P", b.Users[0].PasswordRef)
+
+	bad := dir + "/bad.json"
+	require.NoError(t, os.WriteFile(bad, []byte(`{"rolez":["a"]}`), 0o600))
+	_, err = LoadFile(bad)
+	require.Error(t, err)
 }
