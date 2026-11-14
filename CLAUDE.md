@@ -113,6 +113,14 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   Topic, AggregateType, AggregateID, Payload})` in the business transaction (topic validated: namespaced, no wildcards, not a
   platform lifecycle topic) — never `infra.OutboxEvent` by hand, never RabbitMQ directly. In a consumer use
   `event.AckLogged()` / `NackLogged(requeue)`, never `_ = event.Ack()`: a failed ack means redelivery, so handlers stay idempotent.
+- **`pkg/graphqlgateway` — the generic GraphQL BFF (2026-11-14, audit P1.4; moved from `../waap`).** Builds the schema at
+  runtime from a `MetadataRegistry` over any `map[entity]crud.RecordBackend` (normally one `grpcapi.GrpcBackend` per upstream):
+  typed CRUD fields, the `Json` scalar, `aggregate`, depth/complexity limits, decode-only auth that forwards the caller's token,
+  `ReadOnly() bool` backends get no mutations. `BuildSchema(registry, backends, opts...)`: `WithPlatformBase(url)` adds the
+  platform admin/settings fields (forwarded to that metap service's REST routes), `WithExtensions(fn)` is where a product adds its
+  own non-CRUD fields using `ForwardPost`/`IDArg`/`JSONScalar`/`RequestContextFrom`. A product keeps only its extensions and its
+  `main` (`../waap`: `management-plane/wafgateway` + `cmd/waf-graphql-gateway`) — never copy the engine again. Its tests use a
+  self-declared `shop.*` registry, not a product's entities.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
