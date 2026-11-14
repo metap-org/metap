@@ -30,6 +30,15 @@ func loadEntityFromFile(path string) (metadata.EntityDefinition, error) {
 	if err := json.Unmarshal(contents, &parsed); err != nil {
 		return metadata.EntityDefinition{}, fmt.Errorf("failed to parse %s as a GET /metadata/entities/<entity> response: %w", path, err)
 	}
+	if parsed.Data.Name == "" {
+		// Also accept a bare EntityDefinition. An unrecognised shape used to decode to an empty
+		// entity, which "migrated" nothing and still reported a clean verification.
+		var bare metadata.EntityDefinition
+		if err := json.Unmarshal(contents, &bare); err != nil || bare.Name == "" {
+			return metadata.EntityDefinition{}, fmt.Errorf("%s has no entity name: expected a GET /metadata/entities/<entity> response ({\"data\": {...}}) or a bare entity definition", path)
+		}
+		return bare, nil
+	}
 	return parsed.Data, nil
 }
 
