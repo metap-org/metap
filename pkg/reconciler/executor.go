@@ -245,3 +245,24 @@ func buildDropSyncTriggerSQL(table, field string) []string {
 		fmt.Sprintf("DROP FUNCTION IF EXISTS %s.%s()", quoteIdent(schemaOf(table)), fnName),
 	}
 }
+
+// buildSyncTriggerSQL recreates the pre-Phase-106 trigger that copies data ->> field into a real column.
+// Only RestoreLegacyData uses it (the rollback path); nothing in the normal reconcile creates one, since
+// a leftover trigger would overwrite native writes with NULL.
+func buildSyncTriggerSQL(table, field, sqlType string) []string {
+	bareTable := table
+	if idx := strings.LastIndexByte(table, '.'); idx >= 0 {
+		bareTable = table[idx+1:]
+	}
+	fnName := quoteIdent(fmt.Sprintf("sync_%s_%s", bareTable, field))
+	triggerName := quoteIdent(fmt.Sprintf("trg_sync_%s_%s", bareTable, field))
+	column := quoteIdent(field)
+	fieldLiteral := quoteLiteral(field)
+	qualifiedFn := quoteIdent(schemaOf(table)) + "." + fnName
+	return []string{
+		fmt.Sprintf(`CREATE OR REPLACE FUNCTION %s() RETURNS trigger AS $$ BEGIN NEW.%s := (NEW.data ->> %s)::%s; RETURN NEW; END; $$ LANGUAGE plpgsql`,
+			qualifiedFn, column, fieldLiteral, sqlType),
+		fmt.Sprintf(`CREATE OR REPLACE TRIGGER %s BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION %s()`,
+			triggerName, quoteQualifiedIdent(table), qualifiedFn),
+	}
+}

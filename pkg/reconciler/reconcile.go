@@ -40,7 +40,13 @@ func ReconcileWithScope(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.U
 type ReconcileOptions struct {
 	Scope         BackfillScope
 	MigrateLegacy bool
+	// AllowTypeMismatch: do not refuse when a column's type differs from its field's kind (the caller
+	// has already run, or is about to run, the widen_type migration for it).
+	AllowTypeMismatch bool
 }
+
+// ErrColumnTypeChanged: a field's kind changed but its column still has the old type.
+var ErrColumnTypeChanged = errors.New("a field's kind no longer matches its column type; change the column with the widen_type migration first")
 
 // ErrLegacyDataColumn: the table still has the pre-Phase-106 data jsonb column, so its rows have
 // not been moved to native columns and CrudService (which reads columns only) would see NULLs.
@@ -57,6 +63,9 @@ func ReconcileWithOptions(ctx context.Context, pool *pgxpool.Pool, tenantID uuid
 	}
 	if actual != nil && actual.HasLegacyData && !opts.MigrateLegacy {
 		return ReconcileOutcome{}, fmt.Errorf("%s: %w", desired.Table, ErrLegacyDataColumn)
+	}
+	if mm := ColumnTypeMismatches(desired, actual); len(mm) > 0 && !opts.AllowTypeMismatch {
+		return ReconcileOutcome{}, fmt.Errorf("%s: %w: %v", desired.Table, ErrColumnTypeChanged, mm)
 	}
 	ops := Diff(desired, actual, renames)
 	opsApplied := len(ops)

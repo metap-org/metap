@@ -379,3 +379,91 @@ func TestUniqueScopeTenantAndGlobalOnASharedTable(t *testing.T) {
 		bare, indexName(entityName, "tenant_id", "idx")).Scan(&tenantIndexes))
 	require.Equal(t, 1, tenantIndexes, "tenant_id index must exist")
 }
+
+// The way back: after the move AND after data was dropped, RestoreLegacyData rebuilds data from the
+// columns (including rows the new code wrote natively), recreates the old sync trigger, and a later
+// MigrateLegacy copies forward again from scratch rather than trusting stale "done" marks.
+func TestRestoreLegacyDataRebuildsDataAfterTheDropAndCanRollForwardAgain(t *testing.T) {
+	pool := reconcilerTestPool(t)
+	ctx := context.Background()
+	sentinel := uuid.New()
+	entityName, bare := "test.reconciler_legacy_restore", "test_reconciler_legacy_restore"
+	table := "entities." + bare
+	createLegacyTable(t, pool, bare)
+	tenant := uuid.New()
+	seedLegacyRows(t, pool, bare, tenant)
+	def := legacyEntity(entityName)
+	storage := metadata.StorageColumn
+	for i := range def.Fields {
+		if def.Fields[i].Name == "amount" {
+			def.Fields[i].Storage = &storage // the old code kept a real, trigger-synced column for it
+		}
+	}
+
+	_, err := MigrateLegacy(ctx, pool, sentinel, def, ScopeAllTenants)
+	require.NoError(t, err)
+	require.NoError(t, DropLegacyData(ctx, pool, sentinel, def))
+
+	// The new code writes a row natively: columns only.
+	_, err = pool.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (tenant_id, title, amount, done) VALUES ($1, 'native', 99.5, true)`, table), tenant)
+	require.NoError(t, err)
+
+	report, err := RestoreLegacyData(ctx, pool, sentinel, def, ScopeAllTenants)
+	require.NoError(t, err)
+	require.EqualValues(t, 3, report.Rows)
+	for field, n := range report.MissingByField {
+		require.Zero(t, n, "field %q has a column value missing from data", field)
+	}
+
+	var data string
+	require.NoError(t, pool.QueryRow(ctx, fmt.Sprintf(`SELECT data::text FROM %s WHERE title = 'native'`, table)).Scan(&data))
+	require.JSONEq(t, `{"title":"native","amount":99.5,"done":true}`, data)
+	var richer string
+	require.NoError(t, pool.QueryRow(ctx, fmt.Sprintf(`SELECT data::text FROM %s WHERE title = 'row 0'`, table)).Scan(&richer))
+	require.Contains(t, richer, `"extra": {"a": [1, 2]}`, "a JSON field comes back whole")
+
+	var triggers int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM pg_trigger WHERE tgrelid = $1::regclass AND NOT tgisinternal`, table).Scan(&triggers))
+	require.Equal(t, 1, triggers, "the old sync trigger for the Storage: column field is back")
+
+	// The old code now runs and writes data only; the trigger keeps its column in step.
+	_, err = pool.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (tenant_id, data) VALUES ($1, '{"title":"old code","amount":"5.25"}'::jsonb)`, table), tenant)
+	require.NoError(t, err)
+
+	// Roll forward again: refused until migrated, then the old-code row reaches its columns.
+	_, err = Reconcile(ctx, pool, sentinel, def, nil)
+	require.ErrorIs(t, err, ErrLegacyDataColumn)
+	_, err = MigrateLegacy(ctx, pool, sentinel, def, ScopeAllTenants)
+	require.NoError(t, err)
+	var title string
+	var amount float64
+	require.NoError(t, pool.QueryRow(ctx, fmt.Sprintf(`SELECT title, amount::float8 FROM %s WHERE title = 'old code'`, table)).Scan(&title, &amount))
+	require.Equal(t, 5.25, amount)
+	require.NoError(t, DropLegacyData(ctx, pool, sentinel, def))
+}
+
+// A field whose kind changed no longer silently keeps its old column type.
+func TestChangingAFieldsKindIsRefusedNotIgnored(t *testing.T) {
+	pool := reconcilerTestPool(t)
+	ctx := context.Background()
+	entityName, bare := "test.reconciler_kind_change", "test_reconciler_kind_change"
+	dropReconcilerTableIfExists(t, pool, bare)
+	t.Cleanup(func() { dropReconcilerTableIfExists(t, pool, bare) })
+
+	asText := testEntity(entityName, []metadata.EntityField{plainField("qty", metadata.KindString)})
+	_, err := Reconcile(ctx, pool, uuid.New(), asText, nil)
+	require.NoError(t, err)
+
+	asNumber := testEntity(entityName, []metadata.EntityField{plainField("qty", metadata.KindNumber)})
+	_, err = Reconcile(ctx, pool, uuid.New(), asNumber, nil)
+	require.ErrorIs(t, err, ErrColumnTypeChanged)
+	require.Contains(t, err.Error(), "qty")
+
+	// With the explicit widen_type migration the type changes, and the same reconcile then converges.
+	_, err = RunMigration(ctx, pool, uuid.New(), entityName, "entities."+bare,
+		MigrationOp{Kind: MigWidenType, WidenField: "qty", WidenToSQLType: "double precision"}, QuarantinePolicy{Kind: PolicyBlock}, "kind-change")
+	require.NoError(t, err)
+	out, err := Reconcile(ctx, pool, uuid.New(), asNumber, nil)
+	require.NoError(t, err)
+	require.Zero(t, out.OpsApplied)
+}

@@ -12,6 +12,7 @@ package reconciler
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -118,4 +119,107 @@ func DropLegacyData(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID,
 	}
 	_, err = pool.Exec(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN data", quoteQualifiedIdent(desired.Table)))
 	return err
+}
+
+// RestoreLegacyData is the way back: it rebuilds the pre-Phase-106 shape so the previous release of the
+// application can run again. It works both before DropLegacyData (data still there, probably stale for
+// rows the new code wrote) and after it (data column is added back).
+//
+//  1. add the data column if it is missing (a constant default, so no table rewrite);
+//  2. rewrite data from the columns for every row, in resumable batches (a full copy, so rows written
+//     by the new code are included);
+//  3. recreate the old sync trigger for every field the old code kept a real column for (a Reference
+//     with a target, or Storage: column), since that code reads the column and expects data to feed it.
+//
+// The native columns are left in place; the old code ignores columns it does not know. Indexes the old
+// code builds on data are recreated by its own reconcile at boot.
+func RestoreLegacyData(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entity metadata.EntityDefinition, scope BackfillScope) (LegacyReport, error) {
+	desired, err := Compile(entity)
+	if err != nil {
+		return LegacyReport{}, err
+	}
+	actual, err := Introspect(ctx, pool, tenantID, entity.Name, desired.Table)
+	if err != nil {
+		return LegacyReport{}, err
+	}
+	if actual == nil {
+		return LegacyReport{}, fmt.Errorf("%s: table does not exist, nothing to restore", desired.Table)
+	}
+	t := quoteQualifiedIdent(desired.Table)
+	if !actual.HasLegacyData {
+		if _, err := pool.Exec(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN data jsonb NOT NULL DEFAULT '{}'::jsonb", t)); err != nil {
+			return LegacyReport{}, err
+		}
+	}
+
+	opID := "restore_legacy_data:" + desired.Table
+	// Forget this restore's own progress (a re-run copies everything again) and the forward migration's
+	// per-column "done" marks: the old code is about to write data only, so a later MigrateLegacy must
+	// copy data -> columns afresh instead of trusting that the columns are already filled.
+	if _, err := pool.Exec(ctx, `DELETE FROM metadata.reconciler_backfill_progress
+		WHERE tenant_id = $1 AND entity_name = $2 AND (op_id = $3 OR op_id LIKE $4)`,
+		tenantID, entity.Name, opID, "backfill:"+desired.Table+":%"); err != nil {
+		return LegacyReport{}, err
+	}
+	if err := RunBatchedUpdate(ctx, pool, tenantID, entity.Name, desired.Table, opID, "data = "+columnsAsJSON(entity), "", scope); err != nil {
+		return LegacyReport{}, err
+	}
+
+	for _, f := range entity.Fields {
+		if frameworkFieldNeedsNoTrigger(f.Name) || !hadRealColumnBefore(f) {
+			continue
+		}
+		for _, stmt := range buildSyncTriggerSQL(desired.Table, f.Name, metadata.FieldKindSQLType(f.Kind)) {
+			if _, err := pool.Exec(ctx, stmt); err != nil {
+				return LegacyReport{}, err
+			}
+		}
+	}
+	return verifyRestored(ctx, pool, desired, entity)
+}
+
+func frameworkFieldNeedsNoTrigger(name string) bool { return name == "code" || name == "status" }
+
+// hadRealColumnBefore: which fields the pre-Phase-106 code gave a real, trigger-synced column.
+func hadRealColumnBefore(f metadata.EntityField) bool {
+	return (f.Kind == metadata.KindReference && f.RefEntity != nil) || (f.Storage != nil && *f.Storage == metadata.StorageColumn)
+}
+
+// columnsAsJSON is the SQL expression, over the row aliased t, that builds the old data object from
+// the native columns: every non-NULL column becomes a key (a JSON field keeps its contents).
+func columnsAsJSON(entity metadata.EntityDefinition) string {
+	if len(entity.Fields) == 0 {
+		return "'{}'::jsonb"
+	}
+	pairs := make([]string, 0, len(entity.Fields))
+	for _, f := range entity.Fields {
+		col := "t." + quoteIdent(f.Name)
+		if frameworkFieldNeedsNoTrigger(f.Name) {
+			col = "t." + f.Name
+		}
+		pairs = append(pairs, fmt.Sprintf("(%s, to_jsonb(%s))", quoteLiteral(f.Name), col))
+	}
+	return "(SELECT COALESCE(jsonb_object_agg(x.k, x.v), '{}'::jsonb) FROM (VALUES " + strings.Join(pairs, ", ") + ") AS x(k, v) WHERE x.v IS NOT NULL)"
+}
+
+// verifyRestored counts, per field, rows where the column has a value that data lacks.
+func verifyRestored(ctx context.Context, pool *pgxpool.Pool, desired PhysicalSchema, entity metadata.EntityDefinition) (LegacyReport, error) {
+	t := quoteQualifiedIdent(desired.Table)
+	report := LegacyReport{MissingByField: map[string]int64{}, StillHasLegacyData: true}
+	if err := pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM %s", t)).Scan(&report.Rows); err != nil {
+		return LegacyReport{}, err
+	}
+	for _, f := range entity.Fields {
+		col := "t." + quoteIdent(f.Name)
+		if frameworkFieldNeedsNoTrigger(f.Name) {
+			col = "t." + f.Name
+		}
+		var n int64
+		q := fmt.Sprintf("SELECT count(*) FROM %s t WHERE %s IS NOT NULL AND NOT (t.data ? %s)", t, col, quoteLiteral(f.Name))
+		if err := pool.QueryRow(ctx, q).Scan(&n); err != nil {
+			return LegacyReport{}, err
+		}
+		report.MissingByField[f.Name] = n
+	}
+	return report, nil
 }

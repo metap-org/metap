@@ -319,3 +319,41 @@ func clonePhysicalSchema(s PhysicalSchema) PhysicalSchema {
 	}
 	return out
 }
+
+// TypeMismatch is a native column whose existing SQL type differs from what the EntityDefinition now
+// asks for (a field's kind was changed). Diff never alters a column's type on its own: that rewrites
+// the table and can fail on existing values, so it is the explicit widen_type migration's job.
+type TypeMismatch struct {
+	Column, Have, Want string
+}
+
+// ColumnTypeMismatches lists every native column that exists with a different type than desired.
+func ColumnTypeMismatches(desired PhysicalSchema, actual *PhysicalSchema) []TypeMismatch {
+	if actual == nil {
+		return nil
+	}
+	var out []TypeMismatch
+	for _, name := range sortedKeys(desired.Columns) {
+		want := desired.Columns[name]
+		have, ok := actual.Columns[name]
+		if !ok || want.Origin.Kind != OriginNative {
+			continue
+		}
+		if have.SQLType != want.SQLType {
+			out = append(out, TypeMismatch{Column: name, Have: have.SQLType, Want: want.SQLType})
+		}
+	}
+	return out
+}
+
+// IsDestructive: the op removes a guarantee or an object rather than adding one (an FK, a unique
+// constraint or a sync trigger goes away). Dropping an index only costs speed and is not counted.
+// Nothing Diff emits ever drops a column or data.
+func (op DdlOp) IsDestructive() bool {
+	switch op.Kind {
+	case OpDropForeignKey, OpDropUnique, OpDropSyncTrigger:
+		return true
+	default:
+		return false
+	}
+}

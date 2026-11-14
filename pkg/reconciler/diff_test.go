@@ -222,3 +222,26 @@ func TestTopoOrderCreateTableBeforeColumnsBeforeIndexesBeforeFks(t *testing.T) {
 	pFk, _ := findOp(ops, func(o DdlOp) bool { return o.Kind == OpAddForeignKeyNotValid })
 	require.True(t, (pTable < pCol && pCol < pIdx && pIdx < pFk), "got table=%d col=%d idx=%d fk=%d", pTable, pCol, pIdx, pFk)
 }
+
+func TestColumnTypeMismatchesReportsOnlyNativeColumnsWhoseTypeDiffers(t *testing.T) {
+	desired := EmptySchema("t")
+	desired.Columns["qty"] = ColumnSpec{SQLType: "double precision", Origin: ColumnOrigin{Kind: OriginNative}}
+	desired.Columns["same"] = ColumnSpec{SQLType: "text", Origin: ColumnOrigin{Kind: OriginNative}}
+	desired.Columns["status"] = ColumnSpec{SQLType: "varchar(80)", Origin: ColumnOrigin{Kind: OriginFramework}}
+	actual := EmptySchema("t")
+	actual.Columns["qty"] = ColumnSpec{SQLType: "text"}
+	actual.Columns["same"] = ColumnSpec{SQLType: "text"}
+	actual.Columns["status"] = ColumnSpec{SQLType: "text"}
+
+	require.Equal(t, []TypeMismatch{{Column: "qty", Have: "text", Want: "double precision"}}, ColumnTypeMismatches(desired, &actual))
+	require.Empty(t, ColumnTypeMismatches(desired, nil))
+}
+
+func TestOnlyDroppingAGuaranteeIsDestructive(t *testing.T) {
+	for kind, want := range map[DdlOpKind]bool{
+		OpDropForeignKey: true, OpDropUnique: true, OpDropSyncTrigger: true,
+		OpDropIndexConcurrently: false, OpAddColumn: false, OpCreateIndexConcurrently: false,
+	} {
+		require.Equal(t, want, DdlOp{Kind: kind}.IsDestructive(), "kind %d", kind)
+	}
+}
