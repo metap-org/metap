@@ -58,12 +58,6 @@ func adminRequestContext(tenantID uuid.UUID) *permission.RequestContext {
 	}
 }
 
-func unwrapOk[T any](t *testing.T, r crud.ServiceResult[T]) T {
-	t.Helper()
-	require.True(t, r.IsOk, "expected Ok, got %d %s: %v", r.Status, r.ErrorCode, r.Message)
-	return r.Data
-}
-
 func TestGRPCBackendFullLifecycleMatchesDirectCrudServiceBehavior(t *testing.T) {
 	pool := grpcTestPool(t)
 	ctx := context.Background()
@@ -117,7 +111,7 @@ func TestGRPCBackendFullLifecycleMatchesDirectCrudServiceBehavior(t *testing.T) 
 	// create
 	createResult, err := backend.Create(ctx, "test.grpc_backend_orders", rawObject(t, map[string]any{"name": "First"}), rc, nil)
 	require.NoError(t, err)
-	created := unwrapOk(t, createResult)
+	created := createResult
 	require.NotNil(t, created.Status, "got %v", created.Status)
 	require.Equal(t, "draft", *created.Status, "got %v", created.Status)
 	id := created.ID
@@ -126,39 +120,39 @@ func TestGRPCBackendFullLifecycleMatchesDirectCrudServiceBehavior(t *testing.T) 
 	// get — compares against a direct CrudService call for the exact same record
 	getResult, err := backend.Get(ctx, "test.grpc_backend_orders", id, rc)
 	require.NoError(t, err)
-	fetched := unwrapOk(t, getResult)
+	fetched := getResult
 	require.Equal(t, id, fetched.Record.ID, "got %v", fetched.Record.ID)
 	require.True(t, fetched.Capabilities.CanUpdate, "expected can_update")
 	directGetResult, err := crudService.Get(ctx, "test.grpc_backend_orders", id, rc)
 	require.NoError(t, err)
-	directFetched := unwrapOk(t, directGetResult)
+	directFetched := directGetResult
 	require.Equal(t, string(mustMarshal(t, directFetched.Record.Data)), string(mustMarshal(t, fetched.Record.Data)), "got %v want %v", fetched.Record.Data, directFetched.Record.Data)
 
 	// get_many — no batch RPC on the wire, implemented as N gets; still returns the right shape
 	getManyResult, err := backend.GetMany(ctx, "test.grpc_backend_orders", []uuid.UUID{id, uuid.New()}, rc)
 	require.NoError(t, err)
-	batch := unwrapOk(t, getManyResult)
+	batch := getManyResult
 	require.Len(t, batch, 1, "the nonexistent id must simply be absent, not error the whole batch: got %d", len(batch))
 	require.Equal(t, id, batch[0].ID, "got %v", batch[0].ID)
 
 	// transition
 	transitionResult, err := backend.Transition(ctx, "test.grpc_backend_orders", id, "activate", version, nil, rc, nil)
 	require.NoError(t, err)
-	transitioned := unwrapOk(t, transitionResult)
+	transitioned := transitionResult
 	require.NotNil(t, transitioned.Status, "got %v", transitioned.Status)
 	require.Equal(t, "active", *transitioned.Status, "got %v", transitioned.Status)
 	version = transitioned.Version
 
-	// update with a stale version surfaces as a 409 ServiceResult::Err, not a Go error
+	// update with a stale version surfaces as a 409 *crud.ServiceError, not a plain error
 	staleResult, err := backend.Update(ctx, "test.grpc_backend_orders", id, version-1, rawObject(t, map[string]any{"name": "Stale"}), rc, nil)
-	require.NoError(t, err)
-	require.False(t, staleResult.IsOk, "expected a 409 version-conflict error, got %+v", staleResult)
-	require.EqualValues(t, 409, staleResult.Status, "expected a 409 version-conflict error, got %+v", staleResult)
+	var staleResultErr *crud.ServiceError
+	require.ErrorAs(t, err, &staleResultErr)
+	require.EqualValues(t, 409, staleResultErr.Status, "expected a 409 version-conflict error, got %+v", staleResult)
 
 	// update with the correct version succeeds
 	updateResult, err := backend.Update(ctx, "test.grpc_backend_orders", id, version, rawObject(t, map[string]any{"name": "Renamed"}), rc, nil)
 	require.NoError(t, err)
-	updated := unwrapOk(t, updateResult)
+	updated := updateResult
 	var updatedName string
 	_ = json.Unmarshal(updated.Data["name"], &updatedName)
 	require.Equal(t, "Renamed", updatedName, "got %v", updated.Data["name"])
@@ -167,9 +161,9 @@ func TestGRPCBackendFullLifecycleMatchesDirectCrudServiceBehavior(t *testing.T) 
 	// list finds the record
 	listResult, err := backend.List(ctx, "test.grpc_backend_orders", query.ListInput{Limit: 30}, rc)
 	require.NoError(t, err)
-	listed := unwrapOk(t, listResult)
+	listed := listResult
 	found := false
-	for _, r := range listed {
+	for _, r := range listed.Data {
 		if r.ID == id {
 			found = true
 		}
@@ -177,14 +171,13 @@ func TestGRPCBackendFullLifecycleMatchesDirectCrudServiceBehavior(t *testing.T) 
 	require.True(t, found, "expected the created record in the list result")
 
 	// delete
-	deleteResult, err := backend.Delete(ctx, "test.grpc_backend_orders", id, version, rc, nil)
+	_, err = backend.Delete(ctx, "test.grpc_backend_orders", id, version, rc, nil)
 	require.NoError(t, err)
-	require.True(t, deleteResult.IsOk, "expected delete to succeed, got %+v", deleteResult)
 
 	afterDelete, err := backend.Get(ctx, "test.grpc_backend_orders", id, rc)
-	require.NoError(t, err)
-	require.False(t, afterDelete.IsOk, "expected the record to be gone after delete, got %+v", afterDelete)
-	require.EqualValues(t, 404, afterDelete.Status, "expected the record to be gone after delete, got %+v", afterDelete)
+	var afterDeleteErr *crud.ServiceError
+	require.ErrorAs(t, err, &afterDeleteErr)
+	require.EqualValues(t, 404, afterDeleteErr.Status, "expected the record to be gone after delete, got %+v", afterDelete)
 }
 
 func rawObject(t *testing.T, m map[string]any) crud.JsonObject {

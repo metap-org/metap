@@ -106,17 +106,17 @@ func (b *GrpcBackend) outgoingContext(ctx context.Context, rc *permission.Reques
 // with no details — an older metap build, or an error raised by something that isn't a metap
 // service at all (a mesh sidecar, a proxy) — where Code::Internal/Unavailable/anything else maps
 // to 502 (Bad Gateway) rather than 500, since that failure genuinely originates upstream.
-func statusToServiceErr[T any](err error, trailer grpcmd.MD) crud.ServiceResult[T] {
+func statusToServiceErr(err error, trailer grpcmd.MD) *crud.ServiceError {
 	st, _ := status.FromError(err)
 	if details, ok := errorDetailsFromTrailer(trailer); ok {
-		if details.FieldErrors != nil {
-			return crud.ResultErrWithMessageAndFieldErrors[T](details.Status, details.Error,
-				derefOr(details.Message, details.Error), details.FieldErrors)
-		}
+		se := crud.NewServiceError(details.Status, details.Error)
 		if details.Message != nil {
-			return crud.ResultErrWithMessage[T](details.Status, details.Error, *details.Message)
+			se.Message = *details.Message
+		} else if details.FieldErrors != nil {
+			se.Message = details.Error
 		}
-		return crud.ResultErr[T](details.Status, details.Error)
+		se.FieldErrors = details.FieldErrors
+		return se
 	}
 	httpStatus := uint16(502)
 	switch st.Code() {
@@ -131,7 +131,7 @@ func statusToServiceErr[T any](err error, trailer grpcmd.MD) crud.ServiceResult[
 	case codes.Aborted:
 		httpStatus = 409
 	}
-	return crud.ResultErrWithMessage[T](httpStatus, "upstream_error", st.Message())
+	return crud.NewServiceErrorMsg(httpStatus, "upstream_error", st.Message())
 }
 
 func derefOr(s *string, def string) string {
@@ -180,18 +180,18 @@ func listInputToQuery(input query.ListInput) map[string]any {
 	return q
 }
 
-func (b *GrpcBackend) List(ctx context.Context, entity string, input query.ListInput, rc *permission.RequestContext) (crud.ServiceResult[[]crud.RecordDto], error) {
+func (b *GrpcBackend) List(ctx context.Context, entity string, input query.ListInput, rc *permission.RequestContext) (crud.ListResult, error) {
 	req := &pb.ListRequest{EntityName: entity, Query: JSONToStruct(listInputToQuery(input))}
 	var trailer grpcmd.MD
 	resp, err := b.client.List(b.outgoingContext(ctx, rc), req, grpc.Trailer(&trailer))
 	if err != nil {
-		return statusToServiceErr[[]crud.RecordDto](err, trailer), nil
+		return crud.ListResult{}, statusToServiceErr(err, trailer)
 	}
 	records := make([]crud.RecordDto, len(resp.GetRecords()))
 	for i, r := range resp.GetRecords() {
 		dto, derr := deserializeRecord(r)
 		if derr != nil {
-			return crud.ServiceResult[[]crud.RecordDto]{}, derr
+			return crud.ListResult{}, derr
 		}
 		records[i] = dto
 	}
@@ -200,84 +200,86 @@ func (b *GrpcBackend) List(ctx context.Context, entity string, input query.ListI
 		nc := resp.GetNextCursor()
 		nextCursor = &nc
 	}
-	return crud.ResultOkWithPage(records, crud.PageInfo{Limit: input.Limit, NextCursor: nextCursor}), nil
+	return crud.ListResult{Data: records, Page: crud.PageInfo{Limit: input.Limit, NextCursor: nextCursor}}, nil
 }
 
-func (b *GrpcBackend) Get(ctx context.Context, entity string, id uuid.UUID, rc *permission.RequestContext) (crud.ServiceResult[crud.GetResult], error) {
+func (b *GrpcBackend) Get(ctx context.Context, entity string, id uuid.UUID, rc *permission.RequestContext) (crud.GetResult, error) {
 	req := &pb.GetRequest{EntityName: entity, Id: id.String()}
 	var trailer grpcmd.MD
 	resp, err := b.client.Get(b.outgoingContext(ctx, rc), req, grpc.Trailer(&trailer))
 	if err != nil {
-		return statusToServiceErr[crud.GetResult](err, trailer), nil
+		return crud.GetResult{}, statusToServiceErr(err, trailer)
 	}
 	if resp.GetRecord() == nil {
-		return crud.ServiceResult[crud.GetResult]{}, fmt.Errorf("upstream get response missing record")
+		return crud.GetResult{}, fmt.Errorf("upstream get response missing record")
 	}
 	if resp.GetCapabilities() == nil {
-		return crud.ServiceResult[crud.GetResult]{}, fmt.Errorf("upstream get response missing capabilities")
+		return crud.GetResult{}, fmt.Errorf("upstream get response missing capabilities")
 	}
 	record, err := deserializeRecord(resp.GetRecord())
 	if err != nil {
-		return crud.ServiceResult[crud.GetResult]{}, err
+		return crud.GetResult{}, err
 	}
 	capabilities, err := deserializeCapabilities(resp.GetCapabilities())
 	if err != nil {
-		return crud.ServiceResult[crud.GetResult]{}, err
+		return crud.GetResult{}, err
 	}
-	return crud.ResultOk(crud.GetResult{Record: record, Capabilities: capabilities}), nil
+	return crud.GetResult{Record: record, Capabilities: capabilities}, nil
 }
 
 // GetMany: same convention RecordLoader already expects — a denied/missing id is simply absent
 // from the batch result rather than failing every other id in it.
-func (b *GrpcBackend) GetMany(ctx context.Context, entity string, ids []uuid.UUID, rc *permission.RequestContext) (crud.ServiceResult[[]crud.GetManyResult], error) {
+func (b *GrpcBackend) GetMany(ctx context.Context, entity string, ids []uuid.UUID, rc *permission.RequestContext) ([]crud.GetManyResult, error) {
 	results := make([]crud.GetManyResult, 0, len(ids))
 	for _, id := range ids {
 		result, err := b.Get(ctx, entity, id, rc)
 		if err != nil {
-			return crud.ServiceResult[[]crud.GetManyResult]{}, err
+			// A denied/missing id is absent from the batch; any other failure fails it.
+			if _, business := crud.AsServiceError(err); business {
+				continue
+			}
+			return nil, err
 		}
-		if result.IsOk {
-			results = append(results, crud.GetManyResult{ID: id, Record: result.Data.Record, Capabilities: result.Data.Capabilities})
-		}
+		results = append(results, crud.GetManyResult{ID: id, Record: result.Record, Capabilities: result.Capabilities})
 	}
-	return crud.ResultOk(results), nil
+	return results, nil
 }
 
-func (b *GrpcBackend) Create(ctx context.Context, entity string, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error) {
+func (b *GrpcBackend) Create(ctx context.Context, entity string, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.RecordDto, error) {
 	req := &pb.CreateRequest{EntityName: entity, Data: JSONToStruct(rawObjectToAny(data)), Reason: reason}
 	var trailer grpcmd.MD
 	resp, err := b.client.Create(b.outgoingContext(ctx, rc), req, grpc.Trailer(&trailer))
 	if err != nil {
-		return statusToServiceErr[crud.RecordDto](err, trailer), nil
+		return crud.RecordDto{}, statusToServiceErr(err, trailer)
 	}
 	if resp.GetRecord() == nil {
-		return crud.ServiceResult[crud.RecordDto]{}, fmt.Errorf("upstream create response missing record")
+		return crud.RecordDto{}, fmt.Errorf("upstream create response missing record")
 	}
 	dto, derr := deserializeRecord(resp.GetRecord())
 	if derr != nil {
-		return crud.ServiceResult[crud.RecordDto]{}, derr
+		return crud.RecordDto{}, derr
 	}
-	return crud.ResultOk(dto), nil
+	return dto, nil
 }
 
-func (b *GrpcBackend) Update(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error) {
+func (b *GrpcBackend) Update(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.RecordDto, error) {
 	req := &pb.UpdateRequest{EntityName: entity, Id: id.String(), ExpectedVersion: expectedVersion, Data: JSONToStruct(rawObjectToAny(data)), Reason: reason}
 	var trailer grpcmd.MD
 	resp, err := b.client.Update(b.outgoingContext(ctx, rc), req, grpc.Trailer(&trailer))
 	if err != nil {
-		return statusToServiceErr[crud.RecordDto](err, trailer), nil
+		return crud.RecordDto{}, statusToServiceErr(err, trailer)
 	}
 	if resp.GetRecord() == nil {
-		return crud.ServiceResult[crud.RecordDto]{}, fmt.Errorf("upstream update response missing record")
+		return crud.RecordDto{}, fmt.Errorf("upstream update response missing record")
 	}
 	dto, derr := deserializeRecord(resp.GetRecord())
 	if derr != nil {
-		return crud.ServiceResult[crud.RecordDto]{}, derr
+		return crud.RecordDto{}, derr
 	}
-	return crud.ResultOk(dto), nil
+	return dto, nil
 }
 
-func (b *GrpcBackend) Transition(ctx context.Context, entity string, id uuid.UUID, action string, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error) {
+func (b *GrpcBackend) Transition(ctx context.Context, entity string, id uuid.UUID, action string, expectedVersion int32, data crud.JsonObject, rc *permission.RequestContext, reason *string) (crud.RecordDto, error) {
 	req := &pb.TransitionRequest{EntityName: entity, Id: id.String(), Action: action, ExpectedVersion: expectedVersion, Reason: reason}
 	if data != nil {
 		req.Data = JSONToStruct(rawObjectToAny(data))
@@ -285,55 +287,55 @@ func (b *GrpcBackend) Transition(ctx context.Context, entity string, id uuid.UUI
 	var trailer grpcmd.MD
 	resp, err := b.client.Transition(b.outgoingContext(ctx, rc), req, grpc.Trailer(&trailer))
 	if err != nil {
-		return statusToServiceErr[crud.RecordDto](err, trailer), nil
+		return crud.RecordDto{}, statusToServiceErr(err, trailer)
 	}
 	if resp.GetRecord() == nil {
-		return crud.ServiceResult[crud.RecordDto]{}, fmt.Errorf("upstream transition response missing record")
+		return crud.RecordDto{}, fmt.Errorf("upstream transition response missing record")
 	}
 	dto, derr := deserializeRecord(resp.GetRecord())
 	if derr != nil {
-		return crud.ServiceResult[crud.RecordDto]{}, derr
+		return crud.RecordDto{}, derr
 	}
-	return crud.ResultOk(dto), nil
+	return dto, nil
 }
 
-func (b *GrpcBackend) Delete(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, rc *permission.RequestContext, reason *string) (crud.ServiceResult[crud.RecordDto], error) {
+func (b *GrpcBackend) Delete(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, rc *permission.RequestContext, reason *string) (crud.RecordDto, error) {
 	req := &pb.DeleteRequest{EntityName: entity, Id: id.String(), ExpectedVersion: expectedVersion, Reason: reason}
 	var trailer grpcmd.MD
 	resp, err := b.client.Delete(b.outgoingContext(ctx, rc), req, grpc.Trailer(&trailer))
 	if err != nil {
-		return statusToServiceErr[crud.RecordDto](err, trailer), nil
+		return crud.RecordDto{}, statusToServiceErr(err, trailer)
 	}
 	if resp.GetRecord() == nil {
-		return crud.ServiceResult[crud.RecordDto]{}, fmt.Errorf("upstream delete response missing record")
+		return crud.RecordDto{}, fmt.Errorf("upstream delete response missing record")
 	}
 	dto, derr := deserializeRecord(resp.GetRecord())
 	if derr != nil {
-		return crud.ServiceResult[crud.RecordDto]{}, derr
+		return crud.RecordDto{}, derr
 	}
-	return crud.ResultOk(dto), nil
+	return dto, nil
 }
 
-func (b *GrpcBackend) Aggregate(ctx context.Context, entity string, spec query.AggregateSpec, rc *permission.RequestContext) (crud.ServiceResult[[]json.RawMessage], error) {
+func (b *GrpcBackend) Aggregate(ctx context.Context, entity string, spec query.AggregateSpec, rc *permission.RequestContext) ([]json.RawMessage, error) {
 	specStruct, err := ValueToStruct(spec)
 	if err != nil {
-		return crud.ServiceResult[[]json.RawMessage]{}, err
+		return nil, err
 	}
 	req := &pb.AggregateRequest{EntityName: entity, Spec: specStruct}
 	var trailer grpcmd.MD
 	resp, cerr := b.client.Aggregate(b.outgoingContext(ctx, rc), req, grpc.Trailer(&trailer))
 	if cerr != nil {
-		return statusToServiceErr[[]json.RawMessage](cerr, trailer), nil
+		return nil, statusToServiceErr(cerr, trailer)
 	}
 	rows := make([]json.RawMessage, len(resp.GetRows()))
 	for i, r := range resp.GetRows() {
 		b, merr := json.Marshal(StructToJSON(r))
 		if merr != nil {
-			return crud.ServiceResult[[]json.RawMessage]{}, merr
+			return nil, merr
 		}
 		rows[i] = b
 	}
-	return crud.ResultOk(rows), nil
+	return rows, nil
 }
 
 // rawObjectToAny converts a crud.JsonObject (map[string]json.RawMessage) into map[string]any via

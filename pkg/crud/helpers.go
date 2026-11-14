@@ -91,23 +91,23 @@ func parseUserID(rc *permission.RequestContext) (*uuid.UUID, error) {
 	return &id, nil
 }
 
-func forbidden[T any](decision permission.PermissionDecision) ServiceResult[T] {
+func forbidden(decision permission.PermissionDecision) *ServiceError {
 	reason := decision.Reason
 	if reason == "" {
 		reason = "forbidden"
 	}
-	return ResultErr[T](403, reason)
+	return NewServiceError(403, reason)
 }
 
-func forbiddenWithField[T any](decision permission.PermissionDecision) ServiceResult[T] {
+func forbiddenWithField(decision permission.PermissionDecision) *ServiceError {
 	reason := decision.Reason
 	if reason == "" {
 		reason = "forbidden"
 	}
 	if decision.Field != "" {
-		return ResultErrWithFieldErrors[T](403, reason, map[string][]string{decision.Field: {"forbidden"}})
+		return NewServiceErrorFields(403, reason, map[string][]string{decision.Field: {"forbidden"}})
 	}
-	return ResultErr[T](403, reason)
+	return NewServiceError(403, reason)
 }
 
 // compositeUniqueIndexName mirrors metap_reconciler::compile::composite_unique_index_name's
@@ -121,14 +121,14 @@ func compositeUniqueIndexName(prefix string, fields []string) string {
 // uniqueViolation maps a Postgres unique-index violation (caught after the fact at the
 // INSERT/UPDATE call site) to a 409 naming *what* collided. Returns (zero, false) for any other
 // error, so the caller's generic error fallback still applies.
-func uniqueViolation[T any](entity metadata.EntityDefinition, err error) (ServiceResult[T], bool) {
+func uniqueViolation(entity metadata.EntityDefinition, err error) (*ServiceError, bool) {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
-		return ServiceResult[T]{}, false
+		return nil, false
 	}
 	constraintName := pgErr.ConstraintName
 	if constraintName == "" {
-		return unnamedUniqueViolation[T](entity), true
+		return unnamedUniqueViolation(entity), true
 	}
 
 	mangled := strings.ReplaceAll(entity.Name, ".", "_")
@@ -140,39 +140,39 @@ func uniqueViolation[T any](entity metadata.EntityDefinition, err error) (Servic
 			for _, f := range constraint.Fields {
 				fieldErrors[f] = []string{"A record with this combination of values already exists."}
 			}
-			return ResultErrWithFieldErrors[T](409, "unique_violation", fieldErrors), true
+			return NewServiceErrorFields(409, "unique_violation", fieldErrors), true
 		}
 	}
 
 	if field, ok := strings.CutPrefix(constraintName, prefix); ok {
-		return ResultErrWithFieldErrors[T](409, "unique_violation", map[string][]string{
+		return NewServiceErrorFields(409, "unique_violation", map[string][]string{
 			field: {"A record with this value already exists."},
 		}), true
 	}
-	return unnamedUniqueViolation[T](entity), true
+	return unnamedUniqueViolation(entity), true
 }
 
-func unnamedUniqueViolation[T any](entity metadata.EntityDefinition) ServiceResult[T] {
-	return ResultErrWithMessage[T](409, "unique_violation", fmt.Sprintf("A unique constraint was violated on %q.", entity.Name))
+func unnamedUniqueViolation(entity metadata.EntityDefinition) *ServiceError {
+	return NewServiceErrorMsg(409, "unique_violation", fmt.Sprintf("A unique constraint was violated on %q.", entity.Name))
 }
 
 // routerUnavailable maps a control.RouterError (an expected part of the tenant lifecycle) to a
 // clean 4xx/5xx. Returns (zero, false) for any other error, so the caller's generic error
 // fallback still applies.
-func routerUnavailable[T any](err error) (ServiceResult[T], bool) {
+func routerUnavailable(err error) (*ServiceError, bool) {
 	var routerErr *control.RouterError
 	if !errors.As(err, &routerErr) {
-		return ServiceResult[T]{}, false
+		return nil, false
 	}
 	switch routerErr.Kind {
 	case control.ErrTenantSuspended, control.ErrTenantExpired:
-		return ResultErr[T](403, "tenant_unavailable"), true
+		return NewServiceError(403, "tenant_unavailable"), true
 	case control.ErrTenantMigrating, control.ErrTenantProvisioning:
-		return ResultErr[T](503, "tenant_unavailable"), true
+		return NewServiceError(503, "tenant_unavailable"), true
 	case control.ErrTenantDeleted:
-		return ResultErr[T](404, "tenant_not_found"), true
+		return NewServiceError(404, "tenant_not_found"), true
 	default: // ErrInvalidSchemaName: should never occur from real data — fall through as a real error
-		return ServiceResult[T]{}, false
+		return nil, false
 	}
 }
 

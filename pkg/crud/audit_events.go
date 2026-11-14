@@ -13,35 +13,31 @@ import (
 // history for one record. Record-level (ABAC) read permission via CheckRecordPermission.
 // Returns whatever rows exist regardless of the entity's *current* EntityAuditConfig.Enabled
 // flag — toggling audit off must not make already-recorded history disappear.
-func (s *CrudService) ListAuditEvents(ctx context.Context, entityName string, recordID uuid.UUID, rc *permission.RequestContext) (ServiceResult[[]audit.Row], error) {
-	check, err := s.CheckRecordPermission(ctx, entityName, recordID, permission.ActionRead, rc)
-	if err != nil {
-		return ServiceResult[[]audit.Row]{}, err
-	}
-	if !check.IsOk {
-		return resultErrFrom[struct{}, []audit.Row](check), nil
+func (s *CrudService) ListAuditEvents(ctx context.Context, entityName string, recordID uuid.UUID, rc *permission.RequestContext) ([]audit.Row, error) {
+	if err := s.CheckRecordPermission(ctx, entityName, recordID, permission.ActionRead, rc); err != nil {
+		return nil, err
 	}
 
 	if s.auditStore == nil {
-		return ResultOk([]audit.Row{}), nil
+		return []audit.Row{}, nil
 	}
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {
-		return ServiceResult[[]audit.Row]{}, err
+		return nil, err
 	}
 	events, err := s.auditStore.ListForRecord(ctx, tenantID, entityName, recordID)
 	if err != nil {
-		return ServiceResult[[]audit.Row]{}, err
+		return nil, err
 	}
 
 	visibility, err := s.auditDiffVisibility(ctx, entityName, recordID, rc)
 	if err != nil {
-		return ServiceResult[[]audit.Row]{}, err
+		return nil, err
 	}
 	for i := range events {
 		maskDiff(&events[i].Diff, visibility)
 	}
-	return ResultOk(events), nil
+	return events, nil
 }
 
 // diffVisibility is how much of this record's audit diffs the caller may see. nil fields means

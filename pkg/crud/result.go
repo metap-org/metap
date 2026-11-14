@@ -1,64 +1,71 @@
 package crud
 
-// PageInfo mirrors the Rust PageInfo.
+import (
+	"errors"
+	"fmt"
+)
+
+// PageInfo is the pagination state List returns alongside its records.
 type PageInfo struct {
 	Limit      int64   `json:"limit"`
-	NextCursor *string `json:"nextCursor"`
+	NextCursor *string `json:"nextCursor,omitempty"`
 }
 
-// ServiceResult mirrors the Rust ServiceResult<T> enum — Go has no sum type, so this is a plain
-// struct with an IsOk discriminant instead; callers must check IsOk before reading Data/Page, or
-// Status/Error/Message/FieldErrors otherwise, mirroring a Rust match on the two variants.
-type ServiceResult[T any] struct {
-	IsOk bool
+// ListResult is what List returns: one page of records and where the next one starts.
+type ListResult struct {
+	Data []RecordDto
+	Page PageInfo
+}
 
-	// Set when IsOk is true.
-	Data T
-	Page *PageInfo
-
-	// Set when IsOk is false.
+// ServiceError is a failure the caller can act on: a status (HTTP-shaped, carried over gRPC and
+// GraphQL too), a stable machine-readable code, an optional human message and optional per-field
+// errors. Every CrudService/RecordBackend method returns it as the error of its (T, error)
+// result, so a transport maps it once (errors.As) and a plain error — a database or network
+// failure — stays a plain error, an internal one.
+type ServiceError struct {
 	Status      uint16
-	ErrorCode   string
-	Message     *string
+	Code        string
+	Message     string
 	FieldErrors map[string][]string
 }
 
-func ResultOk[T any](data T) ServiceResult[T] {
-	return ServiceResult[T]{IsOk: true, Data: data}
-}
-
-func ResultOkWithPage[T any](data T, page PageInfo) ServiceResult[T] {
-	return ServiceResult[T]{IsOk: true, Data: data, Page: &page}
-}
-
-func ResultErr[T any](status uint16, errorCode string) ServiceResult[T] {
-	return ServiceResult[T]{Status: status, ErrorCode: errorCode}
-}
-
-func ResultErrWithMessage[T any](status uint16, errorCode, message string) ServiceResult[T] {
-	return ServiceResult[T]{Status: status, ErrorCode: errorCode, Message: &message}
-}
-
-func ResultErrWithFieldErrors[T any](status uint16, errorCode string, fieldErrors map[string][]string) ServiceResult[T] {
-	return ServiceResult[T]{Status: status, ErrorCode: errorCode, FieldErrors: fieldErrors}
-}
-
-// ResultErrWithMessageAndFieldErrors carries both a human-readable Message (for a client that
-// just shows it as-is) and structured FieldErrors (for a client that wants to do more) on the
-// same error — used by delete()'s record_referenced guard, which needs a readable summary of the
-// first blocker *and* the full list every blocker maps to.
-func ResultErrWithMessageAndFieldErrors[T any](status uint16, errorCode, message string, fieldErrors map[string][]string) ServiceResult[T] {
-	return ServiceResult[T]{Status: status, ErrorCode: errorCode, Message: &message, FieldErrors: fieldErrors}
-}
-
-// resultErrFrom copies another result's error shape onto a different T — the Go equivalent of
-// Rust's `ServiceResult::Err { status, error, message, field_errors }` struct-literal propagation
-// used e.g. in check_record_permission's callers.
-func resultErrFrom[From, To any](r ServiceResult[From]) ServiceResult[To] {
-	return ServiceResult[To]{
-		Status:      r.Status,
-		ErrorCode:   r.ErrorCode,
-		Message:     r.Message,
-		FieldErrors: r.FieldErrors,
+func (e *ServiceError) Error() string {
+	msg := e.Code
+	if e.Message != "" {
+		msg = e.Code + ": " + e.Message
 	}
+	if len(e.FieldErrors) > 0 {
+		msg = fmt.Sprintf("%s (field errors: %v)", msg, e.FieldErrors)
+	}
+	return fmt.Sprintf("%d %s", e.Status, msg)
+}
+
+// NewServiceError builds a ServiceError with only a status and code.
+func NewServiceError(status uint16, code string) *ServiceError {
+	return &ServiceError{Status: status, Code: code}
+}
+
+// NewServiceErrorMsg adds a human-readable message.
+func NewServiceErrorMsg(status uint16, code, message string) *ServiceError {
+	return &ServiceError{Status: status, Code: code, Message: message}
+}
+
+// NewServiceErrorFields adds per-field errors.
+func NewServiceErrorFields(status uint16, code string, fieldErrors map[string][]string) *ServiceError {
+	return &ServiceError{Status: status, Code: code, FieldErrors: fieldErrors}
+}
+
+// NewServiceErrorMsgFields carries both a message (for a client that just shows it) and
+// per-field errors (for one that wants more) — used by delete()'s record_referenced guard.
+func NewServiceErrorMsgFields(status uint16, code, message string, fieldErrors map[string][]string) *ServiceError {
+	return &ServiceError{Status: status, Code: code, Message: message, FieldErrors: fieldErrors}
+}
+
+// AsServiceError reports whether err is (or wraps) a ServiceError.
+func AsServiceError(err error) (*ServiceError, bool) {
+	var se *ServiceError
+	if errors.As(err, &se) {
+		return se, true
+	}
+	return nil, false
 }

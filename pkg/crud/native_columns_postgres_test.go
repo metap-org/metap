@@ -64,12 +64,10 @@ func TestEveryFieldKindIsStoredInItsOwnTypedColumnAndReadsBackAsJSON(t *testing.
 		"meta": json.RawMessage(`{"k":[1,{"z":null}],"s":"x"}`),
 	}, rc, nil)
 	require.NoError(t, err)
-	require.True(t, created.IsOk, "%+v", created)
 
-	got, err := svc.Get(ctx, "test.native_all", created.Data.ID, rc)
+	got, err := svc.Get(ctx, "test.native_all", created.ID, rc)
 	require.NoError(t, err)
-	require.True(t, got.IsOk, "%+v", got)
-	d := got.Data.Record.Data
+	d := got.Record.Data
 	require.JSONEq(t, `"first"`, string(d["title"]))
 	require.Equal(t, 3.0, jsonNumber(t, d["qty"]))
 	require.Equal(t, 12.5, jsonNumber(t, d["price"]))
@@ -87,7 +85,7 @@ func TestEveryFieldKindIsStoredInItsOwnTypedColumnAndReadsBackAsJSON(t *testing.
 	var due time.Time
 	var metaK string
 	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT qty, done, due, meta -> 'k' ->> 0 FROM `+nativeTable+` WHERE id = $1`, created.Data.ID).Scan(&qty, &done, &due, &metaK))
+		`SELECT qty, done, due, meta -> 'k' ->> 0 FROM `+nativeTable+` WHERE id = $1`, created.ID).Scan(&qty, &done, &due, &metaK))
 	require.Equal(t, 3.0, qty)
 	require.True(t, done)
 	require.Equal(t, "2026-01-02", due.Format("2006-01-02"))
@@ -109,20 +107,18 @@ func TestUpdateKeepsFieldsNotInThePayloadAndBumpsVersion(t *testing.T) {
 
 	created, err := svc.Create(ctx, "test.native_all", JsonObject{"title": raw("a"), "qty": raw(7), "note": raw("keep me")}, rc, nil)
 	require.NoError(t, err)
-	require.True(t, created.IsOk)
 
-	updated, err := svc.Update(ctx, "test.native_all", created.Data.ID, created.Data.Version, JsonObject{"title": raw("b")}, rc, nil)
+	updated, err := svc.Update(ctx, "test.native_all", created.ID, created.Version, JsonObject{"title": raw("b")}, rc, nil)
 	require.NoError(t, err)
-	require.True(t, updated.IsOk, "%+v", updated)
-	require.EqualValues(t, created.Data.Version+1, updated.Data.Version)
-	require.JSONEq(t, `"b"`, string(updated.Data.Data["title"]))
-	require.Equal(t, 7.0, jsonNumber(t, updated.Data.Data["qty"]), "an untouched field must survive an update")
-	require.JSONEq(t, `"keep me"`, string(updated.Data.Data["note"]))
+	require.EqualValues(t, created.Version+1, updated.Version)
+	require.JSONEq(t, `"b"`, string(updated.Data["title"]))
+	require.Equal(t, 7.0, jsonNumber(t, updated.Data["qty"]), "an untouched field must survive an update")
+	require.JSONEq(t, `"keep me"`, string(updated.Data["note"]))
 
-	stale, err := svc.Update(ctx, "test.native_all", created.Data.ID, created.Data.Version, JsonObject{"title": raw("c")}, rc, nil)
-	require.NoError(t, err)
-	require.False(t, stale.IsOk)
-	require.Equal(t, "version_conflict", stale.ErrorCode)
+	_, err = svc.Update(ctx, "test.native_all", created.ID, created.Version, JsonObject{"title": raw("c")}, rc, nil)
+	var staleErr *ServiceError
+	require.ErrorAs(t, err, &staleErr)
+	require.Equal(t, "version_conflict", staleErr.Code)
 }
 
 func TestFilterSortAndJqlCompareByColumnType(t *testing.T) {
@@ -140,12 +136,11 @@ func TestFilterSortAndJqlCompareByColumnType(t *testing.T) {
 		if qty != nil {
 			payload["qty"] = raw(qty)
 		}
-		r, err := svc.Create(ctx, "test.native_all", payload, rc, nil)
+		_, err := svc.Create(ctx, "test.native_all", payload, rc, nil)
 		require.NoError(t, err)
-		require.True(t, r.IsOk, "%+v", r)
 	}
 
-	qtys := func(res ServiceResult[[]RecordDto]) []float64 {
+	qtys := func(res ListResult) []float64 {
 		var out []float64
 		for _, rec := range res.Data {
 			if v, ok := rec.Data["qty"]; ok {
@@ -163,9 +158,8 @@ func TestFilterSortAndJqlCompareByColumnType(t *testing.T) {
 	for pages := 0; pages < 10; pages++ {
 		res, err := svc.List(ctx, "test.native_all", query.ListInput{Limit: 2, Sort: &sort, Cursor: cursor}, rc)
 		require.NoError(t, err)
-		require.True(t, res.IsOk, "%+v", res)
 		all = append(all, res.Data...)
-		if res.Page == nil || res.Page.NextCursor == nil {
+		if res.Page.NextCursor == nil {
 			break
 		}
 		cursor = res.Page.NextCursor
@@ -176,27 +170,23 @@ func TestFilterSortAndJqlCompareByColumnType(t *testing.T) {
 		require.False(t, seen[r.ID], "row returned twice")
 		seen[r.ID] = true
 	}
-	require.Equal(t, []float64{100, 10, 9, 2}, qtys(ServiceResult[[]RecordDto]{Data: all}))
+	require.Equal(t, []float64{100, 10, 9, 2}, qtys(ListResult{Data: all}))
 
 	// An exact-match filter casts its text value to the column type.
 	byQty, err := svc.List(ctx, "test.native_all", query.ListInput{Limit: 50, Filters: [][2]string{{"qty", "9"}}}, rc)
 	require.NoError(t, err)
-	require.True(t, byQty.IsOk, "%+v", byQty)
 	require.Equal(t, []float64{9}, qtys(byQty))
 	byDone, err := svc.List(ctx, "test.native_all", query.ListInput{Limit: 50, Filters: [][2]string{{"done", "true"}}}, rc)
 	require.NoError(t, err)
-	require.True(t, byDone.IsOk, "%+v", byDone)
 	require.Len(t, byDone.Data, 2)
 	byDue, err := svc.List(ctx, "test.native_all", query.ListInput{Limit: 50, Filters: [][2]string{{"due", "2026-03-01"}}}, rc)
 	require.NoError(t, err)
-	require.True(t, byDue.IsOk, "%+v", byDue)
 	require.Len(t, byDue.Data, 5)
 
 	// JQL compares numerically: qty > 9 is 10 and 100, not "2" (which is > "10" as text).
 	jql := `qty > 9`
 	gt, err := svc.List(ctx, "test.native_all", query.ListInput{Limit: 50, JQL: &jql}, rc)
 	require.NoError(t, err)
-	require.True(t, gt.IsOk, "%+v", gt)
 	require.ElementsMatch(t, []float64{10, 100}, qtys(gt))
 }
 
@@ -210,17 +200,15 @@ func TestAggregateSumsAMoneyColumnWithoutACastThroughText(t *testing.T) {
 	svc := newCrudService(pool, nativeEntity())
 
 	for _, price := range []float64{10.25, 4.75} {
-		r, err := svc.Create(ctx, "test.native_all", JsonObject{"title": raw("p"), "price": raw(price)}, rc, nil)
+		_, err := svc.Create(ctx, "test.native_all", JsonObject{"title": raw("p"), "price": raw(price)}, rc, nil)
 		require.NoError(t, err)
-		require.True(t, r.IsOk, "%+v", r)
 	}
 	field := "price"
 	res, err := svc.AggregateWithInput(ctx, "test.native_all",
 		query.AggregateInput{Metrics: []query.AggregateMetric{{Func: query.AggSum, Field: &field}}, Limit: query.DefaultGroups}, rc)
 	require.NoError(t, err)
-	require.True(t, res.IsOk, "%+v", res)
-	require.Len(t, res.Data, 1)
+	require.Len(t, res, 1)
 	var row map[string]float64
-	require.NoError(t, json.Unmarshal(res.Data[0], &row))
+	require.NoError(t, json.Unmarshal(res[0], &row))
 	require.Equal(t, 15.0, row["sum_price"])
 }

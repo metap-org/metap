@@ -53,11 +53,10 @@ func SessionCookies(token, csrfValue string, ttlSeconds int, secure bool) (*http
 	return sessionCookies(token, csrfValue, ttlSeconds, secure)
 }
 
-// WriteCrudServiceError is the exported form of writeCrudServiceError (crud.ServiceResult's
-// error shape -> the standard {"error":{...}} response).
-func WriteCrudServiceError(w http.ResponseWriter, status uint16, errorCode string, message *string, fieldErrors map[string][]string) {
-	writeCrudServiceError(w, status, errorCode, message, fieldErrors)
-}
+// WriteCrudError answers a CrudService/RecordBackend failure: a *crud.ServiceError becomes the
+// standard {"error":{...}} envelope with its status, code and field errors; anything else is an
+// internal error. Custom routes use this instead of mapping the error themselves.
+func WriteCrudError(w http.ResponseWriter, err error) { writeCrudError(w, err) }
 
 // ParseOptionalUUID is the exported form of parseOptionalUUID: nil for "" or a malformed id.
 func ParseOptionalUUID(s string) *uuid.UUID { return parseOptionalUUID(s) }

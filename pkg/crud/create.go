@@ -11,31 +11,31 @@ import (
 )
 
 // Create mirrors the Rust CrudService::create.
-func (s *CrudService) Create(ctx context.Context, entityName string, rawData JsonObject, rc *permission.RequestContext, reason *string) (ServiceResult[RecordDto], error) {
+func (s *CrudService) Create(ctx context.Context, entityName string, rawData JsonObject, rc *permission.RequestContext, reason *string) (RecordDto, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	registry, err := s.registryFor(ctx, tenantID)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return ResultErr[RecordDto](404, "entity_not_found"), nil
+		return RecordDto{}, NewServiceError(404, "entity_not_found")
 	}
 
 	decision, err := s.permissions.CanCreateEntity(ctx, rc, entity.Name)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	if !decision.Allowed {
-		return forbidden[RecordDto](decision), nil
+		return RecordDto{}, forbidden(decision)
 	}
 
 	snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, entity.Name)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	keys := make([]string, 0, len(rawData))
@@ -44,15 +44,15 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 	}
 	writeDecision := snapshot.AssertWritableFields(rc, keys, nil, false)
 	if !writeDecision.Allowed {
-		return forbiddenWithField[RecordDto](writeDecision), nil
+		return RecordDto{}, forbiddenWithField(writeDecision)
 	}
 
 	if fe := rejectSystemFields(entity, rawData); fe != nil {
-		return ResultErrWithFieldErrors[RecordDto](400, "validation_failed", fe), nil
+		return RecordDto{}, NewServiceErrorFields(400, "validation_failed", fe)
 	}
 	data, fieldErrors := ValidatePayload(entity, rawData)
 	if fieldErrors != nil {
-		return ResultErrWithFieldErrors[RecordDto](400, "validation_failed", fieldErrors), nil
+		return RecordDto{}, NewServiceErrorFields(400, "validation_failed", fieldErrors)
 	}
 
 	recomputeFields(entity, data)
@@ -76,15 +76,15 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 	}
 	userID, err := parseUserID(rc)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
-		if r, ok := routerUnavailable[RecordDto](err); ok {
-			return r, nil
+		if r, ok := routerUnavailable(err); ok {
+			return RecordDto{}, r
 		}
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	var statusArg *string
@@ -96,25 +96,25 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	row := tx.QueryRow(ctx, buildInsertSQL(entity), tenantID, code, statusArg, userID, userID, json.RawMessage(dataJSON))
 	record, err := scanRecordRow(row, entity.Name)
 	if err != nil {
-		if r, ok := uniqueViolation[RecordDto](entity, err); ok {
+		if r, ok := uniqueViolation(entity, err); ok {
 			tx.Rollback(ctx) //nolint:errcheck
-			return r, nil
+			return RecordDto{}, r
 		}
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	if err := workflow.EmitCreated(ctx, tx, entity, tenantID, record.ID, data); err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	versionAfter := record.Version
@@ -132,5 +132,5 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 		OccurredAt:   time.Now().UTC(),
 	})
 
-	return ResultOk(maskRecordForRead(entity, rc, snapshot, record)), nil
+	return maskRecordForRead(entity, rc, snapshot, record), nil
 }

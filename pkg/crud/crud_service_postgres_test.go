@@ -207,82 +207,82 @@ func TestFullLifecycleCreateGetUpdateTransitionDelete(t *testing.T) {
 
 	created, err := crud.Create(ctx, "test.orders", JsonObject{"name": raw("First order"), "amount": raw(50)}, rc, nil)
 	require.NoError(t, err, "create failed: %v %+v", err, created)
-	require.True(t, created.IsOk, "create failed: %v %+v", err, created)
-	require.NotNil(t, created.Data.Status, "expected initial status draft, got %+v", created.Data.Status)
-	require.Equal(t, "draft", *created.Data.Status, "expected initial status draft, got %+v", created.Data.Status)
-	require.EqualValues(t, 1, created.Data.Version, "expected version 1, got %d", created.Data.Version)
+	require.NoError(t, err)
+	require.NotNil(t, created.Status, "expected initial status draft, got %+v", created.Status)
+	require.Equal(t, "draft", *created.Status, "expected initial status draft, got %+v", created.Status)
+	require.EqualValues(t, 1, created.Version, "expected version 1, got %d", created.Version)
 
 	// create validation failure: missing required "name"
 	bad, err := crud.Create(ctx, "test.orders", JsonObject{"amount": raw(1)}, rc, nil)
-	require.NoError(t, err)
-	require.False(t, bad.IsOk, "expected validation_failed, got %+v", bad)
-	require.EqualValues(t, 400, bad.Status, "expected validation_failed, got %+v", bad)
-	require.Equal(t, "validation_failed", bad.ErrorCode, "expected validation_failed, got %+v", bad)
-	_, ok := bad.FieldErrors["name"]
-	require.True(t, ok, "expected name in field errors, got %v", bad.FieldErrors)
+	var badErr *ServiceError
+	require.ErrorAs(t, err, &badErr)
+	require.EqualValues(t, 400, badErr.Status, "expected validation_failed, got %+v", bad)
+	require.Equal(t, "validation_failed", badErr.Code, "expected validation_failed, got %+v", bad)
+	_, ok := badErr.FieldErrors["name"]
+	require.True(t, ok, "expected name in field errors, got %v", badErr.FieldErrors)
 
 	// get
-	got, err := crud.Get(ctx, "test.orders", created.Data.ID, rc)
+	got, err := crud.Get(ctx, "test.orders", created.ID, rc)
 	require.NoError(t, err, "get failed: %v %+v", err, got)
-	require.True(t, got.IsOk, "get failed: %v %+v", err, got)
-	require.Equal(t, created.Data.ID, got.Data.Record.ID, "id mismatch")
-	require.True(t, got.Data.Capabilities.CanUpdate, "expected can_update true")
-	require.Len(t, got.Data.Capabilities.Transitions, 1, "got %+v", got.Data.Capabilities.Transitions)
-	require.Equal(t, "approve", got.Data.Capabilities.Transitions[0].Action, "got %+v", got.Data.Capabilities.Transitions)
-	require.False(t, got.Data.Capabilities.Transitions[0].Available, "guard requires amount == 100, current is 50")
+	require.NoError(t, err)
+	require.Equal(t, created.ID, got.Record.ID, "id mismatch")
+	require.True(t, got.Capabilities.CanUpdate, "expected can_update true")
+	require.Len(t, got.Capabilities.Transitions, 1, "got %+v", got.Capabilities.Transitions)
+	require.Equal(t, "approve", got.Capabilities.Transitions[0].Action, "got %+v", got.Capabilities.Transitions)
+	require.False(t, got.Capabilities.Transitions[0].Available, "guard requires amount == 100, current is 50")
 
 	// update with stale version -> 409
-	stale, err := crud.Update(ctx, "test.orders", created.Data.ID, 999, JsonObject{"amount": raw(100)}, rc, nil)
-	require.NoError(t, err)
-	require.False(t, stale.IsOk, "expected version_conflict, got %+v", stale)
-	require.EqualValues(t, 409, stale.Status, "expected version_conflict, got %+v", stale)
-	require.Equal(t, "version_conflict", stale.ErrorCode, "expected version_conflict, got %+v", stale)
+	stale, err := crud.Update(ctx, "test.orders", created.ID, 999, JsonObject{"amount": raw(100)}, rc, nil)
+	var staleErr *ServiceError
+	require.ErrorAs(t, err, &staleErr)
+	require.EqualValues(t, 409, staleErr.Status, "expected version_conflict, got %+v", stale)
+	require.Equal(t, "version_conflict", staleErr.Code, "expected version_conflict, got %+v", stale)
 
 	// update with correct version -> succeeds
-	updated, err := crud.Update(ctx, "test.orders", created.Data.ID, created.Data.Version, JsonObject{"amount": raw(100)}, rc, nil)
+	updated, err := crud.Update(ctx, "test.orders", created.ID, created.Version, JsonObject{"amount": raw(100)}, rc, nil)
 	require.NoError(t, err, "update failed: %v %+v", err, updated)
-	require.True(t, updated.IsOk, "update failed: %v %+v", err, updated)
-	require.EqualValues(t, 2, updated.Data.Version, "expected version 2, got %d", updated.Data.Version)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, updated.Version, "expected version 2, got %d", updated.Version)
 	var amount float64
-	json.Unmarshal(updated.Data.Data["amount"], &amount)
+	json.Unmarshal(updated.Data["amount"], &amount)
 	require.EqualValues(t, 100, amount, "expected amount 100, got %v", amount)
 	var status string
-	json.Unmarshal(updated.Data.Data["status"], &status)
+	json.Unmarshal(updated.Data["status"], &status)
 	require.Equal(t, "draft", status, "status must not change via update, got %q", status)
 
 	// transition guard now passes
-	transitioned, err := crud.Transition(ctx, "test.orders", created.Data.ID, "approve", updated.Data.Version, nil, rc, nil)
+	transitioned, err := crud.Transition(ctx, "test.orders", created.ID, "approve", updated.Version, nil, rc, nil)
 	require.NoError(t, err, "transition failed: %v %+v", err, transitioned)
-	require.True(t, transitioned.IsOk, "transition failed: %v %+v", err, transitioned)
-	require.NotNil(t, transitioned.Data.Status, "expected approved, got %+v", transitioned.Data.Status)
-	require.Equal(t, "approved", *transitioned.Data.Status, "expected approved, got %+v", transitioned.Data.Status)
-	require.EqualValues(t, 3, transitioned.Data.Version, "expected version 3, got %d", transitioned.Data.Version)
+	require.NoError(t, err)
+	require.NotNil(t, transitioned.Status, "expected approved, got %+v", transitioned.Status)
+	require.Equal(t, "approved", *transitioned.Status, "expected approved, got %+v", transitioned.Status)
+	require.EqualValues(t, 3, transitioned.Version, "expected version 3, got %d", transitioned.Version)
 
 	// transition again from a now-invalid from-state
-	invalid, err := crud.Transition(ctx, "test.orders", created.Data.ID, "approve", transitioned.Data.Version, nil, rc, nil)
-	require.NoError(t, err)
-	require.False(t, invalid.IsOk, "expected invalid_transition, got %+v", invalid)
-	require.EqualValues(t, 409, invalid.Status, "expected invalid_transition, got %+v", invalid)
-	require.Equal(t, "invalid_transition", invalid.ErrorCode, "expected invalid_transition, got %+v", invalid)
+	invalid, err := crud.Transition(ctx, "test.orders", created.ID, "approve", transitioned.Version, nil, rc, nil)
+	var invalidErr *ServiceError
+	require.ErrorAs(t, err, &invalidErr)
+	require.EqualValues(t, 409, invalidErr.Status, "expected invalid_transition, got %+v", invalid)
+	require.Equal(t, "invalid_transition", invalidErr.Code, "expected invalid_transition, got %+v", invalid)
 
 	// delete (soft)
-	deleted, err := crud.Delete(ctx, "test.orders", created.Data.ID, transitioned.Data.Version, rc, nil)
+	deleted, err := crud.Delete(ctx, "test.orders", created.ID, transitioned.Version, rc, nil)
 	require.NoError(t, err, "delete failed: %v %+v", err, deleted)
-	require.True(t, deleted.IsOk, "delete failed: %v %+v", err, deleted)
-	require.EqualValues(t, 4, deleted.Data.Version, "expected version 4, got %d", deleted.Data.Version)
+	require.NoError(t, err)
+	require.EqualValues(t, 4, deleted.Version, "expected version 4, got %d", deleted.Version)
 
 	// get after delete -> 404
-	afterDelete, err := crud.Get(ctx, "test.orders", created.Data.ID, rc)
-	require.NoError(t, err)
-	require.False(t, afterDelete.IsOk, "expected record_not_found, got %+v", afterDelete)
-	require.EqualValues(t, 404, afterDelete.Status, "expected record_not_found, got %+v", afterDelete)
-	require.Equal(t, "record_not_found", afterDelete.ErrorCode, "expected record_not_found, got %+v", afterDelete)
+	afterDelete, err := crud.Get(ctx, "test.orders", created.ID, rc)
+	var afterDeleteErr *ServiceError
+	require.ErrorAs(t, err, &afterDeleteErr)
+	require.EqualValues(t, 404, afterDeleteErr.Status, "expected record_not_found, got %+v", afterDelete)
+	require.Equal(t, "record_not_found", afterDeleteErr.Code, "expected record_not_found, got %+v", afterDelete)
 
 	var eventCount int64
-	pool.QueryRow(ctx, `SELECT count(*) FROM metadata.workflow_events WHERE tenant_id = $1 AND record_id = $2`, tenantID, created.Data.ID).Scan(&eventCount)
+	pool.QueryRow(ctx, `SELECT count(*) FROM metadata.workflow_events WHERE tenant_id = $1 AND record_id = $2`, tenantID, created.ID).Scan(&eventCount)
 	require.EqualValues(t, 1, eventCount, "expected 1 workflow event, got %d", eventCount)
 
-	rows, err := pool.Query(ctx, `SELECT topic FROM metadata.outbox_events WHERE aggregate_id = $1 ORDER BY created_at`, created.Data.ID)
+	rows, err := pool.Query(ctx, `SELECT topic FROM metadata.outbox_events WHERE aggregate_id = $1 ORDER BY created_at`, created.ID)
 	require.NoError(t, err)
 	var topics []string
 	for rows.Next() {
@@ -311,15 +311,15 @@ func TestListReturnsCreatedRecordsScopedToTenant(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		r, err := crud.Create(ctx, "test.orders", JsonObject{"name": raw("A order")}, rcA, nil)
 		require.NoError(t, err, "create failed: %v %+v", err, r)
-		require.True(t, r.IsOk, "create failed: %v %+v", err, r)
+		require.NoError(t, err)
 	}
-	if r, err := crud.Create(ctx, "test.orders", JsonObject{"name": raw("B order")}, rcB, nil); err != nil || !r.IsOk {
+	if r, err := crud.Create(ctx, "test.orders", JsonObject{"name": raw("B order")}, rcB, nil); err != nil {
 		require.FailNow(t, fmt.Sprintf("create failed: %v %+v", err, r))
 	}
 
 	listed, err := crud.List(ctx, "test.orders", query.ListInput{Limit: 50}, rcA)
 	require.NoError(t, err, "list failed: %v %+v", err, listed)
-	require.True(t, listed.IsOk, "list failed: %v %+v", err, listed)
+	require.NoError(t, err)
 	require.Len(t, listed.Data, 3, "expected 3 records scoped to tenant A, got %d", len(listed.Data))
 }
 
@@ -341,14 +341,14 @@ func TestUniqueFieldViolationOnADedicatedTableNamesTheField(t *testing.T) {
 
 	first, err := crud.Create(ctx, "test.unique_widgets", JsonObject{"sku": raw("SKU-1")}, rc, nil)
 	require.NoError(t, err, "first create failed: %v %+v", err, first)
-	require.True(t, first.IsOk, "first create failed: %v %+v", err, first)
-	dup, err := crud.Create(ctx, "test.unique_widgets", JsonObject{"sku": raw("SKU-1")}, rc, nil)
 	require.NoError(t, err)
-	require.False(t, dup.IsOk, "expected unique_violation, got %+v", dup)
-	require.EqualValues(t, 409, dup.Status, "expected unique_violation, got %+v", dup)
-	require.Equal(t, "unique_violation", dup.ErrorCode, "expected unique_violation, got %+v", dup)
-	_, ok := dup.FieldErrors["sku"]
-	require.True(t, ok, "expected sku named in field errors, got %v", dup.FieldErrors)
+	dup, err := crud.Create(ctx, "test.unique_widgets", JsonObject{"sku": raw("SKU-1")}, rc, nil)
+	var dupErr *ServiceError
+	require.ErrorAs(t, err, &dupErr)
+	require.EqualValues(t, 409, dupErr.Status, "expected unique_violation, got %+v", dup)
+	require.Equal(t, "unique_violation", dupErr.Code, "expected unique_violation, got %+v", dup)
+	_, ok := dupErr.FieldErrors["sku"]
+	require.True(t, ok, "expected sku named in field errors, got %v", dupErr.FieldErrors)
 }
 
 func TestCompositeUniqueFieldViolationNamesEveryFieldInTheConstraint(t *testing.T) {
@@ -375,16 +375,16 @@ func TestCompositeUniqueFieldViolationNamesEveryFieldInTheConstraint(t *testing.
 
 	first, err := crud.Create(ctx, "test.unique_list_entries", JsonObject{"type": raw("blacklist"), "value": raw("1.2.3.4")}, rc, nil)
 	require.NoError(t, err, "first create failed: %v %+v", err, first)
-	require.True(t, first.IsOk, "first create failed: %v %+v", err, first)
-	dup, err := crud.Create(ctx, "test.unique_list_entries", JsonObject{"type": raw("blacklist"), "value": raw("1.2.3.4")}, rc, nil)
 	require.NoError(t, err)
-	require.False(t, dup.IsOk, "expected unique_violation, got %+v", dup)
-	require.EqualValues(t, 409, dup.Status, "expected unique_violation, got %+v", dup)
-	require.Equal(t, "unique_violation", dup.ErrorCode, "expected unique_violation, got %+v", dup)
-	_, ok := dup.FieldErrors["type"]
-	require.True(t, ok, "expected type named, got %v", dup.FieldErrors)
-	_, ok = dup.FieldErrors["value"]
-	require.True(t, ok, "expected value named, got %v", dup.FieldErrors)
+	dup, err := crud.Create(ctx, "test.unique_list_entries", JsonObject{"type": raw("blacklist"), "value": raw("1.2.3.4")}, rc, nil)
+	var dupErr *ServiceError
+	require.ErrorAs(t, err, &dupErr)
+	require.EqualValues(t, 409, dupErr.Status, "expected unique_violation, got %+v", dup)
+	require.Equal(t, "unique_violation", dupErr.Code, "expected unique_violation, got %+v", dup)
+	_, ok := dupErr.FieldErrors["type"]
+	require.True(t, ok, "expected type named, got %v", dupErr.FieldErrors)
+	_, ok = dupErr.FieldErrors["value"]
+	require.True(t, ok, "expected value named, got %v", dupErr.FieldErrors)
 }
 
 func TestDeleteIsRejectedWhenAnotherRecordStillReferencesItThenSucceedsOnceItIsGone(t *testing.T) {
@@ -397,26 +397,26 @@ func TestDeleteIsRejectedWhenAnotherRecordStillReferencesItThenSucceedsOnceItIsG
 
 	parent, err := crud.Create(ctx, "test.parents", JsonObject{"name": raw("Acme")}, rc, nil)
 	require.NoError(t, err, "create parent failed: %v %+v", err, parent)
-	require.True(t, parent.IsOk, "create parent failed: %v %+v", err, parent)
-	child, err := crud.Create(ctx, "test.children", JsonObject{"parentId": raw(parent.Data.ID.String())}, rc, nil)
-	require.NoError(t, err, "create child failed: %v %+v", err, child)
-	require.True(t, child.IsOk, "create child failed: %v %+v", err, child)
-
-	blocked, err := crud.Delete(ctx, "test.parents", parent.Data.ID, parent.Data.Version, rc, nil)
 	require.NoError(t, err)
-	require.False(t, blocked.IsOk, "expected record_referenced, got %+v", blocked)
-	require.EqualValues(t, 409, blocked.Status, "expected record_referenced, got %+v", blocked)
-	require.Equal(t, "record_referenced", blocked.ErrorCode, "expected record_referenced, got %+v", blocked)
-	_, ok := blocked.FieldErrors["test.children.parentId"]
-	require.True(t, ok, "expected test.children.parentId blocker named, got %v", blocked.FieldErrors)
+	child, err := crud.Create(ctx, "test.children", JsonObject{"parentId": raw(parent.ID.String())}, rc, nil)
+	require.NoError(t, err, "create child failed: %v %+v", err, child)
+	require.NoError(t, err)
 
-	r, err := crud.Delete(ctx, "test.children", child.Data.ID, child.Data.Version, rc, nil)
+	blocked, err := crud.Delete(ctx, "test.parents", parent.ID, parent.Version, rc, nil)
+	var blockedErr *ServiceError
+	require.ErrorAs(t, err, &blockedErr)
+	require.EqualValues(t, 409, blockedErr.Status, "expected record_referenced, got %+v", blocked)
+	require.Equal(t, "record_referenced", blockedErr.Code, "expected record_referenced, got %+v", blocked)
+	_, ok := blockedErr.FieldErrors["test.children.parentId"]
+	require.True(t, ok, "expected test.children.parentId blocker named, got %v", blockedErr.FieldErrors)
+
+	r, err := crud.Delete(ctx, "test.children", child.ID, child.Version, rc, nil)
 	require.NoError(t, err, "delete child failed: %v %+v", err, r)
-	require.True(t, r.IsOk, "delete child failed: %v %+v", err, r)
+	require.NoError(t, err)
 
-	unblocked, err := crud.Delete(ctx, "test.parents", parent.Data.ID, parent.Data.Version, rc, nil)
+	unblocked, err := crud.Delete(ctx, "test.parents", parent.ID, parent.Version, rc, nil)
 	require.NoError(t, err, "expected delete to succeed once child is gone, got %v %+v", err, unblocked)
-	require.True(t, unblocked.IsOk, "expected delete to succeed once child is gone, got %v %+v", err, unblocked)
+	require.NoError(t, err)
 }
 
 func TestListHydratesRelatedDisplayForReferenceFieldsWithDisplayField(t *testing.T) {
@@ -429,14 +429,14 @@ func TestListHydratesRelatedDisplayForReferenceFieldsWithDisplayField(t *testing
 
 	parent, err := crud.Create(ctx, "test.parents", JsonObject{"name": raw("Acme Corp")}, rc, nil)
 	require.NoError(t, err, "create parent failed: %v %+v", err, parent)
-	require.True(t, parent.IsOk, "create parent failed: %v %+v", err, parent)
-	r, err := crud.Create(ctx, "test.children", JsonObject{"parentId": raw(parent.Data.ID.String())}, rc, nil)
+	require.NoError(t, err)
+	r, err := crud.Create(ctx, "test.children", JsonObject{"parentId": raw(parent.ID.String())}, rc, nil)
 	require.NoError(t, err, "create child failed: %v %+v", err, r)
-	require.True(t, r.IsOk, "create child failed: %v %+v", err, r)
+	require.NoError(t, err)
 
 	listed, err := crud.List(ctx, "test.children", query.ListInput{Limit: 50}, rc)
 	require.NoError(t, err, "list failed: %v %+v", err, listed)
-	require.True(t, listed.IsOk, "list failed: %v %+v", err, listed)
+	require.NoError(t, err)
 	require.Len(t, listed.Data, 1, "expected 1 child, got %d", len(listed.Data))
 	require.Equal(t, "Acme Corp", listed.Data[0].RelatedDisplay["parentId"], "expected hydrated display value, got %+v", listed.Data[0].RelatedDisplay)
 }
@@ -451,15 +451,15 @@ func TestComputedFieldIsRecalculatedOnCreateAndUpdate(t *testing.T) {
 
 	created, err := crud.Create(ctx, "test.people", JsonObject{"firstName": raw("Ada"), "lastName": raw("Lovelace")}, rc, nil)
 	require.NoError(t, err, "create failed: %v %+v", err, created)
-	require.True(t, created.IsOk, "create failed: %v %+v", err, created)
+	require.NoError(t, err)
 	var displayName string
-	json.Unmarshal(created.Data.Data["displayName"], &displayName)
+	json.Unmarshal(created.Data["displayName"], &displayName)
 	require.Equal(t, "Ada Lovelace", displayName, "expected computed displayName, got %q", displayName)
 
-	updated, err := crud.Update(ctx, "test.people", created.Data.ID, created.Data.Version, JsonObject{"lastName": raw("Byron")}, rc, nil)
+	updated, err := crud.Update(ctx, "test.people", created.ID, created.Version, JsonObject{"lastName": raw("Byron")}, rc, nil)
 	require.NoError(t, err, "update failed: %v %+v", err, updated)
-	require.True(t, updated.IsOk, "update failed: %v %+v", err, updated)
-	json.Unmarshal(updated.Data.Data["displayName"], &displayName)
+	require.NoError(t, err)
+	json.Unmarshal(updated.Data["displayName"], &displayName)
 	require.Equal(t, "Ada Byron", displayName, "expected recomputed displayName, got %q", displayName)
 }
 
@@ -482,22 +482,22 @@ func TestAuditedEntityWritesAreRecordedAndUnauditedEntityWritesAreNot(t *testing
 
 	unaudited, err := crud.Create(ctx, "test.orders", JsonObject{"name": raw("plain")}, rc, nil)
 	require.NoError(t, err, "create failed: %v %+v", err, unaudited)
-	require.True(t, unaudited.IsOk, "create failed: %v %+v", err, unaudited)
+	require.NoError(t, err)
 	audited, err := crud.Create(ctx, "test.audited_orders", JsonObject{"name": raw("audited")}, rc, nil)
 	require.NoError(t, err, "create failed: %v %+v", err, audited)
-	require.True(t, audited.IsOk, "create failed: %v %+v", err, audited)
+	require.NoError(t, err)
 
 	var plainCount, auditedCount int64
-	pool.QueryRow(ctx, `SELECT count(*) FROM metadata.audit_trail_entries WHERE tenant_id = $1 AND record_id = $2`, tenantID, unaudited.Data.ID).Scan(&plainCount)
-	pool.QueryRow(ctx, `SELECT count(*) FROM metadata.audit_trail_entries WHERE tenant_id = $1 AND record_id = $2`, tenantID, audited.Data.ID).Scan(&auditedCount)
+	pool.QueryRow(ctx, `SELECT count(*) FROM metadata.audit_trail_entries WHERE tenant_id = $1 AND record_id = $2`, tenantID, unaudited.ID).Scan(&plainCount)
+	pool.QueryRow(ctx, `SELECT count(*) FROM metadata.audit_trail_entries WHERE tenant_id = $1 AND record_id = $2`, tenantID, audited.ID).Scan(&auditedCount)
 	require.EqualValues(t, 0, plainCount, "expected no audit row for unaudited entity, got %d", plainCount)
 	require.EqualValues(t, 1, auditedCount, "expected exactly 1 audit row for audited entity, got %d", auditedCount)
 
-	events, err := crud.ListAuditEvents(ctx, "test.audited_orders", audited.Data.ID, rc)
+	events, err := crud.ListAuditEvents(ctx, "test.audited_orders", audited.ID, rc)
 	require.NoError(t, err, "list audit events failed: %v %+v", err, events)
-	require.True(t, events.IsOk, "list audit events failed: %v %+v", err, events)
-	require.Len(t, events.Data, 1, "got %+v", events.Data)
-	require.Equal(t, "create", events.Data[0].Action, "got %+v", events.Data)
+	require.NoError(t, err)
+	require.Len(t, events, 1, "got %+v", events)
+	require.Equal(t, "create", events[0].Action, "got %+v", events)
 }
 
 func apiKeyEntity() metadata.EntityDefinition {
@@ -528,13 +528,13 @@ func TestSystemFieldsAreWrittenOnlyBySetSystemFieldsWithoutVersionBumpOrAudit(t 
 	crud := WithAudit(testRouter(pool), &ptr, testPermissions(pool), audit.NewPostgresStore(pool))
 
 	rejected, err := crud.Create(ctx, "test.api_keys", JsonObject{"name": raw("ci"), "lastUsedAt": raw("2026-01-01T00:00:00Z")}, rc, nil)
-	require.NoError(t, err, "create with a system field must be rejected: %v %+v", err, rejected)
-	require.False(t, rejected.IsOk, "create with a system field must be rejected: %v %+v", err, rejected)
-	require.NotNil(t, rejected.FieldErrors["lastUsedAt"], "create with a system field must be rejected: %v %+v", err, rejected)
+	var rejectedErr *ServiceError
+	require.ErrorAs(t, err, &rejectedErr)
+	require.NotNil(t, rejectedErr.FieldErrors["lastUsedAt"], "create with a system field must be rejected: %v %+v", err, rejected)
 	created, err := crud.Create(ctx, "test.api_keys", JsonObject{"name": raw("ci")}, rc, nil)
 	require.NoError(t, err, "create failed: %v %+v", err, created)
-	require.True(t, created.IsOk, "create failed: %v %+v", err, created)
-	id, versionBefore := created.Data.ID, created.Data.Version
+	require.NoError(t, err)
+	id, versionBefore := created.ID, created.Version
 
 	countAudit := func() int64 {
 		var n int64
@@ -555,15 +555,16 @@ func TestSystemFieldsAreWrittenOnlyBySetSystemFieldsWithoutVersionBumpOrAudit(t 
 	require.Error(t, err, "SetSystemFields must refuse a non-system field")
 	got, err := crud.Get(ctx, "test.api_keys", id, rc)
 	require.NoError(t, err, "get failed: %v %+v", err, got)
-	require.True(t, got.IsOk, "get failed: %v %+v", err, got)
-	require.Equal(t, versionBefore, got.Data.Record.Version, "version must not change: before %d after %d", versionBefore, got.Data.Record.Version)
+	require.NoError(t, err)
+	require.Equal(t, versionBefore, got.Record.Version, "version must not change: before %d after %d", versionBefore, got.Record.Version)
 	// A datetime column reads back in Postgres's own ISO form (offset, not Z); it is the same instant.
-	require.Equal(t, `"2026-11-06T10:00:00+00:00"`, string(got.Data.Record.Data["lastUsedAt"]), "got %s", got.Data.Record.Data["lastUsedAt"])
+	require.Equal(t, `"2026-11-06T10:00:00+00:00"`, string(got.Record.Data["lastUsedAt"]), "got %s", got.Record.Data["lastUsedAt"])
 	require.Equal(t, auditBefore, countAudit(), "SetSystemFields must not audit or emit outbox events")
 	require.Equal(t, outboxBefore, countOutbox(), "SetSystemFields must not audit or emit outbox events")
 
-	r, _ := crud.Update(ctx, "test.api_keys", id, versionBefore, JsonObject{"lastUsedAt": raw("2020-01-01T00:00:00Z")}, rc, nil)
-	require.False(t, r.IsOk, "update with a system field must be rejected")
+	_, err = crud.Update(ctx, "test.api_keys", id, versionBefore, JsonObject{"lastUsedAt": raw("2020-01-01T00:00:00Z")}, rc, nil)
+	var rErr *ServiceError
+	require.ErrorAs(t, err, &rErr)
 	// A system write before the user's update must survive it. (The interleaved case, a system
 	// write landing between Update's precheck read and its UPDATE, is covered by the UPDATE's own
 	// SQL re-reading system keys from the stored row; it is not deterministic enough to race here.)
@@ -571,6 +572,6 @@ func TestSystemFieldsAreWrittenOnlyBySetSystemFieldsWithoutVersionBumpOrAudit(t 
 	require.NoError(t, err)
 	updated, err := crud.Update(ctx, "test.api_keys", id, versionBefore, JsonObject{"name": raw("ci-renamed")}, rc, nil)
 	require.NoError(t, err, "update failed: %v %+v", err, updated)
-	require.True(t, updated.IsOk, "update failed: %v %+v", err, updated)
-	require.Equal(t, `"2026-11-06T11:00:00+00:00"`, string(updated.Data.Data["lastUsedAt"]), "user update must keep the stored system value, got %s", updated.Data.Data["lastUsedAt"])
+	require.NoError(t, err)
+	require.Equal(t, `"2026-11-06T11:00:00+00:00"`, string(updated.Data["lastUsedAt"]), "user update must keep the stored system value, got %s", updated.Data["lastUsedAt"])
 }

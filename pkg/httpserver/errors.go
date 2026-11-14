@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/runtime"
 )
@@ -41,14 +42,15 @@ func writeRouterUnavailable(w http.ResponseWriter, err error) {
 	}
 }
 
-// writeCrudResult writes a crud.ServiceResult[T]'s error half as the standard envelope — the
-// REST handlers' one shared tail after a non-2xx crud.ServiceResult comes back.
-func writeCrudServiceError(w http.ResponseWriter, status uint16, errorCode string, message *string, fieldErrors map[string][]string) {
-	msg := ""
-	if message != nil {
-		msg = *message
+// writeCrudError answers a CrudService/RecordBackend failure: a *crud.ServiceError keeps its
+// status, code, message and field errors in the standard envelope; anything else is logged and
+// answered as an internal error (RouterError first — an expected tenant-lifecycle state).
+func writeCrudError(w http.ResponseWriter, err error) {
+	if se, ok := crud.AsServiceError(err); ok {
+		writeServiceError(w, int(se.Status), se.Code, se.Message, se.FieldErrors)
+		return
 	}
-	writeServiceError(w, int(status), errorCode, msg, fieldErrors)
+	writeInternalError(w, err)
 }
 
 // decodeJSONBody: see DecodeJSONBody. The body is bounded by httpx.DefaultMaxBodyBytes.

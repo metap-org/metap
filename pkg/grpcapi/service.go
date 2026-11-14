@@ -50,14 +50,27 @@ func internalError(err error) error {
 	return status.Error(codes.Internal, "internal server error")
 }
 
-// recordErr builds the (error, trailer) pair for a non-OK ServiceResult and reports it on resp's
+// recordErr builds the (error, trailer) pair for a crud.ServiceError and reports it on resp's
 // trailer, then returns the error itself — the one call site every RPC handler below uses.
-func sendServiceError[T any](ctx context.Context, r crud.ServiceResult[T]) error {
-	err, md := errorToStatus(r.Status, r.ErrorCode, r.Message, r.FieldErrors)
+func sendServiceError(ctx context.Context, se *crud.ServiceError) error {
+	var message *string
+	if se.Message != "" {
+		message = &se.Message
+	}
+	err, md := errorToStatus(se.Status, se.Code, message, se.FieldErrors)
 	if md != nil {
 		_ = grpc.SetTrailer(ctx, md)
 	}
 	return err
+}
+
+// rpcError maps what a backend returned onto the gRPC error: a ServiceError keeps its status,
+// code and field errors (via the trailer), anything else is an internal error.
+func rpcError(ctx context.Context, err error) error {
+	if se, ok := crud.AsServiceError(err); ok {
+		return sendServiceError(ctx, se)
+	}
+	return internalError(err)
 }
 
 func (s *RecordService) List(ctx context.Context, req *pb.ListRequest) (*pb.ListResponse, error) {
@@ -73,10 +86,7 @@ func (s *RecordService) List(ctx context.Context, req *pb.ListRequest) (*pb.List
 
 	result, ierr := s.backend.List(ctx, req.GetEntityName(), input, rc)
 	if ierr != nil {
-		return nil, internalError(ierr)
-	}
-	if !result.IsOk {
-		return nil, sendServiceError(ctx, result)
+		return nil, rpcError(ctx, ierr)
 	}
 
 	records := make([]*structpb.Struct, len(result.Data))
@@ -89,7 +99,7 @@ func (s *RecordService) List(ctx context.Context, req *pb.ListRequest) (*pb.List
 	}
 	nextCursor := ""
 	hasMore := false
-	if result.Page != nil && result.Page.NextCursor != nil {
+	if result.Page.NextCursor != nil {
 		nextCursor = *result.Page.NextCursor
 		hasMore = true
 	}
@@ -108,17 +118,14 @@ func (s *RecordService) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetRes
 
 	result, ierr := s.backend.Get(ctx, req.GetEntityName(), id, rc)
 	if ierr != nil {
-		return nil, internalError(ierr)
-	}
-	if !result.IsOk {
-		return nil, sendServiceError(ctx, result)
+		return nil, rpcError(ctx, ierr)
 	}
 
-	recordStruct, serr := ValueToStruct(result.Data.Record)
+	recordStruct, serr := ValueToStruct(result.Record)
 	if serr != nil {
 		return nil, internalError(serr)
 	}
-	capsStruct, serr := ValueToStruct(result.Data.Capabilities)
+	capsStruct, serr := ValueToStruct(result.Capabilities)
 	if serr != nil {
 		return nil, internalError(serr)
 	}
@@ -137,12 +144,9 @@ func (s *RecordService) Create(ctx context.Context, req *pb.CreateRequest) (*pb.
 
 	result, ierr := s.backend.Create(ctx, req.GetEntityName(), data, rc, optionalReason(req.Reason))
 	if ierr != nil {
-		return nil, internalError(ierr)
+		return nil, rpcError(ctx, ierr)
 	}
-	if !result.IsOk {
-		return nil, sendServiceError(ctx, result)
-	}
-	recordStruct, serr := ValueToStruct(result.Data)
+	recordStruct, serr := ValueToStruct(result)
 	if serr != nil {
 		return nil, internalError(serr)
 	}
@@ -165,12 +169,9 @@ func (s *RecordService) Update(ctx context.Context, req *pb.UpdateRequest) (*pb.
 
 	result, ierr := s.backend.Update(ctx, req.GetEntityName(), id, req.GetExpectedVersion(), data, rc, optionalReason(req.Reason))
 	if ierr != nil {
-		return nil, internalError(ierr)
+		return nil, rpcError(ctx, ierr)
 	}
-	if !result.IsOk {
-		return nil, sendServiceError(ctx, result)
-	}
-	recordStruct, serr := ValueToStruct(result.Data)
+	recordStruct, serr := ValueToStruct(result)
 	if serr != nil {
 		return nil, internalError(serr)
 	}
@@ -193,12 +194,9 @@ func (s *RecordService) Transition(ctx context.Context, req *pb.TransitionReques
 
 	result, ierr := s.backend.Transition(ctx, req.GetEntityName(), id, req.GetAction(), req.GetExpectedVersion(), data, rc, optionalReason(req.Reason))
 	if ierr != nil {
-		return nil, internalError(ierr)
+		return nil, rpcError(ctx, ierr)
 	}
-	if !result.IsOk {
-		return nil, sendServiceError(ctx, result)
-	}
-	recordStruct, serr := ValueToStruct(result.Data)
+	recordStruct, serr := ValueToStruct(result)
 	if serr != nil {
 		return nil, internalError(serr)
 	}
@@ -217,12 +215,9 @@ func (s *RecordService) Delete(ctx context.Context, req *pb.DeleteRequest) (*pb.
 
 	result, ierr := s.backend.Delete(ctx, req.GetEntityName(), id, req.GetExpectedVersion(), rc, optionalReason(req.Reason))
 	if ierr != nil {
-		return nil, internalError(ierr)
+		return nil, rpcError(ctx, ierr)
 	}
-	if !result.IsOk {
-		return nil, sendServiceError(ctx, result)
-	}
-	recordStruct, serr := ValueToStruct(result.Data)
+	recordStruct, serr := ValueToStruct(result)
 	if serr != nil {
 		return nil, internalError(serr)
 	}
@@ -243,13 +238,10 @@ func (s *RecordService) Aggregate(ctx context.Context, req *pb.AggregateRequest)
 
 	result, ierr := s.backend.Aggregate(ctx, req.GetEntityName(), spec, rc)
 	if ierr != nil {
-		return nil, internalError(ierr)
+		return nil, rpcError(ctx, ierr)
 	}
-	if !result.IsOk {
-		return nil, sendServiceError(ctx, result)
-	}
-	rows := make([]*structpb.Struct, len(result.Data))
-	for i, raw := range result.Data {
+	rows := make([]*structpb.Struct, len(result))
+	for i, raw := range result {
 		var v any
 		if err := json.Unmarshal(raw, &v); err != nil {
 			return nil, internalError(err)

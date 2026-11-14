@@ -16,93 +16,93 @@ import (
 
 // Transition mirrors the Rust CrudService::transition.
 func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid.UUID, action string, expectedVersion int32,
-	payload JsonObject, rc *permission.RequestContext, reason *string) (ServiceResult[RecordDto], error) {
+	payload JsonObject, rc *permission.RequestContext, reason *string) (RecordDto, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	registry, err := s.registryFor(ctx, tenantID)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return ResultErr[RecordDto](404, "entity_not_found"), nil
+		return RecordDto{}, NewServiceError(404, "entity_not_found")
 	}
 
 	// Per-action entity check: `transition` covers every action, `transition:<action>` only
 	// this one (permission.TransitionActionPolicy).
 	decision, err := s.permissions.CanTransitionAction(ctx, rc, entity.Name, action)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	if !decision.Allowed {
-		return forbidden[RecordDto](decision), nil
+		return RecordDto{}, forbidden(decision)
 	}
 
 	precheckTx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
-		if r, ok := routerUnavailable[RecordDto](err); ok {
-			return r, nil
+		if r, ok := routerUnavailable(err); ok {
+			return RecordDto{}, r
 		}
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	existing, err := fetchExisting(ctx, precheckTx, id, tenantID, entity)
 	if err != nil {
 		precheckTx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	if existing == nil {
 		precheckTx.Rollback(ctx) //nolint:errcheck
-		return ResultErr[RecordDto](404, "record_not_found"), nil
+		return RecordDto{}, NewServiceError(404, "record_not_found")
 	}
 	var actors map[string]string
 	if workflow.UsesWorkflowContext(entity) {
 		byRecord, err := workflow.LastActors(ctx, precheckTx, tenantID, entity.Name, []uuid.UUID{id})
 		if err != nil {
 			precheckTx.Rollback(ctx) //nolint:errcheck
-			return ServiceResult[RecordDto]{}, err
+			return RecordDto{}, err
 		}
 		actors = byRecord[id]
 	}
 	if err := precheckTx.Commit(ctx); err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, entity.Name)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	enriched, err := s.enrichRecordForActions(ctx, entity, snapshot, []permission.EntityAction{permission.ActionTransition}, tenantID, registry, existing.Data)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(enriched), permission.ActionTransition)
 	if !recordDecision.Allowed {
-		return forbidden[RecordDto](recordDecision), nil
+		return RecordDto{}, forbidden(recordDecision)
 	}
 
 	if entity.Workflow == nil {
-		return ResultErr[RecordDto](400, "no_workflow"), nil
+		return RecordDto{}, NewServiceError(400, "no_workflow")
 	}
 	workflowDef := entity.Workflow
 
 	fromRaw, ok := existing.Data[workflowDef.StateField]
 	if !ok {
-		return ResultErr[RecordDto](409, "invalid_transition"), nil
+		return RecordDto{}, NewServiceError(409, "invalid_transition")
 	}
 	var fromState string
 	if json.Unmarshal(fromRaw, &fromState) != nil {
-		return ResultErr[RecordDto](409, "invalid_transition"), nil
+		return RecordDto{}, NewServiceError(409, "invalid_transition")
 	}
 
 	transition := workflow.FindTransition(entity, action, fromState)
 	if transition == nil {
-		return ResultErr[RecordDto](409, "invalid_transition"), nil
+		return RecordDto{}, NewServiceError(409, "invalid_transition")
 	}
 
 	if guardErr := workflow.RunGuard(transition, workflow.WithWorkflowContext(existing.Data, actors), rc); guardErr != nil {
-		return ResultErrWithMessage[RecordDto](422, "guard_failed", guardErr.Error()), nil
+		return RecordDto{}, NewServiceErrorMsg(422, "guard_failed", guardErr.Error())
 	}
 	toState := transition.To
 
@@ -123,7 +123,7 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 		}
 		writeDecision := snapshot.AssertWritableFields(rc, keys, permission.JsonObject(existing.Data), true)
 		if !writeDecision.Allowed {
-			return forbiddenWithField[RecordDto](writeDecision), nil
+			return RecordDto{}, forbiddenWithField(writeDecision)
 		}
 		for k, v := range payload {
 			merged[k] = v
@@ -134,53 +134,53 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 
 	nextData, fieldErrors := ValidatePayload(entity, merged)
 	if fieldErrors != nil {
-		return ResultErrWithFieldErrors[RecordDto](400, "validation_failed", fieldErrors), nil
+		return RecordDto{}, NewServiceErrorFields(400, "validation_failed", fieldErrors)
 	}
 
 	if validatorErr := workflow.RunValidator(transition, workflow.WithWorkflowContext(nextData, actors), rc); validatorErr != nil {
-		return ResultErrWithMessage[RecordDto](422, "validator_failed", validatorErr.Error()), nil
+		return RecordDto{}, NewServiceErrorMsg(422, "validator_failed", validatorErr.Error())
 	}
 
 	workflow.ApplySetFields(transition, nextData, rc)
 
 	userID, err := parseUserID(rc)
 	if err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
-		if r, ok := routerUnavailable[RecordDto](err); ok {
-			return r, nil
+		if r, ok := routerUnavailable(err); ok {
+			return RecordDto{}, r
 		}
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	nextDataJSON, err := json.Marshal(nextData)
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	row := tx.QueryRow(ctx, buildUpdateSQL(entity, "status = $6::varchar"), json.RawMessage(nextDataJSON), userID, id, tenantID, expectedVersion, toState)
 	record, err := scanRecordRow(row, entity.Name)
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ResultErr[RecordDto](409, "version_conflict"), nil
+			return RecordDto{}, NewServiceError(409, "version_conflict")
 		}
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	if err := workflow.RecordEvent(ctx, tx, entity, record.ID, action, fromState, toState, rc); err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	if err := workflow.EmitTransitioned(ctx, tx, entity, tenantID, record.ID, action, fromState, toState, userID); err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return ServiceResult[RecordDto]{}, err
+		return RecordDto{}, err
 	}
 
 	versionAfter := record.Version
@@ -199,5 +199,5 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 		OccurredAt:   time.Now().UTC(),
 	})
 
-	return ResultOk(maskRecordForRead(entity, rc, snapshot, record)), nil
+	return maskRecordForRead(entity, rc, snapshot, record), nil
 }

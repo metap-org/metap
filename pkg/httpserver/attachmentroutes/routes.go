@@ -42,13 +42,8 @@ func attachmentsTableFor(state *httpserver.AppState, entity string) string {
 // against recordID, writing the error response itself on failure.
 func ensureRecordPermission(w http.ResponseWriter, r *http.Request, state *httpserver.AppState, entity string, recordID uuid.UUID,
 	action permission.EntityAction, rc *permission.RequestContext) bool {
-	result, err := state.Crud.CheckRecordPermission(r.Context(), entity, recordID, action, rc)
-	if err != nil {
-		httpserver.WriteInternalError(w, err)
-		return false
-	}
-	if !result.IsOk {
-		httpserver.WriteCrudServiceError(w, result.Status, result.ErrorCode, result.Message, result.FieldErrors)
+	if err := state.Crud.CheckRecordPermission(r.Context(), entity, recordID, action, rc); err != nil {
+		httpserver.WriteCrudError(w, err)
 		return false
 	}
 	return true
