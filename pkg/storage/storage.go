@@ -1,11 +1,8 @@
-// Package storage is object storage — a swappable interface, ported from metap's Rust
-// metap-storage crate. Same shape as Cache / a secret store: one interface, callers hold an
-// ObjectStore, never the concrete type.
-//
+// Package storage is object storage — a swappable interface. Same shape as Cache / a secret store:
+// one interface, callers hold an ObjectStore, never the concrete type.
 // ObjectStore deliberately doesn't expose S3 concepts (buckets, ETags, versioning, multipart) —
 // a plain key/bytes blob store, the smallest shape that still fits every backend under
 // consideration.
-//
 // Security-first, not caller discipline: every method takes tenantID as a mandatory first
 // parameter. S3ObjectStore turns (tenantID, key) into the real S3 key (tenantID/key) internally —
 // a caller can never construct a request that reads/writes another tenant's objects, and

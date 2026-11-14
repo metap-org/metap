@@ -44,9 +44,8 @@ func ListJobs(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID) ([]*C
 		return nil, err
 	}
 	defer rows.Close()
-	// make(..., 0), not var out []*CronJob — an empty Go nil slice marshals to JSON null, not
-	// [], diverging from the Rust Vec<CronJob> wire shape a REST client (iterating the result
-	// with .map()) would otherwise break on. Same fix applied to every list function below.
+	// make(..., 0), not var out []*CronJob — an empty Go nil slice marshals to JSON null, not []. Same
+	// fix applied to every list function below.
 	out := make([]*CronJob, 0)
 	for rows.Next() {
 		j, err := jobFromRow(rows)
@@ -68,7 +67,6 @@ func GetJob(ctx context.Context, pool *pgxpool.Pool, tenantID, id uuid.UUID) (*C
 	return j, err
 }
 
-// NewCronJob mirrors the Rust NewCronJob.
 type NewCronJob struct {
 	Name                string
 	TriggerType         string
@@ -115,7 +113,6 @@ func CreateJob(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, inpu
 	return jobFromRow(row)
 }
 
-// JobUpdate mirrors the Rust JobUpdate — every field optional, nil means "keep existing".
 type JobUpdate struct {
 	Name                *string
 	TriggerType         *string

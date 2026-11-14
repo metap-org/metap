@@ -2,8 +2,7 @@
 // the two transports entity access goes through now alongside REST. Every RPC follows the same
 // three steps: authenticate, convert the request's Struct payload to JSON, call the matching
 // crud.RecordBackend method (normally CrudService, or a binary's own decorator around it), then
-// convert the result back. No entity-specific code anywhere. Ported from
-// crates/metap-grpc/src/service.rs.
+// convert the result back. No entity-specific code anywhere.
 package grpcapi
 
 import (
@@ -22,9 +21,8 @@ import (
 	"github.com/metap-org/metap/pkg/query"
 )
 
-// RecordService implements pb.RecordServiceServer by delegating every RPC to a
-// crud.RecordBackend — normally a *crud.CrudService, or a binary's own decorator around one
-// (the same local-vs-remote/decoration seam the Rust GrpcRecordService::new documents).
+// RecordService implements pb.RecordServiceServer by delegating every RPC to a crud.RecordBackend —
+// normally a *crud.CrudService, or a binary's own decorator around one.
 type RecordService struct {
 	pb.UnimplementedRecordServiceServer
 	backend crud.RecordBackend

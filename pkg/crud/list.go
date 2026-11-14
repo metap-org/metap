@@ -9,7 +9,6 @@ import (
 	"github.com/metap-org/metap/pkg/query"
 )
 
-// List mirrors the Rust CrudService::list.
 func (s *CrudService) List(ctx context.Context, entityName string, input query.ListInput, rc *permission.RequestContext) (ListResult, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {

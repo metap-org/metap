@@ -1,8 +1,8 @@
-// Package control is the SaaS multi-tenancy control plane — ported from metap's Rust
-// metap-control crate: control.tenants registry, Router (opens every tenant-scoped transaction),
-// SecretStore (pluggable tenant-credential resolution), tenant provisioning, per-tenant schema
-// isolation, and the PolicyStore/RequestContext glue that needs Router to reach a tenant's own
-// database. No HTTP, no business-entity knowledge — a plain library, same shape as permission.
+// Package control is the SaaS multi-tenancy control plane: the control.tenants registry, Router
+// (opens every tenant-scoped transaction), SecretStore (pluggable tenant-credential resolution),
+// tenant provisioning, per-tenant schema isolation, and the PolicyStore/RequestContext glue that
+// needs Router to reach a tenant's own database. No HTTP, no business-entity knowledge — a plain
+// library, same shape as permission.
 package control
 
 import "github.com/google/uuid"
@@ -22,9 +22,8 @@ const (
 	StatusMigrating
 	StatusSuspended
 	StatusExpired
-	// StatusDeleted is terminal, never reversible. Deliberately does not drop the tenant's
-	// physical data — see this type's Rust doc comment for why. Only ever changes what
-	// Router.Begin does: refuse permanently.
+	// StatusDeleted is terminal, never reversible. Deliberately does not drop the tenant's physical
+	// data. Only ever changes what Router.Begin does: refuse permanently.
 	StatusDeleted
 )
 

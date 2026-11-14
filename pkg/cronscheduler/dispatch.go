@@ -1,12 +1,12 @@
-// The consume-and-run loop (RunExecutor), one firing's idempotency-checked execution (Execute),
-// and the per-TargetType router (dispatch) that calls into the Run*/RunSteps functions. Ported
-// from metap-cron-scheduler's executor/dispatch.rs.
+// The consume-and-run loop (RunExecutor), one firing's idempotency-checked execution (Execute), and
+// the per-TargetType router (dispatch) that calls into the Run*/RunSteps functions.
 package cronscheduler
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"log/slog"
 	"net/http"
 
@@ -14,7 +14,6 @@ import (
 
 	"github.com/metap-org/metap/pkg/cron"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 const ExecutorQueue = "cron.executor"
@@ -54,8 +53,8 @@ func RunExecutor(ctx context.Context, connect func() (eventbus.EventBus, error),
 // workflow_transition/bulk_query_action/webhook call this job makes propagates onward, and a
 // record written by a cron job is traceable back to the run that caused it.
 func Execute(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, payload *cron.CronJobDuePayload) {
-	tc := runtime.TraceContextFromHeaders(http.Header{})
-	ctx = runtime.WithTraceContext(ctx, tc)
+	tc := httpx.TraceContextFromHeaders(http.Header{})
+	ctx = httpx.WithTraceContext(ctx, tc)
 
 	status, ok, err := cron.RunStatusOf(ctx, pool, payload.RunID)
 	if err != nil {

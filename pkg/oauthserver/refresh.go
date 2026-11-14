@@ -28,8 +28,8 @@ type CreateRefreshInput struct {
 	Scope    string
 }
 
-// ConsumeRefreshOutcomeKind distinguishes what presenting a refresh token to the (not yet
-// ported) token endpoint's refresh_token grant resolved to.
+// ConsumeRefreshOutcomeKind distinguishes what presenting a refresh token to the token endpoint's
+// refresh_token grant resolved to.
 type ConsumeRefreshOutcomeKind int
 
 const (
@@ -91,12 +91,10 @@ func CreateRefreshToken(ctx context.Context, tx pgx.Tx, input CreateRefreshInput
 }
 
 // ConsumeRefreshToken takes an open transaction (not a generic DBTX) because rotation genuinely
-// needs multiple statements to succeed or fail together: a caller who fails to mint the new
-// access token after this returns RefreshRotated must roll the whole thing back, or the client
-// would be left holding a rotated refresh token with no access token to show for it. The caller
-// (the not-yet-ported oauth2 HTTP routes) commits only after successfully minting the new access
-// token JWT.
-//
+// needs multiple statements to succeed or fail together: a caller who fails to mint the new access
+// token after this returns RefreshRotated must roll the whole thing back, or the client would be
+// left holding a rotated refresh token with no access token to show for it. The caller (the
+// token endpoint) owns that transaction.
 // Reuse detection: a presented token whose row is already revoked did not come from the
 // legitimate holder's last response (they'd have the *new* token from that rotation, not this
 // one) — this is exactly the signature of a stolen-and-replayed refresh token. Every other live

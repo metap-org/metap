@@ -1,27 +1,20 @@
-// SSRF guard for webhook.go's tenant-supplied target URL — ported from
-// metap-cron-scheduler's executor/ssrf_guard.rs (audit 04 finding A#1).
-//
+// SSRF guard for webhook.go's tenant-supplied target URL.
 // Why this exists. A "webhook" cron job's target_config (url/method/headers/body) is written by
 // a tenant admin — in a SaaS deployment that's a customer, not the operator. Handing that URL
 // straight to an HTTP client, and handing the response body back into cron_job_runs (which the
 // same admin reads), is a *responsive* SSRF: a customer could read cloud metadata
 // (169.254.169.254 -> IAM credentials), reach any service inside the VPC, and set arbitrary
 // request headers while doing it.
-//
 // What is blocked by default, with no configuration: any target that resolves to a
 // loopback/private/link-local/CGNAT/unique-local address, any non-http(s) scheme, and the
 // Authorization/Cookie/Proxy-Authorization request headers.
-//
 // What an operator can tighten or loosen (WebhookPolicyFromEnv):
 //   - CRON_WEBHOOK_ALLOWED_HOSTS — comma-separated allowlist (api.example.com, or .example.com
 //     to match the domain and its subdomains). Unset = allow any public host.
 //   - CRON_WEBHOOK_ALLOW_PRIVATE_TARGETS=true — escape hatch for a deployment that genuinely
 //     webhooks an internal service.
 //
-// Known residual limitation — DNS rebinding, same as the Rust original: Check resolves the host
-// and rejects blocked addresses, then the real HTTP client resolves it again when it actually
-// connects; a DNS record that changes between the two answers could still point the real
-// connection at a blocked address. Left open knowingly, same reasoning as the Rust doc comment.
+// Known residual limitation — DNS rebinding.
 package cronscheduler
 
 import (
@@ -151,9 +144,7 @@ func CheckHeaders(names []string) error {
 // on the public internet" — the single place this list lives, so unit tests and the runtime
 // check can't disagree.
 func IsBlockedIP(addr net.IP) bool {
-	// net.IP.To4 also unwraps an IPv4-mapped IPv6 address (::ffff:a.b.c.d), so that case is
-	// naturally checked as v4 here rather than needing a separate branch the way the Rust
-	// original's to_ipv4_mapped() call does explicitly.
+	// net.IP.To4 also unwraps an IPv4-mapped IPv6 address (::ffff:a.b.c.d).
 	if v4 := addr.To4(); v4 != nil {
 		return isBlockedV4(v4)
 	}
@@ -167,7 +158,6 @@ func isBlockedV4(ip net.IP) bool {
 		return true
 	case ip.Equal(net.IPv4bcast):
 		return true
-	// 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 (TEST-NET-1/2/3, Rust's is_documentation()).
 	case a == 192 && b == 0 && ip[2] == 2:
 		return true
 	case a == 198 && b == 51 && ip[2] == 100:

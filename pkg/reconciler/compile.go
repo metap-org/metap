@@ -94,12 +94,6 @@ func indexName(entityName, fieldName, kind string) string {
 	return kind + "_" + TableNameFor(entityName) + "_" + fieldName
 }
 
-// fnv1a: not Go's hash/fnv (same risk the Rust original flags about std::hash::DefaultHasher —
-// here it's the opposite concern: pinning the exact algorithm this port uses rather than
-// trusting a stdlib package's implementation to never change) — implemented inline so the exact
-// bytes this produces are visible and match the Rust original's fnv1a byte-for-byte, which
-// matters because this name must stay stable across a toolchain upgrade for reconcile
-// convergence.
 func fnv1a(data []byte) uint32 {
 	var hash uint32 = 0x811c9dc5
 	for _, b := range data {
@@ -130,9 +124,7 @@ func compositeUniqueIndexName(entityName string, fields []string) string {
 	return full[:end] + suffix
 }
 
-// utf8RuneBoundary reports whether byte index i in s falls on a UTF-8 rune boundary — mirrors
-// Rust's str::is_char_boundary, needed so the truncation above never splits a multi-byte
-// character.
+// utf8RuneBoundary reports whether byte index i in s falls on a UTF-8 rune boundary.
 func utf8RuneBoundary(s string, i int) bool {
 	if i == 0 || i == len(s) {
 		return true

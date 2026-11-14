@@ -1,9 +1,6 @@
 // Platform (non-entity) GraphQL fields: users/roles, policies, cron jobs, OAuth clients,
-// dashboards, preferences, platform + tenant config. @metap/platform-ui's admin and settings
-// screens call these by the names and shapes the Rust metap-graphql-http::platform_fields module
-// served (recovered from git history — that file is the reference for every type/arg below).
-//
-// metap's Go port has no GraphQL layer, but every one of these already exists as a REST route
+// dashboards, preferences.
+// None of these is a MetadataRegistry entity, but every one of them already exists as a REST route
 // on every metap HTTP service (pkg/httpserver, cronroutes, oauth2routes, dashboardroutes), with
 // the same camelCase JSON shapes inside a {"data": ...} envelope. So each field here is a thin
 // forward: call the matching REST route on the platform service with the caller's own token, unwrap

@@ -1,22 +1,10 @@
-// Package jwks is a JWKS-based multi-service trust root — an alternative to the platform's
-// default per-app static RS256 keypair (peripherals.MintJWT) for a deployment where several
-// separately-deployed microservices need to trust the *same* signing identity: one nominated
-// issuer binary holds the only private key(s), every other microservice verifies locally via a
-// cached JwksClient. Ported from metap's Rust metap-jwks crate.
-//
-// metap-jwks-http (the HTTP surface serving GET /.well-known/jwks.json) is ported in http.go,
-// right in this package rather than a separate one — a plain http.HandlerFunc has none of the
-// axum Router<State>-parameterization friction that made the Rust original a whole separate
-// crate.
-//
+// Package jwks is a JWKS-based multi-service trust root — an alternative to the platform's default
+// per-app static RS256 keypair (peripherals.MintJWT) for a deployment where several
+// separately-deployed microservices need to trust the *same* signing identity: one nominated issuer
+// binary holds the only private key(s), every other microservice verifies locally via a cached
+// JwksClient.
 // Ed25519 (EdDSA), not RS256, for every token this package mints — smaller tokens, faster verify
-// than RS256. Divergence from the Rust original: that version works in PKCS8 DER bytes end to
-// end (ring::signature::Ed25519KeyPair, jsonwebtoken::EncodingKey::from_ed_der) since Rust's
-// jsonwebtoken crate wants DER-encoded keys; Go's crypto/ed25519 and golang-jwt/jwt v5 both work
-// directly with ed25519.PrivateKey/PublicKey (raw 64/32-byte values), so there's no DER encoding
-// step at all here — PrivateKeyBytes/FromPrivateKeyBytes carry the raw ed25519.PrivateKey instead
-// of PKCS8, named differently from the Rust private_pkcs8/from_pkcs8 so a reader doesn't assume
-// PKCS8-compatibility between the two ports' persisted key bytes.
+// than RS256.
 package jwks
 
 import (

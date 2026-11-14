@@ -9,10 +9,8 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// InitTracing sets up the default slog logger for every binary in this module — call this
-// before anything else in main(), ahead of LoadConfig. Reads LOG_LEVEL (the Go-idiomatic
-// equivalent of the Rust RUST_LOG, which has no direct Go analog — EnvFilter's
-// target-scoped-level syntax isn't something slog supports), defaulting to "info".
+// InitTracing sets up the default slog logger for every binary in this module — call this before
+// anything else in main(), ahead of LoadConfig.
 func InitTracing() {
 	_ = godotenv.Load()
 

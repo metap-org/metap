@@ -11,12 +11,6 @@ import (
 	"github.com/metap-org/metap/pkg/reconciler"
 )
 
-// metadataEntityFile mirrors the subset of GET /metadata/entities/{entity}'s response this
-// command needs — the "data" field unmarshals directly into metadata.EntityDefinition since the
-// wire shape (name/label/fields/workflow/uniqueConstraints, all camelCase) already matches that
-// struct's own JSON tags. listViews/version in the real response are ignored the same way the
-// Rust original ignores them (Compile/Reconcile never consult either) — plain unknown-field
-// tolerance in encoding/json, no explicit code needed.
 type metadataEntityFile struct {
 	Data metadata.EntityDefinition `json:"data"`
 }

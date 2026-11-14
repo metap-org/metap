@@ -2,8 +2,6 @@
 
 package control
 
-// Ported from the Rust metap-control crate's tests/postgres_policy_store.rs.
-
 import (
 	"context"
 	"encoding/json"

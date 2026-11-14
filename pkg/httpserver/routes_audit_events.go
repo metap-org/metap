@@ -1,9 +1,8 @@
-// Generic /api/{entity}/{id}/audit-events — read-only create/update/delete/transition history
-// for one record. Distinct from /workflow-events (state-machine transitions only) — this is
+// Generic /api/{entity}/{id}/audit-events — read-only create/update/delete/transition history for
+// one record. Distinct from /workflow-events (state-machine transitions only) — this is
 // metap-audit's general business audit trail, opt-in per entity via EntityDefinition.Audit.
 // Read-only, record-level ABAC via CrudService.ListAuditEvents (which itself calls
-// CheckRecordPermission internally). Ported from
-// crates/metap-http/src/routes/audit_events.rs.
+// CheckRecordPermission internally).
 package httpserver
 
 import (

@@ -2,10 +2,6 @@
 
 package outboxpublisher
 
-// The Rust metap-outbox-publisher crate has no unit tests of its own (confirmed by reading its
-// source) — this is new test coverage added during the port, verified against a real Postgres
-// rather than mocked, matching this project's own "verify sống" convention.
-
 import (
 	"context"
 	"encoding/json"

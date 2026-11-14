@@ -11,7 +11,6 @@ const (
 	AdminScope             = "admin"
 )
 
-// RequestContext mirrors the Rust RequestContext.
 type RequestContext struct {
 	TenantID          string
 	UserID            string // "" means absent
@@ -19,8 +18,8 @@ type RequestContext struct {
 	HasRoles          bool
 	FunctionID        string
 	ContextAttributes map[string]json.RawMessage // nil means absent
-	// ForwardedBearerToken is a transport concern for a gRPC client, never ABAC-visible —
-	// deliberately excluded from ToValue(), matching the Rust #[serde(skip)].
+	// ForwardedBearerToken is a transport concern for a gRPC client, never ABAC-visible — deliberately
+	// excluded from ToValue().
 	ForwardedBearerToken string
 }
 
@@ -63,7 +62,6 @@ func (c *RequestContext) OAuthScope() ([]string, bool) {
 	return tokens, true
 }
 
-// ScopePermits: see the Rust RequestContext::scope_permits doc comment for the grammar.
 func (c *RequestContext) ScopePermits(entity string, action EntityAction) bool {
 	tokens, ok := c.OAuthScope()
 	if !ok {
@@ -102,8 +100,8 @@ func (c *RequestContext) ScopePermitsAdminSurface() bool {
 	return false
 }
 
-// ToValue serializes the context to a JSON-object-shaped value, with ContextAttributes
-// flattened to the top level — matches the Rust #[serde(flatten)] behavior.
+// ToValue serializes the context to a JSON-object-shaped value, with ContextAttributes flattened to
+// the top level.
 func (c *RequestContext) ToValue() json.RawMessage {
 	out := map[string]json.RawMessage{}
 	tenantID, _ := json.Marshal(c.TenantID)
@@ -127,7 +125,6 @@ func (c *RequestContext) ToValue() json.RawMessage {
 	return b
 }
 
-// PermissionDecision mirrors the Rust PermissionDecision.
 type PermissionDecision struct {
 	Allowed bool
 	Reason  string

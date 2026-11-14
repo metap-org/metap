@@ -1,8 +1,8 @@
-// dev-tools is a small CLI of dev/ops subcommands — ported from metap's Rust metap-dev-tools
-// binary. Every subcommand delegates to the exact same library functions a real HTTP path uses
-// (peripherals.CreateUser/AssignRole, control.ProvisionSchemaTenant/ProvisionDedicatedDbTenant,
-// peripherals.MintJWT, ...) so a CLI-seeded user/tenant/token can never diverge from what a real
-// login/admin-provisioned one looks like.
+// dev-tools is a small CLI of dev/ops subcommands. Every subcommand delegates to the exact same
+// library functions a real HTTP path uses (peripherals.CreateUser/AssignRole,
+// control.ProvisionSchemaTenant/ProvisionDedicatedDbTenant, peripherals.MintJWT, ...) so a
+// CLI-seeded user/tenant/token can never diverge from what a real login/admin-provisioned one looks
+// like.
 package main
 
 import (

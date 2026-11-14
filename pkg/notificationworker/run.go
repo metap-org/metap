@@ -1,8 +1,7 @@
 // Package notificationworker is an entity-agnostic notification consumer: logs every workflow
-// transition event — ported from metap's Rust metap-notification-worker crate. The first real
-// consumer of EventBus.Subscribe. Deliberately minimal (stdout logging, not email/SMS/webhook)
-// — the point of this package is the consume-loop plumbing, which any real notification channel
-// would reuse.
+// transition event. The first real consumer of EventBus.Subscribe. Deliberately minimal (stdout
+// logging, not email/SMS/webhook) — the point of this package is the consume-loop plumbing, which
+// any real notification channel would reuse.
 package notificationworker
 
 import (

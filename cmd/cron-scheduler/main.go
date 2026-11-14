@@ -1,11 +1,13 @@
-// cron-scheduler is the dispatch loop for the cron package's job definitions — ported from
-// metap's Rust metap-cron-scheduler binary. Runs 3 loops concurrently (ticker, executor, trigger
-// listener) plus the OAuth2 expired-token cleanup sweep and audit partition maintenance.
+// cron-scheduler is the dispatch loop for the cron package's job definitions. Runs 3 loops
+// concurrently (ticker, executor, trigger listener) plus the OAuth2 expired-token cleanup sweep and
+// audit partition maintenance.
 package main
 
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/kit/httpx"
+	"github.com/metap-org/metap/pkg/kit/shutdown"
 	"log/slog"
 	"os"
 	"strings"
@@ -20,7 +22,6 @@ import (
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
 	"github.com/metap-org/metap/pkg/kit/env"
-	"github.com/metap-org/metap/pkg/runtime"
 	"github.com/metap-org/metap/pkg/secrets"
 )
 
@@ -41,7 +42,7 @@ func main() {
 	if !ok {
 		targetBaseURL = fmt.Sprintf("http://localhost:%d", config.Port)
 	}
-	httpClient := runtime.DefaultHTTPClient()
+	httpClient := httpx.DefaultClient()
 
 	// Logs into the target's own POST /auth/login and keeps the token fresh in the background —
 	// replaces a static, hand-minted-once JWT. Unlike graphql-gateway, this process runs other
@@ -55,19 +56,19 @@ func main() {
 	serviceEmail, hasEmail := env.Lookup("CRON_SERVICE_EMAIL")
 	servicePassword, hasPassword := env.Lookup("CRON_SERVICE_PASSWORD")
 
-	var serviceToken *runtime.ServiceTokenSource
+	var serviceToken *httpx.ServiceTokenSource
 	switch {
 	case hasEmail && hasPassword:
-		st, err := runtime.StartServiceTokenSource(ctx, httpClient, loginURL, serviceEmail, servicePassword)
+		st, err := httpx.StartServiceTokenSource(ctx, httpClient, loginURL, serviceEmail, servicePassword)
 		if err != nil {
 			slog.Warn("failed to log in with CRON_SERVICE_EMAIL/CRON_SERVICE_PASSWORD — workflow_transition/bulk_query_action jobs will fail until this is fixed; webhook jobs are unaffected", "error", err)
-			serviceToken = runtime.NewStaticServiceTokenSource("")
+			serviceToken = httpx.NewStaticServiceTokenSource("")
 		} else {
 			serviceToken = st
 		}
 	default:
 		slog.Warn("CRON_SERVICE_EMAIL/CRON_SERVICE_PASSWORD are unset — workflow_transition/bulk_query_action jobs will fail; webhook jobs are unaffected. Provision one with `dev-tools create-user`/`dev-tools seed-admin` and grant it whatever role the jobs it runs need.")
-		serviceToken = runtime.NewStaticServiceTokenSource("")
+		serviceToken = httpx.NewStaticServiceTokenSource("")
 	}
 
 	// workflow_transition/bulk_query_action jobs' entity CRUD backend, over gRPC now that
@@ -198,7 +199,7 @@ func main() {
 func signalContext() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		runtime.WaitForShutdownSignal()
+		shutdown.Wait()
 		cancel()
 	}()
 	return ctx, cancel

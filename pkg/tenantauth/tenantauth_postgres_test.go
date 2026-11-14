@@ -2,9 +2,6 @@
 
 package tenantauth
 
-// Ported from the Rust metap-auth crate's tests/oidc_e2e.rs and tests/oauth2_login_e2e.rs own
-// JIT-provisioning e2e tests (the ones that touch real Postgres).
-
 import (
 	"context"
 	"testing"
@@ -92,8 +89,6 @@ func TestSameExternalSubjectUnderDifferentProvidersDoesNotCollide(t *testing.T) 
 	require.Equal(t, oauth2User.ID, foundOauth2.ID, "each provider's lookup must resolve to its own user")
 }
 
-// EnabledProviders has no dedicated test of its own in the Rust crate's e2e files (confirmed by
-// reading them) — new coverage added during the port.
 func TestEnabledProvidersReturnsOnlyEnabledRows(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

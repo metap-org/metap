@@ -1,12 +1,12 @@
-// Role lookup and request-context resolution for every protected route — mirrors metap-http's
-// Rust auth.rs. Basic auth (Authorization: Basic) and the metap-jwks trust-root dual-dispatch
-// are deferred (not needed to exercise entity CRUD, the scope of this wave) — only Bearer and
-// the HttpOnly session cookie are wired.
+// Role lookup and request-context resolution for every protected route. Basic auth (Authorization:
+// Basic) and the metap-jwks trust-root dual-dispatch are deferred (not needed to exercise entity
+// CRUD, the scope of this wave) — only Bearer and the HttpOnly session cookie are wired.
 package httpserver
 
 import (
 	"context"
 	"encoding/json"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
 	"time"
 
@@ -14,7 +14,6 @@ import (
 
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 type authError struct {
@@ -40,31 +39,31 @@ func (e *authError) respond(w http.ResponseWriter) {
 	_, _ = w.Write(body)
 }
 
-// authenticate mirrors AuthContext::from_request_parts. An explicit Authorization header always
+// authenticate resolves the caller. An explicit Authorization header always
 // wins when present; otherwise it falls back to the HttpOnly session cookie (the shape a browser
 // request takes), CSRF-checked for any state-changing method.
 func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permission.RequestContext, *authError) {
 	var token string
 	header := r.Header.Get("Authorization")
 	if header != "" {
-		t, ok := runtime.ParseBearer(header)
+		t, ok := httpx.BearerToken(header)
 		if !ok {
 			return nil, unauthorized("Missing or invalid authorization header.")
 		}
 		token = t
 	} else {
-		sessionCookie, err := r.Cookie(runtime.SessionCookieName)
+		sessionCookie, err := r.Cookie(httpx.SessionCookieName)
 		if err != nil || sessionCookie.Value == "" {
 			return nil, unauthorized("Missing or invalid authorization header.")
 		}
-		if runtime.RequiresCSRFCheck(r.Method) {
-			csrfCookie, cErr := r.Cookie(runtime.CSRFCookieName)
+		if httpx.RequiresCSRFCheck(r.Method) {
+			csrfCookie, cErr := r.Cookie(httpx.CSRFCookieName)
 			csrfValue, csrfOK := "", false
 			if cErr == nil {
 				csrfValue, csrfOK = csrfCookie.Value, true
 			}
-			csrfHeader := r.Header.Get(runtime.CSRFHeaderName)
-			if !runtime.CSRFMatches(csrfValue, csrfHeader, csrfOK, csrfHeader != "") {
+			csrfHeader := r.Header.Get(httpx.CSRFHeaderName)
+			if !httpx.CSRFMatches(csrfValue, csrfHeader, csrfOK, csrfHeader != "") {
 				return nil, unauthorized("Missing or invalid CSRF token.")
 			}
 		}

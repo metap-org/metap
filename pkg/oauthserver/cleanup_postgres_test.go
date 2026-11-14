@@ -4,8 +4,7 @@ package oauthserver
 
 // Live-verifies DeleteExpired actually removes stale rows and leaves live ones alone — can't be
 // proven against a mock since the whole point is the WHERE clause's interaction with real
-// expires_at/revoked_at timestamps. Ported from the Rust metap-oauth-server crate's
-// tests/cleanup_postgres.rs.
+// expires_at/revoked_at timestamps.
 
 import (
 	"context"

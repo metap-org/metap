@@ -12,11 +12,6 @@ import (
 	"github.com/metap-org/metap/pkg/runtime"
 )
 
-// BuildRouter mirrors the Rust build_router — the global middleware stack is applied in the
-// same outermost-to-innermost order the Rust layering produces: GenerateRequestIDs, Trace,
-// SecurityHeaders, RequestContext, rate limit, CORS, then route dispatch; every Mount is
-// registered under that same stack rather than bypassing it.
-//
 // BuildRouter builds the HTTP handler: middleware, then the core route groups every service has
 // (health, metrics, metadata, auth, records, users, admin, preferences, platform/tenant config,
 // workflow and audit events), then each of mounts in order — the optional groups
@@ -29,19 +24,17 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 		time.Duration(cfg.GetU64(config.HTTPRateLimitPerMs))*time.Millisecond,
 		int(cfg.GetU64(config.HTTPRateLimitBurst)),
 	)
-	cors := runtime.CORS(runtime.CORSOptions{
+	cors := httpx.CORS(httpx.CORSOptions{
 		Origins: corsOrigins,
 		Methods: []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete},
 		Headers: []string{"Authorization", "Content-Type", "Accept"},
 	})
 
-	// Outermost first — see this function's own doc comment for why this order matches the
-	// Rust original's reversed .layer() chain.
-	r.Use(runtime.GenerateRequestIDs)
-	r.Use(runtime.Trace)
+	r.Use(httpx.GenerateRequestIDs)
+	r.Use(httpx.Trace)
 	r.Use(state.Metrics.Middleware)
-	r.Use(runtime.SecurityHeaders)
-	r.Use(runtime.RequestContext)
+	r.Use(httpx.SecurityHeaders)
+	r.Use(httpx.RequestContext)
 	// Recover sits just inside RequestContext on purpose: a handler panic becomes a logged 500 in
 	// the standard envelope that still passes back through RequestContext (so it carries
 	// x-request-id and requestId/traceId), SecurityHeaders and the metrics, instead of a dropped

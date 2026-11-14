@@ -1,13 +1,12 @@
-// Public POST /auth/login plus /auth/me, /auth/logout, /auth/token. Ported from the Rust
-// routes/auth.rs — the local-password login path, sliding-session refresh, and token re-mint
-// only. OIDC/OAuth2 tenant-login provider flows (oidc_login/oidc_callback/oauth2_login/
-// oauth2_callback) are deferred to a later wave, same scope line the user drew for admin/
-// platform routes — local password is the only provider this core wave needs to exercise entity
-// CRUD end to end.
+// Public POST /auth/login plus /auth/me, /auth/logout, /auth/token. OIDC/OAuth2 tenant-login
+// provider flows (oidc_login/oidc_callback/oauth2_login/ oauth2_callback) are deferred to a later
+// wave, same scope line the user drew for admin/ platform routes — local password is the only
+// provider this core wave needs to exercise entity CRUD end to end.
 package httpserver
 
 import (
 	"errors"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
 	"strconv"
 	"time"
@@ -18,7 +17,6 @@ import (
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/runtime"
 	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
@@ -141,7 +139,7 @@ func nullableString(s string) any {
 // session_started_at, already past the absolute cap, parse failure) — me must keep answering
 // identity/roles regardless.
 func tryRefreshSession(w http.ResponseWriter, r *http.Request, state *AppState, rc *permission.RequestContext) {
-	sessionCookie, err := r.Cookie(runtime.SessionCookieName)
+	sessionCookie, err := r.Cookie(httpx.SessionCookieName)
 	if err != nil || sessionCookie.Value == "" {
 		return
 	}
@@ -153,7 +151,7 @@ func tryRefreshSession(w http.ResponseWriter, r *http.Request, state *AppState, 
 	if err != nil {
 		return
 	}
-	csrfCookie, err := r.Cookie(runtime.CSRFCookieName)
+	csrfCookie, err := r.Cookie(httpx.CSRFCookieName)
 	if err != nil {
 		return
 	}

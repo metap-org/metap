@@ -19,7 +19,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// S3ObjectStoreConfig mirrors metap-storage's Rust S3ObjectStoreConfig.
 type S3ObjectStoreConfig struct {
 	// EndpointURL e.g. "http://localhost:8333" for a local SeaweedFS S3 gateway. Real AWS S3
 	// leaves this empty and lets the SDK resolve the standard AWS endpoint for Region.
@@ -43,10 +42,6 @@ type S3ObjectStore struct {
 	bucket string
 }
 
-// NewS3ObjectStore builds a client from cfg. endpointURL/forcePathStyle are per-request options
-// on each S3 API call (aws-sdk-go-v2's idiom, rather than Rust's per-client builder field) so
-// this function itself never fails — it only needs to succeed in loading the SDK's own default
-// config shape.
 func NewS3ObjectStore(ctx context.Context, cfg S3ObjectStoreConfig) (*S3ObjectStore, error) {
 	awsCfg, err := awsv2config.LoadDefaultConfig(ctx,
 		awsv2config.WithRegion(cfg.Region),

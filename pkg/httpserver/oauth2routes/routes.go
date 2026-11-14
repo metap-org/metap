@@ -1,33 +1,26 @@
 // Package oauth2routes is the optional OAuth2 authorization server endpoints (/oauth/*, /.well-known/oauth-authorization-server, /admin/oauth/clients) route group,
 // mounted with httpserver.BuildRouter(state, cors, oauth2routes.Mount, ...). It lives outside package
 // httpserver so a service that doesn't serve it doesn't link its dependencies.
-//
-// HTTP surface for the oauthserver package — metap acting as an OAuth2 Authorization Server for
-// a third-party client acting on behalf of a tenant's own user. Distinct from routes_auth.go's
-// (not yet ported) oauth2_login/oauth2_callback — those are the opposite direction, a tenant's
-// user logging *into* metap via an external OAuth2 IdP.
-//
+// HTTP surface for the oauthserver package — metap acting as an OAuth2 Authorization Server for a
+// third-party client acting on behalf of a tenant's own user. Distinct from routes_auth.go's
+// oauth2_login/oauth2_callback — those are the opposite direction, a tenant's user logging *into*
+// metap via an external OAuth2 IdP.
 // oauth_clients/oauth_authorization_codes/oauth_refresh_tokens are looked up against the shared
 // platform pool (state.Pool), never Router.Begin(tenant) — /oauth/token and /oauth/revoke
 // resolve which tenant a request belongs to *from the row a caller-supplied client_id/code/
 // refresh-token resolves to*, which carries no tenant hint of its own.
-//
 // Deliberate simplification, not strict RFC 6749 behavior: every error from GET /oauth/authorize,
 // including one raised after client_id/redirect_uri are already confirmed registered, is
 // returned as a direct HTTP error response rather than a redirect carrying ?error=.... A
 // conforming client still gets a clear, immediate error; it just isn't ferried back through the
 // browser redirect the spec technically prescribes for that subset of failures.
-//
 // Real interactive consent: authorize renders a plain server-rendered HTML page the first time a
 // (client, user) pair has no prior oauthserver.GetConsentScope covering the requested scope, and
 // skips straight to the redirect once one does. Its approve/deny action
 // (POST /oauth/authorize/decision) is a fetch() call from an inline <script>, not a plain HTML
 // form post, specifically so it can carry the X-CSRF-Token header requireAuth's cookie-session
 // CSRF defense already requires on every cookie-authenticated mutation.
-//
-// Ported from crates/metap-http/src/routes/oauth2.rs. Admin client CRUD
-// (/admin/oauth/clients*) is recovered from git history (commit 3faaad4~1, before it moved to
-// GraphQL) per the user's standing direction to keep REST rather than follow that later decision.
+// Admin client CRUD lives under /admin/oauth/clients*.
 package oauth2routes
 
 import (
@@ -53,10 +46,9 @@ import (
 // pre-config-tiers session TTL default.
 const oauthAccessTokenTTLSeconds = 3600
 
-// percentEncode is RFC 3986's unreserved-set percent-encoding — net/url's QueryEscape/
-// PathEscape each use a different, not-quite-matching escaping rule (QueryEscape turns a space
-// into "+", not "%20"), so this is hand-rolled to match the Rust original's own manual
-// implementation byte-for-byte rather than approximated.
+// percentEncode is RFC 3986's unreserved-set percent-encoding — net/url's QueryEscape/ PathEscape
+// each use a different, not-quite-matching escaping rule (QueryEscape turns a space into "+", not
+// "%20").
 func percentEncode(s string) string {
 	var out strings.Builder
 	for i := 0; i < len(s); i++ {
@@ -105,11 +97,6 @@ func deniedRedirect(redirectURI string, clientState *string) string {
 	return redirectTo
 }
 
-// consentPageHTML is a minimal, dependency-free consent screen — server-rendered here rather
-// than handed off to a tenant's own frontend, since the consent decision is part of the auth
-// boundary itself, not a business screen. clientName/scope are escaped (html.EscapeString, the
-// stdlib equivalent of the Rust original's hand-rolled escape_html) since both ultimately come
-// from a tenant admin's own free-text input.
 func consentPageHTML(clientName, scope string, requestID uuid.UUID) string {
 	tokens := oauthserver.ScopeTokens(scope)
 	var scopeList strings.Builder
@@ -637,9 +624,8 @@ func discoveryMetadata(w http.ResponseWriter, r *http.Request, state *httpserver
 	httpserver.WriteJSON(w, http.StatusOK, doc)
 }
 
-// -------------------------------------------------------------------------------------------
-// Admin client management — recovered from git history (before it moved to GraphQL)
-// -------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------- Admin
+// client management
 
 type createOAuthClientBody struct {
 	Name           string   `json:"name"`

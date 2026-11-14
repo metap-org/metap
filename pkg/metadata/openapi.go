@@ -1,8 +1,5 @@
 package metadata
 
-// EntityFieldJSONSchema mirrors the Rust entity_field_json_schema, hand-written since this
-// package has no reflection-derived schema step — the wire shape is already fixed by this
-// file's own JSON tags.
 func EntityFieldJSONSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -154,7 +151,7 @@ func entityAuditConfigJSONSchema() map[string]any {
 
 // GenerateOpenAPIDocument is /metadata/*'s own static paths, plus the EntitySummary component
 // schema every one of them can reference. No per-entity /api/{entity}* CRUD path — REST entity
-// access is gone (GraphQL-only), matching the Rust version's own current state.
+// access is gone (GraphQL-only).
 func GenerateOpenAPIDocument() map[string]any {
 	paths := map[string]any{
 		"/metadata/entities": map[string]any{

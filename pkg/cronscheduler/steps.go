@@ -1,6 +1,6 @@
-// TargetType "steps" chain execution — running a fresh chain (RunSteps), continuing one that
-// paused at a wait_event step (ResumeSteps, called by trigger.go), and the shared step-range
-// loop (runStepRange) both go through. Ported from metap-cron-scheduler's executor/steps.rs.
+// TargetType "steps" chain execution — running a fresh chain (RunSteps), continuing one that paused
+// at a wait_event step (ResumeSteps, called by trigger.go), and the shared step-range loop
+// (runStepRange) both go through.
 package cronscheduler
 
 import (

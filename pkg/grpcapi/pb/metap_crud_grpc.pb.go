@@ -37,7 +37,6 @@ const (
 // /metadata/openapi.json are already generic over entity rather than generated per-entity.
 // google.protobuf.Struct (a JSON-shaped map) carries record data instead of a per-entity
 // message, since entities are runtime metadata here, not compile-time Go types.
-// Ported verbatim from crates/metap-grpc/proto/metap_crud.proto.
 type RecordServiceClient interface {
 	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error)
 	Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error)
@@ -135,7 +134,6 @@ func (c *recordServiceClient) Aggregate(ctx context.Context, in *AggregateReques
 // /metadata/openapi.json are already generic over entity rather than generated per-entity.
 // google.protobuf.Struct (a JSON-shaped map) carries record data instead of a per-entity
 // message, since entities are runtime metadata here, not compile-time Go types.
-// Ported verbatim from crates/metap-grpc/proto/metap_crud.proto.
 type RecordServiceServer interface {
 	List(context.Context, *ListRequest) (*ListResponse, error)
 	Get(context.Context, *GetRequest) (*GetResponse, error)

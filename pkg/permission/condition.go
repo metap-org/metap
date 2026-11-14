@@ -1,8 +1,5 @@
-// Package permission is the RBAC/ABAC engine — ported from metap's Rust metap-permission crate:
-// PolicyCondition evaluation, PermissionSnapshot (field/record-level masking), PermissionService
-// (entity-level deny-by-default checks), and the policy explainer. PolicyStore is an interface;
-// the real Postgres-backed implementation lives wherever Router/tenant-DB access lives (ported
-// in a later wave), same layering reason the Rust crate keeps PostgresPolicyStore out of here.
+// Package permission is the RBAC/ABAC engine. PolicyStore is an interface; the real Postgres-backed
+// implementation lives wherever Router/tenant-DB access lives.
 package permission
 
 import (
@@ -26,8 +23,7 @@ const (
 	OpNotContains ConditionOp = "notContains"
 )
 
-// PolicyValue is either a literal JSON value or a fromContext lookup — mirrors the Rust untagged
-// enum.
+// PolicyValue is either a literal JSON value or a fromContext lookup.
 type PolicyValue struct {
 	Literal     json.RawMessage
 	FromContext string

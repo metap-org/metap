@@ -1,4 +1,4 @@
-package runtime
+package httpx
 
 import (
 	"bytes"
@@ -28,10 +28,10 @@ const serviceTokenRetryBackoff = 30 * time.Second
 const serviceTokenInitialRetryBudget = 60 * time.Second
 const serviceTokenInitialRetryInterval = 2 * time.Second
 
-// ServiceTokenSource is a bearer token for one process's own service account, obtained via a
-// POST <loginURL> call and kept fresh by a background goroutine — ported from metap-runtime's
-// ServiceTokenSource. Cheap to read (Current() is a lock-free atomic load); logging in again
-// happens only on the background timer or a transient-failure retry, never on the request path.
+// ServiceTokenSource is a bearer token for one process's own service account, obtained via a POST
+// <loginURL> call and kept fresh by a background goroutine. Cheap to read (Current() is a lock-free
+// atomic load); logging in again happens only on the background timer or a transient-failure retry,
+// never on the request path.
 type ServiceTokenSource struct {
 	current atomic.Pointer[string]
 }
@@ -81,9 +81,8 @@ func StartServiceTokenSource(ctx context.Context, httpClient *http.Client, login
 	s.current.Store(&token)
 
 	go func() {
-		// nextDelay carries the previous attempt's outcome into the next sleep — a failed login
-		// must retry after serviceTokenRetryBackoff, not after another full refresh interval on
-		// top of it (the exact bug this Rust port preserves the fix for).
+		// nextDelay carries the previous attempt's outcome into the next sleep — a failed login must
+		// retry after serviceTokenRetryBackoff, not after another full refresh interval on top of it.
 		nextDelay := serviceTokenRefreshInterval
 		for {
 			select {

@@ -14,10 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// testPool mirrors the real deployment's convention (metap_control::Router::begin sets
-// search_path to include "metadata" in every tenant transaction), so callers here can pass the
-// bare table name "attachments" exactly as crates/metap-http/src/routes/attachments.rs does,
-// rather than a schema-qualified name validateTableName would reject.
+// testPool mirrors the real deployment's convention (control.Router.Begin sets search_path
+// to include "metadata" in every tenant transaction).
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	pool := testkit.NewPostgres(t, testkit.WithSearchPath("metadata", "public"))

@@ -1,4 +1,4 @@
-// RecordBackend is the seam that lets a GraphQL resolver (metap-graphql, a later wave) or any
+// RecordBackend is the seam that lets a GraphQL resolver or any
 // other generic caller be written once against "however this entity's records actually get read
 // and written," without hardcoding whether that means an in-process CrudService call or a
 // remote call to another, separately-deployed microservice.
@@ -14,7 +14,6 @@ import (
 	"github.com/metap-org/metap/pkg/query"
 )
 
-// RecordBackend mirrors the Rust RecordBackend trait.
 type RecordBackend interface {
 	List(ctx context.Context, entity string, input query.ListInput, rc *permission.RequestContext) (ListResult, error)
 	Get(ctx context.Context, entity string, id uuid.UUID, rc *permission.RequestContext) (GetResult, error)

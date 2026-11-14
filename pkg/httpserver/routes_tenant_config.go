@@ -1,5 +1,4 @@
 // The two non-platform config surfaces:
-//
 //   - GET/PUT/DELETE /admin/config — a tenant admin reading and setting its own Tenant-tier
 //     overrides. The tenant comes from the caller's verified token and from nowhere else, which
 //     is the whole of the cross-tenant isolation story here: there is no request shape that
@@ -12,13 +11,6 @@
 // Host header is attacker-controlled and is treated purely as a presentation hint — an
 // unrecognized hostname returns the fleet-wide values, not a 404 (answering differently would
 // make this a tenant-existence oracle), and X-Forwarded-Host is deliberately never consulted.
-//
-// Ported from crates/metap-http/src/routes/tenant_config.rs (recovered from git history, see
-// routes_admin.go's own doc comment for why). Deliberate simplification vs. that Rust original:
-// the hostname->tenant lookup there is cached (moka, 30s TTL); this port queries
-// control.tenant_hostnames directly on every call, since /public/config's own caller (a login
-// page) is low-frequency enough that the extra round trip isn't worth the added cache-invalidation
-// surface for this wave — a later pass can add a cache if this proves to matter.
 package httpserver
 
 import (

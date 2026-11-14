@@ -1,25 +1,20 @@
 // Package graphqlgateway is a generic GraphQL BFF: a forwarding gateway in front of any set of
 // services' RecordBackends (normally GrpcBackends, one per upstream service). It builds the schema
-// at runtime from a MetadataRegistry, wire-compatible with the Rust-era metap-graphql one that
-// @metap/platform-ui's graphqlRecords.ts and downstream control-plane workers were written
-// against. A product adds its own non-CRUD fields through WithExtensions and keeps its own main;
-// nothing here knows an entity name. Concretely, per entity in the metadata registry:
-//
+// at runtime from a MetadataRegistry. A product adds its own non-CRUD fields through WithExtensions
+// and keeps its own main; nothing here knows an entity name. Concretely, per entity in the metadata
+// registry:
 //   - an object type named after the entity ("shop.orders" -> ShopOrders) with the
 //     record envelope (id, entity, code, status, version, createdAt, updatedAt, capabilities)
 //     plus every declared field flattened to the top level, typed by kind. A reference field is
 //     a plain ID ("customerId"), the same value create/update take; its target record is a separate
 //     relation field ("customer { name }", RelationFieldName), resolved through the target
-//     entity's own backend. (Deliberate departure from the Rust schema, which made the reference
-//     field itself the object: reads now match writes, and a bare "customerId" selection — what
+//     entity's own backend. (Reads match writes, and a bare "customerId" selection — what
 //     control-plane and RelatedRecordsPanel send — is valid.)
 //   - a Connection type ({ records, nextCursor, hasMore });
 //   - query fields shopOrders(id) / shopOrdersList(filter, sort, cursor, limit,
 //     listView, jql), plus one shared aggregate(entity, spec): Json!;
 //   - mutations create/update/delete (+ transition for an entity with a workflow), taking
 //     expectedVersion and an optional reason.
-//
-// The scalar is named "Json", matching the Rust schema — clients declare `$data: Json!`.
 package graphqlgateway
 
 import (
@@ -60,8 +55,8 @@ func requestContextFrom(ctx context.Context) *permission.RequestContext {
 	return rc
 }
 
-// recordCache memoizes reference lookups for one request, so a list of 50 rules all pointing at
-// the same zone costs one upstream Get, not 50 (the Rust schema used a DataLoader for this).
+// recordCache memoizes reference lookups for one request, so a list of 50 rules all pointing at the
+// same zone costs one upstream Get, not 50.
 type recordCache struct {
 	mu      sync.Mutex
 	entries map[string]*recordHandle // nil value = looked up, not found/denied
@@ -144,7 +139,7 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// typeName: "shop.orders" -> "ShopOrders" (metap-graphql naming::type_name).
+// typeName: "shop.orders" -> "ShopOrders".
 func typeName(entityName string) string {
 	parts := strings.FieldsFunc(entityName, func(r rune) bool { return r == '.' || r == '_' || r == '-' })
 	for i, p := range parts {
@@ -153,7 +148,7 @@ func typeName(entityName string) string {
 	return strings.Join(parts, "")
 }
 
-// fieldBase: "shop.orders" -> "shopOrders" (metap-graphql naming::get_field_name).
+// fieldBase: "shop.orders" -> "shopOrders".
 func fieldBase(entityName string) string {
 	t := typeName(entityName)
 	if t == "" {
@@ -253,8 +248,7 @@ func (b *schemaBuilder) backendFor(entity string) (crud.RecordBackend, error) {
 }
 
 // loadReference resolves one reference field's target record, memoized per request. A denied or
-// missing target resolves to null rather than failing the whole parent record, same as the Rust
-// RecordLoader (a GetMany that simply omits ids it can't return).
+// missing target resolves to null rather than failing the whole parent record.
 func (b *schemaBuilder) loadReference(ctx context.Context, entity string, id uuid.UUID) (*recordHandle, error) {
 	cache, _ := ctx.Value(recordCacheKey).(*recordCache)
 	key := entity + "/" + id.String()

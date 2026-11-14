@@ -5,7 +5,7 @@
 // whitespace.
 //
 // Known trade-off: stripping *all* casts means an index whose only change is the outer type cast
-// is not detected as needing a rebuild — consistent with this crate's current scope (there is no
+// is not detected as needing a rebuild — consistent with this package's current scope (there is no
 // ALTER COLUMN TYPE op either).
 package reconciler
 

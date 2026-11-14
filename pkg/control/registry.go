@@ -1,10 +1,5 @@
 // TenantRegistry is an interface, not a concrete type, for the same reason PolicyStore is —
 // swapping storage without touching Router/RegistryCache.
-//
-// Divergence from the Rust original: every tenant id here is a plain uuid.UUID, not a TenantId
-// newtype wrapper — every other package in this Go port already passes tenant ids as bare
-// uuid.UUID (permission.RequestContext, workflow, etc.), so introducing a wrapper only in this
-// package would be inconsistent rather than safer.
 package control
 
 import (

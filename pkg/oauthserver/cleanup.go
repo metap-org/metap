@@ -1,11 +1,5 @@
 // Deletes expired/spent rows from oauth_authorization_codes/oauth_refresh_tokens/
-// oauth_pending_authorizations — none of the 3 had a cleanup path before this (the Rust
-// original's own roadmap doc flagged it as a known follow-up), so all three grew forever:
-// oauth_authorization_codes accumulates a row per authorize request (60s TTL) whether or not
-// it's ever redeemed, oauth_refresh_tokens accumulates one per issue *and* one per rotation even
-// after revoked_at is set, and oauth_pending_authorizations (10min TTL) leaks one row per
-// consent screen shown but never decided (tab closed, browser crash).
-//
+// oauth_pending_authorizations — none of the 3 had a cleanup path before this.
 // Deliberately a plain age-based sweep, not a "delete the instant it's no longer valid" trigger:
 // a short grace period past expires_at/revoked_at keeps a just-expired row around long enough to
 // show up in an operator's own ad-hoc query while debugging a client's failed request, without

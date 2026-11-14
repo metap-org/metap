@@ -1,7 +1,6 @@
-// Self-service GET/PUT for the caller's own peripherals preferences row — the backend half of
-// i18n. A separate top-level path (/preferences, not /api/preferences) so it can't collide with
-// /api/{entity}*'s wildcard. Ported from crates/metap-http/src/routes/preferences.rs (recovered
-// from git history, see routes_admin.go's own doc comment for why).
+// Self-service GET/PUT for the caller's own peripherals preferences row — the backend half of i18n.
+// A separate top-level path (/preferences, not /api/preferences) so it can't collide with
+// /api/{entity}*'s wildcard.
 package httpserver
 
 import (

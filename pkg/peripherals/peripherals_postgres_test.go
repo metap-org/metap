@@ -2,18 +2,7 @@
 
 package peripherals
 
-// E2E tests against a real Postgres. Ported from the Rust metap-peripherals crate's
-// tests/peripherals_postgres.rs where that file covers role assignment and metadata drift. The
-// index_reconciler.rs e2e tests in that file are deliberately NOT ported: they insert into and
-// query a table literally named "records", which migrations/0033_drop_records_table.sql
-// drops entirely in the current schema — those tests exercise a code path this port's own
-// index_reconciler.go doc comment already documents as dead against the current schema, so
-// porting them would just assert "fails with relation records does not exist", which is not a
-// useful regression test. The pure unit tests (build_index_name/quote_literal/quote_identifier)
-// are ported in index_reconciler_test.go instead.
-//
-// auth.go/context_attributes.go/preferences.go have no dedicated test of their own in the Rust
-// crate's test file (confirmed by reading it) — new e2e coverage added during the port.
+// E2E tests against a real Postgres.
 
 import (
 	"context"

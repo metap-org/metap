@@ -1,13 +1,6 @@
-// REST entity CRUD — /api/{entity}*. Recovered from the Rust metap-http crate's git history (the
-// commit immediately before "Remove REST entity CRUD, GraphQL-only entity access", #31) and
-// ported essentially unchanged, per the user's explicit direction to reinstate REST for entity
-// CRUD in this Go port rather than following the Rust original's later GraphQL-only decision.
-//
-// One behavioral note vs. that recovered file: it called invalidate_context_cache_if_auth_
-// context_entity itself after a successful update. This Go port's crud.CrudService.Update
-// already does that internally (via CrudService.WithContextInvalidation, ported from the fixed-
-// at-the-root version of the Rust CrudService that shipped *after* the file this was recovered
-// from) — so this handler does not duplicate it; see crud/crud_service.go's own doc comment.
+// REST entity CRUD — /api/{entity}*.
+// A successful update invalidates the auth-context cache inside crud.CrudService.Update itself (via
+// CrudService.WithContextInvalidation), so this handler does not repeat it.
 package httpserver
 
 import (
@@ -106,8 +99,7 @@ func getRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	// The record plus a "capabilities" key merged in at the top level, matching the Rust
-	// handler's own serde_json::Value splice.
+	// The record plus a "capabilities" key merged in at the top level.
 	recordJSON, err := json.Marshal(result.Record)
 	if err != nil {
 		writeInternalError(w, err)
@@ -264,11 +256,6 @@ func aggregateRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": result})
 }
 
-// mountRecords registers /api/{entity}* exactly as the recovered Rust router did — the
-// aggregate/{entity}/aggregate route ahead of /{entity}/{id} in source order for readability
-// only; chi, like axum, matches a literal path segment ahead of a {param} one regardless of
-// registration order, so "aggregate" can never be swallowed as an {id} (it would fail uuid.Parse
-// anyway, which is what makes this collision safe).
 func mountRecords(r chi.Router, state *AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }

@@ -22,14 +22,11 @@ func (g Gate) String() string {
 	}
 }
 
-// MarshalJSON serializes as the lowercase string the Rust #[derive(Serialize)] Gate enum
-// produces — see PolicyEffect.MarshalJSON's own doc comment for why this matters.
 func (g Gate) MarshalJSON() ([]byte, error) {
 	return json.Marshal(g.String())
 }
 
-// PolicyTraceEntry is one policy considered during an explain() call, and why — mirrors the
-// Rust PolicyTraceEntry's #[serde(rename_all = "camelCase")] wire shape.
+// PolicyTraceEntry is one policy considered during an explain() call, and why.
 type PolicyTraceEntry struct {
 	PolicyID        string       `json:"policyId"`
 	Effect          PolicyEffect `json:"effect"`

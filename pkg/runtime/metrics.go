@@ -1,12 +1,5 @@
-// GET /metrics — Prometheus text exposition, the Go counterpart to the Rust metap-http's
-// axum-prometheus wiring (PrometheusMetricLayerBuilder + a process_collector reading /proc).
-// client_golang's own collectors.NewProcessCollector/NewGoCollector stand in for that process
-// collector — same "CPU/RSS/fd" coverage (Go's collector has no per-thread-count metric the way
-// the Rust one does; a small, accepted gap, not a design choice).
-//
-// Public (no auth), same convention as /health — see the Rust original's own doc comment for why
-// this genuinely leaks more than a bare liveness check (per-route request counts/latencies, plus
-// process resource usage) and why that's deliberate for now rather than an oversight.
+// GET /metrics — Prometheus text exposition.
+// Public (no auth), same convention as /health.
 package runtime
 
 import (
@@ -54,11 +47,10 @@ func NewMetricsRegistry() *MetricsRegistry {
 
 // Middleware records request count/duration per (method, matched route pattern, status) plus a
 // single in-flight gauge. Must run after chi's routing has matched a pattern — reads
-// chi.RouteContext(r.Context()).RoutePattern() back off the request once next.ServeHTTP
-// returns, the same "read state chi populated during the call" trick runtime.RequestContext's
-// own doc comment would recognize. Falls back to the raw path (never empty, unlike a pattern on
-// a 404) when nothing matched, same as a 404 would have no pattern in the Rust axum-prometheus
-// layer either.
+// chi.RouteContext(r.Context()).RoutePattern() back off the request once next.ServeHTTP returns,
+// the same "read state chi populated during the call" trick runtime.RequestContext's own doc
+// comment would recognize. Falls back to the raw path (never empty, unlike a pattern on a 404) when
+// nothing matched.
 func (m *MetricsRegistry) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -84,4 +76,16 @@ func (m *MetricsRegistry) Middleware(next http.Handler) http.Handler {
 // Handler is the GET /metrics exposition endpoint.
 func (m *MetricsRegistry) Handler() http.Handler {
 	return promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{})
+}
+
+// statusCapturingWriter records the status code written so the metrics middleware can label the
+// request after the handler returns.
+type statusCapturingWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusCapturingWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
 }

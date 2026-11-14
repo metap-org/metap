@@ -1,7 +1,7 @@
-// Package cron is metadata-driven scheduled jobs — ported from metap's Rust metap-cron crate.
-// An operator defines a recurring job (schedule + target action) through the admin API; this
-// package owns the job definition/run-history storage and due-job-claiming logic. The actual
-// dispatch loop (ticker + executor) lives in a separate ops binary (ported in a later wave).
+// Package cron is metadata-driven scheduled jobs. An operator defines a recurring job (schedule +
+// target action) through the admin API; this package owns the job definition/run-history storage
+// and due-job-claiming logic. The actual dispatch loop (ticker + executor) lives in a separate ops
+// binary.
 package cron
 
 import (

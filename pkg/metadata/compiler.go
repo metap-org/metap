@@ -15,7 +15,6 @@ import (
 // declared fields.
 var implicitSystemFields = map[string]bool{"createdAt": true, "updatedAt": true}
 
-// ValidationError mirrors the Rust MetadataValidationError.
 type ValidationError struct {
 	Entity string
 	Issues []string
@@ -25,11 +24,7 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("Invalid metadata for entity %q: %s", e.Entity, strings.Join(e.Issues, "; "))
 }
 
-// hashShape is the deterministic-hash input shape — label/fields/listViews/workflow, matching
-// the Rust HashShape exactly (field order in the struct literal below controls JSON key order
-// only if using an ordered encoder; Go's encoding/json already emits object keys in Go struct
-// field declaration order for a struct, matching Rust's serde struct order — both sides must
-// still produce identical bytes for Hash to be a real content hash, which this file order does).
+// hashShape is the deterministic-hash input shape — label/fields/listViews/workflow.
 type hashShape struct {
 	Label     string           `json:"label"`
 	Fields    []EntityField    `json:"fields"`
@@ -38,19 +33,13 @@ type hashShape struct {
 }
 
 // Hash is a deterministic SHA-256 over the entity's shape — label/fields/listViews/workflow.
-//
-// Divergence from the Rust version, noted rather than hidden: Rust's serde_json::Value stores
-// object keys in a BTreeMap (sorted) with no preserve_order feature enabled anywhere in that
-// workspace, so its stable_json has every object's keys sorted recursively, independent of
-// struct field declaration order. Go's encoding/json has no such global key-sorting pass for
-// nested maps it encounters during marshal of a typed struct — map[string]T values ARE sorted
-// by Go's encoder, but struct fields are emitted in declaration order, which already matches
-// this struct's declared field order here. The two encoders therefore produce byte-identical
-// output for this specific shape (no map-typed field exists on EntityField/EntityListView/
-// EntityWorkflow themselves — EnumTones/SetFields are the only maps in this whole metadata
-// shape and neither is part of hashShape), so the resulting hash values are cross-compatible
-// between the Rust and Go ports for the same entity. A future field added as a map type would
-// need this re-checked.
+// Go's encoding/json has no such global key-sorting pass for nested maps it encounters during
+// marshal of a typed struct — map[string]T values ARE sorted by Go's encoder, but struct fields are
+// emitted in declaration order, which already matches this struct's declared field order here. The
+// two encoders therefore produce byte-identical output for this specific shape (no map-typed field
+// exists on EntityField/EntityListView/ EntityWorkflow themselves — EnumTones/SetFields are the
+// only maps in this whole metadata shape and neither is part of hashShape). A future field added as
+// a map type would need this re-checked.
 func Hash(entity EntityDefinition) (string, error) {
 	shape := hashShape{Label: entity.Label, Fields: entity.Fields, ListViews: entity.ListViews, Workflow: entity.Workflow}
 	b, err := json.Marshal(shape)
@@ -93,8 +82,6 @@ func isSafeIdentSegment(segment string) bool {
 	return true
 }
 
-// Validate mirrors the Rust validate() function — boot-time structural validation, driven
-// purely by entity metadata, never request input.
 func Validate(entity EntityDefinition) error {
 	var issues []string
 	fieldNames := map[string]bool{}

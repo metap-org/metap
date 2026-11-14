@@ -2,14 +2,7 @@
 
 package control
 
-// Ported from the Rust metap-control crate's tests/provisioning_postgres.rs
-// (provision_schema_tenant_writes_registry_row_and_admin_user — the regression test for audit
-// 06 finding #2, the highest-value case in that file: a freshly provisioned tenant's admin must
-// remain resolvable by email alone through the shared pool, which is how tenant-less login
-// works). The dedicated-db provisioning test needs a genuinely separate throwaway database (the
-// Rust original creates one via the postgres maintenance database) — not ported here given this
-// crate's overall size for this pass; the schema-tenant path above already exercises
-// ProvisionSchemaTenant/CreateTenantSchema end to end.
+// The dedicated-db provisioning test needs a genuinely separate throwaway database.
 
 import (
 	"context"

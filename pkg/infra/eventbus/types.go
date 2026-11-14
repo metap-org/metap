@@ -1,6 +1,6 @@
-// Package eventbus is the publish/subscribe trait + RabbitMQ impl — ported from metap-infra's
-// Rust event_bus module. RabbitEventBus is the only impl today; the point of the interface is
-// that a second one is a new implementation, not a rewrite of every call site.
+// Package eventbus is the publish/subscribe trait + RabbitMQ impl. RabbitEventBus is the only impl
+// today; the point of the interface is that a second one is a new implementation, not a rewrite of
+// every call site.
 package eventbus
 
 import (
@@ -16,8 +16,7 @@ import (
 const exchange = "metap.events"
 
 // originalRoutingKeyHeader stamps the message's true original routing key onto a retry-tier
-// publish — see the Rust ORIGINAL_ROUTING_KEY_HEADER's doc comment for exactly why this is
-// needed (AMQP overwrites routing_key on dead-letter republish).
+// publish.
 const originalRoutingKeyHeader = "x-original-routing-key"
 
 // RetryPolicy is a per-message retry-with-backoff schedule for ConsumedEvent.RetryOrGiveUp.

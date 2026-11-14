@@ -1,4 +1,4 @@
-package runtime
+package httpx
 
 import (
 	"context"
@@ -6,14 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
-// TraceContext is W3C Trace Context (https://www.w3.org/TR/trace-context/) propagation — lets
-// this service interoperate with a mesh sidecar (Istio/Envoy, Linkerd) without a full OpenTelemetry
-// SDK. Ambient via context.Context (ported from the Rust tokio::task_local!), so any function
-// called with the request's ctx can read it back via CurrentTrace(ctx).
+// TraceContext is W3C Trace Context (https://www.w3.org/TR/trace-context/) propagation — lets this
+// service interoperate with a mesh sidecar (Istio/Envoy, Linkerd) without a full OpenTelemetry SDK.
+// Ambient via context.Context, so any function called with the request's ctx can read it back via
+// CurrentTrace(ctx).
 type TraceContext struct {
 	TraceID      string // 32 hex chars, fixed for the whole call chain
 	ParentSpanID string // caller's own span id, "" if absent/invalid
@@ -22,11 +20,11 @@ type TraceContext struct {
 }
 
 func newTraceID() string {
-	return strings.ReplaceAll(uuid.New().String(), "-", "")
+	return randomHex(16)
 }
 
 func newSpanID() string {
-	return strings.ReplaceAll(uuid.New().String(), "-", "")[:16]
+	return randomHex(8)
 }
 
 func isHex(s string) bool {
@@ -97,4 +95,13 @@ func WithTraceContext(ctx context.Context, tc TraceContext) context.Context {
 func CurrentTrace(ctx context.Context) (TraceContext, bool) {
 	tc, ok := ctx.Value(traceContextKey{}).(TraceContext)
 	return tc, ok
+}
+
+// AttachTraceContext attaches the current request's W3C traceparent to an outbound request, if
+// ctx carries one (via WithTraceContext) — a no-op otherwise, e.g. a boot-time or background call
+// with no incoming request to propagate from.
+func AttachTraceContext(ctx context.Context, req *http.Request) {
+	if tc, ok := CurrentTrace(ctx); ok {
+		req.Header.Set("traceparent", tc.ToTraceparentHeader())
+	}
 }

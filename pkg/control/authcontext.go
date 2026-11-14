@@ -24,12 +24,10 @@ type contextAttributesCacheEntry struct {
 	attrs map[string]any
 }
 
-// ContextAttributesCache mirrors the Rust ContextAttributesCache (moka::future::Cache, TTL,
-// try_get_with to de-dupe concurrent misses). Unlike role lookup (always fresh, never cached),
-// this is cached: caller attributes come from an ordinary business record, not a
-// security-critical role assignment, and the whole point of the AUTH_CONTEXT_ENTITY feature is
-// to avoid a DB round-trip on every authenticated request when nothing about the caller's org
-// membership actually changes between requests.
+// Unlike role lookup (always fresh, never cached), this is cached: caller attributes come from an
+// ordinary business record, not a security-critical role assignment, and the whole point of the
+// AUTH_CONTEXT_ENTITY feature is to avoid a DB round-trip on every authenticated request when
+// nothing about the caller's org membership actually changes between requests.
 type ContextAttributesCache struct {
 	cache *gocache.Cache
 	group singleflight.Group
@@ -75,10 +73,7 @@ func (c *ContextAttributesCache) Invalidate(tenantID, userID uuid.UUID) {
 // contextAttributesCache). Any failure resolving roles propagates as an error (identity without
 // roles is unusable), while a failure resolving context attributes only logs and yields nil
 // (supplementary ABAC context, never blocks auth).
-//
-// metadataRegistry is an *atomic.Pointer[metadata.MetadataRegistry], the Go equivalent of the
-// Rust original's ArcSwap<MetadataRegistry> — both exist so a future hot-swap of the registry
-// (no restart needed) is reflected here without this function needing to change.
+// metadataRegistry is an *atomic.Pointer[metadata.MetadataRegistry].
 func ResolveRequestContext(ctx context.Context, router *Router, tenantID, userID uuid.UUID, functionID string,
 	authContextEntity string, metadataRegistry *atomic.Pointer[metadata.MetadataRegistry], contextAttributesCache *ContextAttributesCache) (*permission.RequestContext, error) {
 	// Routed through Router, not a bare pool — a DedicatedDb-strategy tenant's user_roles table

@@ -1,11 +1,9 @@
 // GET/PUT/DELETE /platform/config — the platform-admin surface over config's platform-writable
-// tiers. Gated by requirePlatformAdmin, not requireAdmin: these keys are fleet-wide, so a
-// tenant's own admin has no business reading or writing them. Since this surface also sets the
-// fleet default for Tenant-tier keys — the middle link of
-// declared default <- platform_configs <- tenant_configs — which each tenant may then override
-// through /admin/config (routes_tenant_config.go). Operator-tier keys are never listed or
-// writable from here. Ported from crates/metap-http/src/routes/platform_config.rs (recovered
-// from git history, see routes_admin.go's own doc comment for why).
+// tiers. Gated by requirePlatformAdmin, not requireAdmin: these keys are fleet-wide, so a tenant's
+// own admin has no business reading or writing them. Since this surface also sets the fleet default
+// for Tenant-tier keys — the middle link of declared default <- platform_configs <- tenant_configs
+// — which each tenant may then override through /admin/config (routes_tenant_config.go).
+// Operator-tier keys are never listed or writable from here.
 package httpserver
 
 import (

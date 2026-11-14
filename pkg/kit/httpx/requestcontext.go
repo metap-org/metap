@@ -1,27 +1,23 @@
-package runtime
+package httpx
 
 import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-
-	"github.com/google/uuid"
 )
 
 // Error bodies are small JSON objects; this is just a sanity ceiling, not a tuned limit.
 const maxErrorBodyBytes = 1024 * 1024
 
-// RequestContext echoes x-request-id/x-trace-id response headers on every request, and folds
-// both ids into any JSON error body (status >= 400) — ported from metap-runtime's
-// request_context. A success response streams through untouched, exactly as the Rust version
-// only buffers (to_bytes) the error branch.
+// RequestContext echoes x-request-id/x-trace-id response headers on every request, and folds both
+// ids into any JSON error body (status >= 400). A success response streams through untouched.
 func RequestContext(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ids, ok := CurrentRequestIDs(r.Context())
 		if !ok {
 			// Always present in practice — GenerateRequestIDs runs as the outermost middleware —
 			// but degrade gracefully rather than panic if this is ever used standalone.
-			ids = RequestIDs{RequestID: uuid.NewString(), TraceID: uuid.NewString()}
+			ids = RequestIDs{RequestID: newUUID(), TraceID: newUUID()}
 		}
 		rcw := &requestContextWriter{ResponseWriter: w, requestID: ids.RequestID, traceID: ids.TraceID}
 		next.ServeHTTP(rcw, r)

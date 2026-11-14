@@ -1,6 +1,6 @@
-// Builds a query.ListInput from ListRequest.query — same defaults (limit 30, max 200) as REST's
-// own list parsing, so a caller can't observe a difference in list semantics between the two
-// transports. Ported from crates/metap-grpc/src/list_input.rs.
+// Builds a query.ListInput from ListRequest.query — same defaults (limit 30, max 200) as REST's own
+// list parsing, so a caller can't observe a difference in list semantics between the two
+// transports.
 package grpcapi
 
 import (
@@ -47,9 +47,6 @@ func listInputFromQuery(q map[string]any) (query.ListInput, error) {
 	return input, nil
 }
 
-// valueToFilterString mirrors the Rust value_to_filter_string: a non-string filter value coming
-// through a Struct (numbers/bools are legal JSON there, unlike a real querystring) is coerced to
-// its string form rather than rejected.
 func valueToFilterString(v any) string {
 	if s, ok := v.(string); ok {
 		return s

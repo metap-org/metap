@@ -1,6 +1,5 @@
 // The mint-side counterpart to TokenVerifier — the same "which trust root" choice, made explicit
-// for a login handler (not yet ported) instead of every minting call site hardcoding
-// peripherals.MintJWT.
+// for a login handler instead of every minting call site hardcoding peripherals.MintJWT.
 package jwks
 
 import (

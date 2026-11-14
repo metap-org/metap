@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"math"
 	"net"
 	"net/http"
@@ -11,16 +12,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// RateLimit builds a per-peer-IP token-bucket rate limiter — ported from metap-runtime's
-// rate_limit::build (tower_governor). burstSize tokens replenish one every perMillisecond.
-// Keyed by peer IP (r.RemoteAddr), same PeerIpKeyExtractor choice the Rust version makes and the
-// same caveat it documents: behind a load balancer that doesn't strip/rewrite the client's real
-// IP, every caller collapses into one shared bucket.
-//
-// Known simplification vs. the Rust tower_governor version: that library evicts idle per-key
-// buckets automatically; this port holds one *rate.Limiter per IP seen for the life of the
-// process (an unbounded-key-set memory growth under a very large number of distinct peer IPs) —
-// acceptable for Wave 1, flagged for revisit once this is wired into a real long-running binary.
+// RateLimit builds a per-peer-IP token-bucket rate limiter. burstSize tokens replenish one every
+// perMillisecond.
 func RateLimit(perMillisecond time.Duration, burstSize int) func(http.Handler) http.Handler {
 	var mu sync.Mutex
 	limiters := map[string]*rate.Limiter{}
@@ -42,13 +35,12 @@ func RateLimit(perMillisecond time.Duration, burstSize int) func(http.Handler) h
 			if err != nil {
 				host = r.RemoteAddr
 			}
-			// Reserve (not Allow) so a rejected request can carry a real Retry-After — matching
-			// tower_governor's own behavior, which the Rust e2e test asserts on.
+			// Reserve (not Allow) so a rejected request can carry a real Retry-After.
 			reservation := limiterFor(host).Reserve()
 			if delay := reservation.Delay(); delay > 0 {
 				reservation.Cancel()
 				w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(delay.Seconds()))))
-				ServiceErrorResponse(w, http.StatusTooManyRequests, "too_many_requests",
+				httpx.ServiceErrorResponse(w, http.StatusTooManyRequests, "too_many_requests",
 					"Too many requests. Retry later.", nil)
 				return
 			}

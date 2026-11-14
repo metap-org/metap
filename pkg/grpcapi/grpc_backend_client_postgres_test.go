@@ -5,13 +5,13 @@
 // raw pb.RecordServiceClient calls (grpc_crud_postgres_test.go already covers the server side end
 // to end). This is the piece a BFF gateway actually depends on: a GrpcBackend behind
 // crud.RecordBackend must behave identically to an in-process CrudService for every method.
-// Ported from crates/metap-grpc/tests/grpc_backend_client_postgres.rs.
 package grpcapi
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -29,7 +29,6 @@ import (
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 const grpcBackendTestOrdersTable = "entities.test_grpc_backend_orders"
@@ -105,7 +104,7 @@ func TestGRPCBackendFullLifecycleMatchesDirectCrudServiceBehavior(t *testing.T) 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
-	backend := NewGrpcBackend(conn, runtime.NewStaticServiceTokenSource(serviceJWT))
+	backend := NewGrpcBackend(conn, httpx.NewStaticServiceTokenSource(serviceJWT))
 	rc := adminRequestContext(tenantID) // ignored by GrpcBackend itself — identity comes from serviceJWT
 
 	// create

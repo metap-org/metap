@@ -89,8 +89,7 @@ type Router struct {
 	secretStore    SecretStore
 	dedicatedPools *gocache.Cache
 	schemaPools    *gocache.Cache
-	// poolOpenGroup de-dupes concurrent pool-opens for the same key (dedicated or schema) — the
-	// Go equivalent of moka::future::Cache::try_get_with's own de-dup guarantee for this cache.
+	// poolOpenGroup de-dupes concurrent pool-opens for the same key (dedicated or schema).
 	poolOpenGroup singleflight.Group
 }
 

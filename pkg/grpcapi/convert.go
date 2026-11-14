@@ -1,13 +1,12 @@
 // google.protobuf.Struct <-> encoding/json — the seam every RPC crosses to hand a record (or a
-// query filter object) to/from crud.RecordBackend, which only ever speaks JSON. Ported from
-// crates/metap-grpc/src/convert.rs. The one real lossy edge is numbers — protobuf's
-// structpb.Value is always a float64 for a number, so an integer that doesn't fit exactly in a
-// float64 would round-trip incorrectly; this is protobuf's own Struct design limitation, not
-// something this file can fix. jsonNumberFromFloat64 reconstructs an integer-backed
-// json.Number whenever the float64 exactly represents one, matching every RecordDto integer
-// field (version, a Money-kind field, ...) staying readable as an integer by any caller
-// downstream of this conversion, same as REST's plain encoding/json values already behave for
-// the same field.
+// query filter object) to/from crud.RecordBackend, which only ever speaks JSON. The one real lossy
+// edge is numbers — protobuf's structpb.Value is always a float64 for a number, so an integer that
+// doesn't fit exactly in a float64 would round-trip incorrectly; this is protobuf's own Struct
+// design limitation, not something this file can fix. jsonNumberFromFloat64 reconstructs an
+// integer-backed json.Number whenever the float64 exactly represents one, matching every RecordDto
+// integer field (version, a Money-kind field, ...) staying readable as an integer by any caller
+// downstream of this conversion, same as REST's plain encoding/json values already behave for the
+// same field.
 package grpcapi
 
 import (
@@ -31,10 +30,8 @@ func StructToJSON(s *structpb.Struct) map[string]any {
 	return out
 }
 
-// JSONToStruct converts a JSON-object-shaped Go value into a google.protobuf.Struct. A
-// non-object top-level value has no Struct representation — mirrors the Rust json_to_struct's
-// own fallback (an empty Struct) rather than panicking, since a malformed caller-supplied value
-// should surface as a normal validation error downstream in CrudService, not a panic here.
+// JSONToStruct converts a JSON-object-shaped Go value into a google.protobuf.Struct. A non-object
+// top-level value has no Struct representation.
 func JSONToStruct(v any) *structpb.Struct {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -74,10 +71,6 @@ func pbValueToJSON(v *structpb.Value) any {
 	}
 }
 
-// jsonNumberFromFloat64 mirrors the Rust json_number_from_f64: a whole-valued float64 round-trips
-// as a json.Number holding its integer textual form, so callers reading it back via
-// json.Marshal/Unmarshal into an int64 field keep working exactly as REST's plain JSON body
-// already does for the same field.
 func jsonNumberFromFloat64(n float64) json.Number {
 	if !math.IsInf(n, 0) && !math.IsNaN(n) && n == math.Trunc(n) {
 		if n >= math.MinInt64 && n <= math.MaxInt64 {
@@ -157,12 +150,8 @@ func GetI64(m map[string]any, key string) (int64, bool) {
 	}
 }
 
-// ValueToStruct JSON-round-trips any Go value (a RecordDto, a RecordCapabilities, an
-// AggregateSpec, ...) into a google.protobuf.Struct — the generic counterpart to the Rust
-// json_to_struct(serde_json::to_value(x)) idiom used throughout service.rs/client.rs.
-// json.Decoder.UseNumber keeps an integer field (version, ...) as a json.Number rather than a
-// plain float64, so jsonToPbValue's json.Number branch controls the one lossy conversion
-// (float64 on the wire), instead of a silent extra truncation happening here first.
+// ValueToStruct JSON-round-trips any Go value (a RecordDto, a RecordCapabilities, an AggregateSpec,
+// ...) into a google.protobuf.Struct.
 func ValueToStruct(v any) (*structpb.Struct, error) {
 	b, err := json.Marshal(v)
 	if err != nil {

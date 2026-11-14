@@ -1,12 +1,10 @@
 // Package metadata is entity metadata — the heart of the platform: EntityDefinition/EntityField,
-// MetadataCompiler (validate + hash), MetadataRegistry, the OpenAPI generator. Ported from
-// metap's Rust metap-metadata crate.
+// MetadataCompiler (validate + hash), MetadataRegistry, the OpenAPI generator.
 package metadata
 
 import "github.com/metap-org/metap/pkg/permission"
 
-// FieldKind mirrors the Rust FieldKind. Reference serializes differently over REST vs. GraphQL
-// (a later wave) — see the Rust doc comment for why that's intentional, not a bug.
+// FieldKind is the type of an entity field; it decides the column type and the validation applied.
 type FieldKind string
 
 const (
@@ -76,9 +74,7 @@ type ComputedSpec struct {
 	DependsOn  []string `json:"dependsOn"`
 }
 
-// EntityField mirrors the Rust EntityField. Optional flags are pointers so a Go zero value
-// (false) is distinguishable from "not set", matching the Rust Option<bool>/serde default
-// behavior exactly — this matters for resolve_field_storage_tier's fallback logic.
+// Optional flags are pointers so a Go zero value (false) is distinguishable from "not set".
 type EntityField struct {
 	Name            string        `json:"name"`
 	Label           string        `json:"label"`
@@ -175,7 +171,6 @@ func FieldKindSQLType(kind FieldKind) string {
 	}
 }
 
-// EntityListView mirrors the Rust EntityListView.
 type EntityListView struct {
 	Name           string   `json:"name"`
 	Label          string   `json:"label"`
@@ -186,11 +181,10 @@ type EntityListView struct {
 	MaxLimit       uint32   `json:"maxLimit"`
 }
 
-// WorkflowTransition mirrors the Rust WorkflowTransition. Guard/Validator are
-// permission.PolicyCondition — the same declarative type policies use. Besides record fields,
-// a guard or validator can read the caller (`$ctx.roles`, `$ctx.userId`, any context attribute)
-// and who last performed each action on the record (`$workflow.actors.<action>`), which is what
-// separation of duties ("the approver is not the submitter") and per-account modes ("this
+// Guard/Validator are permission.PolicyCondition — the same declarative type policies use. Besides
+// record fields, a guard or validator can read the caller (`$ctx.roles`, `$ctx.userId`, any context
+// attribute) and who last performed each action on the record (`$workflow.actors.<action>`), which
+// is what separation of duties ("the approver is not the submitter") and per-account modes ("this
 // account requires approval") are written with.
 type WorkflowTransition struct {
 	Action    string                            `json:"action"`
@@ -215,8 +209,7 @@ type EntityWorkflow struct {
 }
 
 // RelatedView is a declarative "show related records from another entity" section — registered
-// separately via SubmitRelatedViews, not a field on EntityDefinition. See the Rust doc comment
-// for why (EntityDefinition is constructed as a bare struct literal at ~50 call sites).
+// separately via SubmitRelatedViews, not a field on EntityDefinition.
 type RelatedView struct {
 	Name        string   `json:"name"`
 	Label       string   `json:"label"`
@@ -241,7 +234,6 @@ type EntityAuditConfig struct {
 	RedactedFields []string `json:"redactedFields,omitempty"`
 }
 
-// EntityDefinition mirrors the Rust EntityDefinition.
 type EntityDefinition struct {
 	Name              string                   `json:"name"`
 	Label             string                   `json:"label"`

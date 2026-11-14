@@ -1,11 +1,9 @@
 // Package cronroutes is the optional cron job admin endpoints (/admin/cron-jobs*) route group,
 // mounted with httpserver.BuildRouter(state, cors, cronroutes.Mount, ...). It lives outside package
 // httpserver so a service that doesn't serve it doesn't link its dependencies.
-//
-// Admin-gated CRUD over metap's cron job store. Same shape as routes_admin.go: every handler
-// uses requireAdmin, tenant always comes from the token via state.Permissions.ScopedTenant,
-// never from the request body/path. Ported from crates/metap-http/src/routes/cron.rs
-// (recovered from git history, see routes_admin.go's own doc comment for why).
+// Admin-gated CRUD over metap's cron job store. Same shape as routes_admin.go: every handler uses
+// requireAdmin, tenant always comes from the token via state.Permissions.ScopedTenant, never from
+// the request body/path.
 package cronroutes
 
 import (

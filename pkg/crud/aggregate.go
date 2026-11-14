@@ -9,7 +9,6 @@ import (
 	"github.com/metap-org/metap/pkg/query"
 )
 
-// Aggregate mirrors the Rust CrudService::aggregate — the GROUP BY/COUNT/SUM sibling of List.
 // Permission is the same gate List uses: entity-level Read must be allowed, and the caller's
 // record-level (ABAC) read policies are applied to the rows *before* they are aggregated.
 func (s *CrudService) AggregateWithInput(ctx context.Context, entityName string, input query.AggregateInput, rc *permission.RequestContext) ([]json.RawMessage, error) {

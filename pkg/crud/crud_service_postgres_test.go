@@ -1,13 +1,6 @@
 //go:build integration
 
-// E2E tests running the full CrudService lifecycle against a real Postgres. Ported from the
-// Rust metap-crud crate's tests/crud_service_postgres.rs — a reduced-but-real subset: the full
-// create/get/update/transition/delete lifecycle, tenant-scoped list, single- and composite-field
-// unique violations, the reference-integrity delete guard, computed-field recomputation, and the
-// opt-in audit trail. The Rust file's two "sustained_concurrent_*" manual load-test benchmarks
-// and its deep audit-masking variants (4 scenarios) are deliberately not ported here — they are
-// soak/stress tooling and repeated coverage of the same masking mechanism, not additional
-// regression risk for this port.
+// E2E tests running the full CrudService lifecycle against a real Postgres.
 package crud
 
 import (

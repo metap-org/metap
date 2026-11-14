@@ -1,19 +1,10 @@
-// Package dbmigrate applies migrations/*.sql — ported from metap's Rust metap-db-migrate
-// binary. The Rust version is a thin wrapper around sqlx::migrate!, a compile-time proc macro
-// that embeds the migrations directory and tracks applied versions in its own _sqlx_migrations
-// table (SHA-384 checksums, a private sqlx implementation detail).
-//
-// This port deliberately does NOT write to that same _sqlx_migrations table: its checksum
-// algorithm differs (SHA-256 here, since there is no public Go equivalent of sqlx's internal
-// hash and reverse-engineering it isn't worth the risk), and inserting a row with a different
-// checksum than sqlx itself would compute would make a later real `db-migrate` run against the
-// same database fail its own checksum check — corrupting the Rust tool's migration state for a
-// database this port never owns exclusively. Tracking state lives in a separate table,
-// metadata.metap_go_migrations, so the two tools can never collide. This means a database
-// previously migrated only by the Rust tool looks completely unmigrated to this one — by
-// design: these are a parallel rewrite's own tracking tables, not meant to interoperate. Only
-// run this against a database this Go port owns, never one the Rust `db-migrate`/the live
-// system is also managing.
+// Package dbmigrate applies migrations/*.sql.
+// This port deliberately does NOT write to that same _sqlx_migrations table: its checksum algorithm
+// differs (SHA-256 here, since there is no public Go equivalent of sqlx's internal hash and
+// reverse-engineering it isn't worth the risk), and inserting a row with a different checksum than
+// sqlx itself would compute would make a later real `db-migrate` run against the same database fail
+// its own checksum check. Tracking state lives in a separate table, metadata.metap_go_migrations,
+// so the two tools can never collide. Only run this against a database this tool owns.
 package dbmigrate
 
 import (
@@ -88,15 +79,14 @@ CREATE TABLE IF NOT EXISTS metap_go_migrations (
 )`
 
 // sqlxPlaceholderTableDDL: migration 0030 runs `ALTER TABLE public._sqlx_migrations SET SCHEMA
-// metadata` — a real statement in the shared migrations directory, not something either port
-// can skip, since it's the one place the `records`/`attachments` table relocation in that same
-// file happens. The real sqlx tool always creates `_sqlx_migrations` itself before running any
-// user migration, which is what makes that statement valid when the Rust db-migrate runs this
-// file. This port isn't sqlx and never populates this table with real bookkeeping rows, but it
+// metadata` — a real statement in the shared migrations directory, not something either port can
+// skip, since it's the one place the `records`/`attachments` table relocation in that same file
+// happens. The real sqlx tool always creates `_sqlx_migrations` itself before running any user
+// migration. This port isn't sqlx and never populates this table with real bookkeeping rows, but it
 // still needs to exist as a placeholder so the same shared SQL file succeeds unmodified — found
-// live: without this, migration 0030 fails outright (`relation "_sqlx_migrations" does not
-// exist`), the one real migrations-directory coupling to sqlx found while verifying this port
-// against a real database from scratch.
+// live: without this, migration 0030 fails outright (`relation "_sqlx_migrations" does not exist`),
+// the one real migrations-directory coupling to sqlx found while verifying this tool against a real
+// database from scratch.
 const sqlxPlaceholderTableDDL = `CREATE TABLE IF NOT EXISTS public._sqlx_migrations (version BIGINT PRIMARY KEY)`
 
 // Result is what Run reports.

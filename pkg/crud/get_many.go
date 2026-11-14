@@ -15,9 +15,8 @@ type GetManyResult struct {
 	Capabilities RecordCapabilities
 }
 
-// GetMany mirrors the Rust CrudService::get_many — batched counterpart to Get. An id that
-// doesn't exist, or that record-level permission denies, is simply absent from the result — not
-// an error.
+// An id that doesn't exist, or that record-level permission denies, is simply absent from the
+// result — not an error.
 func (s *CrudService) GetMany(ctx context.Context, entityName string, ids []uuid.UUID, rc *permission.RequestContext) ([]GetManyResult, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {

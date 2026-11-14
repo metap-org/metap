@@ -1,11 +1,8 @@
-// Package cache is a swappable cache — ported from metap's Rust metap-cache crate. Same shape as
-// metap-storage's ObjectStore / metap-control's SecretStore: one interface, callers hold a
-// Cache, never the concrete type.
-//
+// Package cache is a swappable cache. Same shape as metap-storage's ObjectStore / metap-control's
+// SecretStore: one interface, callers hold a Cache, never the concrete type.
 // Security-first, not caller discipline: every method takes tenantID as a mandatory first
 // parameter — a cache key collision across tenants would leak one tenant's data into another's
 // response.
-//
 // What this must never cache: role/user_roles data — roles are looked up fresh on every request,
 // never cached, so a revocation takes effect on the very next request.
 package cache

@@ -2,8 +2,7 @@
 // config -> Postgres -> tenant router -> permissions -> JWT keys -> metadata registry ->
 // reconcile the service's own dedicated tables -> metadata drift check -> CRUD (+audit) -> optional gRPC
 // -> HTTP. A service's main shrinks to its entity list, its port numbers, and its own routes:
-//
-//	import _ "example.com/scanning/entities"
+// import _ "example.com/scanning/entities"
 //
 //	func main() {
 //		app.Main(app.Options{
@@ -13,10 +12,6 @@
 //			Routes:   scanningservice.MountRoutes,
 //		})
 //	}
-//
-// It is the Go counterpart of the Rust-era metap-app builder (skipped in the Go port until a
-// downstream service needed it — ../waap's three management-plane services were hand-copying ~150
-// identical lines each).
 package app
 
 import (

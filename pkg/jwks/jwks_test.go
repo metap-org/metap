@@ -1,8 +1,5 @@
 package jwks
 
-// Ported from the Rust metap-jwks crate's src/lib.rs test module, using net/http/httptest in
-// place of wiremock for the JwksClient tests.
-
 import (
 	"context"
 	"encoding/json"

@@ -13,7 +13,6 @@ import (
 	"github.com/metap-org/metap/pkg/metadata"
 )
 
-// FieldErrors mirrors the Rust FieldErrors.
 type FieldErrors = map[string][]string
 
 func isJSONNull(raw json.RawMessage) bool {

@@ -1,7 +1,5 @@
 package control
 
-// Ported from the Rust metap-control crate's src/secret_store.rs test module.
-
 import (
 	"context"
 	"testing"

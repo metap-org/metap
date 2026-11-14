@@ -1,17 +1,14 @@
 // Package attachmentroutes is the optional record attachment endpoints (/api/{entity}/{id}/attachments*) route group,
 // mounted with httpserver.BuildRouter(state, cors, attachmentroutes.Mount, ...). It lives outside package
 // httpserver so a service that doesn't serve it doesn't link its dependencies.
-//
 // Generic /api/{entity}/{id}/attachments* — file attachments for any entity, any app,
 // parameterized by :entity the same way /api/{entity}/{id}/transitions/{action} already is.
 // Always mounted regardless of whether AppState.ObjectStore is configured — an unconfigured app
 // just gets a 503 here, same shape any other optional feature degrades to.
-//
-// Deliberately not routed through CrudService: an attachment record isn't a metadata-driven
-// entity (RecordID can't carry a typed FK to "whichever entity"), so permission is checked
-// directly against the *target* entity's policies via CrudService.CheckRecordPermission — "can I
-// edit this issue" is exactly "can I attach a file to it". Ported from
-// crates/metap-http/src/routes/attachments.rs.
+// Deliberately not routed through CrudService: an attachment record isn't a metadata-driven entity
+// (RecordID can't carry a typed FK to "whichever entity"), so permission is checked directly
+// against the *target* entity's policies via CrudService.CheckRecordPermission — "can I edit this
+// issue" is exactly "can I attach a file to it".
 package attachmentroutes
 
 import (

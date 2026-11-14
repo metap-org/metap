@@ -124,8 +124,11 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
-  non-stdlib import there. `pkg/runtime`'s env/serve/shutdown/http-client functions are now thin
-  aliases onto kit. Behavior change: `Serve` now returns a listener error (e.g. port in use)
+  non-stdlib import there. Since 2026-11-14 `pkg/kit/httpx` also holds everything stdlib-only that
+  `pkg/runtime` used to (CORS, security headers, cookie/CSRF constants, the error body, request ids, W3C trace
+  context, access-log `Trace`, `RequestContext`, `ServiceTokenSource`; ids come from `crypto/rand`, not `uuid`);
+  `pkg/runtime` keeps only what needs a third-party dependency — `MetricsRegistry` (prometheus) and `RateLimit`
+  (`x/time/rate`). Import `httpx`, never re-add a thin alias in `runtime`. Behavior change: `Serve` now returns a listener error (e.g. port in use)
   immediately — the old loop only checked it after a shutdown signal, so a bind failure idled
   until Ctrl-C.
 - **`pkg/secrets` — the cloud secret stores** (AWS Secrets Manager, GCP Secret Manager, Vault)

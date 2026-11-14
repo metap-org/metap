@@ -2,11 +2,10 @@
 
 package oauthserver
 
-// Live-verifies the full authorization_code -> access/refresh token -> rotation ->
-// reuse-detection -> revoke lifecycle against a real Postgres, since none of client.go/code.go/
-// refresh.go's atomicity guarantees (single-use code, refresh-token rotation, reuse detection)
-// can be proven against a mock — ported from the Rust metap-oauth-server crate's
-// tests/oauth_server_postgres.rs.
+// Live-verifies the full authorization_code -> access/refresh token -> rotation -> reuse-detection
+// -> revoke lifecycle against a real Postgres, since none of client.go/code.go/ refresh.go's
+// atomicity guarantees (single-use code, refresh-token rotation, reuse detection) can be proven
+// against a mock.
 
 import (
 	"context"
@@ -25,10 +24,6 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// oauth_clients.service_user_id is a real FK into users — this package has no auth-provisioning
-// dependency to provision one the real way (metap-http's create-client handler does that, not
-// yet ported), so tests insert a minimal row directly, same as any other fixture-only user this
-// codebase's e2e tests create by hand.
 func makeTestUser(t *testing.T, pool *pgxpool.Pool, tenantID uuid.UUID) uuid.UUID {
 	var id uuid.UUID
 	err := pool.QueryRow(context.Background(),

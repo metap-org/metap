@@ -13,10 +13,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// DbCreds carries a resolved tenant DSN. Divergence from the Rust original (secrecy::SecretString,
-// whose Debug impl redacts): DSN is a plain Go string here, same documented tradeoff
-// s3store.S3ObjectStoreConfig already makes in this port — avoid logging a DbCreds value
-// directly with %v/%+v.
+// DbCreds carries a resolved tenant DSN.
 type DbCreds struct {
 	DSN string
 	// ExpiresAt is nil for a static credential, never rotated (every case today — EnvStore).

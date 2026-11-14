@@ -2,8 +2,6 @@
 
 package control
 
-// Ported from the Rust metap-control crate's tests/router_postgres.rs.
-
 import (
 	"context"
 	"fmt"

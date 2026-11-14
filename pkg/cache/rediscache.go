@@ -10,9 +10,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisCache is the distributed counterpart to MemoryCache, over any RESP-protocol server
-// (Redis, DragonflyDB, Valkey, KeyDB are all wire-compatible) — ported from metap-cache's
-// RedisCache.
+// RedisCache is the distributed counterpart to MemoryCache, over any RESP-protocol server (Redis,
+// DragonflyDB, Valkey, KeyDB are all wire-compatible).
 type RedisCache struct {
 	client *redis.Client
 	ttl    time.Duration

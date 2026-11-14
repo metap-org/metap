@@ -1,13 +1,6 @@
 package query
 
-// Pure unit tests for PlanList's planning logic (no DB — it only builds SQL text). The Rust
-// original's equivalent coverage lives almost entirely in tests/query_planner_postgres.rs (697
-// lines, executed against real Postgres to prove the generated SQL plans/executes correctly,
-// e.g. real index usage and keyset-pagination correctness over real NULL-containing rows) — a
-// representative but reduced subset of that is ported as real e2e tests in
-// query_planner_postgres_test.go instead of a full 1:1 port, given this crate's overall size;
-// this file covers the planning logic itself (field resolution, filter/sort/cursor validation)
-// without needing a database at all.
+// Pure unit tests for PlanList's planning logic (no DB — it only builds SQL text).
 
 import (
 	"strings"

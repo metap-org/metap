@@ -9,12 +9,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/metap-org/metap/pkg/peripherals"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 // DefaultMinRefreshInterval bounds how often a lookup of an unknown kid may trigger a fetch:
@@ -44,7 +44,7 @@ type JwksClient struct {
 // NewJwksClient returns a client for jwksURL whose key snapshot is refetched once older than ttl.
 func NewJwksClient(jwksURL string, ttl time.Duration) *JwksClient {
 	return &JwksClient{
-		http:               runtime.DefaultHTTPClient(),
+		http:               httpx.DefaultClient(),
 		jwksURL:            jwksURL,
 		ttl:                ttl,
 		MinRefreshInterval: DefaultMinRefreshInterval,

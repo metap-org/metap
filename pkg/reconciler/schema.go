@@ -1,8 +1,8 @@
-// Package reconciler is the table-per-entity reconciler: reconcile(desired) = introspect(actual)
-// -> diff -> plan -> execute for one (tenant, entity), declarative migration ops with
+// Package reconciler is the table-per-entity reconciler: reconcile(desired) = introspect(actual) ->
+// diff -> plan -> execute for one (tenant, entity), declarative migration ops with
 // preflight/quarantine, multi-tenant fan-out (orchestrator), and the one-shot generic-table-to-
-// dedicated-table data move. Ported from metap's Rust metap-reconciler crate. No HTTP, no
-// business-entity knowledge — a plain library, same shape as permission/cron.
+// dedicated-table data move. No HTTP, no business-entity knowledge — a plain library, same shape as
+// permission/cron.
 package reconciler
 
 // PhysicalSchema is the common representation both Compile (from an EntityDefinition, the
@@ -59,10 +59,10 @@ type ColumnSpec struct {
 	Origin   ColumnOrigin
 }
 
-// IndexSpec mirrors the Rust IndexSpec. Using/WhereClause are plain strings rather than *string
-// (a deliberate divergence from this codebase's usual Option<T>-as-pointer convention) — neither
-// field has a real "set but empty" case worth distinguishing from "unset": an access method name
-// and a WHERE predicate are never legitimately the empty string.
+// Using/WhereClause are plain strings rather than *string (a deliberate divergence from this
+// codebase's usual Option<T>-as-pointer convention) — neither field has a real "set but empty" case
+// worth distinguishing from "unset": an access method name and a WHERE predicate are never
+// legitimately the empty string.
 type IndexSpec struct {
 	// Expression: the indexed expression/column list, already normalized — e.g.
 	// (jsonb_extract_path_text(data, 'departmentid')) or a plain column name.
@@ -78,7 +78,6 @@ type IndexSpec struct {
 	WhereClause string
 }
 
-// FkSpec mirrors the Rust FkSpec.
 type FkSpec struct {
 	Column    string
 	RefTable  string

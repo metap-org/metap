@@ -5,7 +5,6 @@
 // env vars (which OpenBao's own CLI also reads) so existing config is unchanged. Two auth methods: a plain token (NewVaultStore) and AppRole
 // (NewVaultStoreWithAppRole) — not Vault's dynamic database-credentials engine, still a real
 // gap, left for when a real production deployment target exists to need it.
-//
 // Auto-renewal: an AppRole-authenticated client's token carries a lease_duration; every call
 // through SecretStore checks the remembered expiry first and, whenever less than renewBuffer
 // remains, renews *before* making the actual Vault call. Renewal tries RenewSelf first —
@@ -16,14 +15,11 @@
 // same secret_id would permanently break itself the first time it renewed, since Vault rejects
 // a reused single-use secret_id. RenewSelf needs no secret_id at all, so it doesn't have this
 // problem.
-//
-// Divergence from the Rust original: that version rebuilds a fresh VaultClient per call outside
-// the lock (ring's own vaultrs client doesn't implement Clone). Go's openbao/api Client.SetToken
-// is just a field mutation on a client that's otherwise safe for concurrent use for read/write
-// calls, so this port mutates the token under the lock and reads the client without rebuilding
-// it — simpler, same net effect (concurrent calls for different tenants don't serialize behind
-// one lock held for a network round trip, since the lock is only held for the token-freshness
-// check, not the KV call itself).
+// Go's openbao/api Client.SetToken is just a field mutation on a client that's otherwise safe for
+// concurrent use for read/write calls, so this store mutates the token under the lock and reads the
+// client without rebuilding it — simpler, same net effect (concurrent calls for different tenants
+// don't serialize behind one lock held for a network round trip, since the lock is only held for
+// the token-freshness check, not the KV call itself).
 package secrets
 
 import (

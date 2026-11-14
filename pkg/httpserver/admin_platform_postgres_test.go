@@ -445,9 +445,6 @@ func TestTenantConfigListSetResetAndPublicConfig(t *testing.T) {
 	badColorRes := doRequest(t, "PUT", base+"/admin/config/theme.primaryColor", adminToken, map[string]any{"value": "not-a-color"})
 	require.Equal(t, 422, badColorRes.StatusCode, "got %d", badColorRes.StatusCode)
 
-	// a credential-tier key is refused — write it through the secret path, not as a config value
-	// (this Go port, like the Rust REST surface it was recovered from, predates the fix that
-	// wired that orchestration — see config.Store.SetTenant's own doc comment).
 	secretRes := doRequest(t, "PUT", base+"/admin/config/cron.webhookAuthorization", adminToken, map[string]any{"value": "Bearer x"})
 	require.Equal(t, 403, secretRes.StatusCode, "got %d", secretRes.StatusCode)
 
@@ -488,10 +485,6 @@ func TestTenantConfigListSetResetAndPublicConfig(t *testing.T) {
 	require.Equal(t, false, decodeJSON(t, resetRes)["data"].(map[string]any)["overridden"], "expected overridden: false after reset")
 }
 
-// Mirrors the Rust platform_admin_context_gates_by_sentinel_tenant_and_role test: a normal
-// tenant admin (even with the "admin" role) must not pass requirePlatformAdmin, a user in the
-// platform sentinel tenant without "platform_admin" must not pass, and only a user in the
-// platform sentinel tenant *with* "platform_admin" passes.
 func TestPlatformAdminContextGatesBySentinelTenantAndRole(t *testing.T) {
 	pool := httpTestPool(t)
 	ctx := context.Background()

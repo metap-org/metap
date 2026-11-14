@@ -14,7 +14,6 @@ import (
 	"github.com/metap-org/metap/pkg/workflow"
 )
 
-// Delete mirrors the Rust CrudService::delete.
 func (s *CrudService) Delete(ctx context.Context, entityName string, id uuid.UUID, expectedVersion int32, rc *permission.RequestContext, reason *string) (RecordDto, error) {
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {

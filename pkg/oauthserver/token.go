@@ -14,13 +14,7 @@ import (
 // opaque, URL-safe string. Used for a client secret, an authorization code, and a refresh token —
 // all server-generated, never user-chosen, which is what makes the fast digest in HashToken the
 // right choice instead of a slow password hash.
-//
-// Divergence from the Rust original: that version builds the 32 bytes from two concatenated
-// uuid::Uuid::new_v4()s (chosen there to avoid a new RNG dependency, since the uuid crate's v4
-// feature was already in the dependency tree) — this port reads crypto/rand directly instead,
-// which is simpler, equally OS-RNG-backed, and avoids the ~6 fixed version/variant bits a v4 UUID
-// spends out of its 128, so if anything this is marginally higher-entropy, never lower. The output
-// shape (43-char base64url string) is identical either way.
+// The output shape (43-char base64url string) is identical either way.
 func GenerateOpaqueToken() (string, error) {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {

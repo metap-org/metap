@@ -1,7 +1,6 @@
 // Generic /api/{entity}/{id}/workflow-events — read-only transition history for one record,
 // parameterized by :entity the same way /attachments is. Read-only, so only Read permission is
 // checked, both entity-level and record-level (ABAC), via CrudService.CheckRecordPermission.
-// Ported from crates/metap-http/src/routes/workflow_events.rs.
 package httpserver
 
 import (

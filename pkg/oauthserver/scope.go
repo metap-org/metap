@@ -3,10 +3,7 @@ package oauthserver
 import "strings"
 
 // ScopeTokens splits a space-separated scope string (RFC 6749 §3.3) into its tokens — the wire
-// format every scope column/claim/query-param in this package uses. Kept as a plain
-// string/[]string rather than a newtype for the same reason the Rust original stays a bare
-// &str/String: every caller either splits once to check subset/membership or passes the string
-// straight through unopened (storage, the JWT claim).
+// format every scope column/claim/query-param in this package uses.
 func ScopeTokens(scope string) []string {
 	return strings.Fields(scope)
 }

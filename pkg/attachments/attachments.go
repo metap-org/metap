@@ -1,12 +1,9 @@
-// Package attachments holds file attachment metadata — ported from metap's Rust
-// metap-attachments crate, metap-storage's ObjectStore's first real consumer. Deliberately not a
-// metadata-driven entity: RecordID can point at a row in any entity's table, which rules out a
-// typed foreign key. No HTTP, no business-entity knowledge.
-//
+// Package attachments holds file attachment metadata. Deliberately not a metadata-driven entity:
+// RecordID can point at a row in any entity's table, which rules out a typed foreign key. No HTTP,
+// no business-entity knowledge.
 // Two storage mechanisms, not one: every function takes a tableName rather than hardcoding
 // "attachments" — a caller passes the shared default table for most entities, or a dedicated
 // table (EnsureDedicatedTable) for one expecting heavy attachment volume.
-//
 // Known tradeoff, not a bug: unlike a real Reference field, nothing here blocks deleting the
 // record an attachment points at — RecordID can't carry a DB-level FK across arbitrary target
 // tables. Deleting a referenced record leaves its attachment rows pointing at nothing (the

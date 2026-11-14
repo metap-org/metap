@@ -45,10 +45,9 @@ func scanCode(row pgx.Row) (*AuthorizationCode, error) {
 
 const codeColumns = `id, client_id, tenant_id, user_id, redirect_uri, scope, code_challenge, code_challenge_method`
 
-// CreateAuthorizationCode is issued by the (not yet ported) authorize endpoint once the caller
-// (an already-authenticated session) is treated as approving the client's request. Returns
-// (row, rawCode): rawCode is what actually goes on the redirect URL, never persisted — only its
-// hash is.
+// CreateAuthorizationCode is issued by the authorize endpoint once the caller (an
+// already-authenticated session) is treated as approving the client's request. Returns (row,
+// rawCode): rawCode is what actually goes on the redirect URL, never persisted — only its hash is.
 func CreateAuthorizationCode(ctx context.Context, db DBTX, input CreateCodeInput) (*AuthorizationCode, string, error) {
 	rawCode, err := GenerateOpaqueToken()
 	if err != nil {

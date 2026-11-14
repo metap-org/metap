@@ -1,9 +1,8 @@
-// Per-peer-IP rate limiting for this package's own gRPC listener — ported from
-// crates/metap-grpc/src/rate_limit.rs. Built directly on golang.org/x/time/rate (the same
-// library httpserver's own RateLimit middleware uses), keyed by the real TCP peer address via
-// peer.FromContext — unlike the HTTP layer's PeerIpKeyExtractor there is no X-Forwarded-For-style
-// spoofing concern to weigh here, since this only ever sees the actual socket peer, never a
-// caller-supplied header.
+// Per-peer-IP rate limiting for this package's own gRPC listener. Built directly on
+// golang.org/x/time/rate (the same library httpserver's own RateLimit middleware uses), keyed by
+// the real TCP peer address via peer.FromContext — unlike the HTTP layer's PeerIpKeyExtractor there
+// is no X-Forwarded-For-style spoofing concern to weigh here, since this only ever sees the actual
+// socket peer, never a caller-supplied header.
 package grpcapi
 
 import (
@@ -46,10 +45,9 @@ func (r *rateLimiter) limiterFor(key string) *rate.Limiter {
 	return l
 }
 
-// UnaryInterceptor returns a grpc.UnaryServerInterceptor enforcing this limiter. No peer IP on
-// the request (a non-TCP transport) fails open rather than blocking every request — this
-// package only ever serves over TCP today, so this branch is not currently reachable, just not
-// assumed away (same posture as the Rust original).
+// UnaryInterceptor returns a grpc.UnaryServerInterceptor enforcing this limiter. No peer IP on the
+// request (a non-TCP transport) fails open rather than blocking every request — this package only
+// ever serves over TCP today, so this branch is not currently reachable, just not assumed away.
 func (r *rateLimiter) UnaryInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {

@@ -28,8 +28,7 @@ func TestSetPlatformGlobalThenReloadIsVisibleImmediately(t *testing.T) {
 	t.Cleanup(func() { _ = store.ResetPlatformGlobal(context.Background(), GraphQLMaxDepth) })
 
 	require.NoError(t, store.SetPlatformGlobal(ctx, GraphQLMaxDepth, num(33)))
-	// SetPlatformGlobal already re-swaps the snapshot — no separate Reload needed, same as the
-	// Rust ArcSwap store.
+	// SetPlatformGlobal already re-swaps the snapshot — no separate Reload needed.
 	got := store.Current().GetU64(GraphQLMaxDepth)
 	require.EqualValues(t, 33, got, "got %d, want 33", got)
 }

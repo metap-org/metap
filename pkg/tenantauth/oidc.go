@@ -99,7 +99,7 @@ func oidcProviderAndVerifier(
 // responsible for stashing csrfToken -> (tenantID, nonce, pkceVerifier) somewhere that survives
 // until the callback, since this package has no HTTP-session concept of its own. clientSecret is
 // resolved by the caller (ResolveClientSecretEnv, or any other means) and passed in explicitly —
-// this function never reads an env var itself, matching the Rust original's own signature.
+// this function never reads an env var itself.
 func OidcAuthorizeURL(
 	ctx context.Context,
 	config *OidcConfig,

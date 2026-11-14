@@ -45,10 +45,7 @@ type CreateClientInput struct {
 	RedirectURIs   []string
 	AllowedScopes  []string
 	IsConfidential bool
-	// ServiceUserID: the caller (eventually metap-http, not yet ported) provisions this users row
-	// *before* calling CreateClient — this package has no auth-provisioning dependency and doesn't
-	// know how to provision a user itself, only how to record which one a client acts as.
-	ServiceUserID uuid.UUID
+	ServiceUserID  uuid.UUID
 }
 
 func scanClient(row pgx.Row) (*OAuthClient, error) {
@@ -98,10 +95,9 @@ func CreateClient(ctx context.Context, db DBTX, input CreateClientInput) (*OAuth
 	return client, clientSecret, nil
 }
 
-// GetClientByClientID looks a client up by the wire-visible client_id (not the internal id) —
-// this is what the authorize and token endpoints receive from the caller. Includes the secret
-// hash so the (not yet ported) token endpoint can verify a presented client_secret without a
-// second query.
+// GetClientByClientID looks a client up by the wire-visible client_id (not the internal id) — this
+// is what the authorize and token endpoints receive from the caller. Includes the secret hash so
+// the token endpoint can verify a presented client_secret without a second query.
 func GetClientByClientID(ctx context.Context, db DBTX, clientID string) (*ClientWithSecret, error) {
 	row := db.QueryRow(ctx,
 		`SELECT id, tenant_id, client_id, client_secret_hash, name, redirect_uris, allowed_scopes,
@@ -135,9 +131,7 @@ func ListClients(ctx context.Context, db DBTX, tenantID uuid.UUID) ([]*OAuthClie
 	}
 	defer rows.Close()
 
-	// make(..., 0), not var out []*OAuthClient — a nil Go slice marshals to JSON null, not [],
-	// diverging from the Rust Vec<OAuthClient> wire shape GET /admin/oauth/clients' caller
-	// expects when a tenant has registered no clients yet.
+	// make(..., 0), not var out []*OAuthClient — a nil Go slice marshals to JSON null, not [].
 	out := make([]*OAuthClient, 0)
 	for rows.Next() {
 		c, err := scanClient(rows)

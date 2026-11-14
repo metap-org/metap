@@ -1,8 +1,7 @@
 // Package query is the Postgres-dialect query planner — QueryPlanner.plan_list, keyset cursor
-// encode/decode, record-level policy -> SQL, and a small JQL query language. Ported from metap's
-// Rust metap-query crate. An opaque, base64-encoded JSON cursor — never trust its contents
-// further than shape-checking here; PlanList separately validates it matches the query's actual
-// resolved sort.
+// encode/decode, record-level policy -> SQL, and a small JQL query language. An opaque,
+// base64-encoded JSON cursor — never trust its contents further than shape-checking here; PlanList
+// separately validates it matches the query's actual resolved sort.
 package query
 
 import (
@@ -17,11 +16,11 @@ const (
 	SortDesc SortDir = "desc"
 )
 
-// Cursor mirrors the Rust Cursor. Value is nil when the page's last row had a SQL NULL sort
-// value — distinct from a real empty string. Collapsing both into the same empty-string
-// encoding is exactly the keyset-pagination bug this type exists to avoid: a NULL sort value can
-// never satisfy sort_expr > ”/sort_expr = ” under SQL's three-valued logic, so every row after
-// the first NULL would silently vanish from later pages. PlanList branches on this explicitly.
+// Value is nil when the page's last row had a SQL NULL sort value — distinct from a real empty
+// string. Collapsing both into the same empty-string encoding is exactly the keyset-pagination bug
+// this type exists to avoid: a NULL sort value can never satisfy sort_expr > ”/sort_expr = ” under
+// SQL's three-valued logic, so every row after the first NULL would silently vanish from later
+// pages. PlanList branches on this explicitly.
 type Cursor struct {
 	Field string  `json:"field"`
 	Value *string `json:"value"`
@@ -30,7 +29,6 @@ type Cursor struct {
 }
 
 func isCursorUUID(s string) bool {
-	// Same shape check as the Rust is_uuid, not full RFC validation.
 	if len(s) != 36 {
 		return false
 	}

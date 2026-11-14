@@ -1,8 +1,3 @@
-// Query depth/complexity limits — the same two guards the Rust gateway applied through
-// async-graphql's limit_depth/limit_complexity (defaults 10 / 1000, overridable with
-// GRAPHQL_MAX_DEPTH / GRAPHQL_MAX_COMPLEXITY). graphql-go has neither built in, so the check
-// walks the parsed document itself before execution.
-//
 // Every resolved field here can cost an upstream gRPC or REST call (a reference field is a Get on
 // another service), so these bound how much upstream work one authenticated operation can
 // trigger: depth bounds nesting, complexity bounds the total number of field selections —
