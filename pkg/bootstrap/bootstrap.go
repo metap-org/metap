@@ -35,8 +35,8 @@ type Grant struct {
 // User is an initial account. The password is never declared here: SecretRef names where Apply's
 // PasswordSource finds it (an environment variable by default).
 type User struct {
-	Email       string   `json:"email"`
-	Roles       []string `json:"roles"`
+	Email     string   `json:"email"`
+	Roles     []string `json:"roles"`
 	SecretRef string   `json:"secretRef"`
 }
 
