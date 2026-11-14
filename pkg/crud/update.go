@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
 )
@@ -25,7 +27,7 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return RecordDto{}, NewServiceError(404, "entity_not_found")
+		return RecordDto{}, NewServiceError(http.StatusNotFound, "entity_not_found")
 	}
 
 	decision, err := s.permissions.CanUpdateEntity(ctx, rc, entity.Name)
@@ -50,7 +52,7 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 	}
 	if existing == nil {
 		precheckTx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, NewServiceError(404, "record_not_found")
+		return RecordDto{}, NewServiceError(http.StatusNotFound, errcode.RecordNotFound)
 	}
 	if err := precheckTx.Commit(ctx); err != nil {
 		return RecordDto{}, err
@@ -70,7 +72,7 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 	}
 
 	if fe := rejectSystemFields(entity, rawData); fe != nil {
-		return RecordDto{}, NewServiceErrorFields(400, "validation_failed", fe)
+		return RecordDto{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fe)
 	}
 
 	keys := make([]string, 0, len(rawData))
@@ -103,7 +105,7 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 
 	data, fieldErrors := ValidatePayload(entity, merged)
 	if fieldErrors != nil {
-		return RecordDto{}, NewServiceErrorFields(400, "validation_failed", fieldErrors)
+		return RecordDto{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fieldErrors)
 	}
 	recomputeFields(entity, data)
 
@@ -147,7 +149,7 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 		}
 		tx.Rollback(ctx) //nolint:errcheck
 		if errors.Is(err, pgx.ErrNoRows) {
-			return RecordDto{}, NewServiceError(409, "version_conflict")
+			return RecordDto{}, NewServiceError(http.StatusConflict, errcode.VersionConflict)
 		}
 		return RecordDto{}, err
 	}

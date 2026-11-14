@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
 )
@@ -21,7 +22,7 @@ func listWorkflowEvents(w http.ResponseWriter, r *http.Request, state *AppState)
 	entity := chi.URLParam(r, "entity")
 	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
 	if err != nil {
-		writeServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 

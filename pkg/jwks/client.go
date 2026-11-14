@@ -21,6 +21,9 @@ import (
 // without it, every request carrying a made-up kid would become one request to the issuer.
 const DefaultMinRefreshInterval = 5 * time.Second
 
+// DefaultLeeway is the clock skew tolerated when checking a token's exp/nbf, for every transport.
+const DefaultLeeway = 20 * time.Second
+
 // JwksClient holds a snapshot of the issuer's keys. The snapshot is replaced wholesale on every
 // refresh (always the whole document, never per kid), so a verifier that fell several rotations
 // behind catches up in one request, and a key the issuer has retired stops verifying at the next

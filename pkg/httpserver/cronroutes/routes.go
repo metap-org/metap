@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/cron"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 
 func cronNotFound(w http.ResponseWriter) {
@@ -25,7 +26,7 @@ func cronNotFound(w http.ResponseWriter) {
 }
 
 func cronValidationError(w http.ResponseWriter, message string) {
-	httpserver.WriteServiceError(w, http.StatusBadRequest, "validation_failed", message, nil)
+	httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, message, nil)
 }
 
 type createCronJobBody struct {

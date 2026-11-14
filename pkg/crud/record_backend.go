@@ -7,6 +7,7 @@ package crud
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 
 	"github.com/google/uuid"
 
@@ -42,7 +43,7 @@ var _ RecordBackend = (*CrudService)(nil)
 func (s *CrudService) Aggregate(ctx context.Context, entityName string, spec query.AggregateSpec, rc *permission.RequestContext) ([]json.RawMessage, error) {
 	input, err := spec.IntoInput()
 	if err != nil {
-		return nil, NewServiceErrorMsg(400, "invalid_aggregate", err.Error())
+		return nil, NewServiceErrorMsg(http.StatusBadRequest, "invalid_aggregate", err.Error())
 	}
 	return s.AggregateWithInput(ctx, entityName, input, rc)
 }

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
 )
@@ -26,7 +28,7 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return RecordDto{}, NewServiceError(404, "entity_not_found")
+		return RecordDto{}, NewServiceError(http.StatusNotFound, "entity_not_found")
 	}
 
 	// Per-action entity check: `transition` covers every action, `transition:<action>` only
@@ -53,7 +55,7 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 	}
 	if existing == nil {
 		precheckTx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, NewServiceError(404, "record_not_found")
+		return RecordDto{}, NewServiceError(http.StatusNotFound, errcode.RecordNotFound)
 	}
 	var actors map[string]string
 	if workflow.UsesWorkflowContext(entity) {
@@ -82,26 +84,26 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 	}
 
 	if entity.Workflow == nil {
-		return RecordDto{}, NewServiceError(400, "no_workflow")
+		return RecordDto{}, NewServiceError(http.StatusBadRequest, "no_workflow")
 	}
 	workflowDef := entity.Workflow
 
 	fromRaw, ok := existing.Data[workflowDef.StateField]
 	if !ok {
-		return RecordDto{}, NewServiceError(409, "invalid_transition")
+		return RecordDto{}, NewServiceError(http.StatusConflict, "invalid_transition")
 	}
 	var fromState string
 	if json.Unmarshal(fromRaw, &fromState) != nil {
-		return RecordDto{}, NewServiceError(409, "invalid_transition")
+		return RecordDto{}, NewServiceError(http.StatusConflict, "invalid_transition")
 	}
 
 	transition := workflow.FindTransition(entity, action, fromState)
 	if transition == nil {
-		return RecordDto{}, NewServiceError(409, "invalid_transition")
+		return RecordDto{}, NewServiceError(http.StatusConflict, "invalid_transition")
 	}
 
 	if guardErr := workflow.RunGuard(transition, workflow.WithWorkflowContext(existing.Data, actors), rc); guardErr != nil {
-		return RecordDto{}, NewServiceErrorMsg(422, "guard_failed", guardErr.Error())
+		return RecordDto{}, NewServiceErrorMsg(http.StatusUnprocessableEntity, "guard_failed", guardErr.Error())
 	}
 	toState := transition.To
 
@@ -133,11 +135,11 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 
 	nextData, fieldErrors := ValidatePayload(entity, merged)
 	if fieldErrors != nil {
-		return RecordDto{}, NewServiceErrorFields(400, "validation_failed", fieldErrors)
+		return RecordDto{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fieldErrors)
 	}
 
 	if validatorErr := workflow.RunValidator(transition, workflow.WithWorkflowContext(nextData, actors), rc); validatorErr != nil {
-		return RecordDto{}, NewServiceErrorMsg(422, "validator_failed", validatorErr.Error())
+		return RecordDto{}, NewServiceErrorMsg(http.StatusUnprocessableEntity, "validator_failed", validatorErr.Error())
 	}
 
 	workflow.ApplySetFields(transition, nextData, rc)
@@ -165,7 +167,7 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
 		if errors.Is(err, pgx.ErrNoRows) {
-			return RecordDto{}, NewServiceError(409, "version_conflict")
+			return RecordDto{}, NewServiceError(http.StatusConflict, errcode.VersionConflict)
 		}
 		return RecordDto{}, err
 	}

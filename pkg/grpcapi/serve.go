@@ -94,7 +94,7 @@ func OptionalServe(host string, defaultPort int, cfg OptionalServeConfig) (*grpc
 
 	verifier := cfg.TokenVerifierOverride
 	if verifier == nil {
-		verifier = &jwks.TokenVerifier{Kind: jwks.VerifierStatic, PublicKey: cfg.JWTPublicKey, Leeway: 20 * time.Second}
+		verifier = &jwks.TokenVerifier{Kind: jwks.VerifierStatic, PublicKey: cfg.JWTPublicKey, Leeway: jwks.DefaultLeeway}
 	}
 	auth := AuthConfig{
 		Verifier:               verifier,

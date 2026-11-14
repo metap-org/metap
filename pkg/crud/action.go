@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/google/uuid"
@@ -62,7 +63,7 @@ func (r *ActionRegistry) Invoke(ctx context.Context, call ActionCall) (JsonObjec
 	h, ok := r.handlers[actionKey(call.Entity, call.Name)]
 	r.mu.RUnlock()
 	if !ok {
-		return nil, NewServiceErrorMsg(404, "action_not_found", fmt.Sprintf("No action %q on entity %q.", call.Name, call.Entity))
+		return nil, NewServiceErrorMsg(http.StatusNotFound, "action_not_found", fmt.Sprintf("No action %q on entity %q.", call.Name, call.Entity))
 	}
 	return h(ctx, call)
 }

@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+
+	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 
 // Recover turns a handler panic into a logged error and a 500 in the standard envelope, instead
@@ -23,7 +25,7 @@ func Recover(next http.Handler) http.Handler {
 			}
 			slog.Error("panic in handler", "panic", rec, "method", r.Method, "path", r.URL.Path, "stack", string(debug.Stack()))
 			if !tracker.wrote {
-				WriteError(w, http.StatusInternalServerError, "internal_error", "Internal server error.")
+				WriteError(w, http.StatusInternalServerError, errcode.InternalError, "Internal server error.")
 			}
 		}()
 		next.ServeHTTP(tracker, r)

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
@@ -94,20 +96,20 @@ func parseUserID(rc *permission.RequestContext) (*uuid.UUID, error) {
 func forbidden(decision permission.PermissionDecision) *ServiceError {
 	reason := decision.Reason
 	if reason == "" {
-		reason = "forbidden"
+		reason = errcode.Forbidden
 	}
-	return NewServiceError(403, reason)
+	return NewServiceError(http.StatusForbidden, reason)
 }
 
 func forbiddenWithField(decision permission.PermissionDecision) *ServiceError {
 	reason := decision.Reason
 	if reason == "" {
-		reason = "forbidden"
+		reason = errcode.Forbidden
 	}
 	if decision.Field != "" {
-		return NewServiceErrorFields(403, reason, map[string][]string{decision.Field: {"forbidden"}})
+		return NewServiceErrorFields(http.StatusForbidden, reason, map[string][]string{decision.Field: {errcode.Forbidden}})
 	}
-	return NewServiceError(403, reason)
+	return NewServiceError(http.StatusForbidden, reason)
 }
 
 // compositeUniqueIndexName reproduces the reconciler's composite unique index naming exactly for
@@ -139,12 +141,12 @@ func uniqueViolation(entity metadata.EntityDefinition, err error) (*ServiceError
 			for _, f := range constraint.Fields {
 				fieldErrors[f] = []string{"A record with this combination of values already exists."}
 			}
-			return NewServiceErrorFields(409, "unique_violation", fieldErrors), true
+			return NewServiceErrorFields(http.StatusConflict, errcode.UniqueViolation, fieldErrors), true
 		}
 	}
 
 	if field, ok := strings.CutPrefix(constraintName, prefix); ok {
-		return NewServiceErrorFields(409, "unique_violation", map[string][]string{
+		return NewServiceErrorFields(http.StatusConflict, errcode.UniqueViolation, map[string][]string{
 			field: {"A record with this value already exists."},
 		}), true
 	}
@@ -152,7 +154,7 @@ func uniqueViolation(entity metadata.EntityDefinition, err error) (*ServiceError
 }
 
 func unnamedUniqueViolation(entity metadata.EntityDefinition) *ServiceError {
-	return NewServiceErrorMsg(409, "unique_violation", fmt.Sprintf("A unique constraint was violated on %q.", entity.Name))
+	return NewServiceErrorMsg(http.StatusConflict, errcode.UniqueViolation, fmt.Sprintf("A unique constraint was violated on %q.", entity.Name))
 }
 
 // routerUnavailable maps a control.RouterError (an expected part of the tenant lifecycle) to a
@@ -165,11 +167,11 @@ func routerUnavailable(err error) (*ServiceError, bool) {
 	}
 	switch routerErr.Kind {
 	case control.ErrTenantSuspended, control.ErrTenantExpired:
-		return NewServiceError(403, "tenant_unavailable"), true
+		return NewServiceError(http.StatusForbidden, "tenant_unavailable"), true
 	case control.ErrTenantMigrating, control.ErrTenantProvisioning:
-		return NewServiceError(503, "tenant_unavailable"), true
+		return NewServiceError(http.StatusServiceUnavailable, "tenant_unavailable"), true
 	case control.ErrTenantDeleted:
-		return NewServiceError(404, "tenant_not_found"), true
+		return NewServiceError(http.StatusNotFound, "tenant_not_found"), true
 	default: // ErrInvalidSchemaName: should never occur from real data — fall through as a real error
 		return nil, false
 	}

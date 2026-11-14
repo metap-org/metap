@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -22,7 +23,7 @@ func RecordActionRoute(state *AppState, label string, run func(ctx context.Conte
 		}
 		id, err := uuid.Parse(chi.URLParam(r, "id"))
 		if err != nil {
-			WriteServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid "+label+" id.", nil)
+			WriteServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "Invalid "+label+" id.", nil)
 			return
 		}
 		out, err := run(r.Context(), rc, id)

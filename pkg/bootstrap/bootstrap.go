@@ -15,6 +15,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/metap-org/metap/pkg/permission"
 )
 
 // AllActions in a Grant expands to every entity action (read, create, update, delete, transition).
@@ -149,7 +151,7 @@ func (b Bootstrap) Validate() error {
 		}
 		seen[strings.ToLower(u.Email)] = true
 		for _, r := range u.Roles {
-			if !declared[r] && r != "admin" {
+			if !declared[r] && r != permission.RoleAdmin {
 				return fmt.Errorf("bootstrap: user %q names undeclared role %q", u.Email, r)
 			}
 		}
@@ -157,7 +159,10 @@ func (b Bootstrap) Validate() error {
 	return nil
 }
 
-var baseActions = []string{"read", "create", "update", "delete", "transition"}
+var baseActions = []string{
+	permission.PolicyActionRead, permission.PolicyActionCreate, permission.PolicyActionUpdate,
+	permission.PolicyActionDelete, permission.PolicyActionTransition,
+}
 
 func validAction(a string) bool {
 	if a == AllActions {

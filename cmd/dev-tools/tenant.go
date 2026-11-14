@@ -7,6 +7,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/peripherals"
+	"github.com/metap-org/metap/pkg/permission"
 )
 
 // seedAdmin mirrors seed-admin.mjs, via peripherals.AssignRole (the same function the
@@ -39,7 +40,7 @@ func seedAdmin(args []string) error {
 		return fmt.Errorf("failed to resolve tenant %s's database: %w", tenantID, err)
 	}
 	defer tx.Rollback(ctx)
-	if err := peripherals.AssignRole(ctx, tx, tenantID, userID, "admin", nil); err != nil {
+	if err := peripherals.AssignRole(ctx, tx, tenantID, userID, permission.RoleAdmin, nil); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

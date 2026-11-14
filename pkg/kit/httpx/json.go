@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+
+	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 
 // DefaultMaxBodyBytes bounds a JSON request body unless the caller asks for another limit. An
@@ -53,7 +55,7 @@ func DecodeJSONOrFail(w http.ResponseWriter, r *http.Request, dst any) bool {
 	case err == nil:
 		return true
 	case errors.Is(err, ErrBodyTooLarge):
-		WriteError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "Request body is too large.")
+		WriteError(w, http.StatusRequestEntityTooLarge, errcode.PayloadTooLarge, "Request body is too large.")
 	case errors.Is(err, io.EOF):
 		WriteError(w, http.StatusBadRequest, "invalid_request_body", "Request body is empty.")
 	default:

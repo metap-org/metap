@@ -6,6 +6,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 )
 
@@ -58,9 +59,9 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 	case err == nil:
 		return true
 	case errors.Is(err, httpx.ErrBodyTooLarge):
-		writeServiceError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "Request body is too large.", nil)
+		writeServiceError(w, http.StatusRequestEntityTooLarge, errcode.PayloadTooLarge, "Request body is too large.", nil)
 	default:
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "Invalid request body.", nil)
 	}
 	return false
 }

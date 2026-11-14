@@ -36,6 +36,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/oauthserver"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/tenantauth"
@@ -187,7 +188,7 @@ func authorizeOAuth2(w http.ResponseWriter, r *http.Request, state *httpserver.A
 	}
 	userID, err := uuid.Parse(rc.UserID)
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusUnauthorized, "unauthorized", "A user session is required to authorize a client.", nil)
+		httpserver.WriteServiceError(w, http.StatusUnauthorized, errcode.Unauthorized, "A user session is required to authorize a client.", nil)
 		return
 	}
 	clientID := q.Get("client_id")
@@ -307,7 +308,7 @@ func authorizeDecision(w http.ResponseWriter, r *http.Request, state *httpserver
 	}
 	userID, err := uuid.Parse(rc.UserID)
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusUnauthorized, "unauthorized", "A user session is required.", nil)
+		httpserver.WriteServiceError(w, http.StatusUnauthorized, errcode.Unauthorized, "A user session is required.", nil)
 		return
 	}
 
@@ -718,7 +719,7 @@ func revokeOAuthClientAdmin(w http.ResponseWriter, r *http.Request, state *https
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusNotFound, "not_found", "No such client in your tenant.", nil)
+		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.NotFound, "No such client in your tenant.", nil)
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)
@@ -732,7 +733,7 @@ func revokeOAuthClientAdmin(w http.ResponseWriter, r *http.Request, state *https
 		return
 	}
 	if !revoked {
-		httpserver.WriteServiceError(w, http.StatusNotFound, "not_found", "No such client in your tenant.", nil)
+		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.NotFound, "No such client in your tenant.", nil)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
@@ -22,7 +23,7 @@ func (s *CrudService) AggregateWithInput(ctx context.Context, entityName string,
 	}
 	entity, ok := md.GetEntity(entityName)
 	if !ok {
-		return nil, NewServiceError(404, "entity_not_found")
+		return nil, NewServiceError(http.StatusNotFound, "entity_not_found")
 	}
 
 	decision, err := s.permissions.CanReadEntity(ctx, rc, entity.Name)
@@ -46,9 +47,9 @@ func (s *CrudService) AggregateWithInput(ctx context.Context, entityName string,
 		var unsupportedContains *query.UnsupportedContainsConditionInListError
 		switch {
 		case errors.As(err, &invalidAggregate):
-			return nil, NewServiceErrorMsg(400, "invalid_aggregate", err.Error())
+			return nil, NewServiceErrorMsg(http.StatusBadRequest, "invalid_aggregate", err.Error())
 		case errors.As(err, &crossRecord), errors.As(err, &unsupportedContains):
-			return nil, NewServiceErrorMsg(500, "unsupported_policy_condition", err.Error())
+			return nil, NewServiceErrorMsg(http.StatusInternalServerError, "unsupported_policy_condition", err.Error())
 		}
 		return nil, err
 	}

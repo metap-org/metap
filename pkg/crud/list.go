@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
@@ -20,7 +21,7 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 	}
 	entity, ok := md.GetEntity(entityName)
 	if !ok {
-		return ListResult{}, NewServiceError(404, "entity_not_found")
+		return ListResult{}, NewServiceError(http.StatusNotFound, "entity_not_found")
 	}
 
 	decision, err := s.permissions.CanReadEntity(ctx, rc, entity.Name)
@@ -46,13 +47,13 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 		var unsupportedContains *query.UnsupportedContainsConditionInListError
 		switch {
 		case errors.As(err, &invalidCursor):
-			return ListResult{}, NewServiceErrorMsg(400, "invalid_cursor", err.Error())
+			return ListResult{}, NewServiceErrorMsg(http.StatusBadRequest, "invalid_cursor", err.Error())
 		case errors.As(err, &unknownListView):
-			return ListResult{}, NewServiceErrorMsg(400, "unknown_list_view", err.Error())
+			return ListResult{}, NewServiceErrorMsg(http.StatusBadRequest, "unknown_list_view", err.Error())
 		case errors.As(err, &invalidJql):
-			return ListResult{}, NewServiceErrorMsg(400, "invalid_jql", err.Error())
+			return ListResult{}, NewServiceErrorMsg(http.StatusBadRequest, "invalid_jql", err.Error())
 		case errors.As(err, &crossRecord), errors.As(err, &unsupportedContains):
-			return ListResult{}, NewServiceErrorMsg(500, "unsupported_policy_condition", err.Error())
+			return ListResult{}, NewServiceErrorMsg(http.StatusInternalServerError, "unsupported_policy_condition", err.Error())
 		}
 		return ListResult{}, err
 	}

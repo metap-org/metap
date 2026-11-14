@@ -2,6 +2,7 @@ package grpcapi
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -34,7 +35,7 @@ func (s *ActionService) Invoke(ctx context.Context, req *pb.InvokeRequest) (*pb.
 	}
 	def, ok := s.declared(req.GetEntityName(), req.GetAction())
 	if !ok {
-		return nil, rpcError(ctx, crud.NewServiceErrorMsg(404, "action_not_found",
+		return nil, rpcError(ctx, crud.NewServiceErrorMsg(http.StatusNotFound, "action_not_found",
 			"No action "+req.GetAction()+" on entity "+req.GetEntityName()+"."))
 	}
 	call := crud.ActionCall{Entity: req.GetEntityName(), Name: req.GetAction(), Input: crud.JsonObject{}, RC: rc}

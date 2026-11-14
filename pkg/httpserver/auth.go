@@ -6,9 +6,10 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -29,9 +30,9 @@ func forbidden(message string) *authError {
 }
 
 func (e *authError) respond(w http.ResponseWriter) {
-	code := "unauthorized"
+	code := errcode.Unauthorized
 	if e.status == http.StatusForbidden {
-		code = "forbidden"
+		code = errcode.Forbidden
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(e.status)
@@ -72,7 +73,7 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 
 	// 20s leeway (project owner decision) — no revocation list exists, so exp+leeway is the
 	// only bound on how long a leaked token stays usable past its stated expiry.
-	claims, err := state.VerifyToken(r.Context(), token, 20*time.Second)
+	claims, err := state.VerifyToken(r.Context(), token, jwks.DefaultLeeway)
 	if err != nil {
 		return nil, unauthorized("Invalid or expired token.")
 	}

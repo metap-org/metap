@@ -2,8 +2,10 @@ package crud
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
 )
@@ -24,7 +26,7 @@ func (s *CrudService) Get(ctx context.Context, entityName string, id uuid.UUID, 
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return GetResult{}, NewServiceError(404, "entity_not_found")
+		return GetResult{}, NewServiceError(http.StatusNotFound, "entity_not_found")
 	}
 
 	decision, err := s.permissions.CanReadEntity(ctx, rc, entity.Name)
@@ -49,7 +51,7 @@ func (s *CrudService) Get(ctx context.Context, entityName string, id uuid.UUID, 
 	}
 	if existing == nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return GetResult{}, NewServiceError(404, "record_not_found")
+		return GetResult{}, NewServiceError(http.StatusNotFound, errcode.RecordNotFound)
 	}
 	var actors map[string]string
 	if workflow.UsesWorkflowContext(entity) {
