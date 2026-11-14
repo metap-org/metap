@@ -121,6 +121,15 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   own non-CRUD fields using `ForwardPost`/`IDArg`/`JSONScalar`/`RequestContextFrom`. A product keeps only its extensions and its
   `main` (`../waap`: `management-plane/wafgateway` + `cmd/waf-graphql-gateway`) — never copy the engine again. Its tests use a
   self-declared `shop.*` registry, not a product's entities.
+- **`pkg/bootstrap` — first-run roles, grants and initial accounts (2026-11-14, `docs/roadmap/108-bootstrap-roles-accounts-permissions.md`
+  in `../metap-docs`).** Declare `bootstrap.Bootstrap{Roles, Grants, Users}` in Go next to the entities
+  (`bootstrap.Submit` from an `init()`, gathered by `Collect`), apply with `bootstrap.Apply(ctx, Deps, tenantID, b, Options{Production})`.
+  **Additive only**: a policy row is created only when no identical basic one exists, an existing account is never touched
+  (password and roles included) — never turn this into a sync that overwrites or deletes (`SyncBasicPolicies` does that, on purpose
+  not used). Wildcard entity patterns (`*`, `waf.*`) are expanded against the registry at apply time into concrete rows; a pattern
+  matching nothing is an error. Passwords come only from `PasswordRef` via a `PasswordSource` (env var by default) — no default
+  password; `Production` makes a missing one for a new user abort before anything is written. Not wired into `provision-tenant`/
+  `app.Main`/`dev-tools` yet, and policies carry no `source` marker, so an admin-deleted bootstrap policy comes back on re-run.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
