@@ -15,12 +15,14 @@
 package attachmentroutes
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 
 	"github.com/metap-org/metap/pkg/httpserver"
+	"github.com/metap-org/metap/pkg/kit/env"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -88,6 +90,11 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 		return
 	}
 
+	// The whole file is read into memory below, so the upload is bounded. The body cap is a little
+	// over the file cap to leave room for the multipart framing.
+	maxBytes := maxUploadBytes()
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+multipartOverheadBytes)
+
 	mr, err := r.MultipartReader()
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_multipart", err.Error(), nil)
@@ -107,7 +114,13 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 		filename = "upload"
 	}
 	contentType := part.Header.Get("Content-Type")
-	data, err := io.ReadAll(part)
+	data, err := io.ReadAll(io.LimitReader(part, maxBytes+1))
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) || int64(len(data)) > maxBytes {
+		httpserver.WriteServiceError(w, http.StatusRequestEntityTooLarge, "payload_too_large",
+			fmt.Sprintf("The file is larger than the %d byte limit.", maxBytes), nil)
+		return
+	}
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_multipart", err.Error(), nil)
 		return
@@ -325,6 +338,21 @@ func deleteAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 		slog.Warn("failed to delete attachment blob from object storage", "key", record.Key, "error", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// defaultMaxUploadBytes is the largest attachment accepted unless ATTACHMENT_MAX_BYTES says
+// otherwise. Uploads are buffered in memory (then handed to the ObjectStore in one Put), so this
+// bounds memory per in-flight upload.
+const (
+	defaultMaxUploadBytes  = 25 << 20
+	multipartOverheadBytes = 1 << 20
+)
+
+func maxUploadBytes() int64 {
+	if n := env.Int("ATTACHMENT_MAX_BYTES", defaultMaxUploadBytes); n > 0 {
+		return int64(n)
+	}
+	return defaultMaxUploadBytes
 }
 
 func Mount(r chi.Router, state *httpserver.AppState) {

@@ -1,6 +1,9 @@
 package httpserver
 
 import (
+	"github.com/metap-org/metap/pkg/kit/httpx"
+	"github.com/metap-org/metap/pkg/runtime"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -35,4 +38,19 @@ func TestDecodeJSONBodyAnswersForTheHandler(t *testing.T) {
 			assert.Contains(t, rec.Body.String(), `"code":"`+c.code+`"`)
 		})
 	}
+}
+
+// Recover has to sit inside RequestContext, or a panicked request gets no x-request-id and an
+// error body without requestId/traceId. This mirrors BuildRouter's order for those layers.
+func TestRecoveredPanicStillCarriesRequestIDs(t *testing.T) {
+	h := runtime.GenerateRequestIDs(runtime.RequestContext(httpx.Recover(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }))))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.NotEmpty(t, rec.Header().Get("x-request-id"))
+	assert.Contains(t, rec.Body.String(), `"code":"internal_error"`)
+	assert.Contains(t, rec.Body.String(), `"requestId"`)
+	assert.Contains(t, rec.Body.String(), `"traceId"`)
 }
