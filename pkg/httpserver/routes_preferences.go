@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/peripherals"
 )
 
@@ -63,7 +64,7 @@ func updatePreferences(w http.ResponseWriter, r *http.Request, state *AppState) 
 		return
 	}
 	if !isSupportedLocale(body.Locale) {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed",
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed,
 			"`locale` must be one of: en, vi.", nil)
 		return
 	}

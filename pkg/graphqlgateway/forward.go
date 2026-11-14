@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/graphql-go/graphql"
 
+	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -88,4 +90,25 @@ func IDArg(p graphql.ResolveParams, name string) (string, error) {
 // own fields, which run queries with graphql.Do directly.
 func WithRequestContext(ctx context.Context, rc *permission.RequestContext) context.Context {
 	return withRequestContext(ctx, rc)
+}
+
+// InvokeAction runs an entity action on an upstream's ActionService and returns its JSON object
+// as a GraphQL value, with a *crud.ServiceError reported through the usual extensions envelope.
+// Product-specific mutations that keep an older name or argument shape call this instead of
+// duplicating the gRPC plumbing; the generic "<action><TypeName>" fields use it too.
+func InvokeAction(ctx context.Context, inv crud.ActionInvoker, call crud.ActionCall) (interface{}, error) {
+	out, err := inv.Invoke(ctx, call)
+	if err != nil {
+		return nil, gqlError(err)
+	}
+	return jsonObjectToMap(out)
+}
+
+// ParseUUID parses a record id argument.
+func ParseUUID(s string) (uuid.UUID, error) {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("%q is not a valid id", s)
+	}
+	return id, nil
 }

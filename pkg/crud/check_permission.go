@@ -2,8 +2,10 @@ package crud
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -22,7 +24,7 @@ func (s *CrudService) CheckRecordPermission(ctx context.Context, entityName stri
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return NewServiceError(404, "entity_not_found")
+		return NewServiceError(http.StatusNotFound, "entity_not_found")
 	}
 
 	var decision permission.PermissionDecision
@@ -57,7 +59,7 @@ func (s *CrudService) CheckRecordPermission(ctx context.Context, entityName stri
 	}
 	if existing == nil {
 		tx.Rollback(ctx) //nolint:errcheck
-		return NewServiceError(404, "record_not_found")
+		return NewServiceError(http.StatusNotFound, errcode.RecordNotFound)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err

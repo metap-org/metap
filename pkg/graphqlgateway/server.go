@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"io"
 	"net/http"
@@ -46,11 +47,11 @@ func (s *Server) ServeMetadataFor(registry *metadata.MetadataRegistry, entities 
 func (s *Server) metadataAuth(w http.ResponseWriter, r *http.Request) bool {
 	token, msg := requestToken(r)
 	if token == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "unauthorized", "message": msg}})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": errcode.Unauthorized, "message": msg}})
 		return false
 	}
 	if _, err := jwks.DecodeWithVerifier(r.Context(), token, s.verifier, nil); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "unauthorized", "message": "invalid or expired token"}})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": errcode.Unauthorized, "message": "invalid or expired token"}})
 		return false
 	}
 	return true

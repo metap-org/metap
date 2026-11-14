@@ -36,6 +36,7 @@ import (
 	"github.com/metap-org/metap/pkg/httpserver/dashboardroutes"
 	"github.com/metap-org/metap/pkg/httpserver/oauth2routes"
 	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/shutdown"
 	"github.com/metap-org/metap/pkg/metadata"
@@ -64,6 +65,12 @@ type Options struct {
 	// WrapBackend, if set, decorates the CRUD backend the gRPC API serves — e.g. to add
 	// service-specific create/update/delete guards. Defaults to state.Crud as-is.
 	WrapBackend func(state *httpserver.AppState) (crud.RecordBackend, error)
+
+	// Actions, if set, registers the handlers for the actions this service's entities declare
+	// (EntityDefinition.Actions); they are served over gRPC (ActionService) next to the CRUD API.
+	// Handlers read and write through state.Crud (or the wrapped backend) with the caller's own
+	// RequestContext, so permissions bound them exactly like plain CRUD.
+	Actions func(state *httpserver.AppState, registry *crud.ActionRegistry) error
 
 	// Routes mounts the service's own custom HTTP routes next to metap's generic ones.
 	Routes httpserver.Mount
@@ -142,6 +149,23 @@ func Run(ctx context.Context, opts Options) error {
 	// records-table index reconciler was removed (that table was dropped in migration 0033).
 	peripherals.Check(ctx, pool, registry.ListEntities())
 
+	// Opt-in first-run bootstrap for a single-service product. A product with several services
+	// should run its one-shot bootstrap process (BootstrapMain) instead: each service only knows
+	// its own entities, and two services applying at once could both create the same policy.
+	if env.Bool("BOOTSTRAP_ON_BOOT") {
+		decl, err := declaration(nil)
+		if err != nil {
+			return fmt.Errorf("bootstrap on boot: %w", err)
+		}
+		tenants, err := bootstrapTargets(ctx, pool, os.Getenv("BOOTSTRAP_TENANT_IDS"))
+		if err != nil {
+			return fmt.Errorf("bootstrap on boot: %w", err)
+		}
+		if err := ApplyBootstrap(ctx, registry, permissions, router, tenants, decl, config.NodeEnv == infra.NodeEnvProduction, opts.Name+" bootstrap"); err != nil {
+			return fmt.Errorf("bootstrap on boot: %w", err)
+		}
+	}
+
 	var mdPtr atomic.Pointer[metadata.MetadataRegistry]
 	mdPtr.Store(registry)
 
@@ -166,10 +190,26 @@ func Run(ctx context.Context, opts Options) error {
 				return fmt.Errorf("building gRPC backend: %w", err)
 			}
 		}
+		var invoker crud.ActionInvoker
+		if opts.Actions != nil {
+			reg := crud.NewActionRegistry()
+			if err := opts.Actions(state, reg); err != nil {
+				return fmt.Errorf("registering actions: %w", err)
+			}
+			for _, def := range registry.Definitions() {
+				for _, a := range def.Actions {
+					if !reg.Has(def.Name, a.Name) {
+						return fmt.Errorf("entity %s declares action %s but no handler is registered", def.Name, a.Name)
+					}
+				}
+			}
+			invoker = reg
+		}
 		// gRPC verifies exactly like HTTP: the JWKS verifier when configured, else the static key.
 		grpcServer, err := grpcapi.OptionalServe(config.Host, opts.GRPCPort, grpcapi.OptionalServeConfig{
 			Backend: backend, Router: state.Router, JWTPublicKey: tokens.PublicKey, TokenVerifierOverride: tokens.Verifier,
 			AuthContextEntity: state.AuthContextEntity, Metadata: state.Metadata, ContextAttributesCache: state.ContextAttributesCache,
+			Actions: invoker,
 		})
 		if err != nil {
 			return fmt.Errorf("starting gRPC server: %w", err)

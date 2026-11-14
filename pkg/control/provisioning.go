@@ -12,6 +12,7 @@ import (
 	"github.com/metap-org/metap/pkg/dbmigrate"
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/peripherals"
+	"github.com/metap-org/metap/pkg/permission"
 )
 
 type ProvisionedTenant struct {
@@ -67,7 +68,7 @@ func ProvisionSchemaTenant(ctx context.Context, sharedPool *pgxpool.Pool, regist
 		conn.Release()
 		return nil, err
 	}
-	if err := peripherals.AssignRole(ctx, conn, tenantID, user.ID, "admin", nil); err != nil {
+	if err := peripherals.AssignRole(ctx, conn, tenantID, user.ID, permission.RoleAdmin, nil); err != nil {
 		conn.Release()
 		return nil, err
 	}
@@ -115,7 +116,7 @@ func ProvisionDedicatedDbTenant(ctx context.Context, registry *PostgresTenantReg
 	if err != nil {
 		return nil, err
 	}
-	if err := peripherals.AssignRole(ctx, dedicatedPool, tenantID, user.ID, "admin", nil); err != nil {
+	if err := peripherals.AssignRole(ctx, dedicatedPool, tenantID, user.ID, permission.RoleAdmin, nil); err != nil {
 		return nil, err
 	}
 

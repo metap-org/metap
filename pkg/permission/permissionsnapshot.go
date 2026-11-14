@@ -151,7 +151,7 @@ func (s *PermissionSnapshot) RecordStateDependentReadFields(ctx *RequestContext)
 	}
 	byField := map[string][]PolicyRow{}
 	for _, policy := range s.fieldPolicies {
-		if policy.Action != "read" || policy.Field == "" {
+		if policy.Action != PolicyActionRead || policy.Field == "" {
 			continue
 		}
 		byField[policy.Field] = append(byField[policy.Field], policy)
@@ -176,7 +176,7 @@ func (s *PermissionSnapshot) FilterReadableFields(ctx *RequestContext, record Js
 	}
 	readPoliciesByField := map[string][]PolicyRow{}
 	for _, policy := range s.fieldPolicies {
-		if policy.Action != "read" || policy.Field == "" {
+		if policy.Action != PolicyActionRead || policy.Field == "" {
 			continue
 		}
 		readPoliciesByField[policy.Field] = append(readPoliciesByField[policy.Field], policy)

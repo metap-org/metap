@@ -6,6 +6,7 @@ package httpserver
 
 import (
 	"errors"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
 	"strconv"
@@ -195,7 +196,7 @@ func issueToken(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	if !credentialIssuingRequestAllowed(r) {
-		writeServiceError(w, http.StatusUnauthorized, "unauthorized", "Missing or invalid CSRF token.", nil)
+		writeServiceError(w, http.StatusUnauthorized, errcode.Unauthorized, "Missing or invalid CSRF token.", nil)
 		return
 	}
 	tenantID, err := uuid.Parse(rc.TenantID)

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+
+	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 
 // The {"error":{"code":...,"message":...}} response shape every metap-go service returns on
@@ -13,15 +15,15 @@ func defaultMessage(errorCode string) string {
 	switch errorCode {
 	case "entity_not_found":
 		return "Entity not found."
-	case "forbidden":
+	case errcode.Forbidden:
 		return "You do not have permission to perform this action."
-	case "validation_failed":
+	case errcode.ValidationFailed:
 		return "Request validation failed."
 	case "insert_failed":
 		return "Failed to create the record."
-	case "record_not_found":
+	case errcode.RecordNotFound:
 		return "Record not found."
-	case "version_conflict":
+	case errcode.VersionConflict:
 		return "The record was modified by someone else. Reload and try again."
 	case "no_workflow":
 		return "This entity has no workflow."
@@ -53,7 +55,7 @@ func (b ErrorBody) MarshalEnvelope() []byte {
 	if err != nil {
 		// b is always a plain, already-valid-UTF8 struct of strings/maps — this cannot fail in
 		// practice; fall back to an empty object rather than panicking a request handler.
-		return []byte(`{"error":{"code":"internal_error","message":"Internal server error."}}`)
+		return []byte(`{"error":{"code":errcode.InternalError,"message":"Internal server error."}}`)
 	}
 	return out
 }
@@ -81,5 +83,5 @@ func InternalErrorResponse(w http.ResponseWriter, err error) {
 	slog.Error("internal error", "error", err)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusInternalServerError)
-	_, _ = w.Write([]byte(`{"error":{"code":"internal_error","message":"Internal server error."}}`))
+	_, _ = w.Write([]byte(`{"error":{"code":errcode.InternalError,"message":"Internal server error."}}`))
 }

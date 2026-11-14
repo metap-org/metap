@@ -3,9 +3,11 @@ package crud
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"time"
 
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
 )
@@ -21,7 +23,7 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return RecordDto{}, NewServiceError(404, "entity_not_found")
+		return RecordDto{}, NewServiceError(http.StatusNotFound, "entity_not_found")
 	}
 
 	decision, err := s.permissions.CanCreateEntity(ctx, rc, entity.Name)
@@ -47,11 +49,11 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 	}
 
 	if fe := rejectSystemFields(entity, rawData); fe != nil {
-		return RecordDto{}, NewServiceErrorFields(400, "validation_failed", fe)
+		return RecordDto{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fe)
 	}
 	data, fieldErrors := ValidatePayload(entity, rawData)
 	if fieldErrors != nil {
-		return RecordDto{}, NewServiceErrorFields(400, "validation_failed", fieldErrors)
+		return RecordDto{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fieldErrors)
 	}
 
 	recomputeFields(entity, data)

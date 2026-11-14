@@ -46,7 +46,7 @@ func (a *TokenAuth) Mode() string {
 	}
 }
 
-const tokenLeeway = 20 * time.Second
+const tokenLeeway = jwks.DefaultLeeway
 
 // BuildTokenAuth resolves cfg into a TokenAuth. Background work (key-dir reload, JWKS refresh)
 // runs until ctx is done.

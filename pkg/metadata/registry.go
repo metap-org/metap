@@ -16,6 +16,7 @@ type EntitySummary struct {
 	FieldDisplayHints []FieldDisplayHint       `json:"fieldDisplayHints,omitempty"`
 	UniqueConstraints []EntityUniqueConstraint `json:"uniqueConstraints,omitempty"`
 	Audit             *EntityAuditConfig       `json:"audit,omitempty"`
+	Actions           []EntityAction           `json:"actions,omitempty"`
 	Version           string                   `json:"version"`
 }
 
@@ -238,7 +239,7 @@ func (r *MetadataRegistry) toSummary(entity EntityDefinition) EntitySummary {
 	return EntitySummary{
 		Name: entity.Name, Label: entity.Label, Fields: entity.Fields, ListViews: entity.ListViews,
 		Workflow: entity.Workflow, RelatedViews: r.relatedViews[entity.Name], FieldDisplayHints: r.fieldDisplayHints[entity.Name],
-		UniqueConstraints: entity.UniqueConstraints, Audit: entity.Audit, Version: version,
+		UniqueConstraints: entity.UniqueConstraints, Audit: entity.Audit, Actions: entity.Actions, Version: version,
 	}
 }
 

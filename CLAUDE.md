@@ -121,6 +121,36 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   own non-CRUD fields using `ForwardPost`/`IDArg`/`JSONScalar`/`RequestContextFrom`. A product keeps only its extensions and its
   `main` (`../waap`: `management-plane/wafgateway` + `cmd/waf-graphql-gateway`) — never copy the engine again. Its tests use a
   self-declared `shop.*` registry, not a product's entities.
+- **`pkg/bootstrap` — first-run roles, grants and initial accounts (2026-11-14, `docs/roadmap/108-bootstrap-roles-accounts-permissions.md`
+  in `../metap-docs`).** Declare `bootstrap.Bootstrap{Roles, Grants, Users}` in Go next to the entities
+  (`bootstrap.Submit` from an `init()`, gathered by `Collect`), apply with `bootstrap.Apply(ctx, Deps, tenantID, b, Options{Production})`.
+  **Additive only**: a policy row is created only when no identical basic one exists, an existing account is never touched
+  (password and roles included) — never turn this into a sync that overwrites or deletes (`SyncBasicPolicies` does that, on purpose
+  not used). Wildcard entity patterns (`*`, `waf.*`) are expanded against the registry at apply time into concrete rows; a pattern
+  matching nothing is an error. Passwords come only from `SecretRef` via a `PasswordSource` (env var by default) — no default
+  password; `Production` makes a missing one for a new user abort before anything is written. Wiring: a product ships one tiny binary that
+  blank-imports its services' entity/bootstrap packages and calls `app.BootstrapMain` (one-shot, like `db-migrate`; env
+  `BOOTSTRAP_TENANT_IDS` = ids or `all`, `BOOTSTRAP_FILE` = JSON overlay via `bootstrap.LoadFile`, `NODE_ENV=production` makes a
+  missing password fatal); `app.Run` applies it itself only when `BOOTSTRAP_ON_BOOT=true` (single-service products — with several
+  services two could race and create the same policy); `dev-tools apply-bootstrap <tenant> <file> [entity.json...]` applies a JSON
+  declaration; `provision-tenant` prints the follow-up. `bootstrap.ScopedIdentity` resolves a dedicated_db tenant's own database.
+  Policies carry no `source` marker, so an admin-deleted bootstrap policy comes back on re-run.
+- **Entity actions — gRPC is the standard transport for anything beyond CRUD (2026-11-14, `docs/roadmap/109-grpc-first-actions.md`
+  in `../metap-docs`).** A named operation that is neither CRUD nor a workflow transition (verify DNS, run a scan, correlate)
+  is declared once on its entity (`EntityDefinition.Actions`: `Name` camelCase, `Scope` record|entity), registered with
+  `crud.ActionRegistry` through `app.Options.Actions` (boot refuses a declared action with no handler), and served by
+  `ActionService.Invoke` on the same gRPC listener as `RecordService`. The call is checked against the declared actions and scope
+  before the handler runs. A handler must read/write through a `RecordBackend` with `call.RC` — it adds no permission of its own,
+  so an action can never do more than the caller could with plain CRUD. `grpcapi.GrpcBackend` implements `crud.ActionInvoker`;
+  `pkg/graphqlgateway` turns every declared action into a mutation `<action><TypeName>` (`verifyDnsWafZones(id, input)`;
+  `InvokeAction` for a product that keeps an older mutation name). A REST route for the same action stays available — write the
+  logic once as a core `func(ctx, rc, id) (map[string]any, error)` and let `httpserver.RecordActionRoute` and the action handler
+  both call it. Permanent REST: `/auth/*`, OAuth2/JWKS, health/metrics, attachments, webhook receivers, and non-metap services
+  (`e-edge`, `a-api`, which may not import gRPC).
+- **Names are declared once (2026-11-14, `docs/roadmap/110-magic-literals-audit.md` in `../metap-docs`).** Error codes come from
+  `pkg/kit/errcode` (`errcode.ValidationFailed`, `RecordNotFound`, ...), never a quoted string; `ServiceError` constructors take
+  `http.Status*`, not a number; the admin role and policy action names are `permission.RoleAdmin` / `permission.PolicyAction*`;
+  the JWT clock-skew tolerance is `jwks.DefaultLeeway`. A new code, role, action or tunable goes in that one place first.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

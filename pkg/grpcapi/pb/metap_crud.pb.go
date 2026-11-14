@@ -666,6 +666,119 @@ func (x *AggregateResponse) GetRows() []*structpb.Struct {
 	return nil
 }
 
+type InvokeRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	EntityName string                 `protobuf:"bytes,1,opt,name=entity_name,json=entityName,proto3" json:"entity_name,omitempty"`
+	Action     string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
+	// Empty for an action with scope "entity".
+	Id            string           `protobuf:"bytes,3,opt,name=id,proto3" json:"id,omitempty"`
+	Input         *structpb.Struct `protobuf:"bytes,4,opt,name=input,proto3" json:"input,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InvokeRequest) Reset() {
+	*x = InvokeRequest{}
+	mi := &file_metap_crud_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InvokeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InvokeRequest) ProtoMessage() {}
+
+func (x *InvokeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_metap_crud_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InvokeRequest.ProtoReflect.Descriptor instead.
+func (*InvokeRequest) Descriptor() ([]byte, []int) {
+	return file_metap_crud_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *InvokeRequest) GetEntityName() string {
+	if x != nil {
+		return x.EntityName
+	}
+	return ""
+}
+
+func (x *InvokeRequest) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *InvokeRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *InvokeRequest) GetInput() *structpb.Struct {
+	if x != nil {
+		return x.Input
+	}
+	return nil
+}
+
+type InvokeResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Result        *structpb.Struct       `protobuf:"bytes,1,opt,name=result,proto3" json:"result,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InvokeResponse) Reset() {
+	*x = InvokeResponse{}
+	mi := &file_metap_crud_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InvokeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InvokeResponse) ProtoMessage() {}
+
+func (x *InvokeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_metap_crud_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InvokeResponse.ProtoReflect.Descriptor instead.
+func (*InvokeResponse) Descriptor() ([]byte, []int) {
+	return file_metap_crud_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *InvokeResponse) GetResult() *structpb.Struct {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
 var File_metap_crud_proto protoreflect.FileDescriptor
 
 const file_metap_crud_proto_rawDesc = "" +
@@ -725,7 +838,15 @@ const file_metap_crud_proto_rawDesc = "" +
 	"entityName\x12+\n" +
 	"\x04spec\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x04spec\"@\n" +
 	"\x11AggregateResponse\x12+\n" +
-	"\x04rows\x18\x01 \x03(\v2\x17.google.protobuf.StructR\x04rows2\x82\x04\n" +
+	"\x04rows\x18\x01 \x03(\v2\x17.google.protobuf.StructR\x04rows\"\x87\x01\n" +
+	"\rInvokeRequest\x12\x1f\n" +
+	"\ventity_name\x18\x01 \x01(\tR\n" +
+	"entityName\x12\x16\n" +
+	"\x06action\x18\x02 \x01(\tR\x06action\x12\x0e\n" +
+	"\x02id\x18\x03 \x01(\tR\x02id\x12-\n" +
+	"\x05input\x18\x04 \x01(\v2\x17.google.protobuf.StructR\x05input\"A\n" +
+	"\x0eInvokeResponse\x12/\n" +
+	"\x06result\x18\x01 \x01(\v2\x17.google.protobuf.StructR\x06result2\x82\x04\n" +
 	"\rRecordService\x12?\n" +
 	"\x04List\x12\x1a.metap.crud.v1.ListRequest\x1a\x1b.metap.crud.v1.ListResponse\x12<\n" +
 	"\x03Get\x12\x19.metap.crud.v1.GetRequest\x1a\x1a.metap.crud.v1.GetResponse\x12E\n" +
@@ -734,7 +855,9 @@ const file_metap_crud_proto_rawDesc = "" +
 	"\n" +
 	"Transition\x12 .metap.crud.v1.TransitionRequest\x1a\x1d.metap.crud.v1.RecordResponse\x12E\n" +
 	"\x06Delete\x12\x1c.metap.crud.v1.DeleteRequest\x1a\x1d.metap.crud.v1.RecordResponse\x12N\n" +
-	"\tAggregate\x12\x1f.metap.crud.v1.AggregateRequest\x1a .metap.crud.v1.AggregateResponseB+Z)github.com/metap-org/metap/pkg/grpcapi/pbb\x06proto3"
+	"\tAggregate\x12\x1f.metap.crud.v1.AggregateRequest\x1a .metap.crud.v1.AggregateResponse2V\n" +
+	"\rActionService\x12E\n" +
+	"\x06Invoke\x12\x1c.metap.crud.v1.InvokeRequest\x1a\x1d.metap.crud.v1.InvokeResponseB+Z)github.com/metap-org/metap/pkg/grpcapi/pbb\x06proto3"
 
 var (
 	file_metap_crud_proto_rawDescOnce sync.Once
@@ -748,7 +871,7 @@ func file_metap_crud_proto_rawDescGZIP() []byte {
 	return file_metap_crud_proto_rawDescData
 }
 
-var file_metap_crud_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_metap_crud_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_metap_crud_proto_goTypes = []any{
 	(*ListRequest)(nil),       // 0: metap.crud.v1.ListRequest
 	(*ListResponse)(nil),      // 1: metap.crud.v1.ListResponse
@@ -761,38 +884,44 @@ var file_metap_crud_proto_goTypes = []any{
 	(*RecordResponse)(nil),    // 8: metap.crud.v1.RecordResponse
 	(*AggregateRequest)(nil),  // 9: metap.crud.v1.AggregateRequest
 	(*AggregateResponse)(nil), // 10: metap.crud.v1.AggregateResponse
-	(*structpb.Struct)(nil),   // 11: google.protobuf.Struct
+	(*InvokeRequest)(nil),     // 11: metap.crud.v1.InvokeRequest
+	(*InvokeResponse)(nil),    // 12: metap.crud.v1.InvokeResponse
+	(*structpb.Struct)(nil),   // 13: google.protobuf.Struct
 }
 var file_metap_crud_proto_depIdxs = []int32{
-	11, // 0: metap.crud.v1.ListRequest.query:type_name -> google.protobuf.Struct
-	11, // 1: metap.crud.v1.ListResponse.records:type_name -> google.protobuf.Struct
-	11, // 2: metap.crud.v1.GetResponse.record:type_name -> google.protobuf.Struct
-	11, // 3: metap.crud.v1.GetResponse.capabilities:type_name -> google.protobuf.Struct
-	11, // 4: metap.crud.v1.CreateRequest.data:type_name -> google.protobuf.Struct
-	11, // 5: metap.crud.v1.UpdateRequest.data:type_name -> google.protobuf.Struct
-	11, // 6: metap.crud.v1.TransitionRequest.data:type_name -> google.protobuf.Struct
-	11, // 7: metap.crud.v1.RecordResponse.record:type_name -> google.protobuf.Struct
-	11, // 8: metap.crud.v1.AggregateRequest.spec:type_name -> google.protobuf.Struct
-	11, // 9: metap.crud.v1.AggregateResponse.rows:type_name -> google.protobuf.Struct
-	0,  // 10: metap.crud.v1.RecordService.List:input_type -> metap.crud.v1.ListRequest
-	2,  // 11: metap.crud.v1.RecordService.Get:input_type -> metap.crud.v1.GetRequest
-	4,  // 12: metap.crud.v1.RecordService.Create:input_type -> metap.crud.v1.CreateRequest
-	5,  // 13: metap.crud.v1.RecordService.Update:input_type -> metap.crud.v1.UpdateRequest
-	6,  // 14: metap.crud.v1.RecordService.Transition:input_type -> metap.crud.v1.TransitionRequest
-	7,  // 15: metap.crud.v1.RecordService.Delete:input_type -> metap.crud.v1.DeleteRequest
-	9,  // 16: metap.crud.v1.RecordService.Aggregate:input_type -> metap.crud.v1.AggregateRequest
-	1,  // 17: metap.crud.v1.RecordService.List:output_type -> metap.crud.v1.ListResponse
-	3,  // 18: metap.crud.v1.RecordService.Get:output_type -> metap.crud.v1.GetResponse
-	8,  // 19: metap.crud.v1.RecordService.Create:output_type -> metap.crud.v1.RecordResponse
-	8,  // 20: metap.crud.v1.RecordService.Update:output_type -> metap.crud.v1.RecordResponse
-	8,  // 21: metap.crud.v1.RecordService.Transition:output_type -> metap.crud.v1.RecordResponse
-	8,  // 22: metap.crud.v1.RecordService.Delete:output_type -> metap.crud.v1.RecordResponse
-	10, // 23: metap.crud.v1.RecordService.Aggregate:output_type -> metap.crud.v1.AggregateResponse
-	17, // [17:24] is the sub-list for method output_type
-	10, // [10:17] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	13, // 0: metap.crud.v1.ListRequest.query:type_name -> google.protobuf.Struct
+	13, // 1: metap.crud.v1.ListResponse.records:type_name -> google.protobuf.Struct
+	13, // 2: metap.crud.v1.GetResponse.record:type_name -> google.protobuf.Struct
+	13, // 3: metap.crud.v1.GetResponse.capabilities:type_name -> google.protobuf.Struct
+	13, // 4: metap.crud.v1.CreateRequest.data:type_name -> google.protobuf.Struct
+	13, // 5: metap.crud.v1.UpdateRequest.data:type_name -> google.protobuf.Struct
+	13, // 6: metap.crud.v1.TransitionRequest.data:type_name -> google.protobuf.Struct
+	13, // 7: metap.crud.v1.RecordResponse.record:type_name -> google.protobuf.Struct
+	13, // 8: metap.crud.v1.AggregateRequest.spec:type_name -> google.protobuf.Struct
+	13, // 9: metap.crud.v1.AggregateResponse.rows:type_name -> google.protobuf.Struct
+	13, // 10: metap.crud.v1.InvokeRequest.input:type_name -> google.protobuf.Struct
+	13, // 11: metap.crud.v1.InvokeResponse.result:type_name -> google.protobuf.Struct
+	0,  // 12: metap.crud.v1.RecordService.List:input_type -> metap.crud.v1.ListRequest
+	2,  // 13: metap.crud.v1.RecordService.Get:input_type -> metap.crud.v1.GetRequest
+	4,  // 14: metap.crud.v1.RecordService.Create:input_type -> metap.crud.v1.CreateRequest
+	5,  // 15: metap.crud.v1.RecordService.Update:input_type -> metap.crud.v1.UpdateRequest
+	6,  // 16: metap.crud.v1.RecordService.Transition:input_type -> metap.crud.v1.TransitionRequest
+	7,  // 17: metap.crud.v1.RecordService.Delete:input_type -> metap.crud.v1.DeleteRequest
+	9,  // 18: metap.crud.v1.RecordService.Aggregate:input_type -> metap.crud.v1.AggregateRequest
+	11, // 19: metap.crud.v1.ActionService.Invoke:input_type -> metap.crud.v1.InvokeRequest
+	1,  // 20: metap.crud.v1.RecordService.List:output_type -> metap.crud.v1.ListResponse
+	3,  // 21: metap.crud.v1.RecordService.Get:output_type -> metap.crud.v1.GetResponse
+	8,  // 22: metap.crud.v1.RecordService.Create:output_type -> metap.crud.v1.RecordResponse
+	8,  // 23: metap.crud.v1.RecordService.Update:output_type -> metap.crud.v1.RecordResponse
+	8,  // 24: metap.crud.v1.RecordService.Transition:output_type -> metap.crud.v1.RecordResponse
+	8,  // 25: metap.crud.v1.RecordService.Delete:output_type -> metap.crud.v1.RecordResponse
+	10, // 26: metap.crud.v1.RecordService.Aggregate:output_type -> metap.crud.v1.AggregateResponse
+	12, // 27: metap.crud.v1.ActionService.Invoke:output_type -> metap.crud.v1.InvokeResponse
+	20, // [20:28] is the sub-list for method output_type
+	12, // [12:20] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_metap_crud_proto_init() }
@@ -810,9 +939,9 @@ func file_metap_crud_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_metap_crud_proto_rawDesc), len(file_metap_crud_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   13,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_metap_crud_proto_goTypes,
 		DependencyIndexes: file_metap_crud_proto_depIdxs,

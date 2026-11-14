@@ -359,3 +359,113 @@ var RecordService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "metap_crud.proto",
 }
+
+const (
+	ActionService_Invoke_FullMethodName = "/metap.crud.v1.ActionService/Invoke"
+)
+
+// ActionServiceClient is the client API for ActionService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// ActionService runs the named operations an entity declares beyond CRUD and workflow transitions
+// (EntityDefinition.Actions). One RPC for every entity and action, same Struct-as-payload design as
+// RecordService, so adding an action needs no proto change.
+type ActionServiceClient interface {
+	Invoke(ctx context.Context, in *InvokeRequest, opts ...grpc.CallOption) (*InvokeResponse, error)
+}
+
+type actionServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewActionServiceClient(cc grpc.ClientConnInterface) ActionServiceClient {
+	return &actionServiceClient{cc}
+}
+
+func (c *actionServiceClient) Invoke(ctx context.Context, in *InvokeRequest, opts ...grpc.CallOption) (*InvokeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InvokeResponse)
+	err := c.cc.Invoke(ctx, ActionService_Invoke_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ActionServiceServer is the server API for ActionService service.
+// All implementations must embed UnimplementedActionServiceServer
+// for forward compatibility.
+//
+// ActionService runs the named operations an entity declares beyond CRUD and workflow transitions
+// (EntityDefinition.Actions). One RPC for every entity and action, same Struct-as-payload design as
+// RecordService, so adding an action needs no proto change.
+type ActionServiceServer interface {
+	Invoke(context.Context, *InvokeRequest) (*InvokeResponse, error)
+	mustEmbedUnimplementedActionServiceServer()
+}
+
+// UnimplementedActionServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedActionServiceServer struct{}
+
+func (UnimplementedActionServiceServer) Invoke(context.Context, *InvokeRequest) (*InvokeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Invoke not implemented")
+}
+func (UnimplementedActionServiceServer) mustEmbedUnimplementedActionServiceServer() {}
+func (UnimplementedActionServiceServer) testEmbeddedByValue()                       {}
+
+// UnsafeActionServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ActionServiceServer will
+// result in compilation errors.
+type UnsafeActionServiceServer interface {
+	mustEmbedUnimplementedActionServiceServer()
+}
+
+func RegisterActionServiceServer(s grpc.ServiceRegistrar, srv ActionServiceServer) {
+	// If the following call panics, it indicates UnimplementedActionServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&ActionService_ServiceDesc, srv)
+}
+
+func _ActionService_Invoke_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InvokeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ActionServiceServer).Invoke(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ActionService_Invoke_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ActionServiceServer).Invoke(ctx, req.(*InvokeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// ActionService_ServiceDesc is the grpc.ServiceDesc for ActionService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var ActionService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "metap.crud.v1.ActionService",
+	HandlerType: (*ActionServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Invoke",
+			Handler:    _ActionService_Invoke_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "metap_crud.proto",
+}

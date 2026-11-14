@@ -6,6 +6,7 @@ package httpserver
 import (
 	"encoding/json"
 	"errors"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
 	"strconv"
@@ -24,7 +25,7 @@ func parseListInput(w http.ResponseWriter, values map[string][]string) (query.Li
 	if raw := firstValue(values, "limit"); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || n <= 0 || n > 200 {
-			writeServiceError(w, http.StatusBadRequest, "validation_failed", "`limit` must be a positive integer no greater than 200.", nil)
+			writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`limit` must be a positive integer no greater than 200.", nil)
 			return query.ListInput{}, false
 		}
 		limit = n
@@ -89,7 +90,7 @@ func getRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	entity := chi.URLParam(r, "entity")
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		writeServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 
@@ -153,7 +154,7 @@ func updateRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	entity := chi.URLParam(r, "entity")
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		writeServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 	var body updateBody
@@ -182,7 +183,7 @@ func deleteRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	entity := chi.URLParam(r, "entity")
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		writeServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 	var body deleteBody
@@ -212,7 +213,7 @@ func transitionRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	entity := chi.URLParam(r, "entity")
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		writeServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 	action := chi.URLParam(r, "action")
@@ -241,7 +242,7 @@ func aggregateRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 	var spec query.AggregateSpec
 	if err := httpx.DecodeJSON(w, r, &spec, 0); err != nil {
 		if errors.Is(err, httpx.ErrBodyTooLarge) {
-			writeServiceError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "Request body is too large.", nil)
+			writeServiceError(w, http.StatusRequestEntityTooLarge, errcode.PayloadTooLarge, "Request body is too large.", nil)
 			return
 		}
 		writeServiceError(w, http.StatusBadRequest, "invalid_aggregate", "Invalid request body.", nil)

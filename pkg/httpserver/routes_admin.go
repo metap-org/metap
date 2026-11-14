@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
@@ -141,7 +142,7 @@ func assignRoleAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 	userID, err := uuid.Parse(chi.URLParam(r, "userId"))
 	if err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "`userId` must be a UUID.", nil)
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`userId` must be a UUID.", nil)
 		return
 	}
 	var body assignRoleBody
@@ -178,7 +179,7 @@ func revokeRoleAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 	userID, err := uuid.Parse(chi.URLParam(r, "userId"))
 	if err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "`userId` must be a UUID.", nil)
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`userId` must be a UUID.", nil)
 		return
 	}
 	role := chi.URLParam(r, "role")
@@ -214,7 +215,7 @@ func invalidateContextAdmin(w http.ResponseWriter, r *http.Request, state *AppSt
 	}
 	userID, err := uuid.Parse(chi.URLParam(r, "userId"))
 	if err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "`userId` must be a UUID.", nil)
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`userId` must be a UUID.", nil)
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)
@@ -338,7 +339,7 @@ func seedDefaultPoliciesAdmin(w http.ResponseWriter, r *http.Request, state *App
 		return
 	}
 	if len(body.Roles) == 0 {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "`roles` must not be empty.", nil)
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`roles` must not be empty.", nil)
 		return
 	}
 	actions := body.Actions
@@ -347,7 +348,7 @@ func seedDefaultPoliciesAdmin(w http.ResponseWriter, r *http.Request, state *App
 	}
 	for _, a := range actions {
 		if !isKnownAction(a) {
-			writeServiceError(w, http.StatusBadRequest, "validation_failed",
+			writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed,
 				"Unknown action \""+a+"\" — must be one of "+joinQuoted(knownActions())+".", nil)
 			return
 		}
@@ -375,7 +376,7 @@ func deletePolicyAdmin(w http.ResponseWriter, r *http.Request, state *AppState) 
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "`id` must be a UUID.", nil)
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`id` must be a UUID.", nil)
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)
@@ -420,7 +421,7 @@ func syncMatrixPoliciesAdmin(w http.ResponseWriter, r *http.Request, state *AppS
 	}
 	for _, g := range body.Grants {
 		if !isKnownAction(g.Action) {
-			writeServiceError(w, http.StatusBadRequest, "validation_failed",
+			writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed,
 				"Unknown action \""+g.Action+"\" — must be one of "+joinQuoted(knownActions())+".", nil)
 			return
 		}

@@ -40,10 +40,13 @@ func logUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInf
 // Same token-bucket shape/defaults as graphql-gateway's own rate limiter (200ms per token, burst
 // 300) — see ratelimit.go's doc comment for why this transport needs its own small interceptor
 // instead of reusing httpserver's RateLimit directly (that one wraps net/http, not grpc).
-func NewServer(service *RecordService) *grpc.Server {
+func NewServer(service *RecordService, actions ...*ActionService) *grpc.Server {
 	limiter := newRateLimiter(200*time.Millisecond, 300)
 	srv := grpc.NewServer(grpc.ChainUnaryInterceptor(limiter.UnaryInterceptor(), logUnaryInterceptor))
 	pb.RegisterRecordServiceServer(srv, service)
+	for _, a := range actions {
+		pb.RegisterActionServiceServer(srv, a)
+	}
 	return srv
 }
 
@@ -72,6 +75,9 @@ type OptionalServeConfig struct {
 	// against the old static key after everything else moved off it. nil preserves the
 	// all-Static default below.
 	TokenVerifierOverride *jwks.TokenVerifier
+	// Actions, when set, also serves ActionService over the same listener, running the handlers
+	// registered in it for the actions entities declare in EntityDefinition.Actions.
+	Actions crud.ActionInvoker
 }
 
 // OptionalServe reads GRPC_ENABLED/GRPC_PORT (falling back to defaultPort) to decide whether to
@@ -88,7 +94,7 @@ func OptionalServe(host string, defaultPort int, cfg OptionalServeConfig) (*grpc
 
 	verifier := cfg.TokenVerifierOverride
 	if verifier == nil {
-		verifier = &jwks.TokenVerifier{Kind: jwks.VerifierStatic, PublicKey: cfg.JWTPublicKey, Leeway: 20 * time.Second}
+		verifier = &jwks.TokenVerifier{Kind: jwks.VerifierStatic, PublicKey: cfg.JWTPublicKey, Leeway: jwks.DefaultLeeway}
 	}
 	auth := AuthConfig{
 		Verifier:               verifier,
@@ -103,7 +109,11 @@ func OptionalServe(host string, defaultPort int, cfg OptionalServeConfig) (*grpc
 	if err != nil {
 		return nil, fmt.Errorf("listening on %s: %w", addr, err)
 	}
-	srv := NewServer(service)
+	var actions []*ActionService
+	if cfg.Actions != nil {
+		actions = append(actions, NewActionService(cfg.Actions, auth))
+	}
+	srv := NewServer(service, actions...)
 	slog.Info("gRPC listening", "addr", addr)
 	go func() {
 		if err := srv.Serve(lis); err != nil {

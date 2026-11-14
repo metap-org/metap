@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/dashboards"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 
 func dashboardConfigJSON(c *dashboards.DashboardConfig) any {
@@ -49,7 +50,7 @@ func getMyDashboard(w http.ResponseWriter, r *http.Request, state *httpserver.Ap
 	}
 	userID, err := uuid.Parse(rc.UserID)
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusUnauthorized, "unauthorized", "", nil)
+		httpserver.WriteServiceError(w, http.StatusUnauthorized, errcode.Unauthorized, "", nil)
 		return
 	}
 	tx, err := state.Router.Begin(r.Context(), tenantID)
@@ -83,7 +84,7 @@ func saveMyDashboard(w http.ResponseWriter, r *http.Request, state *httpserver.A
 	}
 	userID, err := uuid.Parse(rc.UserID)
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusUnauthorized, "unauthorized", "", nil)
+		httpserver.WriteServiceError(w, http.StatusUnauthorized, errcode.Unauthorized, "", nil)
 		return
 	}
 	tx, err := state.Router.Begin(r.Context(), tenantID)
@@ -145,7 +146,7 @@ func saveTenantDefaultDashboard(w http.ResponseWriter, r *http.Request, state *h
 	}
 	userID, err := uuid.Parse(rc.UserID)
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusUnauthorized, "unauthorized", "", nil)
+		httpserver.WriteServiceError(w, http.StatusUnauthorized, errcode.Unauthorized, "", nil)
 		return
 	}
 	tx, err := state.Router.Begin(r.Context(), tenantID)

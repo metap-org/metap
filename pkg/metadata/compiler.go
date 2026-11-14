@@ -341,6 +341,20 @@ func Validate(entity EntityDefinition) error {
 		}
 	}
 
+	seenActions := map[string]bool{}
+	for _, action := range entity.Actions {
+		if !isActionName(action.Name) {
+			issues = append(issues, fmt.Sprintf("action name %q must match ^[a-z][A-Za-z0-9]*$", action.Name))
+		}
+		if seenActions[action.Name] {
+			issues = append(issues, fmt.Sprintf("duplicate action name %q", action.Name))
+		}
+		seenActions[action.Name] = true
+		if action.Scope != ActionScopeRecord && action.Scope != ActionScopeEntity {
+			issues = append(issues, fmt.Sprintf("action %q scope %q must be \"record\" or \"entity\"", action.Name, action.Scope))
+		}
+	}
+
 	seenFieldSets := map[string]bool{}
 	for _, constraint := range entity.UniqueConstraints {
 		if constraint.Scope != nil && *constraint.Scope != UniqueScopeTenant && *constraint.Scope != UniqueScopeGlobal {
@@ -418,4 +432,16 @@ func conditionAttributes(c permission.PolicyCondition) []string {
 	default:
 		return []string{c.Attribute}
 	}
+}
+
+func isActionName(name string) bool {
+	if name == "" || name[0] < 'a' || name[0] > 'z' {
+		return false
+	}
+	for _, c := range name {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
 }

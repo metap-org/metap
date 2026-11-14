@@ -25,7 +25,7 @@ type RequestContext struct {
 
 func (c *RequestContext) IsAdmin() bool {
 	for _, r := range c.Roles {
-		if r == "admin" {
+		if r == RoleAdmin {
 			return true
 		}
 	}
@@ -70,13 +70,13 @@ func (c *RequestContext) ScopePermits(entity string, action EntityAction) bool {
 	var verb string
 	switch action {
 	case ActionRead:
-		verb = "read"
+		verb = PolicyActionRead
 	case ActionCreate, ActionUpdate:
 		verb = "write"
 	case ActionDelete:
-		verb = "delete"
+		verb = PolicyActionDelete
 	case ActionTransition:
-		verb = "transition"
+		verb = PolicyActionTransition
 	}
 	for _, t := range tokens {
 		v, e, found := strings.Cut(t, ":")
@@ -140,6 +140,18 @@ func ForbiddenField(field string) PermissionDecision {
 }
 
 // EntityAction is one of the 5 actions a policy can grant.
+// RoleAdmin is the built-in role that bypasses every policy within its tenant.
+const RoleAdmin = "admin"
+
+// The policy action names a policy row's Action column holds (EntityAction.String()).
+const (
+	PolicyActionRead       = "read"
+	PolicyActionCreate     = "create"
+	PolicyActionUpdate     = "update"
+	PolicyActionDelete     = "delete"
+	PolicyActionTransition = "transition"
+)
+
 type EntityAction int
 
 const (
@@ -161,15 +173,15 @@ func TransitionActionPolicy(action string) string { return ActionTransition.Stri
 func (a EntityAction) String() string {
 	switch a {
 	case ActionRead:
-		return "read"
+		return PolicyActionRead
 	case ActionCreate:
-		return "create"
+		return PolicyActionCreate
 	case ActionUpdate:
-		return "update"
+		return PolicyActionUpdate
 	case ActionDelete:
-		return "delete"
+		return PolicyActionDelete
 	case ActionTransition:
-		return "transition"
+		return PolicyActionTransition
 	default:
 		return "unknown"
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/attachments"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -70,7 +71,7 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 	entity := chi.URLParam(r, "entity")
 	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 	if !ensureRecordPermission(w, r, state, entity, recordID, permission.ActionUpdate, rc) {
@@ -109,7 +110,7 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 	data, err := io.ReadAll(io.LimitReader(part, maxBytes+1))
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) || int64(len(data)) > maxBytes {
-		httpserver.WriteServiceError(w, http.StatusRequestEntityTooLarge, "payload_too_large",
+		httpserver.WriteServiceError(w, http.StatusRequestEntityTooLarge, errcode.PayloadTooLarge,
 			fmt.Sprintf("The file is larger than the %d byte limit.", maxBytes), nil)
 		return
 	}
@@ -160,7 +161,7 @@ func listAttachments(w http.ResponseWriter, r *http.Request, state *httpserver.A
 	entity := chi.URLParam(r, "entity")
 	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 	if !ensureRecordPermission(w, r, state, entity, recordID, permission.ActionRead, rc) {
@@ -211,7 +212,7 @@ func loadOwnedAttachment(w http.ResponseWriter, r *http.Request, state *httpserv
 	}
 	tx.Commit(r.Context()) //nolint:errcheck
 	if record == nil || record.EntityName != entity || record.RecordID != recordID {
-		httpserver.WriteServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return nil, false
 	}
 	return record, true
@@ -229,12 +230,12 @@ func downloadAttachment(w http.ResponseWriter, r *http.Request, state *httpserve
 	entity := chi.URLParam(r, "entity")
 	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 	attachmentID, err := uuid.Parse(chi.URLParam(r, "attachmentId"))
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 	if !ensureRecordPermission(w, r, state, entity, recordID, permission.ActionRead, rc) {
@@ -257,7 +258,7 @@ func downloadAttachment(w http.ResponseWriter, r *http.Request, state *httpserve
 		return
 	}
 	if !found {
-		httpserver.WriteServiceError(w, http.StatusNotFound, "record_not_found", "The file is missing from object storage.", nil)
+		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "The file is missing from object storage.", nil)
 		return
 	}
 
@@ -285,12 +286,12 @@ func deleteAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 	entity := chi.URLParam(r, "entity")
 	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 	attachmentID, err := uuid.Parse(chi.URLParam(r, "attachmentId"))
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 	if !ensureRecordPermission(w, r, state, entity, recordID, permission.ActionDelete, rc) {

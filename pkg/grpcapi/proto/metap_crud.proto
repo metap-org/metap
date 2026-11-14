@@ -84,3 +84,22 @@ message AggregateRequest {
 message AggregateResponse {
   repeated google.protobuf.Struct rows = 1;
 }
+
+// ActionService runs the named operations an entity declares beyond CRUD and workflow transitions
+// (EntityDefinition.Actions). One RPC for every entity and action, same Struct-as-payload design as
+// RecordService, so adding an action needs no proto change.
+service ActionService {
+  rpc Invoke(InvokeRequest) returns (InvokeResponse);
+}
+
+message InvokeRequest {
+  string entity_name = 1;
+  string action = 2;
+  // Empty for an action with scope "entity".
+  string id = 3;
+  google.protobuf.Struct input = 4;
+}
+
+message InvokeResponse {
+  google.protobuf.Struct result = 1;
+}

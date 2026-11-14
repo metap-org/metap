@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
 )
@@ -25,7 +27,7 @@ func (s *CrudService) Delete(ctx context.Context, entityName string, id uuid.UUI
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return RecordDto{}, NewServiceError(404, "entity_not_found")
+		return RecordDto{}, NewServiceError(http.StatusNotFound, "entity_not_found")
 	}
 
 	decision, err := s.permissions.CanDeleteEntity(ctx, rc, entity.Name)
@@ -50,7 +52,7 @@ func (s *CrudService) Delete(ctx context.Context, entityName string, id uuid.UUI
 	}
 	if existing == nil {
 		precheckTx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, NewServiceError(404, "record_not_found")
+		return RecordDto{}, NewServiceError(http.StatusNotFound, errcode.RecordNotFound)
 	}
 	if err := precheckTx.Commit(ctx); err != nil {
 		return RecordDto{}, err
@@ -101,7 +103,7 @@ func (s *CrudService) Delete(ctx context.Context, entityName string, id uuid.UUI
 			key := hit.entity + "." + hit.field
 			fieldErrors[key] = append(fieldErrors[key], hit.id.String())
 		}
-		return RecordDto{}, NewServiceErrorMsgFields(409, "record_referenced",
+		return RecordDto{}, NewServiceErrorMsgFields(http.StatusConflict, errcode.RecordReferenced,
 			fmt.Sprintf("This record is referenced by %q on %q and cannot be deleted.", first.field, first.entity),
 			fieldErrors)
 	}
@@ -116,7 +118,7 @@ func (s *CrudService) Delete(ctx context.Context, entityName string, id uuid.UUI
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
 		if errors.Is(err, pgx.ErrNoRows) {
-			return RecordDto{}, NewServiceError(409, "version_conflict")
+			return RecordDto{}, NewServiceError(http.StatusConflict, errcode.VersionConflict)
 		}
 		return RecordDto{}, err
 	}

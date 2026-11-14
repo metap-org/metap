@@ -10,6 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
+	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 
 func listRecordAuditEvents(w http.ResponseWriter, r *http.Request, state *AppState) {
@@ -20,7 +22,7 @@ func listRecordAuditEvents(w http.ResponseWriter, r *http.Request, state *AppSta
 	entity := chi.URLParam(r, "entity")
 	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
 	if err != nil {
-		writeServiceError(w, http.StatusNotFound, "record_not_found", "", nil)
+		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
 
