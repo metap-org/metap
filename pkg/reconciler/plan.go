@@ -12,6 +12,8 @@ package reconciler
 type PlannedOp struct {
 	Op  DdlOp
 	SQL []string
+	// Destructive: see DdlOp.IsDestructive. A review/CI step can fail on it.
+	Destructive bool
 }
 
 // Plan has the same signature as Diff, plus it renders the SQL each op would run against
@@ -20,7 +22,7 @@ func Plan(desired PhysicalSchema, actual *PhysicalSchema, renames [][2]string) [
 	ops := Diff(desired, actual, renames)
 	planned := make([]PlannedOp, len(ops))
 	for i, op := range ops {
-		planned[i] = PlannedOp{Op: op, SQL: buildSQL(desired.Table, op)}
+		planned[i] = PlannedOp{Op: op, SQL: buildSQL(desired.Table, op), Destructive: op.IsDestructive()}
 	}
 	return planned
 }

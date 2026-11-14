@@ -83,8 +83,10 @@ func QuarantineBadRows(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UU
 		}
 
 		var rowTenantID uuid.UUID
+		// The whole row as JSON (every native column), so nothing the migration could not
+		// carry over is lost from the quarantine copy.
 		var data json.RawMessage
-		err = tx.QueryRow(ctx, fmt.Sprintf("SELECT tenant_id, data FROM %s WHERE id = $1 AND tenant_id = $2", quotedTable), id, tenantID).
+		err = tx.QueryRow(ctx, fmt.Sprintf("SELECT t.tenant_id, to_jsonb(t) FROM %s t WHERE t.id = $1 AND t.tenant_id = $2", quotedTable), id, tenantID).
 			Scan(&rowTenantID, &data)
 		if err != nil {
 			tx.Rollback(ctx) //nolint:errcheck
@@ -144,8 +146,12 @@ func Resolve(ctx context.Context, pool *pgxpool.Pool, table string, quarantineID
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf("INSERT INTO %s (id, tenant_id, data) VALUES ($1, $2, $3)", quotedTable),
-		quarantineID, tenantID, correctedData); err != nil {
+	// correctedData is a JSON object keyed by column name (the shape original_data was stored
+	// in); id and tenant_id are forced to the quarantined row's own so a corrected payload can
+	// never move the row to another tenant.
+	if _, err := tx.Exec(ctx, fmt.Sprintf(
+		"INSERT INTO %s SELECT r.* FROM jsonb_populate_record(NULL::%s, $1::jsonb || jsonb_build_object('id', $2::text, 'tenant_id', $3::text)) r",
+		quotedTable, quotedTable), correctedData, quarantineID.String(), tenantID.String()); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, fmt.Sprintf("UPDATE %s SET resolved_at = now() WHERE id = $1", quotedQuarantine), quarantineID); err != nil {

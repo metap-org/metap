@@ -23,7 +23,7 @@ import (
 
 // recordColumns: every entity is a dedicated table-per-entity table — one table already means
 // one entity, so there is no "entity" discriminator column to select.
-const recordColumns = "id, code, status, data, version, created_at, updated_at"
+// (record reads and writes are built per entity in record_sql.go)
 
 // recomputeFields fills in every Computed field's value from the rest of data — called from
 // create/update after ValidatePayload has already accepted the payload, before the write lands.
@@ -245,13 +245,8 @@ func findReferencingRecords(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UU
 		var clauses []string
 		args := []any{tenantID, id}
 		for _, r := range group {
-			if r.hasRealColumn {
-				clauses = append(clauses, fmt.Sprintf(`"%s" = $%d::uuid`, r.refField, len(args)+1))
-				args = append(args, id)
-			} else {
-				clauses = append(clauses, fmt.Sprintf(`data ->> '%s' = $%d`, r.refField, len(args)+1))
-				args = append(args, id.String())
-			}
+			clauses = append(clauses, fmt.Sprintf(`"%s" = $%d::uuid`, r.refField, len(args)+1))
+			args = append(args, id)
 		}
 		sql := fmt.Sprintf(
 			"SELECT id FROM %s WHERE tenant_id = $1 AND deleted = false AND id != $2 AND (%s) LIMIT %d",
@@ -294,7 +289,7 @@ func scanRecordRow(scanner interface{ Scan(...any) error }, entityName string) (
 
 func fetchExisting(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, entity metadata.EntityDefinition) (*RecordDto, error) {
 	row := tx.QueryRow(ctx, fmt.Sprintf(
-		"SELECT %s FROM %s WHERE id = $1 AND tenant_id = $2 AND deleted = false", recordColumns, entity.TableName,
+		"SELECT %s FROM %s t WHERE t.id = $1 AND t.tenant_id = $2 AND t.deleted = false", recordSelectList(entity), entity.TableName,
 	), id, tenantID)
 	dto, err := scanRecordRow(row, entity.Name)
 	if err != nil {
@@ -310,7 +305,7 @@ func fetchExisting(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, entit
 // every id instead of one fetchExisting call per id. Order is whatever = ANY($1) returns.
 func fetchExistingBatch(ctx context.Context, tx pgx.Tx, ids []uuid.UUID, tenantID uuid.UUID, entity metadata.EntityDefinition) ([]RecordDto, error) {
 	rows, err := tx.Query(ctx, fmt.Sprintf(
-		"SELECT %s FROM %s WHERE id = ANY($1) AND tenant_id = $2 AND deleted = false", recordColumns, entity.TableName,
+		"SELECT %s FROM %s t WHERE t.id = ANY($1) AND t.tenant_id = $2 AND t.deleted = false", recordSelectList(entity), entity.TableName,
 	), ids, tenantID)
 	if err != nil {
 		return nil, err
@@ -332,7 +327,7 @@ func fetchExistingBatch(ctx context.Context, tx pgx.Tx, ids []uuid.UUID, tenantI
 // response, it's only ever fed into PolicyCondition evaluation for the *current* record.
 func fetchRelatedData(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, refEntity metadata.EntityDefinition) (JsonObject, error) {
 	row := tx.QueryRow(ctx, fmt.Sprintf(
-		"SELECT data FROM %s WHERE id = $1 AND tenant_id = $2 AND deleted = false", refEntity.TableName,
+		"SELECT %s FROM %s t WHERE t.id = $1 AND t.tenant_id = $2 AND t.deleted = false", recordDataExpr(refEntity), refEntity.TableName,
 	), id, tenantID)
 	var dataRaw json.RawMessage
 	if err := row.Scan(&dataRaw); err != nil {
@@ -353,7 +348,7 @@ func fetchRelatedData(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, re
 // entity, instead of one query per row. Returns each related record's *whole* data.
 func fetchRelatedRecordsBatch(ctx context.Context, tx pgx.Tx, ids []uuid.UUID, tenantID uuid.UUID, refEntity metadata.EntityDefinition) (map[uuid.UUID]JsonObject, error) {
 	rows, err := tx.Query(ctx, fmt.Sprintf(
-		"SELECT id, data FROM %s WHERE id = ANY($1) AND tenant_id = $2 AND deleted = false", refEntity.TableName,
+		"SELECT t.id, %s FROM %s t WHERE t.id = ANY($1) AND t.tenant_id = $2 AND t.deleted = false", recordDataExpr(refEntity), refEntity.TableName,
 	), ids, tenantID)
 	if err != nil {
 		return nil, err

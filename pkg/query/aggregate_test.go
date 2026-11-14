@@ -123,7 +123,7 @@ func TestPlanAggregateRejectsSumOverANonNumericField(t *testing.T) {
 	require.True(t, ok, "expected an InvalidAggregateError, got %T: %v", err, err)
 }
 
-func TestPlanAggregateSumOverANumericFieldUsesNullifNumericCast(t *testing.T) {
+func TestPlanAggregateSumOverANumericFieldCastsTheColumnToNumeric(t *testing.T) {
 	reg := qpTestRegistry(t, aggTestEntity())
 	perms := permission.NewPermissionService(nil)
 	field := "bytesBlocked"
@@ -131,8 +131,7 @@ func TestPlanAggregateSumOverANumericFieldUsesNullifNumericCast(t *testing.T) {
 		AggregateInput{Metrics: []AggregateMetric{{Func: AggSum, Field: &field}}, Limit: DefaultGroups},
 		qpTestContext(uuid.New()), nil)
 	require.NoError(t, err)
-	require.Contains(t, q.SQL, "sum(NULLIF(", "expected a NULLIF(...)::numeric sum, got %q", q.SQL)
-	require.Contains(t, q.SQL, "::numeric)", "expected a NULLIF(...)::numeric sum, got %q", q.SQL)
+	require.Contains(t, q.SQL, `sum(("bytesBlocked")::numeric)`, "expected a numeric-cast sum over the column, got %q", q.SQL)
 }
 
 func TestPlanAggregateRejectsMoreThanTheMetricLimit(t *testing.T) {

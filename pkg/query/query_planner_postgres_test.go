@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/reconciler"
 )
 
 func qpTestPool(t *testing.T) *pgxpool.Pool {
@@ -33,21 +34,18 @@ func qpTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// qpE2ETable creates a dedicated-table fixture (id/tenant_id/deleted/created_at/updated_at +
-// data jsonb, same shape every table-per-entity table has) and returns its name plus a cleanup.
+// qpE2ETable reserves a table name for a fixture entity (and drops the table afterwards); the table
+// itself is created by qpReconcile, the way production creates one.
 func qpE2ETable(t *testing.T, pool *pgxpool.Pool) string {
 	table := "public.go_query_test_" + uuid.NewString()[:8]
-	_, err := pool.Exec(context.Background(), `CREATE TABLE `+table+` (
-		id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-		tenant_id uuid NOT NULL,
-		deleted boolean NOT NULL DEFAULT false,
-		created_at timestamptz NOT NULL DEFAULT now(),
-		updated_at timestamptz NOT NULL DEFAULT now(),
-		data jsonb NOT NULL DEFAULT '{}'::jsonb
-	)`)
-	require.NoError(t, err)
 	t.Cleanup(func() { pool.Exec(context.Background(), "DROP TABLE IF EXISTS "+table) })
 	return table
+}
+
+func qpReconcile(t *testing.T, pool *pgxpool.Pool, entity metadata.EntityDefinition) {
+	t.Helper()
+	_, err := reconciler.ReconcileWithScope(context.Background(), pool, uuid.Nil, entity, nil, reconciler.ScopeAllTenants)
+	require.NoError(t, err)
 }
 
 func qpE2EEntity(table string) metadata.EntityDefinition {
@@ -66,15 +64,9 @@ func qpE2EEntity(table string) metadata.EntityDefinition {
 }
 
 func qpInsertRow(t *testing.T, pool *pgxpool.Pool, table string, tenantID uuid.UUID, priority *int) uuid.UUID {
-	var data []byte
-	if priority != nil {
-		data, _ = json.Marshal(map[string]any{"priority": *priority})
-	} else {
-		data = []byte(`{}`)
-	}
 	var id uuid.UUID
 	err := pool.QueryRow(context.Background(),
-		"INSERT INTO "+table+" (tenant_id, data) VALUES ($1, $2::jsonb) RETURNING id", tenantID, data).Scan(&id)
+		"INSERT INTO "+table+" (tenant_id, priority) VALUES ($1, $2) RETURNING id", tenantID, priority).Scan(&id)
 	require.NoError(t, err)
 	return id
 }
@@ -101,6 +93,7 @@ func TestKeysetPaginationAcrossANullContainingSortColumnNeverDropsOrDuplicatesRo
 	pool := qpTestPool(t)
 	table := qpE2ETable(t, pool)
 	entity := qpE2EEntity(table)
+	qpReconcile(t, pool, entity)
 	reg := qpTestRegistry(t, entity)
 	perms := permission.NewPermissionService(nil)
 	tenantID := uuid.New()
@@ -132,7 +125,7 @@ func TestKeysetPaginationAcrossANullContainingSortColumnNeverDropsOrDuplicatesRo
 		// would (not yet ported) — read back its own sort value/id directly.
 		lastID := ids[len(ids)-1]
 		var lastPriority *string
-		row := pool.QueryRow(context.Background(), "SELECT data->>'priority' FROM "+table+" WHERE id = $1", lastID)
+		row := pool.QueryRow(context.Background(), "SELECT priority::text FROM "+table+" WHERE id = $1", lastID)
 		require.NoError(t, row.Scan(&lastPriority))
 		next := EncodeCursor(Cursor{Field: "priority", Value: lastPriority, ID: lastID.String(), Dir: SortDesc})
 		cursor = &next
@@ -151,6 +144,7 @@ func TestPlanListTenantScopingActuallyExcludesOtherTenantsRows(t *testing.T) {
 	pool := qpTestPool(t)
 	table := qpE2ETable(t, pool)
 	entity := qpE2EEntity(table)
+	qpReconcile(t, pool, entity)
 	reg := qpTestRegistry(t, entity)
 	perms := permission.NewPermissionService(nil)
 
@@ -176,13 +170,14 @@ func TestPlanAggregateGroupByActuallyCountsEachGroupCorrectly(t *testing.T) {
 			{Name: "country", Label: "Country", Kind: metadata.KindString, Indexed: &trueVal},
 		},
 	}
+	qpReconcile(t, pool, entity)
 	reg := qpTestRegistry(t, entity)
 	perms := permission.NewPermissionService(nil)
 	tenantID := uuid.New()
 
 	for _, country := range []string{"US", "US", "US", "VN", "VN"} {
-		data, _ := json.Marshal(map[string]any{"country": country})
-		pool.Exec(context.Background(), "INSERT INTO "+table+" (tenant_id, data) VALUES ($1, $2::jsonb)", tenantID, data)
+		_, err := pool.Exec(context.Background(), "INSERT INTO "+table+" (tenant_id, country) VALUES ($1, $2)", tenantID, country)
+		require.NoError(t, err)
 	}
 
 	groupBy := "country"

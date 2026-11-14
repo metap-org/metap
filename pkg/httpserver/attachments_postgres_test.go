@@ -97,25 +97,7 @@ func TestAttachmentsUploadListDownloadAndDelete(t *testing.T) {
 	if _, err := pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')", tenantID, userID); err != nil {
 		require.FailNow(t, fmt.Sprint(err))
 	}
-	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS entities"); err != nil {
-		require.FailNow(t, fmt.Sprint(err))
-	}
-	createTableSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
-		id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-		tenant_id uuid NOT NULL,
-		code varchar(120),
-		status varchar(80),
-		data jsonb DEFAULT '{}'::jsonb NOT NULL,
-		version integer DEFAULT 1 NOT NULL,
-		deleted boolean DEFAULT false NOT NULL,
-		created_at timestamptz DEFAULT now() NOT NULL,
-		updated_at timestamptz DEFAULT now() NOT NULL,
-		created_by uuid,
-		updated_by uuid
-	)`, testOrdersTable)
-	if _, err := pool.Exec(ctx, createTableSQL); err != nil {
-		require.FailNow(t, fmt.Sprint(err))
-	}
+	ensureTestOrdersTable(t, pool)
 	t.Cleanup(func() {
 		pool.Exec(context.Background(), "DELETE FROM attachments WHERE tenant_id = $1", tenantID)
 		pool.Exec(context.Background(), "DELETE FROM metadata.outbox_events WHERE aggregate_type = 'test.orders'")
@@ -204,25 +186,7 @@ func TestWorkflowEventsAndAuditEventsForARecord(t *testing.T) {
 	if _, err := pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')", tenantID, userID); err != nil {
 		require.FailNow(t, fmt.Sprint(err))
 	}
-	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS entities"); err != nil {
-		require.FailNow(t, fmt.Sprint(err))
-	}
-	createTableSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
-		id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-		tenant_id uuid NOT NULL,
-		code varchar(120),
-		status varchar(80),
-		data jsonb DEFAULT '{}'::jsonb NOT NULL,
-		version integer DEFAULT 1 NOT NULL,
-		deleted boolean DEFAULT false NOT NULL,
-		created_at timestamptz DEFAULT now() NOT NULL,
-		updated_at timestamptz DEFAULT now() NOT NULL,
-		created_by uuid,
-		updated_by uuid
-	)`, testOrdersTable)
-	if _, err := pool.Exec(ctx, createTableSQL); err != nil {
-		require.FailNow(t, fmt.Sprint(err))
-	}
+	ensureTestOrdersTable(t, pool)
 	t.Cleanup(func() {
 		pool.Exec(context.Background(), "DELETE FROM metadata.workflow_events WHERE tenant_id = $1", tenantID)
 		pool.Exec(context.Background(), "DELETE FROM metadata.outbox_events WHERE aggregate_type = 'test.orders'")

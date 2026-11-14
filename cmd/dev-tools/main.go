@@ -35,7 +35,9 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  dev-tools set-tenant-hostname <tenantId> <hostname>")
 	fmt.Fprintln(os.Stderr, "  dev-tools put-tenant-secret <tenantId> <configKey> <value>")
 	fmt.Fprintln(os.Stderr, "  dev-tools migrate-to-dedicated-table <tenantId> <entityJsonPath> [sourceTable]")
-	fmt.Fprintln(os.Stderr, "  dev-tools reconcile-plan <tenantId> <entityJsonPath> <tableName>")
+	fmt.Fprintln(os.Stderr, "  dev-tools reconcile-plan <tenantId> <entityJsonPath> <tableName> [--fail-on-destructive]")
+	fmt.Fprintln(os.Stderr, "  dev-tools restore-legacy-data <tenantId> <entityJsonPath> <tableName> [--all-tenants]")
+	fmt.Fprintln(os.Stderr, "  dev-tools migrate-to-native-columns <tenantId> <entityJsonPath> <tableName> [--all-tenants] [--drop-data]")
 	os.Exit(1)
 }
 
@@ -78,6 +80,10 @@ func main() {
 		err = migrateToDedicatedTable(args)
 	case "reconcile-plan":
 		err = reconcilePlan(args)
+	case "restore-legacy-data":
+		err = restoreLegacyData(args)
+	case "migrate-to-native-columns":
+		err = migrateToNativeColumns(args)
 	default:
 		usage()
 	}

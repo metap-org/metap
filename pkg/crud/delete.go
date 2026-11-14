@@ -108,9 +108,9 @@ func (s *CrudService) Delete(ctx context.Context, entityName string, id uuid.UUI
 	}
 
 	deleteSQL := fmt.Sprintf(
-		`UPDATE %s SET deleted = true, version = version + 1, updated_at = now(), updated_by = $1
-		 WHERE id = $2 AND tenant_id = $3 AND version = $4 AND deleted = false RETURNING %s`,
-		entity.TableName, recordColumns,
+		`UPDATE %s AS t SET deleted = true, version = t.version + 1, updated_at = now(), updated_by = $1
+		 WHERE t.id = $2 AND t.tenant_id = $3 AND t.version = $4 AND t.deleted = false RETURNING %s`,
+		entity.TableName, recordSelectList(entity),
 	)
 	row := tx.QueryRow(ctx, deleteSQL, userID, id, tenantID, expectedVersion)
 	record, err := scanRecordRow(row, entity.Name)

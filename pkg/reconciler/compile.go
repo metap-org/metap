@@ -22,7 +22,6 @@ var frameworkColumns = []frameworkColumn{
 	{"tenant_id", "uuid", false},
 	{"code", "varchar(120)", true},
 	{"status", "varchar(80)", true},
-	{"data", "jsonb", false},
 	{"version", "integer", false},
 	{"deleted", "boolean", false},
 	{"created_at", "timestamptz", false},
@@ -30,6 +29,10 @@ var frameworkColumns = []frameworkColumn{
 	{"created_by", "uuid", true},
 	{"updated_by", "uuid", true},
 }
+
+// legacyDataColumn is the pre-Phase-106 payload column. It is no longer part of any desired
+// schema; Introspect still recognises it on a table that has not been migrated yet.
+const legacyDataColumn = "data"
 
 // FrameworkColumnNames returns every framework column's name, in declaration order.
 func FrameworkColumnNames() []string {
@@ -138,31 +141,21 @@ func utf8RuneBoundary(s string, i int) bool {
 	return s[i]&0xC0 != 0x80
 }
 
-// fieldIndexExpression is the expression a field contributes to an index — same shape whether
-// it's this field's own promoted single-field index or one of several fields inside a composite
+// fieldIndexExpression is the expression a field contributes to an index — its own column,
+// whether it is that field's single-field index or one of several fields inside a composite
 // UniqueConstraints entry.
 func fieldIndexExpression(field metadata.EntityField) string {
-	if metadata.FieldHasRealColumn(field) {
-		return fmt.Sprintf(`"%s"`, field.Name)
-	}
-	switch field.Kind {
-	case metadata.KindDate, metadata.KindDatetime:
-		return fmt.Sprintf("(data ->> '%s')", field.Name)
-	default:
-		return fmt.Sprintf("((data ->> '%s')::%s)", field.Name, metadata.FieldKindSQLType(field.Kind))
-	}
+	return fmt.Sprintf(`"%s"`, field.Name)
 }
 
 // Compile compiles an EntityDefinition into its target PhysicalSchema under table-per-entity.
 //
-//   - Every Reference field with a RefEntity gets a real FK (referential integrity, not a
-//     query-optimization decision).
-//   - field.Storage == StorageColumn is the only thing that produces a real, trigger-synced
-//     physical column (OriginGenerated) — every other promoted field gets an **expression
-//     index** straight over data, never a new column, to avoid GENERATED ... STORED's
-//     ACCESS EXCLUSIVE table rewrite by default.
-//   - Searchable fields always use an expression-based GIN index (tsvector for
-//     SearchMode=="fts", trigram otherwise) regardless of Storage.
+//   - Every field (except code/status, which are framework columns) gets its own typed,
+//     nullable column; there is no data jsonb payload (Phase 106).
+//   - Every Reference field with a RefEntity gets a real FK (referential integrity).
+//   - Indexed/Sortable/Unique fields get a btree index on the column (Unique: a partial unique
+//     index WHERE deleted = false); Searchable string/enum fields a GIN index (tsvector for
+//     SearchMode=="fts", trigram otherwise).
 func Compile(entity metadata.EntityDefinition) (PhysicalSchema, error) {
 	if err := CheckTableNameLength(entity.Name); err != nil {
 		return PhysicalSchema{}, err
@@ -188,7 +181,7 @@ func Compile(entity metadata.EntityDefinition) (PhysicalSchema, error) {
 		// "code"/"status" are the two framework columns an EntityField is *expected* to
 		// name-collide with — CrudService already mirrors a code-holding or workflow-state
 		// field's value into these directly, independent of this compiler's own machinery.
-		if field.Name != "code" && field.Name != "status" && frameworkNames[field.Name] {
+		if field.Name != "code" && field.Name != "status" && (frameworkNames[field.Name] || field.Name == legacyDataColumn) {
 			return PhysicalSchema{}, fmt.Errorf("entity '%s' field '%s' collides with a framework column name", entity.Name, field.Name)
 		}
 		if field.Name == "code" || field.Name == "status" {
@@ -196,88 +189,58 @@ func Compile(entity metadata.EntityDefinition) (PhysicalSchema, error) {
 		}
 
 		sqlType := metadata.FieldKindSQLType(field.Kind)
+		col := fmt.Sprintf(`"%s"`, field.Name)
+		// Every field has its own typed, nullable column (Phase 106). Nullable on purpose: a
+		// NOT NULL column cannot be added to a table that already has rows without a default,
+		// and CrudService's payload validation is the required-field gate.
+		schema.Columns[field.Name] = ColumnSpec{SQLType: sqlType, Nullable: true, Origin: ColumnOrigin{Kind: OriginNative, Backfilled: true}}
+
 		unique := boolVal(field.Unique)
 		uniqueTenantScoped := unique && metadata.ResolveUniqueScope(field.UniqueScope) == metadata.UniqueScopeTenant
+		isFkReference := field.Kind == metadata.KindReference && field.RefEntity != nil
 
-		// Searchable always uses an expression-based GIN index straight over data — a field can
-		// also be Unique (waf.zones.hostname, real-world case), so this doesn't unconditionally
-		// skip the rest of the loop body — the two need genuinely separate index objects.
+		// Searchable: a GIN index straight over the column. Trigram and tsvector both operate on
+		// text, so a searchable field must be a string-like kind. A field can also be Unique
+		// (waf.zones.hostname), so this does not skip the rest of the loop body.
 		if boolVal(field.Searchable) {
+			if field.Kind != metadata.KindString && field.Kind != metadata.KindEnum {
+				return PhysicalSchema{}, fmt.Errorf("entity '%s' field '%s' is searchable but its kind is not string or enum", entity.Name, field.Name)
+			}
 			fts := field.SearchMode != nil && *field.SearchMode == "fts"
 			var kind, expr string
 			if fts {
-				kind, expr = "gin", fmt.Sprintf("to_tsvector('simple', (data ->> '%s'))", field.Name)
+				kind, expr = "gin", fmt.Sprintf("to_tsvector('simple', %s)", col)
 			} else {
-				kind, expr = "trgm", fmt.Sprintf("(data ->> '%s') gin_trgm_ops", field.Name)
+				kind, expr = "trgm", fmt.Sprintf("%s gin_trgm_ops", col)
 			}
 			schema.Indexes[indexName(entity.Name, field.Name, kind)] = IndexSpec{Expression: expr, Using: "gin", Valid: true}
-			if !unique {
-				continue
-			}
-		}
-
-		// A real SQL FOREIGN KEY needs a real physical column to attach to — a Reference field
-		// can never stay JSONB-only once its RefEntity is set, regardless of Indexed/Storage.
-		isFkReference := field.Kind == metadata.KindReference && field.RefEntity != nil
-		wantsRealColumn := metadata.FieldHasRealColumn(field)
-
-		if !wantsRealColumn && metadata.ResolveFieldStorageTier(field) == metadata.TierJsonb {
-			continue
 		}
 
 		indexed := unique || boolVal(field.Indexed) || boolVal(field.Sortable) || isFkReference
-
-		if wantsRealColumn {
-			schema.Columns[field.Name] = ColumnSpec{
-				SQLType: sqlType, Nullable: true,
-				Origin: ColumnOrigin{Kind: OriginGenerated, SourceField: field.Name, Backfilled: true},
-			}
-			// A Unique field gets a *partial* unique index (WHERE deleted = false), never a
-			// blanket table UNIQUE constraint.
-			if indexed {
-				kind := "idx"
-				if unique {
-					kind = "uniq"
-				}
-				col := fmt.Sprintf(`"%s"`, field.Name)
-				// A non-unique FK column keeps a single-column index: Postgres's own FK check on
-				// the referenced row (ON DELETE RESTRICT) looks the column up by itself.
-				leadWithTenant := uniqueTenantScoped || (!unique && !isFkReference)
-				idx := IndexSpec{Expression: withTenantPrefix(col, leadWithTenant), Unique: unique, Valid: true}
-				if unique {
-					idx.WhereClause = "deleted = false"
-				}
-				schema.Indexes[indexName(entity.Name, field.Name, kind)] = idx
-			}
-			if isFkReference {
-				schema.ForeignKeys[fmt.Sprintf("fk_%s_%s", TableNameFor(entity.Name), field.Name)] = FkSpec{
-					Column: field.Name,
-					// Assumes the referenced entity lives in this *same* schema as the entity
-					// being compiled — true for every Reference in this codebase today.
-					RefTable:  QualifiedTableNameIn(*field.RefEntity, entitySchema),
-					RefColumn: "id", OnDelete: OnDeleteRestrict, Validated: true,
-				}
-			}
-		} else {
-			// Date/Datetime deliberately stay an uncast text expression — Postgres's implicit
-			// text->date/text->timestamptz cast is STABLE, not IMMUTABLE, and CREATE INDEX on an
-			// expression requires IMMUTABLE.
-			var expr string
-			switch field.Kind {
-			case metadata.KindDate, metadata.KindDatetime:
-				expr = fmt.Sprintf("(data ->> '%s')", field.Name)
-			default:
-				expr = fmt.Sprintf("((data ->> '%s')::%s)", field.Name, sqlType)
-			}
+		if indexed {
 			kind := "idx"
 			if unique {
 				kind = "uniq"
 			}
-			idx := IndexSpec{Expression: withTenantPrefix(expr, uniqueTenantScoped || !unique), Unique: unique, Valid: true}
+			// A non-unique FK column keeps a single-column index: Postgres's own FK check on the
+			// referenced row (ON DELETE RESTRICT) looks the column up by itself.
+			leadWithTenant := uniqueTenantScoped || (!unique && !isFkReference)
+			idx := IndexSpec{Expression: withTenantPrefix(col, leadWithTenant), Unique: unique, Valid: true}
+			// A Unique field gets a *partial* unique index (WHERE deleted = false), never a
+			// blanket table UNIQUE constraint.
 			if unique {
 				idx.WhereClause = "deleted = false"
 			}
 			schema.Indexes[indexName(entity.Name, field.Name, kind)] = idx
+		}
+		if isFkReference {
+			schema.ForeignKeys[fmt.Sprintf("fk_%s_%s", TableNameFor(entity.Name), field.Name)] = FkSpec{
+				Column: field.Name,
+				// Assumes the referenced entity lives in this *same* schema as the entity being
+				// compiled — true for every Reference in this codebase today.
+				RefTable:  QualifiedTableNameIn(*field.RefEntity, entitySchema),
+				RefColumn: "id", OnDelete: OnDeleteRestrict, Validated: true,
+			}
 		}
 	}
 

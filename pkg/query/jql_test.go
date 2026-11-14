@@ -37,8 +37,8 @@ func TestJqlSimpleEqualityCompilesAndBindsOneParam(t *testing.T) {
 	require.True(t, hasWhere, "unexpected where sql: %q", whereSQL)
 	require.NotContains(t, whereSQL, "ILIKE", "unexpected where sql: %q", whereSQL)
 	require.False(t, hasOrder, "expected no order")
-	// jsonb key placeholder + value placeholder
-	require.Len(t, params.Params, 2, "expected 2 params, got %d", len(params.Params))
+	// one placeholder: the value (the field is its own column)
+	require.Len(t, params.Params, 1, "expected 1 param, got %d", len(params.Params))
 }
 
 func TestJqlAndOrNotPrecedenceAndParensAllParse(t *testing.T) {

@@ -61,30 +61,41 @@ func Introspect(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, ent
 		return nil, err
 	}
 	for _, r := range colRows {
+		if r.name == legacyDataColumn {
+			// The pre-Phase-106 payload: not a column Diff manages, only a fact about the table.
+			result.HasLegacyData = true
+		}
+	}
+	for _, r := range colRows {
+		if r.name == legacyDataColumn {
+			continue
+		}
 		sqlType := pgTypeToShort(r.dataType, r.charLen, r.numPrecision, r.numScale)
 		var origin ColumnOrigin
 		if frameworkNames[r.name] {
 			origin = ColumnOrigin{Kind: OriginFramework}
 		} else {
-			// reconciler_backfill_progress.completed alone isn't enough — a Generated column
-			// only reads back as truly backfilled when the ledger says so *and* its sync
-			// trigger is actually present (see this function's own doc comment history for the
-			// real incident this closes). Either half being false means Diff's existing
-			// push_sync_and_backfill re-assertion path fires again on the very next reconcile.
-			completed, err := isBackfillCompleted(ctx, pool, tenantID, entityName, BackfillOpID(table, r.name))
-			if err != nil {
-				return nil, err
-			}
-			triggerExists := false
-			if completed {
-				triggerExists, err = syncTriggerExists(ctx, pool, schema, bareTable, r.name)
+			// Backfilled only matters while the legacy data column still exists; on a native
+			// table there is nothing to copy from. The ledger is the single source here — a
+			// column is "done" when its backfill recorded completion.
+			completed := true
+			if result.HasLegacyData {
+				var err error
+				completed, err = isBackfillCompleted(ctx, pool, tenantID, entityName, BackfillOpID(table, r.name))
 				if err != nil {
 					return nil, err
 				}
 			}
-			origin = ColumnOrigin{Kind: OriginGenerated, SourceField: r.name, Backfilled: completed && triggerExists}
+			origin = ColumnOrigin{Kind: OriginNative, Backfilled: completed}
 		}
 		result.Columns[r.name] = ColumnSpec{SQLType: sqlType, Nullable: r.isNullable == "YES", Origin: origin}
+	}
+	if result.HasLegacyData {
+		triggers, err := legacySyncTriggerFields(ctx, pool, schema, bareTable)
+		if err != nil {
+			return nil, err
+		}
+		result.LegacySyncTriggers = triggers
 	}
 
 	indexRows, err := pool.Query(ctx,
@@ -185,21 +196,29 @@ func BackfillOpID(table, column string) string {
 	return fmt.Sprintf("backfill:%s:%s", table, column)
 }
 
-// syncTriggerExists: whether the BEFORE INSERT OR UPDATE sync trigger executor.go's
-// buildSyncTriggerSQL creates for a Generated column actually exists in pg_catalog right now.
-// Trigger name (trg_sync_{bareTable}_{field}, unquoted) must match buildSyncTriggerSQL's naming
-// exactly.
-func syncTriggerExists(ctx context.Context, pool *pgxpool.Pool, schema, bareTable, field string) (bool, error) {
-	triggerName := fmt.Sprintf("trg_sync_%s_%s", bareTable, field)
-	var exists bool
-	err := pool.QueryRow(ctx,
-		`SELECT EXISTS (
-			SELECT 1 FROM pg_trigger t
-			JOIN pg_class c ON c.oid = t.tgrelid
-			JOIN pg_namespace n ON n.oid = c.relnamespace
-			WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal
-		)`, schema, bareTable, triggerName).Scan(&exists)
-	return exists, err
+// legacySyncTriggerFields lists the fields that still have a pre-Phase-106 sync trigger on this
+// table (trg_sync_{bareTable}_{field}), so Diff can drop them.
+func legacySyncTriggerFields(ctx context.Context, pool *pgxpool.Pool, schema, bareTable string) ([]string, error) {
+	prefix := "trg_sync_" + bareTable + "_"
+	rows, err := pool.Query(ctx,
+		`SELECT t.tgname FROM pg_trigger t
+		 JOIN pg_class c ON c.oid = t.tgrelid
+		 JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = $1 AND c.relname = $2 AND NOT t.tgisinternal AND t.tgname LIKE $3
+		 ORDER BY t.tgname`, schema, bareTable, strings.ReplaceAll(prefix, "_", "\\_")+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var fields []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		fields = append(fields, strings.TrimPrefix(name, prefix))
+	}
+	return fields, rows.Err()
 }
 
 func isBackfillCompleted(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entityName, opID string) (bool, error) {

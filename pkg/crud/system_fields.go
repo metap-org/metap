@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -64,13 +65,18 @@ func (s *CrudService) SetSystemFields(ctx context.Context, tenantID uuid.UUID, e
 	if err != nil {
 		return false, err
 	}
+	sets := make([]string, len(declared))
+	for i, f := range declared {
+		sets[i] = quoteCol(f.Name) + " = r." + quoteCol(f.Name)
+	}
 
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
 		return false, err
 	}
 	tag, err := tx.Exec(ctx,
-		fmt.Sprintf(`UPDATE %s SET data = data || $1::jsonb WHERE id = $2 AND tenant_id = $3 AND deleted = false`, entity.TableName),
+		fmt.Sprintf(`UPDATE %s AS t SET %s FROM jsonb_to_record($1::jsonb) AS r(%s) WHERE t.id = $2 AND t.tenant_id = $3 AND t.deleted = false`,
+			entity.TableName, strings.Join(sets, ", "), recordTypeList(declared)),
 		json.RawMessage(patch), id, tenantID)
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck

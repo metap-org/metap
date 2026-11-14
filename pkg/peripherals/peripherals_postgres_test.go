@@ -181,15 +181,14 @@ func TestFetchContextAttributesReadsTheCallersOwnRecordByUserID(t *testing.T) {
 	// on a specific business entity being registered.
 	tableName := "public.test_context_attrs_" + fastUUIDSuffix()
 	if _, err := pool.Exec(ctx, "CREATE TABLE "+tableName+
-		" (id uuid PRIMARY KEY, tenant_id uuid NOT NULL, deleted boolean NOT NULL DEFAULT false, data jsonb NOT NULL)"); err != nil {
+		" (id uuid PRIMARY KEY, tenant_id uuid NOT NULL, deleted boolean NOT NULL DEFAULT false, \"userId\" uuid, department text)"); err != nil {
 		require.FailNow(t, fmt.Sprint(err))
 	}
 	t.Cleanup(func() { pool.Exec(context.Background(), "DROP TABLE IF EXISTS "+tableName) })
 
 	recordID := uuid.New()
-	data := `{"userId": "` + userID.String() + `", "department": "security"}`
-	if _, err := pool.Exec(ctx, "INSERT INTO "+tableName+" (id, tenant_id, data) VALUES ($1, $2, $3::jsonb)",
-		recordID, tenantID, data); err != nil {
+	if _, err := pool.Exec(ctx, "INSERT INTO "+tableName+" (id, tenant_id, \"userId\", department) VALUES ($1, $2, $3, 'security')",
+		recordID, tenantID, userID); err != nil {
 		require.FailNow(t, fmt.Sprint(err))
 	}
 

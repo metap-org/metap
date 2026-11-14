@@ -38,6 +38,7 @@ import (
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/reconciler"
 )
 
 func grpcTestPool(t *testing.T) *pgxpool.Pool {
@@ -78,24 +79,10 @@ func grpcTestEntity() metadata.EntityDefinition {
 
 func boolPtr(b bool) *bool { return &b }
 
-func createGrpcTestTable(t *testing.T, pool *pgxpool.Pool, table string) {
-	ctx := context.Background()
-	_, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS entities")
-	require.NoError(t, err)
-	createTableSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
-		id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-		tenant_id uuid NOT NULL,
-		code varchar(120),
-		status varchar(80),
-		data jsonb DEFAULT '{}'::jsonb NOT NULL,
-		version integer DEFAULT 1 NOT NULL,
-		deleted boolean DEFAULT false NOT NULL,
-		created_at timestamptz DEFAULT now() NOT NULL,
-		updated_at timestamptz DEFAULT now() NOT NULL,
-		created_by uuid,
-		updated_by uuid
-	)`, table)
-	_, err = pool.Exec(ctx, createTableSQL)
+// createGrpcTestTable creates the entity's table the way production does, through the reconciler.
+func createGrpcTestTable(t *testing.T, pool *pgxpool.Pool, entity metadata.EntityDefinition) {
+	t.Helper()
+	_, err := reconciler.ReconcileWithScope(context.Background(), pool, uuid.Nil, entity, nil, reconciler.ScopeAllTenants)
 	require.NoError(t, err)
 }
 
@@ -125,7 +112,7 @@ func TestFullGRPCLifecycleOverARealServerAndARealJWT(t *testing.T) {
 		pool.Exec(context.Background(), fmt.Sprintf("DELETE FROM %s WHERE tenant_id = $1", grpcTestOrdersTable), tenantID)
 		pool.Exec(context.Background(), "DELETE FROM metadata.user_roles WHERE tenant_id = $1", tenantID)
 	})
-	createGrpcTestTable(t, pool, grpcTestOrdersTable)
+	createGrpcTestTable(t, pool, grpcTestEntity())
 
 	privPEM, pubKey := grpcGenRSAKeyPair(t)
 	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)

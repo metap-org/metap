@@ -47,22 +47,9 @@ func changeRequestEntity() metadata.EntityDefinition {
 	}
 }
 
-func ensureChangeRequestsTable(t *testing.T, pool *pgxpool.Pool) {
-	_, err := pool.Exec(context.Background(), `CREATE TABLE IF NOT EXISTS `+changeRequestsTable+` (
-		id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-		tenant_id uuid NOT NULL,
-		code varchar(120),
-		status varchar(80),
-		data jsonb DEFAULT '{}'::jsonb NOT NULL,
-		version integer DEFAULT 1 NOT NULL,
-		deleted boolean DEFAULT false NOT NULL,
-		created_at timestamptz DEFAULT now() NOT NULL,
-		updated_at timestamptz DEFAULT now() NOT NULL,
-		created_by uuid,
-		updated_by uuid
-	)`)
-	require.NoError(t, err)
-}
+// ensureChangeRequestsTable: the table is created by newCrudService (it reconciles the entity), so
+// there is nothing to hand-build any more; kept so callers read the same.
+func ensureChangeRequestsTable(t *testing.T, pool *pgxpool.Pool) {}
 
 // member is a non-admin caller of one account; approvalRequired models the account's mode.
 func member(tenantID uuid.UUID, approvalRequired bool, roles ...string) *permission.RequestContext {

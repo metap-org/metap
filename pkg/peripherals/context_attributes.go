@@ -18,8 +18,11 @@ import (
 // because the caller resolves it from EntityDefinition.table_name after schema-name validation,
 // never from unvalidated request input.
 func FetchContextAttributes(ctx context.Context, db DBTX, tenantID uuid.UUID, tableName string, userID uuid.UUID) (map[string]any, error) {
+	// Every field is its own column (Phase 106): the record is the row as JSON, minus the
+	// framework bookkeeping columns, so the caller sees the entity's fields (plus code/status).
 	row := db.QueryRow(ctx,
-		"SELECT data FROM "+tableName+" WHERE tenant_id = $1 AND deleted = false AND data ->> 'userId' = $2 LIMIT 1",
+		"SELECT to_jsonb(t) - ARRAY['id','tenant_id','deleted','version','created_at','updated_at','created_by','updated_by'] "+
+			"FROM "+tableName+" t WHERE t.tenant_id = $1 AND t.deleted = false AND t.\"userId\"::text = $2 LIMIT 1",
 		tenantID, userID.String(),
 	)
 	var raw []byte

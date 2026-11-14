@@ -58,8 +58,8 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 		return ServiceResult[[]RecordDto]{}, err
 	}
 
-	sql := fmt.Sprintf("SELECT %s FROM %s WHERE %s ORDER BY %s LIMIT %d",
-		recordColumns, entity.TableName, planned.WhereSQL, planned.OrderBySQL, planned.Limit+1)
+	sql := fmt.Sprintf("SELECT %s FROM %s t WHERE %s ORDER BY %s LIMIT %d",
+		recordSelectList(entity), entity.TableName, planned.WhereSQL, planned.OrderBySQL, planned.Limit+1)
 
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {

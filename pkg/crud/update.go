@@ -4,14 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
 )
@@ -135,20 +133,13 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 		tx.Rollback(ctx) //nolint:errcheck
 		return ServiceResult[RecordDto]{}, err
 	}
-	// System fields keep whatever is stored *now*, not the value read at precheck: a concurrent
-	// SetSystemFields does not bump version, so the version check alone would not stop this
-	// UPDATE from writing a stale system value back.
-	systemFields := metadata.SystemFieldNames(entity)
-	updateSQL := fmt.Sprintf(
-		`UPDATE %s SET data = ($1::jsonb - $7::text[]) || COALESCE((SELECT jsonb_object_agg(key, value) FROM jsonb_each(data) WHERE key = ANY($7::text[])), '{}'::jsonb),
-		 code = $2, version = version + 1, updated_at = now(), updated_by = $3
-		 WHERE id = $4 AND tenant_id = $5 AND version = $6 AND deleted = false RETURNING %s`,
-		entity.TableName, recordColumns,
-	)
-	if systemFields == nil {
-		systemFields = []string{}
+	// System fields are not part of the write (see writableFields): they keep whatever is stored
+	// now, so a concurrent SetSystemFields cannot be overwritten by this update.
+	extraSet := "code = $6::varchar"
+	if sv := plainStatusValue(entity, data); sv != nil {
+		extraSet += ", status = " + quoteLit(*sv)
 	}
-	row := tx.QueryRow(ctx, updateSQL, json.RawMessage(dataJSON), code, userID, id, tenantID, expectedVersion, systemFields)
+	row := tx.QueryRow(ctx, buildUpdateSQL(entity, extraSet), json.RawMessage(dataJSON), userID, id, tenantID, expectedVersion, code)
 	record, err := scanRecordRow(row, entity.Name)
 	if err != nil {
 		if r, ok := uniqueViolation[RecordDto](entity, err); ok {

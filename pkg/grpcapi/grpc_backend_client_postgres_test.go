@@ -79,7 +79,7 @@ func TestGRPCBackendFullLifecycleMatchesDirectCrudServiceBehavior(t *testing.T) 
 		pool.Exec(context.Background(), "DELETE FROM "+grpcBackendTestOrdersTable+" WHERE tenant_id = $1", tenantID)
 		pool.Exec(context.Background(), "DELETE FROM metadata.user_roles WHERE tenant_id = $1", tenantID)
 	})
-	createGrpcTestTable(t, pool, grpcBackendTestOrdersTable)
+	createGrpcTestTable(t, pool, grpcBackendTestEntity())
 
 	privPEM, pubKey := grpcGenRSAKeyPair(t)
 	// This test exercises GrpcBackend's dispatch, not ServiceTokenSource's login flow — there is

@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/metadata"
 )
 
 type bindKind int
@@ -60,6 +61,23 @@ func ArgsOf(params []BindValue) []any {
 
 type ParamBuilder struct {
 	Params []BindValue
+	// fields: the entity's declared fields, by name, so a condition that names a field resolves to
+	// that field's typed column. Set by the planner via SetEntity; unset (a bare ConditionToSQL
+	// call) means no field is known and a field condition resolves to NULL.
+	fields map[string]metadata.EntityField
+}
+
+// SetEntity tells the builder which entity the fragments being built belong to.
+func (p *ParamBuilder) SetEntity(entity metadata.EntityDefinition) {
+	p.fields = make(map[string]metadata.EntityField, len(entity.Fields))
+	for _, f := range entity.Fields {
+		p.fields[f.Name] = f
+	}
+}
+
+func (p *ParamBuilder) field(name string) (metadata.EntityField, bool) {
+	f, ok := p.fields[name]
+	return f, ok
 }
 
 func NewParamBuilder() *ParamBuilder { return &ParamBuilder{} }

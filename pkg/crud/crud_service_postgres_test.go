@@ -28,6 +28,7 @@ import (
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
+	"github.com/metap-org/metap/pkg/reconciler"
 )
 
 const (
@@ -53,41 +54,27 @@ func ensureCoreTestTables(t *testing.T, pool *pgxpool.Pool) {
 	}
 	_, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS entities")
 	must(err)
-	for _, table := range []string{ordersTable, auditedOrdersTable, parentsTable, childrenTable, peopleTable, apiKeysTable} {
-		_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS `+table+` (
-			id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-			tenant_id uuid NOT NULL,
-			code varchar(120),
-			status varchar(80),
-			data jsonb DEFAULT '{}'::jsonb NOT NULL,
-			version integer DEFAULT 1 NOT NULL,
-			deleted boolean DEFAULT false NOT NULL,
-			created_at timestamptz DEFAULT now() NOT NULL,
-			updated_at timestamptz DEFAULT now() NOT NULL,
-			created_by uuid,
-			updated_by uuid
-		)`)
-		must(err)
-	}
-	ensureReferenceSyncTrigger(t, pool, childrenTable, "parentId")
 }
 
-// ensureReferenceSyncTrigger hand-rolls what metap-reconciler builds in production for a
-// Reference field with ref_entity set — a real column plus a BEFORE INSERT OR UPDATE trigger
-// copying data->>'field' into it, so findReferencingRecords' "field" = $N::uuid query actually
-// matches something.
-func ensureReferenceSyncTrigger(t *testing.T, pool *pgxpool.Pool, table, field string) {
-	ctx := context.Background()
-	bareTable := table[len("entities."):]
-	_, err := pool.Exec(ctx, `ALTER TABLE `+table+` ADD COLUMN IF NOT EXISTS "`+field+`" uuid`)
-	require.NoError(t, err)
-	_, err = pool.Exec(ctx, `CREATE OR REPLACE FUNCTION sync_`+bareTable+`_`+field+`() RETURNS trigger AS $$
-		BEGIN NEW."`+field+`" := (NEW.data ->> '`+field+`')::uuid; RETURN NEW; END;
-		$$ LANGUAGE plpgsql`)
-	require.NoError(t, err)
-	_, err = pool.Exec(ctx, `CREATE OR REPLACE TRIGGER trg_sync_`+bareTable+`_`+field+` BEFORE INSERT OR UPDATE ON `+table+`
-		FOR EACH ROW EXECUTE FUNCTION sync_`+bareTable+`_`+field+`()`)
-	require.NoError(t, err)
+// reconcileEntities creates (or converges) each entity's table the way production does, through
+// the reconciler, so a test never hand-rolls a table shape that could drift from what Compile builds.
+// Referenced entities may come after the ones that reference them, so it retries until no progress.
+func reconcileEntities(pool *pgxpool.Pool, entities ...metadata.EntityDefinition) {
+	pending := entities
+	for len(pending) > 0 {
+		var failed []metadata.EntityDefinition
+		var lastErr error
+		for _, e := range pending {
+			if _, err := reconciler.ReconcileWithScope(context.Background(), pool, uuid.Nil, e, nil, reconciler.ScopeAllTenants); err != nil {
+				failed = append(failed, e)
+				lastErr = err
+			}
+		}
+		if len(failed) == len(pending) {
+			panic(lastErr)
+		}
+		pending = failed
+	}
 }
 
 func cleanupTenant(t *testing.T, pool *pgxpool.Pool, tenantID uuid.UUID) {
@@ -125,6 +112,7 @@ func adminContext(tenantID uuid.UUID) *permission.RequestContext {
 }
 
 func newCrudService(pool *pgxpool.Pool, entities ...metadata.EntityDefinition) *CrudService {
+	reconcileEntities(pool, entities...)
 	reg := metadata.NewMetadataRegistry()
 	for _, e := range entities {
 		if err := reg.Register(e); err != nil {
@@ -340,11 +328,6 @@ func TestUniqueFieldViolationOnADedicatedTableNamesTheField(t *testing.T) {
 	ctx := context.Background()
 	pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS entities")
 	pool.Exec(ctx, `DROP TABLE IF EXISTS entities.test_unique_widgets CASCADE`)
-	pool.Exec(ctx, `CREATE TABLE entities.test_unique_widgets (
-		id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, code varchar(120), status varchar(80),
-		data jsonb NOT NULL DEFAULT '{}'::jsonb, version integer NOT NULL DEFAULT 1, deleted boolean NOT NULL DEFAULT false,
-		created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), created_by uuid, updated_by uuid)`)
-	pool.Exec(ctx, `CREATE UNIQUE INDEX uniq_test_unique_widgets_sku ON entities.test_unique_widgets ((jsonb_extract_path_text(data, 'sku'))) WHERE deleted = false`)
 	t.Cleanup(func() { pool.Exec(context.Background(), `DROP TABLE IF EXISTS entities.test_unique_widgets CASCADE`) })
 
 	entity := metadata.EntityDefinition{
@@ -373,12 +356,6 @@ func TestCompositeUniqueFieldViolationNamesEveryFieldInTheConstraint(t *testing.
 	ctx := context.Background()
 	pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS entities")
 	pool.Exec(ctx, `DROP TABLE IF EXISTS entities.test_unique_list_entries CASCADE`)
-	pool.Exec(ctx, `CREATE TABLE entities.test_unique_list_entries (
-		id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, code varchar(120), status varchar(80),
-		data jsonb NOT NULL DEFAULT '{}'::jsonb, version integer NOT NULL DEFAULT 1, deleted boolean NOT NULL DEFAULT false,
-		created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), created_by uuid, updated_by uuid)`)
-	pool.Exec(ctx, `CREATE UNIQUE INDEX uniq_test_unique_list_entries_type_value ON entities.test_unique_list_entries
-		((jsonb_extract_path_text(data, 'type')), (jsonb_extract_path_text(data, 'value'))) WHERE deleted = false`)
 	t.Cleanup(func() {
 		pool.Exec(context.Background(), `DROP TABLE IF EXISTS entities.test_unique_list_entries CASCADE`)
 	})
@@ -495,6 +472,7 @@ func TestAuditedEntityWritesAreRecordedAndUnauditedEntityWritesAreNot(t *testing
 
 	reg := metadata.NewMetadataRegistry()
 	for _, e := range []metadata.EntityDefinition{testOrderEntity(), auditedOrderEntity()} {
+		reconcileEntities(pool, e)
 		require.NoError(t, reg.Register(e))
 	}
 	var ptr atomic.Pointer[metadata.MetadataRegistry]
@@ -543,6 +521,7 @@ func TestSystemFieldsAreWrittenOnlyBySetSystemFieldsWithoutVersionBumpOrAudit(t 
 	rc := adminContext(tenantID)
 
 	reg := metadata.NewMetadataRegistry()
+	reconcileEntities(pool, apiKeyEntity())
 	require.NoError(t, reg.Register(apiKeyEntity()))
 	var ptr atomic.Pointer[metadata.MetadataRegistry]
 	ptr.Store(reg)
@@ -578,7 +557,8 @@ func TestSystemFieldsAreWrittenOnlyBySetSystemFieldsWithoutVersionBumpOrAudit(t 
 	require.NoError(t, err, "get failed: %v %+v", err, got)
 	require.True(t, got.IsOk, "get failed: %v %+v", err, got)
 	require.Equal(t, versionBefore, got.Data.Record.Version, "version must not change: before %d after %d", versionBefore, got.Data.Record.Version)
-	require.Equal(t, `"2026-11-06T10:00:00Z"`, string(got.Data.Record.Data["lastUsedAt"]), "got %s", got.Data.Record.Data["lastUsedAt"])
+	// A datetime column reads back in Postgres's own ISO form (offset, not Z); it is the same instant.
+	require.Equal(t, `"2026-11-06T10:00:00+00:00"`, string(got.Data.Record.Data["lastUsedAt"]), "got %s", got.Data.Record.Data["lastUsedAt"])
 	require.Equal(t, auditBefore, countAudit(), "SetSystemFields must not audit or emit outbox events")
 	require.Equal(t, outboxBefore, countOutbox(), "SetSystemFields must not audit or emit outbox events")
 
@@ -592,5 +572,5 @@ func TestSystemFieldsAreWrittenOnlyBySetSystemFieldsWithoutVersionBumpOrAudit(t 
 	updated, err := crud.Update(ctx, "test.api_keys", id, versionBefore, JsonObject{"name": raw("ci-renamed")}, rc, nil)
 	require.NoError(t, err, "update failed: %v %+v", err, updated)
 	require.True(t, updated.IsOk, "update failed: %v %+v", err, updated)
-	require.Equal(t, `"2026-11-06T11:00:00Z"`, string(updated.Data.Data["lastUsedAt"]), "user update must keep the stored system value, got %s", updated.Data.Data["lastUsedAt"])
+	require.Equal(t, `"2026-11-06T11:00:00+00:00"`, string(updated.Data.Data["lastUsedAt"]), "user update must keep the stored system value, got %s", updated.Data.Data["lastUsedAt"])
 }

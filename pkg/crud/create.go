@@ -3,7 +3,6 @@ package crud
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/metap-org/metap/pkg/audit"
@@ -91,17 +90,15 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 	var statusArg *string
 	if hasStatus {
 		statusArg = &status
+	} else {
+		statusArg = plainStatusValue(entity, data)
 	}
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck
 		return ServiceResult[RecordDto]{}, err
 	}
-	insertSQL := fmt.Sprintf(
-		"INSERT INTO %s (tenant_id, code, status, data, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING %s",
-		entity.TableName, recordColumns,
-	)
-	row := tx.QueryRow(ctx, insertSQL, tenantID, code, statusArg, json.RawMessage(dataJSON), userID, userID)
+	row := tx.QueryRow(ctx, buildInsertSQL(entity), tenantID, code, statusArg, userID, userID, json.RawMessage(dataJSON))
 	record, err := scanRecordRow(row, entity.Name)
 	if err != nil {
 		if r, ok := uniqueViolation[RecordDto](entity, err); ok {

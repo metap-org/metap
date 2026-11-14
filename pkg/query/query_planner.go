@@ -64,6 +64,11 @@ const (
 	sortColTimestamptz sortColType = iota
 	sortColUUID
 	sortColText
+	sortColNumber
+	sortColMoney
+	sortColBool
+	sortColDate
+	sortColJSON
 )
 
 func (t sortColType) castSuffix() string {
@@ -72,15 +77,48 @@ func (t sortColType) castSuffix() string {
 		return "::timestamptz"
 	case sortColUUID:
 		return "::uuid"
+	case sortColNumber:
+		return "::double precision"
+	case sortColMoney:
+		return "::numeric"
+	case sortColBool:
+		return "::boolean"
+	case sortColDate:
+		return "::date"
+	case sortColJSON:
+		return "::jsonb"
 	default:
 		return ""
 	}
 }
 
-// sortFieldExpression: fieldDef lets a field with a real physical column resolve to that column
-// directly instead of the jsonb_extract_path_text(data, ...) fallback every other field uses.
-// Only Reference/Id fields get sortColUUID — everything else promoted to a real column is still
-// a text-typed column, same cast behavior as the JSONB fallback.
+// sortColForKind maps a field's kind to the type of its column, so a value bound as text (a
+// filter, a cursor) is cast to what the column actually is. Every field has its own typed
+// column (Phase 106); text kinds need no cast.
+func sortColForKind(kind metadata.FieldKind) sortColType {
+	switch kind {
+	case metadata.KindNumber:
+		return sortColNumber
+	case metadata.KindMoney:
+		return sortColMoney
+	case metadata.KindBoolean:
+		return sortColBool
+	case metadata.KindDate:
+		return sortColDate
+	case metadata.KindDatetime:
+		return sortColTimestamptz
+	case metadata.KindReference, metadata.KindID:
+		return sortColUUID
+	case metadata.KindJSON:
+		return sortColJSON
+	default:
+		return sortColText
+	}
+}
+
+// sortFieldExpression resolves a field name to the column expression holding its value and the
+// type that column has. A name that is not a declared field resolves to a NULL literal: every
+// comparison against it is false, which is what filtering on a key no record has always meant.
 func sortFieldExpression(fieldName string, fieldDef *metadata.EntityField, params *ParamBuilder) (string, sortColType) {
 	switch fieldName {
 	case "createdAt":
@@ -88,15 +126,10 @@ func sortFieldExpression(fieldName string, fieldDef *metadata.EntityField, param
 	case "updatedAt":
 		return "updated_at", sortColTimestamptz
 	}
-	if fieldDef != nil && metadata.FieldHasRealColumn(*fieldDef) {
-		ct := sortColText
-		if fieldDef.Kind == metadata.KindReference || fieldDef.Kind == metadata.KindID {
-			ct = sortColUUID
-		}
-		return `"` + fieldDef.Name + `"`, ct
+	if fieldDef != nil {
+		return `"` + fieldDef.Name + `"`, sortColForKind(fieldDef.Kind)
 	}
-	ph := params.Push(TextBind(fieldName))
-	return "jsonb_extract_path_text(data, " + ph + ")", sortColText
+	return "NULL::text", sortColText
 }
 
 func bindCursorValue(ct sortColType, value string, params *ParamBuilder) string {
@@ -176,6 +209,7 @@ func PlanList(metadataRegistry *metadata.MetadataRegistry, permissions TenantSco
 	}
 
 	params := NewParamBuilder()
+	params.SetEntity(entity)
 	var conditions []string
 
 	conditions = append(conditions, "tenant_id = "+params.Push(UUIDBind(tenantID)))
