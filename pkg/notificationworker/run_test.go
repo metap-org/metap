@@ -1,22 +1,22 @@
 package notificationworker
 
-// The Rust metap-notification-worker crate has no unit tests of its own (confirmed by reading
-// its source) — this covers notify's pure parsing logic, added during the port.
-
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/metap-org/metap/pkg/events"
+	"github.com/metap-org/metap/pkg/infra/eventbus"
 )
 
-func TestJsonStringOrReturnsTheValueWhenPresent(t *testing.T) {
-	got := jsonStringOr([]byte(`"approve"`), "?")
-	require.Equal(t, "approve", got, "got %q", got)
+// Run's handler decodes through the shared payload type; a payload it cannot read must not
+// panic the consumer.
+func TestNotifyToleratesUnreadablePayload(t *testing.T) {
+	require.NotPanics(t, func() {
+		notify(&eventbus.ConsumedEvent{RoutingKey: "a.b.workflow.transitioned", Payload: []byte(`[1]`)})
+	})
 }
 
-func TestJsonStringOrFallsBackWhenAbsentOrWrongType(t *testing.T) {
-	got := jsonStringOr(nil, "?")
-	require.Equal(t, "?", got, "got %q", got)
-	got = jsonStringOr([]byte(`42`), "?")
-	require.Equal(t, "?", got, "got %q", got)
+func TestBindingIsTheSharedTransitionPattern(t *testing.T) {
+	require.Equal(t, events.AnyTransition, RoutingKey)
 }

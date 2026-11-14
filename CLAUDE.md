@@ -104,6 +104,15 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   registers every submitted entity and reconciles them in dependency order (`MetadataRegistry.Definitions()`: a Reference
   target first, ties by name) — `app.Options.Entities` is now only an explicit override, normally empty. A service's
   `main.go` therefore blank-imports its entities package instead of listing entities by hand.
+- **Events: `pkg/events` is the one place that knows a topic or a payload (2026-11-14, audit P1).** Build a topic with
+  `events.WorkflowTransitioned(entity)` / `events.Record(entity, action)` and subscribe with `events.AnyTransition` /
+  `events.RecordPattern("waf.*", "")`; classify a received routing key with `events.ParseTopic` and decode with the typed
+  payloads (`events.Transitioned`, `events.RecordEvent`, `events.Envelope`, `events.Decode[T]`) — never concatenate or
+  `CutSuffix` a topic, never unmarshal into `map[string]any`. Platform payloads carry `"v"` (`PayloadVersion`); adding a
+  field is not a bump, renaming/removing is. A service publishes its own domain event with `events.Emit(ctx, tx, events.Event{
+  Topic, AggregateType, AggregateID, Payload})` in the business transaction (topic validated: namespaced, no wildcards, not a
+  platform lifecycle topic) — never `infra.OutboxEvent` by hand, never RabbitMQ directly. In a consumer use
+  `event.AckLogged()` / `NackLogged(requeue)`, never `_ = event.Ack()`: a failed ack means redelivery, so handlers stay idempotent.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
