@@ -94,6 +94,7 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   Define small interfaces at the consumer (`crud.TxBeginner`, `crud.PermissionChecker`,
   `query.TenantScoper`) and accept them in constructors — concrete types still satisfy them.
   Never mock pgx/SQL; database behavior is an integration test.
+- **`pkg/kit/httpx` is the one HTTP baseline (2026-11-14, audit P0):** `NewServer`/`ServeContext` apply read-header/read/idle timeouts (slowloris), `DecodeJSON`/`DecodeJSONOrFail` bound a JSON body (1 MiB default, 413 `payload_too_large`), `WriteJSON`/`WriteError` are the one `{"error":{code,message}}` shape, `Recover` and `MaxBody` are middleware, `SecretEqual` compares shared secrets in constant time and `BearerToken` parses the header. Any listener — including ones not built on `pkg/httpserver` — uses these rather than a local copy; `httpserver.DecodeJSONBody` is the handler-side form and every route that takes a JSON body goes through it (never `json.NewDecoder(r.Body)` directly).
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

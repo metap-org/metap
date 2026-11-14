@@ -87,8 +87,7 @@ func setPlatformConfig(w http.ResponseWriter, r *http.Request, state *AppState) 
 	}
 	key := chi.URLParam(r, "key")
 	var body setConfigBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	if err := state.Config.SetPlatformGlobal(r.Context(), key, body.Value); err != nil {

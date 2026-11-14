@@ -1,17 +1,6 @@
 package runtime
 
-import "strings"
+import "github.com/metap-org/metap/pkg/kit/httpx"
 
-// ParseBearer strips the "Bearer " prefix from an Authorization header value, trims incidental
-// whitespace, and returns ("", false) if the prefix is missing or the token is empty.
-func ParseBearer(header string) (string, bool) {
-	const prefix = "Bearer "
-	if !strings.HasPrefix(header, prefix) {
-		return "", false
-	}
-	token := strings.TrimSpace(header[len(prefix):])
-	if token == "" {
-		return "", false
-	}
-	return token, true
-}
+// ParseBearer is httpx.BearerToken, kept for callers that import runtime.
+func ParseBearer(header string) (string, bool) { return httpx.BearerToken(header) }

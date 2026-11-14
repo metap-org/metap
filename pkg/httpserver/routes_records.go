@@ -12,6 +12,8 @@ package httpserver
 
 import (
 	"encoding/json"
+	"errors"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
 	"strconv"
 
@@ -144,8 +146,7 @@ func createRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 	entity := chi.URLParam(r, "entity")
 	var body recordBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 
@@ -179,8 +180,7 @@ func updateRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	var body updateBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 
@@ -213,8 +213,7 @@ func deleteRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	var body deleteBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 
@@ -249,8 +248,7 @@ func transitionRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 	action := chi.URLParam(r, "action")
 	var body transitionBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 
@@ -276,7 +274,11 @@ func aggregateRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 	entity := chi.URLParam(r, "entity")
 	var spec query.AggregateSpec
-	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+	if err := httpx.DecodeJSON(w, r, &spec, 0); err != nil {
+		if errors.Is(err, httpx.ErrBodyTooLarge) {
+			writeServiceError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "Request body is too large.", nil)
+			return
+		}
 		writeServiceError(w, http.StatusBadRequest, "invalid_aggregate", "Invalid request body.", nil)
 		return
 	}

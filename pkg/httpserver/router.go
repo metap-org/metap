@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
 	"time"
 
@@ -36,6 +37,9 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 
 	// Outermost first — see this function's own doc comment for why this order matches the
 	// Rust original's reversed .layer() chain.
+	// Recover is outermost so a panic anywhere below (including another middleware) becomes a
+	// logged 500 in the standard envelope rather than a dropped connection.
+	r.Use(httpx.Recover)
 	r.Use(runtime.GenerateRequestIDs)
 	r.Use(runtime.Trace)
 	r.Use(state.Metrics.Middleware)

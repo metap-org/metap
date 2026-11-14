@@ -65,3 +65,11 @@ func ParseOptionalUUID(s string) *uuid.UUID { return parseOptionalUUID(s) }
 // Mount adds a group of routes to the router BuildRouter builds. Optional route groups
 // (OAuth2 server, cron jobs, dashboards, attachments) and a service's own routes are Mounts.
 type Mount func(r chi.Router, state *AppState)
+
+// DecodeJSONBody decodes the request's JSON body into dst, bounded by httpx.DefaultMaxBodyBytes,
+// and writes the failure response itself (413 payload_too_large, or 400 validation_failed). It
+// reports whether the handler may continue. Every handler that takes a JSON body uses this, so
+// no route reads an unbounded body or swallows a decode error.
+func DecodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	return decodeJSONBody(w, r, dst)
+}

@@ -33,7 +33,6 @@ package oauth2routes
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
@@ -311,8 +310,7 @@ func authorizeDecision(w http.ResponseWriter, r *http.Request, state *httpserver
 		return
 	}
 	var body oauthDecisionBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !httpserver.DecodeJSONBody(w, r, &body) {
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)
@@ -674,8 +672,7 @@ func createOAuthClientAdmin(w http.ResponseWriter, r *http.Request, state *https
 		return
 	}
 	var body createOAuthClientBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	if !httpserver.DecodeJSONBody(w, r, &body) {
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)

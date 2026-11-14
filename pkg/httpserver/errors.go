@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/runtime"
 )
 
@@ -48,4 +49,18 @@ func writeCrudServiceError(w http.ResponseWriter, status uint16, errorCode strin
 		msg = *message
 	}
 	writeServiceError(w, int(status), errorCode, msg, fieldErrors)
+}
+
+// decodeJSONBody: see DecodeJSONBody. The body is bounded by httpx.DefaultMaxBodyBytes.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	err := httpx.DecodeJSON(w, r, dst, 0)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, httpx.ErrBodyTooLarge):
+		writeServiceError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "Request body is too large.", nil)
+	default:
+		writeServiceError(w, http.StatusBadRequest, "validation_failed", "Invalid request body.", nil)
+	}
+	return false
 }
