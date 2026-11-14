@@ -147,6 +147,10 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   logic once as a core `func(ctx, rc, id) (map[string]any, error)` and let `httpserver.RecordActionRoute` and the action handler
   both call it. Permanent REST: `/auth/*`, OAuth2/JWKS, health/metrics, attachments, webhook receivers, and non-metap services
   (`e-edge`, `a-api`, which may not import gRPC).
+- **Names are declared once (2026-11-14, `docs/roadmap/110-magic-literals-audit.md` in `../metap-docs`).** Error codes come from
+  `pkg/kit/errcode` (`errcode.ValidationFailed`, `RecordNotFound`, ...), never a quoted string; `ServiceError` constructors take
+  `http.Status*`, not a number; the admin role and policy action names are `permission.RoleAdmin` / `permission.PolicyAction*`;
+  the JWT clock-skew tolerance is `jwks.DefaultLeeway`. A new code, role, action or tunable goes in that one place first.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
