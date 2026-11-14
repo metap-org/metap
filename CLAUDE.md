@@ -135,6 +135,18 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   services two could race and create the same policy); `dev-tools apply-bootstrap <tenant> <file> [entity.json...]` applies a JSON
   declaration; `provision-tenant` prints the follow-up. `bootstrap.ScopedIdentity` resolves a dedicated_db tenant's own database.
   Policies carry no `source` marker, so an admin-deleted bootstrap policy comes back on re-run.
+- **Entity actions — gRPC is the standard transport for anything beyond CRUD (2026-11-14, `docs/roadmap/109-grpc-first-actions.md`
+  in `../metap-docs`).** A named operation that is neither CRUD nor a workflow transition (verify DNS, run a scan, correlate)
+  is declared once on its entity (`EntityDefinition.Actions`: `Name` camelCase, `Scope` record|entity), registered with
+  `crud.ActionRegistry` through `app.Options.Actions` (boot refuses a declared action with no handler), and served by
+  `ActionService.Invoke` on the same gRPC listener as `RecordService`. The call is checked against the declared actions and scope
+  before the handler runs. A handler must read/write through a `RecordBackend` with `call.RC` — it adds no permission of its own,
+  so an action can never do more than the caller could with plain CRUD. `grpcapi.GrpcBackend` implements `crud.ActionInvoker`;
+  `pkg/graphqlgateway` turns every declared action into a mutation `<action><TypeName>` (`verifyDnsWafZones(id, input)`;
+  `InvokeAction` for a product that keeps an older mutation name). A REST route for the same action stays available — write the
+  logic once as a core `func(ctx, rc, id) (map[string]any, error)` and let `httpserver.RecordActionRoute` and the action handler
+  both call it. Permanent REST: `/auth/*`, OAuth2/JWKS, health/metrics, attachments, webhook receivers, and non-metap services
+  (`e-edge`, `a-api`, which may not import gRPC).
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

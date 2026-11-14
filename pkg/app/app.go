@@ -66,6 +66,12 @@ type Options struct {
 	// service-specific create/update/delete guards. Defaults to state.Crud as-is.
 	WrapBackend func(state *httpserver.AppState) (crud.RecordBackend, error)
 
+	// Actions, if set, registers the handlers for the actions this service's entities declare
+	// (EntityDefinition.Actions); they are served over gRPC (ActionService) next to the CRUD API.
+	// Handlers read and write through state.Crud (or the wrapped backend) with the caller's own
+	// RequestContext, so permissions bound them exactly like plain CRUD.
+	Actions func(state *httpserver.AppState, registry *crud.ActionRegistry) error
+
 	// Routes mounts the service's own custom HTTP routes next to metap's generic ones.
 	Routes httpserver.Mount
 
@@ -184,10 +190,26 @@ func Run(ctx context.Context, opts Options) error {
 				return fmt.Errorf("building gRPC backend: %w", err)
 			}
 		}
+		var invoker crud.ActionInvoker
+		if opts.Actions != nil {
+			reg := crud.NewActionRegistry()
+			if err := opts.Actions(state, reg); err != nil {
+				return fmt.Errorf("registering actions: %w", err)
+			}
+			for _, def := range registry.Definitions() {
+				for _, a := range def.Actions {
+					if !reg.Has(def.Name, a.Name) {
+						return fmt.Errorf("entity %s declares action %s but no handler is registered", def.Name, a.Name)
+					}
+				}
+			}
+			invoker = reg
+		}
 		// gRPC verifies exactly like HTTP: the JWKS verifier when configured, else the static key.
 		grpcServer, err := grpcapi.OptionalServe(config.Host, opts.GRPCPort, grpcapi.OptionalServeConfig{
 			Backend: backend, Router: state.Router, JWTPublicKey: tokens.PublicKey, TokenVerifierOverride: tokens.Verifier,
 			AuthContextEntity: state.AuthContextEntity, Metadata: state.Metadata, ContextAttributesCache: state.ContextAttributesCache,
+			Actions: invoker,
 		})
 		if err != nil {
 			return fmt.Errorf("starting gRPC server: %w", err)

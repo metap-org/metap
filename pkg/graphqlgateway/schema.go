@@ -651,6 +651,47 @@ func (b *schemaBuilder) addMutations(fields graphql.Fields, entity string, recor
 	}
 }
 
+// addActionMutations exposes every action an entity declares as one mutation,
+// "<action><TypeName>" (verifyDnsWafZones), e.g. `verifyDnsWafZones(id: ID!, input: Json): Json`.
+// An entity-scoped action takes no id. The call goes to the upstream's ActionService with the
+// caller's own token, so the upstream's checks decide; an upstream backend that cannot invoke
+// actions gets no such fields.
+func (b *schemaBuilder) addActionMutations(fields graphql.Fields, summary metadata.EntitySummary) {
+	invoker, ok := b.backends[summary.Name].(crud.ActionInvoker)
+	if !ok {
+		return
+	}
+	entity := summary.Name
+	for _, action := range summary.Actions {
+		action := action
+		args := graphql.FieldConfigArgument{"input": &graphql.ArgumentConfig{Type: jsonScalar}}
+		if action.Scope == metadata.ActionScopeRecord {
+			args["id"] = &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}
+		}
+		fields[action.Name+typeName(entity)] = &graphql.Field{
+			Type:        jsonScalar,
+			Description: action.Description,
+			Args:        args,
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				call := crud.ActionCall{Entity: entity, Name: action.Name, RC: requestContextFrom(p.Context)}
+				if action.Scope == metadata.ActionScopeRecord {
+					id, err := parseID(p.Args, "id")
+					if err != nil {
+						return nil, err
+					}
+					call.ID = id
+				}
+				input, _, err := objectArg(p.Args, "input")
+				if err != nil {
+					return nil, err
+				}
+				call.Input = input
+				return InvokeAction(p.Context, invoker, call)
+			},
+		}
+	}
+}
+
 // Option customizes BuildSchema.
 type Option func(*buildConfig)
 
@@ -710,6 +751,7 @@ func BuildSchema(registry *metadata.MetadataRegistry, backends map[string]crud.R
 			continue // a read model: no mutations
 		}
 		b.addMutations(mutationFields, summary.Name, recordType, summary.Workflow != nil)
+		b.addActionMutations(mutationFields, summary)
 	}
 	queryFields["aggregate"] = b.aggregateField()
 

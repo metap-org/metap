@@ -285,3 +285,61 @@ func TestReadOnlyOnlySchemaHasNoMutationType(t *testing.T) {
 type readOnlyFake struct{ *fakeBackend }
 
 func (readOnlyFake) ReadOnly() bool { return true }
+
+type fakeActionBackend struct {
+	*fakeBackend
+	last crud.ActionCall
+}
+
+func (f *fakeActionBackend) Invoke(_ context.Context, call crud.ActionCall) (crud.JsonObject, error) {
+	f.last = call
+	if call.Name == "boom" {
+		return nil, crud.NewServiceErrorMsg(409, "scan_already_in_progress", "busy")
+	}
+	return crud.ToObject(map[string]any{"ran": call.Name, "id": call.ID.String()}, nil)
+}
+
+func TestActionMutationsAreGeneratedFromDeclaredActions(t *testing.T) {
+	registry := metadata.NewMetadataRegistry()
+	require.NoError(t, registry.Register(metadata.EntityDefinition{
+		Name: "shop.jobs", Label: "Jobs", TableName: "shop.jobs",
+		Fields: []metadata.EntityField{metadata.NewField("name", "Name", metadata.KindString)},
+		Actions: []metadata.EntityAction{
+			{Name: "run", Scope: metadata.ActionScopeRecord},
+			{Name: "sweep", Scope: metadata.ActionScopeEntity},
+			{Name: "boom", Scope: metadata.ActionScopeEntity},
+		},
+	}))
+	backend := &fakeActionBackend{fakeBackend: &fakeBackend{records: map[uuid.UUID]crud.RecordDto{}}}
+	schema, err := BuildSchema(registry, map[string]crud.RecordBackend{"shop.jobs": backend})
+	require.NoError(t, err)
+
+	id := uuid.New()
+	out := run(t, schema, `mutation($id: ID!) { runShopJobs(id: $id, input: {mode: "fast"}) }`, map[string]interface{}{"id": id.String()})
+	assert.Equal(t, map[string]interface{}{"ran": "run", "id": id.String()}, out["runShopJobs"])
+	assert.Equal(t, "shop.jobs", backend.last.Entity)
+	assert.Equal(t, id, backend.last.ID)
+	assert.JSONEq(t, `"fast"`, string(backend.last.Input["mode"]))
+
+	// An entity-scoped action takes no id.
+	out = run(t, schema, `mutation { sweepShopJobs }`, nil)
+	assert.Equal(t, "sweep", out["sweepShopJobs"].(map[string]interface{})["ran"])
+
+	// A ServiceError keeps its code and status in the error extensions.
+	ctx := withRequestContext(context.Background(), &permission.RequestContext{})
+	res := graphql.Do(graphql.Params{Schema: schema, RequestString: `mutation { boomShopJobs }`, Context: ctx})
+	require.Len(t, res.Errors, 1)
+	assert.EqualValues(t, "scan_already_in_progress", res.Errors[0].Extensions["code"])
+}
+
+func TestNoActionMutationsWithoutAnInvoker(t *testing.T) {
+	registry := metadata.NewMetadataRegistry()
+	require.NoError(t, registry.Register(metadata.EntityDefinition{
+		Name: "shop.jobs", Label: "Jobs", TableName: "shop.jobs",
+		Fields:  []metadata.EntityField{metadata.NewField("name", "Name", metadata.KindString)},
+		Actions: []metadata.EntityAction{{Name: "run", Scope: metadata.ActionScopeRecord}},
+	}))
+	schema, err := BuildSchema(registry, map[string]crud.RecordBackend{"shop.jobs": &fakeBackend{records: map[uuid.UUID]crud.RecordDto{}}})
+	require.NoError(t, err)
+	assert.Nil(t, schema.MutationType().Fields()["runShopJobs"])
+}

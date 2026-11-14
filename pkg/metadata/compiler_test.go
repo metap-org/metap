@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -335,4 +336,15 @@ func TestMessageWithoutConditionIsRejected(t *testing.T) {
 	mustHaveIssueContaining(t, err, "has guardMessage but no guard")
 	err = Validate(workflowEntity(WorkflowTransition{Action: "approve", From: "pending", To: "done", Label: "a", ValidatorMessage: "x"}))
 	mustHaveIssueContaining(t, err, "has validatorMessage but no validator")
+}
+
+func TestValidateActions(t *testing.T) {
+	base := func(actions ...EntityAction) EntityDefinition {
+		return EntityDefinition{Name: "shop.orders", Label: "Orders", TableName: "shop.orders", Actions: actions,
+			Fields: []EntityField{NewField("name", "Name", KindString)}}
+	}
+	assert.NoError(t, Validate(base(EntityAction{Name: "verifyDns", Scope: ActionScopeRecord}, EntityAction{Name: "sweep", Scope: ActionScopeEntity})))
+	assert.ErrorContains(t, Validate(base(EntityAction{Name: "Bad", Scope: ActionScopeRecord})), "must match")
+	assert.ErrorContains(t, Validate(base(EntityAction{Name: "x", Scope: "weird"})), "scope")
+	assert.ErrorContains(t, Validate(base(EntityAction{Name: "x", Scope: ActionScopeRecord}, EntityAction{Name: "x", Scope: ActionScopeEntity})), "duplicate action")
 }

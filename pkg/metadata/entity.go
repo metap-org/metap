@@ -243,4 +243,24 @@ type EntityDefinition struct {
 	Workflow          *EntityWorkflow          `json:"workflow,omitempty"`
 	UniqueConstraints []EntityUniqueConstraint `json:"uniqueConstraints,omitempty"`
 	Audit             *EntityAuditConfig       `json:"audit,omitempty"`
+	// Actions are named operations beyond CRUD and workflow transitions (verify DNS, run a scan,
+	// ...). Declared once here, they are served over gRPC (ActionService.Invoke) and exposed by the
+	// GraphQL gateway as one mutation each; the handler is registered with crud.ActionRegistry.
+	Actions []EntityAction `json:"actions,omitempty"`
+}
+
+// Action scopes.
+const (
+	ActionScopeRecord = "record" // needs a record id
+	ActionScopeEntity = "entity" // acts on the entity as a whole, no id
+)
+
+// EntityAction declares one action. Permissions are not declared here: a handler reads and writes
+// through the same RecordBackend with the caller's own RequestContext, so an action can never do
+// more than the caller could do with plain CRUD.
+type EntityAction struct {
+	Name        string `json:"name"` // camelCase, e.g. "verifyDns"
+	Label       string `json:"label,omitempty"`
+	Description string `json:"description,omitempty"`
+	Scope       string `json:"scope"` // ActionScopeRecord or ActionScopeEntity
 }
