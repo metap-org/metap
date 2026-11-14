@@ -127,7 +127,7 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   **Additive only**: a policy row is created only when no identical basic one exists, an existing account is never touched
   (password and roles included) — never turn this into a sync that overwrites or deletes (`SyncBasicPolicies` does that, on purpose
   not used). Wildcard entity patterns (`*`, `waf.*`) are expanded against the registry at apply time into concrete rows; a pattern
-  matching nothing is an error. Passwords come only from `PasswordRef` via a `PasswordSource` (env var by default) — no default
+  matching nothing is an error. Passwords come only from `SecretRef` via a `PasswordSource` (env var by default) — no default
   password; `Production` makes a missing one for a new user abort before anything is written. Wiring: a product ships one tiny binary that
   blank-imports its services' entity/bootstrap packages and calls `app.BootstrapMain` (one-shot, like `db-migrate`; env
   `BOOTSTRAP_TENANT_IDS` = ids or `all`, `BOOTSTRAP_FILE` = JSON overlay via `bootstrap.LoadFile`, `NODE_ENV=production` makes a

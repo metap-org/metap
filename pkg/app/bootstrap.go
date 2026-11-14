@@ -41,7 +41,7 @@ func BootstrapMain(opts BootstrapOptions) {
 //
 //	BOOTSTRAP_TENANT_IDS  comma-separated tenant ids; unset or "all" means every active tenant
 //	BOOTSTRAP_FILE        optional JSON overlay merged after the code-declared parts
-//	<PasswordRef>         one environment variable per declared user (see bootstrap.EnvPasswords)
+//	<SecretRef>         one environment variable per declared user (see bootstrap.EnvPasswords)
 //
 // NODE_ENV=production makes a missing password for a new user fatal.
 func RunBootstrap(ctx context.Context, opts BootstrapOptions) error {

@@ -32,12 +32,12 @@ type Grant struct {
 	Actions []string `json:"actions"`
 }
 
-// User is an initial account. The password is never declared here: PasswordRef names where Apply's
+// User is an initial account. The password is never declared here: SecretRef names where Apply's
 // PasswordSource finds it (an environment variable by default).
 type User struct {
 	Email       string   `json:"email"`
 	Roles       []string `json:"roles"`
-	PasswordRef string   `json:"passwordRef"`
+	SecretRef string   `json:"secretRef"`
 }
 
 // Bootstrap is one product's (or one service's) declaration. Fragments from several packages are

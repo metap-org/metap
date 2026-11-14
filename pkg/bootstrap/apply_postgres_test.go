@@ -22,7 +22,7 @@ func TestApplyUsersAgainstPostgres(t *testing.T) {
 	tenant := uuid.New()
 	b := Bootstrap{
 		Roles: []string{"analyst"},
-		Users: []User{{Email: "Soc@Example.io", Roles: []string{"analyst"}, PasswordRef: "BOOTSTRAP_SOC_PW"}},
+		Users: []User{{Email: "Soc@Example.io", Roles: []string{"analyst"}, SecretRef: "BOOTSTRAP_SOC_PW"}},
 	}
 	t.Setenv("BOOTSTRAP_SOC_PW", "correct horse battery staple")
 	deps := Deps{Registry: registry(t), Policies: &fakePolicies{}, Identity: PgIdentity{DB: pool}}

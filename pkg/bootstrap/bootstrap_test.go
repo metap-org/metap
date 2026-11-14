@@ -116,8 +116,8 @@ func TestUsersPasswordsAndProduction(t *testing.T) {
 	b := Bootstrap{
 		Roles: []string{"analyst"},
 		Users: []User{
-			{Email: "a@x.io", Roles: []string{"analyst"}, PasswordRef: "A_PW"},
-			{Email: "b@x.io", Roles: []string{"analyst"}, PasswordRef: "B_PW"},
+			{Email: "a@x.io", Roles: []string{"analyst"}, SecretRef: "A_PW"},
+			{Email: "b@x.io", Roles: []string{"analyst"}, SecretRef: "B_PW"},
 		},
 	}
 	newDeps := func(pw map[string]string, existing ...string) (Deps, *fakeIdentity) {
@@ -170,11 +170,11 @@ func TestSubmitCollectMerge(t *testing.T) {
 func TestLoadFileRejectsUnknownFields(t *testing.T) {
 	dir := t.TempDir()
 	good := dir + "/good.json"
-	require.NoError(t, os.WriteFile(good, []byte(`{"roles":["a"],"grants":[{"role":"a","entities":["x.*"],"actions":["read"]}],"users":[{"email":"a@x.io","roles":["a"],"passwordRef":"P"}]}`), 0o600))
+	require.NoError(t, os.WriteFile(good, []byte(`{"roles":["a"],"grants":[{"role":"a","entities":["x.*"],"actions":["read"]}],"users":[{"email":"a@x.io","roles":["a"],"secretRef":"P"}]}`), 0o600))
 	b, err := LoadFile(good)
 	require.NoError(t, err)
 	assert.NoError(t, b.Validate())
-	assert.Equal(t, "P", b.Users[0].PasswordRef)
+	assert.Equal(t, "P", b.Users[0].SecretRef)
 
 	bad := dir + "/bad.json"
 	require.NoError(t, os.WriteFile(bad, []byte(`{"rolez":["a"]}`), 0o600))

@@ -31,7 +31,7 @@ type Identity interface {
 	AssignRole(ctx context.Context, tenantID, userID uuid.UUID, role string) error
 }
 
-// PasswordSource resolves a User.PasswordRef. ok=false means "not provided".
+// PasswordSource resolves a User.SecretRef. ok=false means "not provided".
 type PasswordSource func(ctx context.Context, ref string) (password string, ok bool, err error)
 
 // EnvPasswords reads the password from the environment variable named by the ref; an empty value
@@ -94,15 +94,15 @@ func Apply(ctx context.Context, d Deps, tenantID uuid.UUID, b Bootstrap, opts Op
 			res.UsersExisting = append(res.UsersExisting, u.Email)
 			continue
 		}
-		pw, ok, err := d.Passwords(ctx, u.PasswordRef)
+		pw, ok, err := d.Passwords(ctx, u.SecretRef)
 		if err != nil {
 			return res, fmt.Errorf("bootstrap: password for %s: %w", u.Email, err)
 		}
 		if !ok {
 			if opts.Production {
-				return res, fmt.Errorf("bootstrap: no password provided for new user %s (ref %q); refusing to continue in production", u.Email, u.PasswordRef)
+				return res, fmt.Errorf("bootstrap: no password provided for new user %s (ref %q); refusing to continue in production", u.Email, u.SecretRef)
 			}
-			slog.Warn("bootstrap: skipping user without a password", "email", u.Email, "ref", u.PasswordRef)
+			slog.Warn("bootstrap: skipping user without a password", "email", u.Email, "ref", u.SecretRef)
 			res.UsersSkipped = append(res.UsersSkipped, u.Email)
 			continue
 		}
