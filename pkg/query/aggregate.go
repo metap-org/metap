@@ -218,21 +218,16 @@ type PlannedAggregateQuery struct {
 	Params []BindValue
 }
 
-// valueExpression resolves one field name to the SQL expression holding its value — a real
-// physical column when the field has one, else the entity's own data JSONB path.
+// valueExpression resolves one field name to the SQL expression holding its value: the field's
+// own typed column.
 func valueExpression(field metadata.EntityField, params *ParamBuilder) string {
-	if metadata.FieldHasRealColumn(field) {
-		return `"` + field.Name + `"`
-	}
-	ph := params.Push(TextBind(field.Name))
-	return "jsonb_extract_path_text(data, " + ph + ")"
+	return `"` + field.Name + `"`
 }
 
-// numericExpression: NULLIF(..., ”) first — a missing/blank JSON value comes back as ”, and
-// ”::numeric is a hard error at the database rather than the NULL every aggregate function
-// already handles correctly.
+// numericExpression: only Number and Money fields reach here (PlanAggregate checks), and both are
+// numeric columns already, so this is just a cast to the common numeric type.
 func numericExpression(field metadata.EntityField, params *ParamBuilder) string {
-	return "NULLIF(" + valueExpression(field, params) + ", '')::numeric"
+	return "(" + valueExpression(field, params) + ")::numeric"
 }
 
 // timestampExpression: createdAt/updatedAt are real columns on every table (platform columns,
@@ -257,7 +252,7 @@ func timestampExpression(fieldName string, entity metadata.EntityDefinition, par
 	if field.Kind != metadata.KindDate && field.Kind != metadata.KindDatetime {
 		return "", invalidAggregate("`%s` is not a date field and cannot be used as a time axis.", fieldName)
 	}
-	return "NULLIF(" + valueExpression(*field, params) + ", '')::timestamptz", nil
+	return "(" + valueExpression(*field, params) + ")::timestamptz", nil
 }
 
 // assertGroupable: not "any field" — grouping scans and sorts the whole filtered set, so this is
@@ -317,6 +312,7 @@ func PlanAggregate(metadataRegistry *metadata.MetadataRegistry, permissions Tena
 	}
 
 	params := NewParamBuilder()
+	params.SetEntity(entity)
 	var conditions []string
 	conditions = append(conditions, "tenant_id = "+params.Push(UUIDBind(tenantID)))
 	conditions = append(conditions, "deleted = false")
@@ -347,11 +343,7 @@ func PlanAggregate(metadataRegistry *metadata.MetadataRegistry, permissions Tena
 			conditions = append(conditions, expr+" IS NULL")
 		} else {
 			ph := params.Push(TextBind(value))
-			cast := ""
-			if metadata.FieldHasRealColumn(*field) && (field.Kind == metadata.KindReference || field.Kind == metadata.KindID) {
-				cast = "::uuid"
-			}
-			conditions = append(conditions, expr+" = "+ph+cast)
+			conditions = append(conditions, expr+" = "+ph+sortColForKind(field.Kind).castSuffix())
 		}
 	}
 

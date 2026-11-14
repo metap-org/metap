@@ -113,13 +113,14 @@ func TestRenameAppliesBeforeColumnDiffSoNoDropAddPairAppears(t *testing.T) {
 	require.Equal(t, "new_name", ops[0].RenameTo, "got %+v", ops)
 }
 
-func TestUnbackfilledGeneratedColumnThatAlreadyExistsResumesWithoutReadd(t *testing.T) {
+func TestUnbackfilledColumnOnALegacyTableResumesWithoutReadd(t *testing.T) {
 	desired := EmptySchema("t")
 	desired.Columns["amount"] = ColumnSpec{SQLType: "numeric(18,4)", Nullable: true,
-		Origin: ColumnOrigin{Kind: OriginGenerated, SourceField: "amount", Backfilled: true}}
+		Origin: ColumnOrigin{Kind: OriginNative, Backfilled: true}}
 	actual := EmptySchema("t")
+	actual.HasLegacyData = true
 	actual.Columns["amount"] = ColumnSpec{SQLType: "numeric(18,4)", Nullable: true,
-		Origin: ColumnOrigin{Kind: OriginGenerated, SourceField: "amount", Backfilled: false}}
+		Origin: ColumnOrigin{Kind: OriginNative, Backfilled: false}}
 
 	ops := Diff(desired, &actual, nil)
 	_, ok := findOp(ops, func(o DdlOp) bool { return o.Kind == OpAddColumn })
@@ -128,14 +129,43 @@ func TestUnbackfilledGeneratedColumnThatAlreadyExistsResumesWithoutReadd(t *test
 	require.True(t, ok, "must resume the backfill")
 }
 
-func TestBackfilledGeneratedColumnProducesNoOps(t *testing.T) {
+func TestBackfilledNativeColumnProducesNoOps(t *testing.T) {
 	desired := EmptySchema("t")
 	desired.Columns["amount"] = ColumnSpec{SQLType: "numeric(18,4)", Nullable: true,
-		Origin: ColumnOrigin{Kind: OriginGenerated, SourceField: "amount", Backfilled: true}}
+		Origin: ColumnOrigin{Kind: OriginNative, Backfilled: true}}
 	actual := clonePhysicalSchema(desired)
 
 	ops := Diff(desired, &actual, nil)
 	require.Len(t, ops, 0, "expected no ops, got %+v", ops)
+}
+
+func TestNewFieldOnANativeTableIsJustAnAddColumnNoBackfill(t *testing.T) {
+	desired := EmptySchema("t")
+	desired.Columns["amount"] = ColumnSpec{SQLType: "numeric(18,4)", Nullable: true, Origin: ColumnOrigin{Kind: OriginNative, Backfilled: true}}
+	actual := EmptySchema("t")
+
+	ops := Diff(desired, &actual, nil)
+	require.Len(t, ops, 1, "got %+v", ops)
+	require.Equal(t, OpAddColumn, ops[0].Kind)
+}
+
+func TestLegacyTableGetsColumnBackfillThenSyncTriggersDropped(t *testing.T) {
+	desired := EmptySchema("t")
+	desired.Columns["amount"] = ColumnSpec{SQLType: "numeric(18,4)", Nullable: true, Origin: ColumnOrigin{Kind: OriginNative, Backfilled: true}}
+	desired.Columns["name"] = ColumnSpec{SQLType: "text", Nullable: true, Origin: ColumnOrigin{Kind: OriginNative, Backfilled: true}}
+	actual := EmptySchema("t")
+	actual.HasLegacyData = true
+	actual.LegacySyncTriggers = []string{"amount"}
+	actual.Columns["amount"] = ColumnSpec{SQLType: "numeric(18,4)", Nullable: true, Origin: ColumnOrigin{Kind: OriginNative, Backfilled: true}}
+
+	ops := Diff(desired, &actual, nil)
+	kinds := make([]DdlOpKind, len(ops))
+	for i, o := range ops {
+		kinds[i] = o.Kind
+	}
+	require.Equal(t, []DdlOpKind{OpAddColumn, OpBackfillColumn, OpDropSyncTrigger}, kinds, "add and fill the missing column, drop the old trigger last: %+v", ops)
+	require.Equal(t, "name", ops[1].BackfillColumn)
+	require.Equal(t, "amount", ops[2].SyncField)
 }
 
 func TestFkAddedNotValidThenValidatedWhenMissing(t *testing.T) {

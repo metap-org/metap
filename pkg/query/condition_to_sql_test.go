@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/stretchr/testify/require"
 )
@@ -71,14 +72,33 @@ func TestRoleGateFailureYieldsFalse(t *testing.T) {
 	require.Equal(t, "false", clause, "expected clause=false, got %q ok=%v err=%v", clause, ok, err)
 }
 
-func TestEqConditionOnJsonbFieldProducesExpectedSqlShape(t *testing.T) {
-	ctx := condTestContext(nil, false)
+// condTestParams: a ParamBuilder that knows the fields the conditions below name, as the planner
+// would after SetEntity.
+func condTestParams() *ParamBuilder {
 	params := NewParamBuilder()
+	params.SetEntity(metadata.EntityDefinition{Name: "test.cond", Fields: []metadata.EntityField{
+		{Name: "ownerId", Kind: metadata.KindString},
+		{Name: "amount", Kind: metadata.KindMoney},
+		{Name: "name", Kind: metadata.KindString},
+	}})
+	return params
+}
+
+func TestEqConditionOnAFieldProducesItsTypedColumn(t *testing.T) {
+	ctx := condTestContext(nil, false)
+	params := condTestParams()
 	cond := literalCondition("ownerId", permission.OpEq, "u1")
 	sql, err := ConditionToSQL(cond, ctx, params)
 	require.NoError(t, err)
-	require.Equal(t, "jsonb_extract_path_text(data, $1) = $2", sql, "got %q", sql)
-	require.Len(t, params.Params, 2, "expected 2 params, got %d", len(params.Params))
+	require.Equal(t, `"ownerId" = $1`, sql, "got %q", sql)
+	require.Len(t, params.Params, 1, "expected 1 param, got %d", len(params.Params))
+}
+
+func TestConditionOnAnUndeclaredFieldNeverMatches(t *testing.T) {
+	ctx := condTestContext(nil, false)
+	sql, err := ConditionToSQL(literalCondition("ghost", permission.OpEq, "x"), ctx, condTestParams())
+	require.NoError(t, err)
+	require.Equal(t, "NULL::text = $1", sql)
 }
 
 func TestUuidFieldBindsNativelyWhenValueParsesAsUuid(t *testing.T) {
@@ -101,20 +121,20 @@ func TestUuidFieldWithNonUuidValueIsAClearError(t *testing.T) {
 
 func TestGtConditionAgainstANumberCastsBothSidesNumeric(t *testing.T) {
 	ctx := condTestContext(nil, false)
-	params := NewParamBuilder()
+	params := condTestParams()
 	cond := literalCondition("amount", permission.OpGt, 10000)
 	sql, err := ConditionToSQL(cond, ctx, params)
 	require.NoError(t, err)
-	require.Equal(t, "(jsonb_extract_path_text(data, $1))::numeric > $2::numeric", sql, "got %q", sql)
+	require.Equal(t, `"amount" > $1::numeric`, sql, "got %q", sql)
 }
 
 func TestGtConditionAgainstAStringStaysAPlainTextComparison(t *testing.T) {
 	ctx := condTestContext(nil, false)
-	params := NewParamBuilder()
+	params := condTestParams()
 	cond := literalCondition("name", permission.OpLt, "banana")
 	sql, err := ConditionToSQL(cond, ctx, params)
 	require.NoError(t, err)
-	require.Equal(t, "jsonb_extract_path_text(data, $1) < $2", sql, "got %q", sql)
+	require.Equal(t, `"name" < $1`, sql, "got %q", sql)
 }
 
 func TestGtConditionOnAUuidFieldIsRejected(t *testing.T) {

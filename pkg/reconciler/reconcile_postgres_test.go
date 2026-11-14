@@ -2,13 +2,9 @@
 
 // E2E tests running Reconcile against a real Postgres. A reduced-but-real subset of the Rust
 // metap-reconciler crate's tests/reconcile_postgres.rs: basic convergence, the historic WAF
-// unique-constraint-to-partial-index transition bug, storage:column backfill + sync trigger,
-// and the BackfillScope (SingleTenant vs AllTenants) fix for a sentinel-tenant boot-time
-// reconcile against a shared table. The Rust suite's remaining tests (orphan-reference-style
-// multi-tenant isolation variants, composite-unique-with-reference, sync-trigger-dropped-
-// externally recovery) are not ported here — each exercises the same already-covered mechanism
-// (BackfillScope/introspect's sync-trigger re-check) from a different angle, not new code paths
-// in this port.
+// unique-constraint-to-partial-index transition bug, and (Phase 106) the one-time move of a table
+// whose fields lived in a data jsonb column to native columns: MigrateLegacy, VerifyLegacy,
+// DropLegacyData, including a sentinel-tenant AllTenants run against a shared table.
 package reconciler
 
 import (
@@ -85,8 +81,6 @@ func TestUniqueFieldConvergesFromALegacyBlanketConstraintToAPartialIndexInOnePas
 
 	sku := plainField("sku", metadata.KindString)
 	sku.Unique = boolp(true)
-	storageColumn := metadata.StorageColumn
-	sku.Storage = &storageColumn
 	def := testEntity(entityName, []metadata.EntityField{sku})
 
 	// Pass 1: reconcile for real, producing today's correct shape — a partial unique index.
@@ -123,142 +117,167 @@ func TestUniqueFieldConvergesFromALegacyBlanketConstraintToAPartialIndexInOnePas
 	require.True(t, isPartial, "must end up a partial index, not still the blanket constraint")
 }
 
-// storage:column end to end: a field promoted to a real column on an entity that already has
-// existing rows must have those rows correctly backfilled, and the sync trigger must keep a
-// newly-written row consistent without needing another reconcile.
-func TestStorageColumnBackfillsExistingRowsAndSyncsNewOnes(t *testing.T) {
-	pool := reconcilerTestPool(t)
+// createLegacyTable builds a table the way the code before Phase 106 did: framework columns plus
+// a data jsonb payload, and (for "amount") a real column kept in sync by the old trigger.
+func createLegacyTable(t *testing.T, pool *pgxpool.Pool, bare string) {
+	t.Helper()
 	ctx := context.Background()
-	tenantID := uuid.New()
-	entityName := "test.reconciler_storage_column"
-	dropReconcilerTableIfExists(t, pool, "test_reconciler_storage_column")
-	t.Cleanup(func() { dropReconcilerTableIfExists(t, pool, "test_reconciler_storage_column") })
-
-	defV1 := testEntity(entityName, []metadata.EntityField{plainField("amount", metadata.KindMoney)})
-	if _, err := Reconcile(ctx, pool, tenantID, defV1, nil); err != nil {
-		require.FailNow(t, fmt.Sprint(err))
+	dropReconcilerTableIfExists(t, pool, bare)
+	t.Cleanup(func() { dropReconcilerTableIfExists(t, pool, bare) })
+	for _, stmt := range []string{
+		`CREATE SCHEMA IF NOT EXISTS entities`,
+		fmt.Sprintf(`CREATE TABLE entities.%s (
+			id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, code varchar(120), status varchar(80),
+			data jsonb NOT NULL DEFAULT '{}'::jsonb, version integer NOT NULL DEFAULT 1, deleted boolean NOT NULL DEFAULT false,
+			created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), created_by uuid, updated_by uuid,
+			amount numeric(18,4))`, bare),
+		fmt.Sprintf(`CREATE FUNCTION entities.sync_%[1]s_amount() RETURNS trigger AS $$ BEGIN NEW.amount := (NEW.data ->> 'amount')::numeric(18,4); RETURN NEW; END; $$ LANGUAGE plpgsql`, bare),
+		fmt.Sprintf(`CREATE TRIGGER trg_sync_%[1]s_amount BEFORE INSERT OR UPDATE ON entities.%[1]s FOR EACH ROW EXECUTE FUNCTION entities.sync_%[1]s_amount()`, bare),
+	} {
+		_, err := pool.Exec(ctx, stmt)
+		require.NoError(t, err, stmt)
 	}
-
-	for _, amount := range []string{"12.50", "7.25", "100.00"} {
-		_, err := pool.Exec(ctx,
-			`INSERT INTO entities.test_reconciler_storage_column (tenant_id, data) VALUES ($1, jsonb_build_object('amount', $2::text))`,
-			tenantID, amount)
-		require.NoError(t, err)
-	}
-
-	promoted := plainField("amount", metadata.KindMoney)
-	promoted.Indexed = boolp(true)
-	storageColumn := metadata.StorageColumn
-	promoted.Storage = &storageColumn
-	defV2 := testEntity(entityName, []metadata.EntityField{promoted})
-	outcome, err := Reconcile(ctx, pool, tenantID, defV2, nil)
-	require.NoError(t, err)
-	require.NotEqual(t, 0, outcome.OpsApplied, "expected ops")
-
-	rows, err := pool.Query(ctx, `SELECT amount::float8 FROM entities.test_reconciler_storage_column ORDER BY amount`)
-	require.NoError(t, err)
-	var backfilled []float64
-	for rows.Next() {
-		var v float64
-		require.NoError(t, rows.Scan(&v))
-		backfilled = append(backfilled, v)
-	}
-	rows.Close()
-	want := []float64{7.25, 12.50, 100.00}
-	require.Len(t, backfilled, len(want), "got %v, want %v", backfilled, want)
-	for i := range want {
-		require.Equal(t, want[i], backfilled[i], "got %v, want %v", backfilled, want)
-	}
-
-	// A new row written directly must still end up with the real column populated, via the
-	// sync trigger.
-	_, err = pool.Exec(ctx,
-		`INSERT INTO entities.test_reconciler_storage_column (tenant_id, data) VALUES ($1, jsonb_build_object('amount', '42.00'))`,
-		tenantID)
-	require.NoError(t, err)
-	var synced float64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT amount::float8 FROM entities.test_reconciler_storage_column WHERE amount = 42.00`).Scan(&synced))
-	require.Equal(t, 42.00, synced, "got %v", synced)
-
-	third, err := Reconcile(ctx, pool, tenantID, defV2, nil)
-	require.NoError(t, err)
-	require.Equal(t, 0, third.OpsApplied, "backfill must be recognized as already-done, not re-queued, got %d ops", third.OpsApplied)
 }
 
-// Regression for the BackfillScope fix: a Schema-strategy service reconciling its own shared
-// table at boot always passes a sentinel tenant id, never one of the real tenants whose rows
-// actually live in the table. Confirms both halves: SingleTenant (the historical default)
-// reproduces the bug live — touches nothing real — and AllTenants is the fix.
-func TestAllTenantsScopeBackfillsASharedTableReconciledWithASentinelTenantID(t *testing.T) {
+func legacyEntity(entityName string) metadata.EntityDefinition {
+	amount := plainField("amount", metadata.KindMoney)
+	amount.Indexed = boolp(true)
+	return testEntity(entityName, []metadata.EntityField{
+		amount, plainField("title", metadata.KindString), plainField("due", metadata.KindDate),
+		plainField("done", metadata.KindBoolean), plainField("extra", metadata.KindJSON),
+	})
+}
+
+func seedLegacyRows(t *testing.T, pool *pgxpool.Pool, bare string, tenants ...uuid.UUID) {
+	t.Helper()
+	for i, tenant := range tenants {
+		_, err := pool.Exec(context.Background(), fmt.Sprintf(
+			`INSERT INTO entities.%s (tenant_id, data) VALUES ($1, $2::jsonb)`, bare),
+			tenant, fmt.Sprintf(`{"amount":"%d.50","title":"row %d","due":"2026-01-%02d","done":true,"extra":{"a":[1,2]}}`, 10+i, i, i+1))
+		require.NoError(t, err)
+	}
+	// A row with most fields absent and a JSON null: neither may become a value.
+	_, err := pool.Exec(context.Background(), fmt.Sprintf(
+		`INSERT INTO entities.%s (tenant_id, data) VALUES ($1, '{"title":"sparse","due":null}'::jsonb)`, bare), tenants[0])
+	require.NoError(t, err)
+}
+
+// Phase 106 end to end on a legacy table: refused by a normal reconcile, then moved to native
+// columns across every tenant sharing the table (sentinel tenant id, AllTenants scope), verified,
+// and only then is the data column dropped.
+func TestLegacyTableMovesToNativeColumnsAcrossTenantsThenDropsData(t *testing.T) {
 	pool := reconcilerTestPool(t)
 	ctx := context.Background()
-	sentinelTenantID := uuid.New() // stands in for control.PlatformTenantID
-	realTenantA := uuid.New()
-	realTenantB := uuid.New()
-	entityName := "test.reconciler_backfill_scope"
-	dropReconcilerTableIfExists(t, pool, "test_reconciler_backfill_scope")
-	t.Cleanup(func() { dropReconcilerTableIfExists(t, pool, "test_reconciler_backfill_scope") })
+	sentinel := uuid.New()
+	entityName, bare := "test.reconciler_legacy_move", "test_reconciler_legacy_move"
+	table := "entities." + bare
+	createLegacyTable(t, pool, bare)
+	tenantA, tenantB := uuid.New(), uuid.New()
+	seedLegacyRows(t, pool, bare, tenantA, tenantB)
+	def := legacyEntity(entityName)
 
-	defV1 := testEntity(entityName, []metadata.EntityField{plainField("amount", metadata.KindMoney)})
-	if _, err := Reconcile(ctx, pool, sentinelTenantID, defV1, nil); err != nil {
-		require.FailNow(t, fmt.Sprint(err))
+	_, err := Reconcile(ctx, pool, sentinel, def, nil)
+	require.ErrorIs(t, err, ErrLegacyDataColumn, "a normal reconcile must refuse a table that still has data")
+
+	out, err := MigrateLegacy(ctx, pool, sentinel, def, ScopeAllTenants)
+	require.NoError(t, err)
+	require.NotZero(t, out.OpsApplied)
+
+	var title *string
+	var amount *float64
+	var done *bool
+	var due *string
+	var extra *string
+	require.NoError(t, pool.QueryRow(ctx, fmt.Sprintf(
+		`SELECT title, amount::float8, done, due::text, extra::text FROM %s WHERE tenant_id = $1 AND title = 'row 1'`, table), tenantB).
+		Scan(&title, &amount, &done, &due, &extra))
+	require.Equal(t, "row 1", *title)
+	require.Equal(t, 11.5, *amount)
+	require.True(t, *done)
+	require.Equal(t, "2026-01-02", *due)
+	require.JSONEq(t, `{"a":[1,2]}`, *extra)
+
+	var nullDue bool
+	require.NoError(t, pool.QueryRow(ctx, fmt.Sprintf(`SELECT due IS NULL AND amount IS NULL FROM %s WHERE title = 'sparse'`, table)).Scan(&nullDue))
+	require.True(t, nullDue, "an absent field and a JSON null must both stay NULL")
+
+	var triggers int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM pg_trigger WHERE tgrelid = $1::regclass AND NOT tgisinternal`, table).Scan(&triggers))
+	require.Zero(t, triggers, "the old sync trigger must be gone, or it would overwrite native writes with NULL")
+
+	report, err := VerifyLegacy(ctx, pool, sentinel, def)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), report.Rows)
+	require.True(t, report.Ok(), "%+v", report)
+
+	require.NoError(t, DropLegacyData(ctx, pool, sentinel, def))
+	var hasData bool
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'entities' AND table_name = $1 AND column_name = 'data')`, bare).Scan(&hasData))
+	require.False(t, hasData)
+
+	converged, err := Reconcile(ctx, pool, sentinel, def, nil)
+	require.NoError(t, err)
+	require.Zero(t, converged.OpsApplied, "a migrated table must converge to zero ops, got %d", converged.OpsApplied)
+
+	var count int
+	require.NoError(t, pool.QueryRow(ctx, fmt.Sprintf(`SELECT count(*) FROM %s`, table)).Scan(&count))
+	require.Equal(t, 3, count, "no row may be lost by the move")
+}
+
+// SingleTenant scope under a sentinel owns zero rows, so it must not be mistaken for a finished
+// migration: the report keeps blocking the drop.
+func TestDropLegacyDataRefusesWhileAValueExistsOnlyInData(t *testing.T) {
+	pool := reconcilerTestPool(t)
+	ctx := context.Background()
+	sentinel := uuid.New()
+	entityName, bare := "test.reconciler_legacy_refuse", "test_reconciler_legacy_refuse"
+	createLegacyTable(t, pool, bare)
+	seedLegacyRows(t, pool, bare, uuid.New())
+	def := legacyEntity(entityName)
+
+	_, err := MigrateLegacy(ctx, pool, sentinel, def, ScopeSingleTenant)
+	require.NoError(t, err)
+
+	report, err := VerifyLegacy(ctx, pool, sentinel, def)
+	require.NoError(t, err)
+	require.False(t, report.Ok(), "rows the sentinel does not own were never copied: %+v", report)
+	require.Error(t, DropLegacyData(ctx, pool, sentinel, def))
+
+	var hasData bool
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'entities' AND table_name = $1 AND column_name = 'data')`, bare).Scan(&hasData))
+	require.True(t, hasData, "the data column must survive a refused drop")
+}
+
+// A new entity is created native from the start: no data column at all.
+func TestNewEntityTableHasNoDataColumn(t *testing.T) {
+	pool := reconcilerTestPool(t)
+	ctx := context.Background()
+	entityName, bare := "test.reconciler_native_new", "test_reconciler_native_new"
+	dropReconcilerTableIfExists(t, pool, bare)
+	t.Cleanup(func() { dropReconcilerTableIfExists(t, pool, bare) })
+
+	def := legacyEntity(entityName)
+	_, err := Reconcile(ctx, pool, uuid.New(), def, nil)
+	require.NoError(t, err)
+
+	var cols []string
+	rows, err := pool.Query(ctx, `SELECT column_name FROM information_schema.columns WHERE table_schema = 'entities' AND table_name = $1`, bare)
+	require.NoError(t, err)
+	for rows.Next() {
+		var c string
+		require.NoError(t, rows.Scan(&c))
+		cols = append(cols, c)
 	}
+	rows.Close()
+	require.NotContains(t, cols, "data")
+	require.Subset(t, cols, []string{"amount", "title", "due", "done", "extra", "id", "tenant_id", "version", "deleted"})
 
-	for _, tc := range []struct {
-		tenant uuid.UUID
-		amount string
-	}{{realTenantA, "12.50"}, {realTenantB, "999.99"}} {
-		_, err := pool.Exec(ctx,
-			`INSERT INTO entities.test_reconciler_backfill_scope (tenant_id, data) VALUES ($1, jsonb_build_object('amount', $2::text))`,
-			tc.tenant, tc.amount)
-		require.NoError(t, err)
-	}
-
-	promoted := plainField("amount", metadata.KindMoney)
-	promoted.Indexed = boolp(true)
-	storageColumn := metadata.StorageColumn
-	promoted.Storage = &storageColumn
-	defV2 := testEntity(entityName, []metadata.EntityField{promoted})
-
-	amounts := func() []*float64 {
-		rows, err := pool.Query(ctx, `SELECT amount::float8 FROM entities.test_reconciler_backfill_scope ORDER BY amount`)
-		require.NoError(t, err)
-		defer rows.Close()
-		var out []*float64
-		for rows.Next() {
-			var v *float64
-			require.NoError(t, rows.Scan(&v))
-			out = append(out, v)
-		}
-		return out
-	}
-
-	// The bug, reproduced live: SingleTenant scoped to the sentinel, which owns zero rows in
-	// this table.
-	buggy, err := Reconcile(ctx, pool, sentinelTenantID, defV2, nil)
+	again, err := Reconcile(ctx, pool, uuid.New(), def, nil)
 	require.NoError(t, err)
-	require.NotEqual(t, 0, buggy.OpsApplied, "expected ops")
-	got := amounts()
-	require.Len(t, got, 2, "SingleTenant scoped to a sentinel must touch neither real tenant's row — this is the bug; got %v", got)
-	require.Nil(t, got[0], "SingleTenant scoped to a sentinel must touch neither real tenant's row — this is the bug; got %v", got)
-	require.Nil(t, got[1], "SingleTenant scoped to a sentinel must touch neither real tenant's row — this is the bug; got %v", got)
-
-	// Un-stick it: drop the backfill's own progress row so the next reconcile re-attempts it.
-	_, err = pool.Exec(ctx, `DELETE FROM metadata.reconciler_backfill_progress WHERE tenant_id = $1 AND entity_name = $2`, sentinelTenantID, entityName)
-	require.NoError(t, err)
-
-	// The fix: same sentinel tenant id, but AllTenants scope.
-	fixed, err := ReconcileWithScope(ctx, pool, sentinelTenantID, defV2, nil, ScopeAllTenants)
-	require.NoError(t, err)
-	require.NotEqual(t, 0, fixed.OpsApplied, "expected ops")
-	got = amounts()
-	require.Len(t, got, 2, "AllTenants must backfill every real tenant's row in the shared table; got %v", got)
-	require.NotNil(t, got[0], "AllTenants must backfill every real tenant's row in the shared table; got %v", got)
-	require.NotNil(t, got[1], "AllTenants must backfill every real tenant's row in the shared table; got %v", got)
-
-	converged, err := ReconcileWithScope(ctx, pool, sentinelTenantID, defV2, nil, ScopeAllTenants)
-	require.NoError(t, err)
-	require.Equal(t, 0, converged.OpsApplied, "got %d ops", converged.OpsApplied)
+	require.Zero(t, again.OpsApplied)
 }
 
 // A Reference field whose RefEntity already has its own table gets a real FK.
@@ -297,9 +316,10 @@ func TestReferenceFieldGetsARealFkOnceBothEntitiesAreTables(t *testing.T) {
 // insertRawRow writes one row straight into a reconciled table, bypassing CrudService, so a test
 // can probe what the physical unique indexes allow.
 func insertRawRow(ctx context.Context, pool *pgxpool.Pool, table string, tenantID uuid.UUID, data string) error {
+	// data is a JSON object keyed by column name; jsonb_populate_record spreads it over the table's
+	// own columns, so the helper does not care which fields a test entity declares.
 	_, err := pool.Exec(ctx, fmt.Sprintf(
-		`INSERT INTO %s (id, tenant_id, data, version, deleted, created_at, updated_at)
-		 VALUES ($1, $2, $3::jsonb, 1, false, now(), now())`, table),
+		`INSERT INTO %[1]s SELECT r.* FROM jsonb_populate_record(NULL::%[1]s, $3::jsonb || jsonb_build_object('id', $1::text, 'tenant_id', $2::text, 'version', 1, 'deleted', false, 'created_at', now()::text, 'updated_at', now()::text)) r`, table),
 		uuid.New(), tenantID, data)
 	return err
 }
@@ -335,7 +355,7 @@ func TestUniqueScopeTenantAndGlobalOnASharedTable(t *testing.T) {
 		require.FailNow(t, fmt.Sprint(err))
 	}
 	if _, err := pool.Exec(ctx, fmt.Sprintf(
-		`CREATE UNIQUE INDEX %q ON %s (((data ->> 'slug')::text)) WHERE deleted = false`, slugIdx, table)); err != nil {
+		`CREATE UNIQUE INDEX %q ON %s (slug) WHERE deleted = false`, slugIdx, table)); err != nil {
 		require.FailNow(t, fmt.Sprint(err))
 	}
 	if _, err := Reconcile(ctx, pool, uuid.Nil, def, nil); err != nil {

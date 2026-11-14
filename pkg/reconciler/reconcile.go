@@ -7,6 +7,8 @@ package reconciler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,6 +29,24 @@ func Reconcile(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, enti
 }
 
 func ReconcileWithScope(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entity metadata.EntityDefinition, renames [][2]string, scope BackfillScope) (ReconcileOutcome, error) {
+	return ReconcileWithOptions(ctx, pool, tenantID, entity, renames, ReconcileOptions{Scope: scope})
+}
+
+// ReconcileOptions: Scope as BackfillScope's own doc comment describes. MigrateLegacy turns on
+// the one-time move of a pre-Phase-106 table (still carrying its data jsonb column) to native
+// columns — see MigrateLegacy/DropLegacyData in legacy.go. Left false, reconciling such a table
+// is refused (ErrLegacyDataColumn) rather than silently serving NULL columns that have not been
+// filled yet.
+type ReconcileOptions struct {
+	Scope         BackfillScope
+	MigrateLegacy bool
+}
+
+// ErrLegacyDataColumn: the table still has the pre-Phase-106 data jsonb column, so its rows have
+// not been moved to native columns and CrudService (which reads columns only) would see NULLs.
+var ErrLegacyDataColumn = errors.New("table still has the legacy data column; migrate it to native columns first (dev-tools migrate-to-native-columns)")
+
+func ReconcileWithOptions(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entity metadata.EntityDefinition, renames [][2]string, opts ReconcileOptions) (ReconcileOutcome, error) {
 	desired, err := Compile(entity)
 	if err != nil {
 		return ReconcileOutcome{}, err
@@ -35,10 +55,13 @@ func ReconcileWithScope(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.U
 	if err != nil {
 		return ReconcileOutcome{}, err
 	}
+	if actual != nil && actual.HasLegacyData && !opts.MigrateLegacy {
+		return ReconcileOutcome{}, fmt.Errorf("%s: %w", desired.Table, ErrLegacyDataColumn)
+	}
 	ops := Diff(desired, actual, renames)
 	opsApplied := len(ops)
 
-	if err := ExecuteWithScope(ctx, pool, tenantID, entity.Name, desired, ops, scope); err != nil {
+	if err := ExecuteWithScope(ctx, pool, tenantID, entity.Name, desired, ops, opts.Scope); err != nil {
 		return ReconcileOutcome{}, err
 	}
 

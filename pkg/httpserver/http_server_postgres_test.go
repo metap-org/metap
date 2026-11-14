@@ -38,6 +38,7 @@ import (
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/reconciler"
 )
 
 func httpTestPool(t *testing.T) *pgxpool.Pool {
@@ -292,26 +293,11 @@ func TestRateLimitReturns429OnceTheBurstIsExhausted(t *testing.T) {
 
 func boolp(b bool) *bool { return &b }
 
-// ensureTestOrdersTable creates the dedicated table httpTestEntity() points at — every test that
-// serves /api/test.orders needs it in its own (testkit-isolated) database.
+// ensureTestOrdersTable creates the dedicated table httpTestEntity() points at, through the
+// reconciler like production — every test that serves /api/test.orders needs it in its own
+// (testkit-isolated) database.
 func ensureTestOrdersTable(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	ctx := context.Background()
-	_, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS entities")
-	require.NoError(t, err)
-	createTableSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
-		id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-		tenant_id uuid NOT NULL,
-		code varchar(120),
-		status varchar(80),
-		data jsonb DEFAULT '{}'::jsonb NOT NULL,
-		version integer DEFAULT 1 NOT NULL,
-		deleted boolean DEFAULT false NOT NULL,
-		created_at timestamptz DEFAULT now() NOT NULL,
-		updated_at timestamptz DEFAULT now() NOT NULL,
-		created_by uuid,
-		updated_by uuid
-	)`, testOrdersTable)
-	_, err = pool.Exec(ctx, createTableSQL)
+	_, err := reconciler.ReconcileWithScope(context.Background(), pool, uuid.Nil, httpTestEntity(), nil, reconciler.ScopeAllTenants)
 	require.NoError(t, err)
 }

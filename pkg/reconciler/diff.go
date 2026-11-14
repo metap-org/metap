@@ -14,13 +14,13 @@ const (
 	OpCreateTable DdlOpKind = iota
 	OpAddColumn
 	OpRenameColumn
-	// OpAddSyncTrigger (re)creates the BEFORE INSERT OR UPDATE trigger that keeps a
-	// storage:column field's real column in sync with data ->> field — the permanent stand-in
-	// for Postgres's GENERATED ... STORED, which this crate never uses. Idempotent (CREATE OR
-	// REPLACE TRIGGER) — safe to re-run on resume.
-	OpAddSyncTrigger
-	// OpBackfillColumn is a checkpointed, resumable backfill of a newly (or not-yet-fully)
-	// populated real column. OpID keys metadata.reconciler_backfill_progress.
+	// OpDropSyncTrigger removes a pre-Phase-106 trigger (and its function) that copied
+	// data ->> field into a real column. Such a trigger would overwrite a natively written
+	// column with NULL, so it must go before native writes start. Idempotent.
+	OpDropSyncTrigger
+	// OpBackfillColumn is a checkpointed, resumable copy of data ->> field into a native column
+	// on a table that still has the legacy data column. OpID keys
+	// metadata.reconciler_backfill_progress.
 	OpBackfillColumn
 	OpCreateIndexConcurrently
 	OpDropIndexConcurrently
@@ -43,9 +43,8 @@ type DdlOp struct {
 	RenameFrom string
 	RenameTo   string
 
-	// AddSyncTrigger
-	SyncField   string
-	SyncSQLType string
+	// DropSyncTrigger
+	SyncField string
 
 	// BackfillColumn
 	BackfillOpID        string
@@ -123,19 +122,28 @@ func Diff(desired PhysicalSchema, actual *PhysicalSchema, renames [][2]string) [
 		ops = append(ops, DdlOp{Kind: OpRenameColumn, RenameFrom: from, RenameTo: to})
 	}
 
-	// Step 2: columns — add missing, never drop. A Generated column that exists but isn't fully
-	// backfilled yet (crash-resume) gets its trigger re-asserted and its backfill re-queued.
+	// Step 2: columns — add missing, never drop. While the table still has the legacy data
+	// column (HasLegacyData), a native column is also filled from data, resumably; the old sync
+	// triggers are dropped last so a writer still on the old code keeps both copies in step
+	// until the migration finishes.
 	for _, name := range sortedKeys(desired.Columns) {
 		spec := desired.Columns[name]
 		actualSpec, exists := actualCopy.Columns[name]
 		if !exists {
 			ops = append(ops, DdlOp{Kind: OpAddColumn, ColumnName: name, ColumnSpec: spec})
-			if spec.Origin.Kind == OriginGenerated {
-				ops = pushSyncAndBackfill(ops, desired.Table, name, spec.Origin.SourceField, spec.SQLType)
-			}
-		} else if actualSpec.Origin.Kind == OriginGenerated && !actualSpec.Origin.Backfilled {
-			ops = pushSyncAndBackfill(ops, desired.Table, name, actualSpec.Origin.SourceField, spec.SQLType)
 		}
+		if spec.Origin.Kind != OriginNative || !actualCopy.HasLegacyData {
+			continue
+		}
+		if !exists || !actualSpec.Origin.Backfilled {
+			ops = append(ops, DdlOp{
+				Kind: OpBackfillColumn, BackfillOpID: BackfillOpID(desired.Table, name),
+				BackfillColumn: name, BackfillSourceField: name, BackfillSQLType: spec.SQLType,
+			})
+		}
+	}
+	for _, field := range actualCopy.LegacySyncTriggers {
+		ops = append(ops, DdlOp{Kind: OpDropSyncTrigger, SyncField: field})
 	}
 
 	// Step 3: indexes.
@@ -208,15 +216,6 @@ func Diff(desired PhysicalSchema, actual *PhysicalSchema, renames [][2]string) [
 	return topoSort(ops)
 }
 
-func pushSyncAndBackfill(ops []DdlOp, table, column, sourceField, sqlType string) []DdlOp {
-	ops = append(ops, DdlOp{Kind: OpAddSyncTrigger, SyncField: sourceField, SyncSQLType: sqlType})
-	ops = append(ops, DdlOp{
-		Kind: OpBackfillColumn, BackfillOpID: BackfillOpID(table, column),
-		BackfillColumn: column, BackfillSourceField: sourceField, BackfillSQLType: sqlType,
-	})
-	return ops
-}
-
 func indexMatches(actual, desired IndexSpec) bool {
 	return NormalizeExpr(actual.Expression) == NormalizeExpr(desired.Expression) &&
 		actual.Unique == desired.Unique &&
@@ -253,9 +252,9 @@ func topoSort(ops []DdlOp) []DdlOp {
 			return 1
 		case OpAddColumn:
 			return 2
-		case OpAddSyncTrigger:
-			return 3
 		case OpBackfillColumn:
+			return 3
+		case OpDropSyncTrigger:
 			return 4
 		case OpDropForeignKey:
 			return 5
@@ -302,6 +301,8 @@ func stringSlicesEqual(a, b []string) bool {
 
 func clonePhysicalSchema(s PhysicalSchema) PhysicalSchema {
 	out := EmptySchema(s.Table)
+	out.HasLegacyData = s.HasLegacyData
+	out.LegacySyncTriggers = append([]string(nil), s.LegacySyncTriggers...)
 	for k, v := range s.Columns {
 		out.Columns[k] = v
 	}

@@ -159,7 +159,6 @@ func buildSQL(table string, op DdlOp) []string {
 			 tenant_id uuid NOT NULL,
 			 code varchar(120),
 			 status varchar(80),
-			 data jsonb NOT NULL DEFAULT '{}'::jsonb,
 			 version integer NOT NULL DEFAULT 1,
 			 deleted boolean NOT NULL DEFAULT false,
 			 created_at timestamptz NOT NULL DEFAULT now(),
@@ -170,8 +169,8 @@ func buildSQL(table string, op DdlOp) []string {
 		return []string{fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", t, quoteIdent(op.ColumnName), op.ColumnSpec.SQLType)}
 	case OpRenameColumn:
 		return []string{fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s", t, quoteIdent(op.RenameFrom), quoteIdent(op.RenameTo))}
-	case OpAddSyncTrigger:
-		return buildSyncTriggerSQL(table, op.SyncField, op.SyncSQLType)
+	case OpDropSyncTrigger:
+		return buildDropSyncTriggerSQL(table, op.SyncField)
 	case OpBackfillColumn:
 		return nil // Batched — handled by runOne directly, never via SQL text.
 	case OpCreateIndexConcurrently:
@@ -230,23 +229,19 @@ func buildAddUniqueSQL(table, name string, spec UniqueSpec) string {
 	return fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s UNIQUE (%s)", quoteQualifiedIdent(table), quoteIdent(name), strings.Join(cols, ", "))
 }
 
-// buildSyncTriggerSQL: the trigger function name is derived from (table, field) so two different
-// promoted fields on the same table never collide, and re-running this op (crash-resume) is a
-// plain CREATE OR REPLACE. Uses the *bare* table name (after the last ".") for the
-// function/trigger name itself — same convention indexName already uses.
-func buildSyncTriggerSQL(table, field, sqlType string) []string {
+// buildDropSyncTriggerSQL drops the pre-Phase-106 sync trigger and its function for one field.
+// Names follow the old convention (trg_sync_{bareTable}_{field} / sync_{bareTable}_{field}),
+// which is the only reason this still knows about them: they exist on tables created before the
+// native-column switch. IF EXISTS on both, so re-running after a crash is a no-op.
+func buildDropSyncTriggerSQL(table, field string) []string {
 	bareTable := table
 	if idx := strings.LastIndexByte(table, '.'); idx >= 0 {
 		bareTable = table[idx+1:]
 	}
 	fnName := quoteIdent(fmt.Sprintf("sync_%s_%s", bareTable, field))
 	triggerName := quoteIdent(fmt.Sprintf("trg_sync_%s_%s", bareTable, field))
-	column := quoteIdent(field)
-	fieldLiteral := quoteLiteral(field)
 	return []string{
-		fmt.Sprintf(`CREATE OR REPLACE FUNCTION %s() RETURNS trigger AS $$ BEGIN NEW.%s := (NEW.data ->> %s)::%s; RETURN NEW; END; $$ LANGUAGE plpgsql`,
-			fnName, column, fieldLiteral, sqlType),
-		fmt.Sprintf(`CREATE OR REPLACE TRIGGER %s BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION %s()`,
-			triggerName, quoteQualifiedIdent(table), fnName),
+		fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", triggerName, quoteQualifiedIdent(table)),
+		fmt.Sprintf("DROP FUNCTION IF EXISTS %s.%s()", quoteIdent(schemaOf(table)), fnName),
 	}
 }

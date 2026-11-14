@@ -151,9 +151,9 @@ func badRowPredicate(op MigrationOp) (string, bool) {
 	if op.Kind != MigWidenType {
 		return "", false
 	}
-	f := quoteLiteral(op.WidenField)
+	col := quoteIdent(op.WidenField)
 	ty := quoteLiteral(op.WidenToSQLType)
-	return fmt.Sprintf("jsonb_typeof(t.data -> %s) = 'string' AND NOT pg_input_is_valid(t.data ->> %s, %s)", f, f, ty), true
+	return fmt.Sprintf("t.%s IS NOT NULL AND NOT pg_input_is_valid(t.%s::text, %s)", col, col, ty), true
 }
 
 type MigrationOutcome struct {
@@ -192,8 +192,19 @@ func RunMigration(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, e
 		}
 	}
 
+	// Ops that change the column itself (widen, drop) are one DDL statement, not a batched row
+	// update: they run once, transactionally.
+	if stmt, ok, derr := applyDDL(op, table, policy); derr != nil {
+		return outcome, derr
+	} else if ok {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			return outcome, err
+		}
+		return outcome, nil
+	}
+
 	opID := fmt.Sprintf("migration:%s:%s", table, migrationID)
-	setClause, whereExtra, hasSQL, err := applySQL(op, policy)
+	setClause, whereExtra, hasSQL, err := applySQL(op, table, policy)
 	if err != nil {
 		return outcome, err
 	}
@@ -208,52 +219,62 @@ func RunMigration(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, e
 	return outcome, nil
 }
 
-// applySQL builds the (SET clause, optional extra WHERE) for RunBatchedUpdate — hasSQL is false
-// for an op with nothing to backfill (a DropField with DropKeepData only ever needs a metadata
-// change, no data touched).
-func applySQL(op MigrationOp, policy QuarantinePolicy) (setClause, whereExtra string, hasSQL bool, err error) {
+// applyDDL builds the single ALTER TABLE statement for the ops that change a column itself.
+// ok is false for ops handled as batched row updates (applySQL) or that need nothing.
+//
+// Widening a type rewrites the table under an ACCESS EXCLUSIVE lock (Postgres cannot change a
+// column's type online). That is the price of typed columns; rows that cannot convert were
+// already handled by the quarantine policy before this runs.
+func applyDDL(op MigrationOp, table string, policy QuarantinePolicy) (stmt string, ok bool, err error) {
+	t := quoteQualifiedIdent(table)
 	switch op.Kind {
-	case MigRenameField:
-		fromLit := quoteLiteral(op.RenameFrom)
-		toLit := quoteLiteral(op.RenameTo)
-		return fmt.Sprintf("data = (t.data - %s) || jsonb_build_object(%s, t.data -> %s)", fromLit, toLit, fromLit),
-			fmt.Sprintf("t.data ? %s", fromLit), true, nil
+	case MigWidenType:
+		col := quoteIdent(op.WidenField)
+		var using string
+		if policy.Kind == PolicyCoerce {
+			fallbackText, ferr := scalarFallbackText(policy.CoerceFallback)
+			if ferr != nil {
+				return "", false, ferr
+			}
+			using = fmt.Sprintf("CASE WHEN pg_input_is_valid(%s::text, %s) THEN %s::text::%s ELSE %s::%s END",
+				col, quoteLiteral(op.WidenToSQLType), col, op.WidenToSQLType, quoteLiteral(fallbackText), op.WidenToSQLType)
+		} else {
+			using = fmt.Sprintf("%s::text::%s", col, op.WidenToSQLType)
+		}
+		return fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s USING %s", t, col, op.WidenToSQLType, using), true, nil
+	case MigDropField:
+		if op.DropKeepData {
+			return "", false, nil
+		}
+		return fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s", t, quoteIdent(op.DropField)), true, nil
+	default:
+		return "", false, nil
+	}
+}
+
+// applySQL builds the (SET clause, optional extra WHERE) for RunBatchedUpdate — hasSQL is false
+// for an op with nothing to backfill. A rename is a RenameColumn DdlOp (Diff's renames), never a
+// row update, so it needs nothing here.
+func applySQL(op MigrationOp, table string, policy QuarantinePolicy) (setClause, whereExtra string, hasSQL bool, err error) {
+	switch op.Kind {
+	case MigRenameField, MigWidenType, MigDropField:
+		return "", "", false, nil
 
 	case MigAddField:
 		if op.AddFieldDefault == nil {
 			return "", "", false, nil
 		}
-		nameLit := quoteLiteral(op.AddFieldName)
-		return fmt.Sprintf("data = jsonb_set(t.data, ARRAY[%s], %s::jsonb, true)", nameLit, quoteLiteral(string(op.AddFieldDefault))),
-			fmt.Sprintf("NOT (t.data ? %s)", nameLit), true, nil
-
-	case MigWidenType:
-		f := quoteLiteral(op.WidenField)
-		var castExpr string
-		if policy.Kind == PolicyCoerce {
-			fallbackText, ferr := scalarFallbackText(policy.CoerceFallback)
-			if ferr != nil {
-				return "", "", false, ferr
-			}
-			castExpr = fmt.Sprintf("CASE WHEN pg_input_is_valid(t.data ->> %s, %s) THEN (t.data ->> %s)::%s ELSE %s::%s END",
-				f, quoteLiteral(op.WidenToSQLType), f, op.WidenToSQLType, quoteLiteral(fallbackText), op.WidenToSQLType)
-		} else {
-			castExpr = fmt.Sprintf("(t.data ->> %s)::%s", f, op.WidenToSQLType)
-		}
-		return fmt.Sprintf("data = jsonb_set(t.data, ARRAY[%s], to_jsonb((%s)))", f, castExpr),
-			fmt.Sprintf("jsonb_typeof(t.data -> %s) = 'string'", f), true, nil
-
-	case MigDropField:
-		if op.DropKeepData {
-			return "", "", false, nil
-		}
-		f := quoteLiteral(op.DropField)
-		return fmt.Sprintf("data = t.data - %s", f), fmt.Sprintf("t.data ? %s", f), true, nil
+		// jsonb_populate_record casts the JSON default to the column's own type, so one
+		// expression serves every field kind.
+		col := quoteIdent(op.AddFieldName)
+		return fmt.Sprintf("%s = (jsonb_populate_record(NULL::%s, jsonb_build_object(%s, %s::jsonb))).%s",
+				col, quoteQualifiedIdent(table), quoteLiteral(op.AddFieldName), quoteLiteral(string(op.AddFieldDefault)), col),
+			fmt.Sprintf("t.%s IS NULL", col), true, nil
 
 	case MigRemoveEnum:
-		f := quoteLiteral(op.RemoveEnumField)
-		return fmt.Sprintf("data = jsonb_set(t.data, ARRAY[%s], to_jsonb(%s::text))", f, quoteLiteral(op.RemoveEnumRemapTo)),
-			fmt.Sprintf("t.data ->> %s = %s", f, quoteLiteral(op.RemoveEnumValue)), true, nil
+		col := quoteIdent(op.RemoveEnumField)
+		return fmt.Sprintf("%s = %s", col, quoteLiteral(op.RemoveEnumRemapTo)),
+			fmt.Sprintf("t.%s = %s", col, quoteLiteral(op.RemoveEnumValue)), true, nil
 
 	default:
 		return "", "", false, fmt.Errorf("reconciler: unknown MigrationOpKind %d", op.Kind)

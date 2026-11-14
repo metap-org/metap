@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -21,7 +22,31 @@ const (
 	colUUID colType = iota
 	colText
 	colTimestamptz
+	colNumber
+	colBool
+	colDate
+	colJSON
 )
+
+// colTypeForKind is the typed-column counterpart of sortColForKind for policy conditions.
+func colTypeForKind(kind metadata.FieldKind) colType {
+	switch kind {
+	case metadata.KindNumber, metadata.KindMoney:
+		return colNumber
+	case metadata.KindBoolean:
+		return colBool
+	case metadata.KindDate:
+		return colDate
+	case metadata.KindDatetime:
+		return colTimestamptz
+	case metadata.KindReference, metadata.KindID:
+		return colUUID
+	case metadata.KindJSON:
+		return colJSON
+	default:
+		return colText
+	}
+}
 
 // CrossRecordConditionInListError: a record-level policy's condition uses a dotted cross-record
 // attribute path (e.g. "project.ownerId") that List can't resolve. Deterministic and permanent
@@ -61,8 +86,17 @@ func fieldExpression(fieldName string, params *ParamBuilder) (string, colType, e
 	case "updatedAt":
 		return "updated_at", colTimestamptz, nil
 	default:
-		ph := params.Push(TextBind(fieldName))
-		return "jsonb_extract_path_text(data, " + ph + ")", colText, nil
+		f, ok := params.field(fieldName)
+		if !ok {
+			// Not a declared field: nothing can equal it. NULL keeps a condition on a field no
+			// record has behaving as it always did (never true).
+			return "NULL::text", colText, nil
+		}
+		ct := colTypeForKind(f.Kind)
+		if ct == colJSON {
+			return `"` + f.Name + `"::text`, colText, nil
+		}
+		return `"` + f.Name + `"`, ct, nil
 	}
 }
 
@@ -113,6 +147,12 @@ func bindScalar(ct colType, value json.RawMessage, params *ParamBuilder) (string
 			return "", err
 		}
 		return params.Push(TextBind(text)) + "::timestamptz", nil
+	case colNumber, colBool, colDate:
+		text, err := jsonScalarToText(value)
+		if err != nil {
+			return "", err
+		}
+		return params.Push(TextBind(text)) + map[colType]string{colNumber: "::numeric", colBool: "::boolean", colDate: "::date"}[ct], nil
 	default:
 		text, err := jsonScalarToText(value)
 		if err != nil {
@@ -137,6 +177,20 @@ func comparableExprAndValue(expr string, ct colType, expected json.RawMessage, p
 			return "", "", err
 		}
 		return expr, params.Push(TextBind(text)) + "::timestamptz", nil
+	case colDate:
+		text, err := jsonScalarToText(expected)
+		if err != nil {
+			return "", "", err
+		}
+		return expr, params.Push(TextBind(text)) + "::date", nil
+	case colNumber:
+		text, err := jsonScalarToText(expected)
+		if err != nil {
+			return "", "", err
+		}
+		return expr, params.Push(TextBind(text)) + "::numeric", nil
+	case colBool:
+		return "", "", fmt.Errorf("gt/gte/lt/lte is not supported on a boolean field")
 	default:
 		var n json.Number
 		if err := json.Unmarshal(expected, &n); err == nil {

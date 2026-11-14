@@ -9,11 +9,17 @@ package reconciler
 // desired state) and Introspect (from pg_catalog, the actual state) produce, so Diff only ever
 // compares two PhysicalSchema values.
 type PhysicalSchema struct {
-	Table       string
-	Columns     map[string]ColumnSpec
-	Indexes     map[string]IndexSpec
-	ForeignKeys map[string]FkSpec
-	Uniques     map[string]UniqueSpec
+	Table string
+	// HasLegacyData: the introspected table still carries the pre-Phase-106 `data jsonb` column,
+	// i.e. its rows have not been moved to native columns yet. Never set on a desired schema.
+	HasLegacyData bool
+	// LegacySyncTriggers: field names that still have a pre-Phase-106 trigger keeping a real
+	// column in sync with data ->> field. Only meaningful alongside HasLegacyData.
+	LegacySyncTriggers []string
+	Columns            map[string]ColumnSpec
+	Indexes            map[string]IndexSpec
+	ForeignKeys        map[string]FkSpec
+	Uniques            map[string]UniqueSpec
 }
 
 func EmptySchema(table string) PhysicalSchema {
@@ -27,32 +33,23 @@ func EmptySchema(table string) PhysicalSchema {
 }
 
 // ColumnOriginKind is a column's origin, not just its SQL type — Diff needs this to know a
-// Framework column must never be dropped, and a Generated column's index lives on an
-// *expression* over data, not on the column itself.
+// Framework column must never be dropped.
 type ColumnOriginKind int
 
 const (
 	// OriginFramework: one of the fixed columns every per-entity table has.
 	OriginFramework ColumnOriginKind = iota
-	// OriginData: a field's data jsonb payload — the escape hatch for anything not physically
-	// promoted.
-	OriginData
-	// OriginGenerated: a real physical column kept in sync with data->>field by a trigger (never
-	// Postgres's native GENERATED ALWAYS AS (...) STORED, which forces a full-table rewrite) —
-	// field.Storage == StorageColumn only.
-	OriginGenerated
+	// OriginNative: the column that holds one EntityDefinition field's value (Phase 106 — every
+	// field has its own typed column; there is no data jsonb payload any more).
+	OriginNative
 )
 
-// ColumnOrigin mirrors the Rust ColumnOrigin enum — SourceField/Backfilled are only meaningful
-// when Kind == OriginGenerated.
+// ColumnOrigin: Backfilled is only meaningful for an OriginNative column on a table that still
+// has the legacy data column — "this column has been filled from data for every pre-existing
+// row" (reconciler_backfill_progress.completed) vs. "a backfill is still in progress or never
+// started" (crash-resume). On the desired side (Compile) it is always true.
 type ColumnOrigin struct {
-	Kind ColumnOriginKind
-	// SourceField: the field this column is synced from (Generated only).
-	SourceField string
-	// Backfilled: "column exists and every pre-existing row has been backfilled" vs. "column
-	// exists but a backfill is still in progress or never started" (crash-resume). On the
-	// desired side (Compile) this is always true; on the actual side (Introspect) it reflects
-	// reconciler_backfill_progress.completed.
+	Kind       ColumnOriginKind
 	Backfilled bool
 }
 

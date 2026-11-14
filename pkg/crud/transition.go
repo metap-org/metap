@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -162,12 +161,7 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 		tx.Rollback(ctx) //nolint:errcheck
 		return ServiceResult[RecordDto]{}, err
 	}
-	transitionSQL := fmt.Sprintf(
-		`UPDATE %s SET data = $1, status = $2, version = version + 1, updated_at = now(), updated_by = $3
-		 WHERE id = $4 AND tenant_id = $5 AND version = $6 AND deleted = false RETURNING %s`,
-		entity.TableName, recordColumns,
-	)
-	row := tx.QueryRow(ctx, transitionSQL, json.RawMessage(nextDataJSON), toState, userID, id, tenantID, expectedVersion)
+	row := tx.QueryRow(ctx, buildUpdateSQL(entity, "status = $6::varchar"), json.RawMessage(nextDataJSON), userID, id, tenantID, expectedVersion, toState)
 	record, err := scanRecordRow(row, entity.Name)
 	if err != nil {
 		tx.Rollback(ctx) //nolint:errcheck

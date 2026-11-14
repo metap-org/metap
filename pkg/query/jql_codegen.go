@@ -82,11 +82,11 @@ func resolveJqlField(fieldName string, entity metadata.EntityDefinition, params 
 	case metadata.KindReference, metadata.KindID:
 		ftype = jqlFieldUUID
 	}
-	if metadata.FieldHasRealColumn(*field) {
-		return `"` + fieldName + `"`, ftype, nil
+	if field.Kind == metadata.KindJSON {
+		// A jsonb column has no ILIKE/equality with text; JQL treats a JSON field as text.
+		return `"` + fieldName + `"::text`, ftype, nil
 	}
-	ph := params.Push(TextBind(fieldName))
-	return "jsonb_extract_path_text(data, " + ph + ")", ftype, nil
+	return `"` + fieldName + `"`, ftype, nil
 }
 
 func validateJqlOp(op jqlCompareOp, ftype jqlFieldType, field string) error {

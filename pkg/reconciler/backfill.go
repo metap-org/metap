@@ -43,7 +43,12 @@ const (
 func RunHeavyBackfill(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entityName, table, opID, column, sourceField, sqlType string, scope BackfillScope) error {
 	quotedCol := quoteIdent(column)
 	fieldLiteral := quoteLiteral(sourceField)
+	// jsonb is copied as jsonb (->), everything else through its text form (->>) so the cast
+	// applies to the stored scalar, not to a JSON string literal.
 	setClause := fmt.Sprintf("%s = (t.data ->> %s)::%s", quotedCol, fieldLiteral, sqlType)
+	if sqlType == "jsonb" {
+		setClause = fmt.Sprintf("%s = t.data -> %s", quotedCol, fieldLiteral)
+	}
 	return RunBatchedUpdate(ctx, pool, tenantID, entityName, table, opID, setClause, "", scope)
 }
 

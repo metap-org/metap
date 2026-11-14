@@ -229,3 +229,98 @@ func reconcilePlan(args []string) error {
 	}
 	return nil
 }
+
+// migrateToNativeColumns moves one entity's table from the pre-Phase-106 shape (every field inside a
+// data jsonb column) to one typed column per field — docs/roadmap/106-native-entity-columns-no-data-jsonb.md,
+// section 3. Thin wrapper over reconciler.MigrateLegacy / VerifyLegacy / DropLegacyData.
+//
+// Run it BEFORE deploying the code that reads native columns: a service built on this version refuses
+// to reconcile a table that still has a data column (ErrLegacyDataColumn) rather than serve NULLs.
+//
+//	step 1 (always): add every field column, copy data -> column in resumable batches, drop the old
+//	                 sync triggers. data stays, so the old code keeps working until cutover.
+//	step 2 (always): print the verification report (rows, and per field the rows whose value is only
+//	                 in data).
+//	step 3 (--drop-data, only if step 2 is clean): drop the data column. Irreversible: snapshot first.
+//
+// --all-tenants: the table is shared by many tenants (a Schema-strategy table), so tenantId is only the
+// progress-ledger key (use the platform sentinel) and the copy covers every row. Without it the copy is
+// limited to tenantId's own rows (a DedicatedDb tenant's table).
+func migrateToNativeColumns(args []string) error {
+	var positional []string
+	allTenants, dropData := false, false
+	for _, a := range args[2:] {
+		switch a {
+		case "--all-tenants":
+			allTenants = true
+		case "--drop-data":
+			dropData = true
+		default:
+			positional = append(positional, a)
+		}
+	}
+	if len(positional) != 3 {
+		fmt.Fprintln(os.Stderr, "Usage: dev-tools migrate-to-native-columns <tenantId> <entityJsonPath> <tableName> [--all-tenants] [--drop-data]")
+		fmt.Fprintln(os.Stderr, "  entityJsonPath: a local file holding what GET /metadata/entities/<entity> returns.")
+		fmt.Fprintln(os.Stderr, "  tableName: the entity's real, already-qualified table_name, e.g. \"waf.ddos_policies\".")
+		fmt.Fprintln(os.Stderr, "  Snapshot the database first. Preview the DDL with `dev-tools reconcile-plan` if you want to read it.")
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	sharedPool, err := connectShared(ctx, 5)
+	if err != nil {
+		return err
+	}
+	defer sharedPool.Close()
+
+	tenantID, err := parseUUID(positional[0])
+	if err != nil {
+		return err
+	}
+	entity, err := loadEntityFromFile(positional[1])
+	if err != nil {
+		return err
+	}
+	entity.TableName = positional[2]
+	entity.ListViews = nil
+	entity.Audit = nil
+
+	pool, err := routerFor(sharedPool).PoolFor(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+
+	scope := reconciler.ScopeSingleTenant
+	if allTenants {
+		scope = reconciler.ScopeAllTenants
+	}
+	outcome, err := reconciler.MigrateLegacy(ctx, pool, tenantID, entity, scope)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s: %d DDL/backfill op(s) applied.\n", entity.TableName, outcome.OpsApplied)
+
+	report, err := reconciler.VerifyLegacy(ctx, pool, tenantID, entity)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("rows: %d, data column still present: %v, sync triggers left: %v\n", report.Rows, report.StillHasLegacyData, report.SyncTriggersLeft)
+	for field, n := range report.MissingByField {
+		if n > 0 {
+			fmt.Printf("  field %q: %d row(s) have a value only in data\n", field, n)
+		}
+	}
+	if !report.Ok() {
+		return fmt.Errorf("verification is not clean; not dropping data. Fix the cause (a --all-tenants run for a shared table, a value that does not fit its column) and run again")
+	}
+	if !dropData {
+		fmt.Println("Verification is clean. Re-run with --drop-data to drop the data column (irreversible).")
+		return nil
+	}
+	if err := reconciler.DropLegacyData(ctx, pool, tenantID, entity); err != nil {
+		return err
+	}
+	fmt.Println("data column dropped; the table is native.")
+	return nil
+}

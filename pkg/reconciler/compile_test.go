@@ -50,31 +50,33 @@ func TestFrameworkColumnsAlwaysPresent(t *testing.T) {
 	}
 }
 
-func TestUnpromotedFieldGetsNoColumnAndNoIndex(t *testing.T) {
+func TestPlainFieldGetsAColumnButNoIndex(t *testing.T) {
 	schema, err := Compile(testEntity("t.e", []metadata.EntityField{plainField("notes", metadata.KindString)}))
 	require.NoError(t, err)
-	require.Len(t, schema.Columns, len(frameworkColumns), "got %d columns", len(schema.Columns))
+	require.Len(t, schema.Columns, len(frameworkColumns)+1, "got %d columns", len(schema.Columns))
 	if len(fieldIdx(schema)) != 0 {
 		require.FailNow(t, fmt.Sprintf("expected no indexes, got %d", len(fieldIdx(schema))))
 	}
 }
 
-func TestIndexedFieldGetsExpressionIndexNotAColumn(t *testing.T) {
+func TestIndexedFieldGetsItsOwnColumnAndAColumnIndex(t *testing.T) {
 	f := plainField("departmentId", metadata.KindString)
 	f.Indexed = boolp(true)
 	schema, err := Compile(testEntity("t.e", []metadata.EntityField{f}))
 	require.NoError(t, err)
-	require.Len(t, schema.Columns, len(frameworkColumns), "no new column expected")
+	require.Len(t, schema.Columns, len(frameworkColumns)+1, "one native column per field")
+	require.Equal(t, OriginNative, schema.Columns["departmentId"].Origin.Kind)
+	require.NotContains(t, schema.Columns, "data", "there is no data jsonb column any more")
 	if len(fieldIdx(schema)) != 1 {
 		require.FailNow(t, fmt.Sprintf("got %d indexes", len(fieldIdx(schema))))
 	}
 	for _, idx := range fieldIdx(schema) {
-		require.Equal(t, `"tenant_id", ((data ->> 'departmentId')::text)`, idx.Expression, "got %q", idx.Expression)
+		require.Equal(t, `"tenant_id", "departmentId"`, idx.Expression, "got %q", idx.Expression)
 		require.False(t, idx.Unique, "expected not unique")
 	}
 }
 
-func TestIndexedDateFieldGetsAnUncastTextExpressionIndex(t *testing.T) {
+func TestIndexedDateFieldIndexesTheTypedColumn(t *testing.T) {
 	f := plainField("dueDate", metadata.KindDate)
 	f.Indexed = boolp(true)
 	schema, err := Compile(testEntity("t.e", []metadata.EntityField{f}))
@@ -83,31 +85,27 @@ func TestIndexedDateFieldGetsAnUncastTextExpressionIndex(t *testing.T) {
 		require.FailNow(t, fmt.Sprintf("got %d", len(fieldIdx(schema))))
 	}
 	for _, idx := range fieldIdx(schema) {
-		require.Equal(t, `"tenant_id", (data ->> 'dueDate')`, idx.Expression, "got %q", idx.Expression)
+		require.Equal(t, `"tenant_id", "dueDate"`, idx.Expression, "got %q", idx.Expression)
 	}
 }
 
-func TestStorageColumnOverridePromotesToARealColumn(t *testing.T) {
+func TestEveryKindGetsItsTypedColumn(t *testing.T) {
 	f := plainField("amount", metadata.KindMoney)
 	f.Indexed = boolp(true)
-	storage := metadata.StorageColumn
-	f.Storage = &storage
 	schema, err := Compile(testEntity("t.e", []metadata.EntityField{f}))
 	require.NoError(t, err)
 	col, ok := schema.Columns["amount"]
 	require.True(t, ok, "real column expected")
 	require.Equal(t, "numeric(18,4)", col.SQLType, "got %q", col.SQLType)
-	require.Equal(t, OriginGenerated, col.Origin.Kind, "expected Generated origin")
+	require.Equal(t, OriginNative, col.Origin.Kind, "expected Native origin")
 	if len(fieldIdx(schema)) != 1 {
 		require.FailNow(t, fmt.Sprintf("got %d", len(fieldIdx(schema))))
 	}
 }
 
-func TestUniqueStorageColumnGetsASinglePartialUniqueIndexNotABlanketConstraint(t *testing.T) {
+func TestUniqueFieldGetsASinglePartialUniqueIndexNotABlanketConstraint(t *testing.T) {
 	f := plainField("sku", metadata.KindString)
 	f.Unique = boolp(true)
-	storage := metadata.StorageColumn
-	f.Storage = &storage
 	schema, err := Compile(testEntity("t.e", []metadata.EntityField{f}))
 	require.NoError(t, err)
 	require.Len(t, schema.Uniques, 0, "expected no blanket unique constraints")
@@ -195,8 +193,8 @@ func TestCompositeUniqueConstraintBuildsOnePartialUniqueIndexOverBothFields(t *t
 	for _, idx := range fieldIdx(schema) {
 		require.True(t, idx.Unique, "expected unique")
 		require.Equal(t, "deleted = false", idx.WhereClause, "got %q", idx.WhereClause)
-		require.Contains(t, idx.Expression, "'type'", "got %q", idx.Expression)
-		require.Contains(t, idx.Expression, "'value'", "got %q", idx.Expression)
+		require.Contains(t, idx.Expression, `"type"`, "got %q", idx.Expression)
+		require.Contains(t, idx.Expression, `"value"`, "got %q", idx.Expression)
 	}
 }
 
@@ -263,9 +261,9 @@ func TestUniqueScopeTenantByDefaultGlobalWhenAsked(t *testing.T) {
 	schema, err := Compile(testEntity("t.e", []metadata.EntityField{tenantF, globalF}))
 	require.NoError(t, err)
 	got := schema.Indexes[indexName("t.e", "slug", "uniq")].Expression
-	require.Equal(t, `"tenant_id", ((data ->> 'slug')::text)`, got, "tenant-scoped unique: got %q", got)
+	require.Equal(t, `"tenant_id", "slug"`, got, "tenant-scoped unique: got %q", got)
 	got = schema.Indexes[indexName("t.e", "hostname", "uniq")].Expression
-	require.Equal(t, `((data ->> 'hostname')::text)`, got, "global unique: got %q", got)
+	require.Equal(t, `"hostname"`, got, "global unique: got %q", got)
 }
 
 func TestCompositeUniqueConstraintLeadsWithTenantUnlessGlobal(t *testing.T) {

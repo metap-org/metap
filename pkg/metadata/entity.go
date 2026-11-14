@@ -143,11 +143,12 @@ func ResolveFieldStorageTier(field EntityField) FieldStorageTier {
 	return TierJsonb
 }
 
-// FieldHasRealColumn: only two cases force a real column — a Reference with RefEntity set, or
-// an explicit Storage: Column override. Single source of truth shared with the reconciler and
-// query planner (ported in a later wave) so the two can never disagree.
+// FieldHasRealColumn is always true since Phase 106 (docs/roadmap/106): every field has its own
+// typed column and there is no data jsonb payload. Kept as the single question the reconciler and
+// the query planner both ask, so a future exception (a virtual field) would have one place to say
+// "no" instead of a second, disagreeing implementation.
 func FieldHasRealColumn(field EntityField) bool {
-	return (field.Kind == KindReference && field.RefEntity != nil) || (field.Storage != nil && *field.Storage == StorageColumn)
+	return true
 }
 
 // FieldKindSQLType: FieldKind -> SQL type a promoted field would use.

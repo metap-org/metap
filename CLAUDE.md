@@ -158,6 +158,26 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   HTTP. This *is* the `metap-app` equivalent the paragraph above says was skipped — `../waap`'s
   three management-plane services needed it (each `main.go` was ~150 copied lines, now ~20).
 
+**Entity fields are native typed columns, no `data jsonb` (2026-11-14, `docs/roadmap/106-native-entity-columns-no-data-jsonb.md`
+in `../metap-docs`).** Project owner did not want entity values inside a `data` blob. Every field of an
+`EntityDefinition` is now its own typed, nullable column (`FieldKindSQLType`: text, double precision,
+numeric(18,4), boolean, date, timestamptz, uuid, jsonb for kind `json`); `code`/`status` stay framework columns.
+`metadata.FieldHasRealColumn` is always true and `EntityField.Storage` no longer matters. The service boundary is
+unchanged — `RecordDto.Data` is still a JSON object — and the JSON⇄column translation lives in `pkg/crud/record_sql.go`
+(reads build the object from columns, `jsonb_build` over non-NULL columns; writes spread the payload with
+`jsonb_to_record` typed per field; `update`/`transition` skip `system` fields). `pkg/query` (planner, JQL, aggregate,
+record-level policy via `ParamBuilder.SetEntity`) compares typed columns and casts bound text to the column's kind.
+Read-back format differences: `datetime` comes back in Postgres's ISO form (`+00:00`, not `Z`), `money` with 4 decimals,
+a NULL column is an absent key. A new table is created without a `data` column. **A table that still has `data`
+is refused** (`reconciler.ErrLegacyDataColumn`) so a service never serves unfilled columns; move it with
+`dev-tools migrate-to-native-columns <tenantId> <entity.json> <table> [--all-tenants] [--drop-data]`
+(`reconciler.MigrateLegacy` -> `VerifyLegacy` -> `DropLegacyData`, drop only when verification is clean, run it before
+deploying the new code and snapshot first). The old sync triggers are dropped by that migration — a leftover one would
+overwrite native writes with NULL. Declarative migration ops (`pkg/reconciler/migration.go`) are now column DDL:
+widening a type is `ALTER COLUMN TYPE ... USING` (table rewrite), drop-field is `DROP COLUMN`. Integration tests build
+their tables through the reconciler (`reconcileEntities` in `pkg/crud` tests), never by hand. `metap-lowcode` and the
+demo repos still need their own pass (roadmap 106 slices S6, S7).
+
 **Frontend library moved out of this repo (2026-08-28):** the reusable frontend library — formerly `packages/platform-react` (Mantine-based), now retired/deleted — lives as `@metap/platform-ui` in a separate sibling repo, `../platform-ui`, alongside a second sibling repo `../design-system` (`@metap/ui`, Tailwind + Radix + shadcn-style components) that it's built on. Neither is a member of this repo's pnpm workspace (which has had no members of its own since the "No example apps in this repo" change below — see that note for what still consumes them via `link:`). `@metap/platform-ui`'s own `README.md` documents its module list and port status; treat that repo, not this section, as the source of truth for what's in it.
 
 **No example apps in this repo (2026-08-31):** `apps/crm-server`/`apps/crm-fe`/`apps/jira-server`/`apps/jira-fe` — the sample/example consumers this section used to document in detail — moved out to their own sibling repos, `../metap-demo-crm` and `../metap-demo-jira`, same pattern `../metap-demo-waf` already established (a `metap` dependency, in `../metap-demo-crm`'s/`../metap-demo-jira`'s own `Cargo.toml`, as a `path` dependency into `../metap/crates/metap` for local dev, swappable to `git`/version for CI/deploy). This repo (`metap`) is now a pure library workspace: `crates/` (the reusable `metap-*` surface plus the ops binaries built on it) and `templates/metap-app/` (a `cargo generate` scaffold — see its own `README.md` for first-time setup) are the only things here a downstream project touches; there is no runnable example app, no pnpm workspace member, and no frontend workspace content left in this repo at all. Root `package.json` was trimmed right after the split (`gateway:rs`/`test:rs`/`test:rs:e2e` only — everything that used to `cd apps/crm-server`/`cd apps/jira-server` for its own `.env`/`keys/` was removed) and then, same day once it was clear the 3 remaining scripts were pure `cargo` wrappers with zero actual `dependencies` to install, deleted outright along with `pnpm-workspace.yaml`/`pnpm-lock.yaml`/`node_modules/` — **no Node/pnpm in this repo at all now**, see the "Commands" section below for the plain `cargo` equivalents. `.github/workflows/ci.yml`'s frontend CI job was removed for the same underlying reason (nothing left to typecheck/lint/format/test). `crates/metap-graphql-gateway/README.md`'s local walkthrough now points at the sibling demo repos instead of in-repo `apps/*` paths.

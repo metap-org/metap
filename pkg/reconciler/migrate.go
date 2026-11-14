@@ -54,17 +54,21 @@ func CopyGenericRecords(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.U
 	quotedSource := quoteQualifiedIdent(sourceTable)
 	quotedDest := quoteQualifiedIdent(destTable)
 	entityLiteral := quoteLiteral(entityName)
+	// The destination has one typed column per field (Phase 106), so the source row's data jsonb
+	// is spread over the destination's own columns with jsonb_populate_record. The framework
+	// columns are laid over data last, so a payload key can never override them.
 	sql := fmt.Sprintf(
 		`WITH batch AS (
 			 SELECT id, tenant_id, code, status, data, version, deleted, created_at, updated_at, created_by, updated_by
-			 FROM %s
-			 WHERE tenant_id = $2 AND entity = %s AND id > $1
-			 ORDER BY id LIMIT %d
+			 FROM %[1]s
+			 WHERE tenant_id = $2 AND entity = %[2]s AND id > $1
+			 ORDER BY id LIMIT %[3]d
 		 ), ins AS (
-			 INSERT INTO %s
-			     (id, tenant_id, code, status, data, version, deleted, created_at, updated_at, created_by, updated_by)
-			 SELECT id, tenant_id, code, status, data, version, deleted, created_at, updated_at, created_by, updated_by
-			 FROM batch
+			 INSERT INTO %[4]s
+			 SELECT r.* FROM batch b, LATERAL jsonb_populate_record(NULL::%[4]s, b.data || jsonb_build_object(
+			     'id', b.id::text, 'tenant_id', b.tenant_id::text, 'code', b.code, 'status', b.status, 'version', b.version,
+			     'deleted', b.deleted, 'created_at', b.created_at, 'updated_at', b.updated_at,
+			     'created_by', b.created_by::text, 'updated_by', b.updated_by::text)) r
 			 ON CONFLICT (id) DO NOTHING
 			 RETURNING id
 		 )
