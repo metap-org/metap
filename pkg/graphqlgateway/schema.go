@@ -449,7 +449,7 @@ func (b *schemaBuilder) getField(entity string, recordType *graphql.Object) *gra
 // listInputFromArgs mirrors metap-graphql's list_input_from_args: limit defaults to 30 and must
 // be in 1..=200; filter is a flat object whose values are stringified.
 func listInputFromArgs(args map[string]interface{}) (query.ListInput, error) {
-	input := query.ListInput{Limit: 30}
+	input := query.ListInput{Limit: defaultListLimit}
 	if _, ok := args["limit"]; ok {
 		n := int64(int32Arg(args, "limit"))
 		if n <= 0 || n > 200 {
@@ -770,3 +770,6 @@ func BuildSchema(registry *metadata.MetadataRegistry, backends map[string]crud.R
 	}
 	return graphql.NewSchema(cfgSchema)
 }
+
+// defaultListLimit is the page size of a {entity}List query that names no limit.
+const defaultListLimit = 30

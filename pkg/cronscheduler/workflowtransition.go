@@ -74,7 +74,7 @@ func RunBulkQueryAction(ctx context.Context, backend crud.RecordBackend, targetC
 	for k, v := range cfg.Filter {
 		filters = append(filters, [2]string{k, v})
 	}
-	input := query.ListInput{Limit: 200, Filters: filters}
+	input := query.ListInput{Limit: bulkQueryPageLimit, Filters: filters}
 	page, err := b.List(ctx, cfg.Entity, input, serviceContext())
 	if err != nil {
 		return nil, err
@@ -109,3 +109,7 @@ func transitionOne(ctx context.Context, backend crud.RecordBackend, entity strin
 	}
 	return b.Transition(ctx, entity, recordID, action, getResult.Record.Version, nil, rc, nil)
 }
+
+// bulkQueryPageLimit is how many records one bulk_query_action run reads and transitions; a larger
+// match is finished by the next scheduled run.
+const bulkQueryPageLimit = 200

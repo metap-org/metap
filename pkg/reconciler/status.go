@@ -25,11 +25,11 @@ const (
 func (s EntityStatus) String() string {
 	switch s {
 	case StatusMigrating:
-		return "migrating"
+		return entityStatusMigrating
 	case StatusError:
-		return "error"
+		return entityStatusError
 	default:
-		return "active"
+		return entityStatusActive
 	}
 }
 
@@ -48,9 +48,9 @@ func GetStatus(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, enti
 		return StatusActive, nil
 	}
 	switch *row {
-	case "migrating":
+	case entityStatusMigrating:
 		return StatusMigrating, nil
-	case "error":
+	case entityStatusError:
 		return StatusError, nil
 	default:
 		return StatusActive, nil
@@ -79,9 +79,9 @@ func SetStatus(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, enti
 func RecordError(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entityName, errMsg string) error {
 	_, err := pool.Exec(ctx,
 		`INSERT INTO metadata.reconciler_entity_status (tenant_id, entity_name, status, attempts, last_error, updated_at)
-		 VALUES ($1, $2, 'error', 1, $3, now())
+		 VALUES ($1, $2, `+sqlLit(entityStatusError)+`, 1, $3, now())
 		 ON CONFLICT (tenant_id, entity_name) DO UPDATE
-		 SET status = 'error', attempts = metadata.reconciler_entity_status.attempts + 1,
+		 SET status = `+sqlLit(entityStatusError)+`, attempts = metadata.reconciler_entity_status.attempts + 1,
 		     last_error = EXCLUDED.last_error, updated_at = now()`,
 		tenantID, entityName, errMsg)
 	return err

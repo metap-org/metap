@@ -21,6 +21,13 @@ import (
 	"github.com/metap-org/metap/pkg/metadata"
 )
 
+// Per-peer token bucket for the gRPC listener: one token per rateInterval, up to rateBurst at once.
+// The same numbers graphql-gateway uses for its HTTP listener.
+const (
+	rateInterval = 200 * time.Millisecond
+	rateBurst    = 300
+)
+
 // Logs the generic RPC method name (e.g. "/metap.crud.v1.RecordService/List") and latency/error.
 func logUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	start := time.Now()
@@ -42,7 +49,7 @@ func logUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInf
 // 300) — see ratelimit.go's doc comment for why this transport needs its own small interceptor
 // instead of reusing httpserver's RateLimit directly (that one wraps net/http, not grpc).
 func NewServer(service *RecordService, actions ...*ActionService) *grpc.Server {
-	limiter := newRateLimiter(200*time.Millisecond, 300)
+	limiter := newRateLimiter(rateInterval, rateBurst)
 	srv := grpc.NewServer(grpc.ChainUnaryInterceptor(limiter.UnaryInterceptor(), logUnaryInterceptor))
 	pb.RegisterRecordServiceServer(srv, service)
 	for _, a := range actions {
