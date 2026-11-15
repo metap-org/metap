@@ -20,6 +20,41 @@ const (
 	KindJSON      FieldKind = "json"
 )
 
+// FieldWidget is the input control a generic form renders for a field. It is a presentation
+// choice only (never stored differently); each widget is valid for specific kinds, enforced by
+// Validate, so a form can never be asked to draw a switch for a date.
+type FieldWidget string
+
+const (
+	WidgetSwitch        FieldWidget = "switch"        // boolean
+	WidgetCheckbox      FieldWidget = "checkbox"      // boolean
+	WidgetSelect        FieldWidget = "select"        // enum, reference
+	WidgetRadio         FieldWidget = "radio"         // enum
+	WidgetCombobox      FieldWidget = "combobox"      // enum, reference: type-to-filter
+	WidgetTextarea      FieldWidget = "textarea"      // string
+	WidgetMultiSelect   FieldWidget = "multiselect"   // json array of enumValues
+	WidgetCheckboxGroup FieldWidget = "checkboxGroup" // json array of enumValues
+	WidgetTags          FieldWidget = "tags"          // json array of free strings
+)
+
+// widgetKinds is which kinds each widget may be declared on.
+var widgetKinds = map[FieldWidget][]FieldKind{
+	WidgetSwitch:        {KindBoolean},
+	WidgetCheckbox:      {KindBoolean},
+	WidgetSelect:        {KindEnum, KindReference},
+	WidgetRadio:         {KindEnum},
+	WidgetCombobox:      {KindEnum, KindReference},
+	WidgetTextarea:      {KindString},
+	WidgetMultiSelect:   {KindJSON},
+	WidgetCheckboxGroup: {KindJSON},
+	WidgetTags:          {KindJSON},
+}
+
+// IsArrayWidget: the widget edits a JSON array of strings (a multi-value field).
+func (w FieldWidget) IsArrayWidget() bool {
+	return w == WidgetMultiSelect || w == WidgetCheckboxGroup || w == WidgetTags
+}
+
 // FieldStorage is an explicit override of the storage tier resolve_field_storage_tier would
 // otherwise derive from indexed/sortable/unique/searchable.
 type FieldStorage string
@@ -95,6 +130,8 @@ type EntityField struct {
 	MinLength       *uint32       `json:"minLength,omitempty"`
 	MaxLength       *uint32       `json:"maxLength,omitempty"`
 	Computed        *ComputedSpec `json:"computed,omitempty"`
+	// Widget overrides the default input control for this kind; nil keeps the default.
+	Widget *FieldWidget `json:"widget,omitempty"`
 	// System marks a field the platform writes, never the user: e.g. an API key's lastUsedAt,
 	// a heartbeat, a counter. Create and Update reject it in a payload and Update preserves its
 	// current stored value; it is written only through CrudService.SetSystemFields, which does
@@ -232,6 +269,24 @@ type FieldDisplayHint struct {
 type EntityAuditConfig struct {
 	Enabled        bool     `json:"enabled"`
 	RedactedFields []string `json:"redactedFields,omitempty"`
+	// Parent names a reference field (with refEntity) whose target owns this record, e.g.
+	// "zoneId" on a zone's firewall rule. Each audit entry then also records that parent, so the
+	// parent's history can include its children's in one paged query, deleted children included.
+	Parent string `json:"parent,omitempty"`
+}
+
+// AuditParentEntity is the entity Audit.Parent points at ("" when there is none or it is not a
+// reference with refEntity, which Validate rejects).
+func (e EntityDefinition) AuditParentEntity() string {
+	if e.Audit == nil || e.Audit.Parent == "" {
+		return ""
+	}
+	for _, f := range e.Fields {
+		if f.Name == e.Audit.Parent && f.Kind == KindReference && f.RefEntity != nil {
+			return *f.RefEntity
+		}
+	}
+	return ""
 }
 
 type EntityDefinition struct {

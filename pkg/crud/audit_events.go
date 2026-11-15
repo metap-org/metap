@@ -2,42 +2,162 @@ package crud
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
-// ListAuditEvents is the read side of recordAudit — full create/update/delete/transition
-// history for one record. Record-level (ABAC) read permission via CheckRecordPermission.
-// Returns whatever rows exist regardless of the entity's *current* EntityAuditConfig.Enabled
-// flag — toggling audit off must not make already-recorded history disappear.
-func (s *CrudService) ListAuditEvents(ctx context.Context, entityName string, recordID uuid.UUID, rc *permission.RequestContext) ([]audit.Row, error) {
-	if err := s.CheckRecordPermission(ctx, entityName, recordID, permission.ActionRead, rc); err != nil {
-		return nil, err
-	}
+// AuditQuery selects one page of a record's audit history (ListAuditEvents).
+type AuditQuery struct {
+	// IncludeChildren also returns the history of every record whose entity declares this
+	// entity as its EntityAuditConfig.Parent and points at this record — limited to the child
+	// entities the caller may read, deleted children included.
+	IncludeChildren bool
+	Entities        []string // keep only entries of these entities
+	Actions         []string // keep only these actions
+	ActorUserID     *uuid.UUID
+	From, To        *time.Time
+	Cursor          *string // the previous page's NextCursor
+	Limit           int     // default DefaultAuditPageSize, at most audit.MaxPageSize
+}
 
+// AuditPage is one page of history, newest first. NextCursor is nil on the last page.
+type AuditPage struct {
+	Data       []audit.Row
+	NextCursor *string
+}
+
+// DefaultAuditPageSize is the page size when AuditQuery.Limit is unset.
+const DefaultAuditPageSize = 50
+
+// ListAuditEvents is the read side of recordAudit — create/update/delete/transition history for
+// one record (and optionally its children), one page at a time. Record-level (ABAC) read
+// permission on the record via CheckRecordPermission; each entry's diff is masked to the fields
+// the caller may read on that entry's own record. Returns whatever rows exist regardless of the
+// entity's *current* EntityAuditConfig.Enabled flag — toggling audit off must not make
+// already-recorded history disappear.
+func (s *CrudService) ListAuditEvents(ctx context.Context, entityName string, recordID uuid.UUID, q AuditQuery, rc *permission.RequestContext) (AuditPage, error) {
+	if err := s.CheckRecordPermission(ctx, entityName, recordID, permission.ActionRead, rc); err != nil {
+		return AuditPage{}, err
+	}
 	if s.auditStore == nil {
-		return []audit.Row{}, nil
+		return AuditPage{Data: []audit.Row{}}, nil
 	}
 	tenantID, err := s.permissions.ScopedTenant(rc)
 	if err != nil {
-		return nil, err
-	}
-	events, err := s.auditStore.ListForRecord(ctx, tenantID, entityName, recordID)
-	if err != nil {
-		return nil, err
+		return AuditPage{}, err
 	}
 
-	visibility, err := s.auditDiffVisibility(ctx, entityName, recordID, rc)
+	query := audit.Query{
+		Entity: entityName, RecordID: recordID,
+		Entities: q.Entities, Actions: q.Actions, ActorUserID: q.ActorUserID, From: q.From, To: q.To,
+		Limit: q.Limit,
+	}
+	if query.Limit <= 0 {
+		query.Limit = DefaultAuditPageSize
+	}
+	if query.Limit > audit.MaxPageSize {
+		query.Limit = audit.MaxPageSize
+	}
+	if q.Cursor != nil && *q.Cursor != "" {
+		after, ok := decodeAuditCursor(*q.Cursor)
+		if !ok {
+			return AuditPage{}, NewServiceErrorMsg(http.StatusBadRequest, errcode.InvalidCursor, "`cursor` is not a cursor this endpoint issued.")
+		}
+		query.After = &after
+	}
+	if q.IncludeChildren {
+		children, err := s.readableAuditChildren(ctx, tenantID, entityName, rc)
+		if err != nil {
+			return AuditPage{}, err
+		}
+		query.ChildEntities = children
+	}
+
+	events, err := s.auditStore.Query(ctx, tenantID, query)
+	if err != nil {
+		return AuditPage{}, err
+	}
+	page := AuditPage{Data: events}
+	if len(events) > query.Limit {
+		page.Data = events[:query.Limit]
+		last := page.Data[len(page.Data)-1]
+		next := encodeAuditCursor(audit.Cursor{OccurredAt: last.OccurredAt, ID: last.ID})
+		page.NextCursor = &next
+	}
+
+	// One visibility lookup per distinct record on the page, not per entry.
+	visibilities := map[string]diffVisibility{}
+	for i := range page.Data {
+		row := &page.Data[i]
+		key := row.Entity + "/" + row.RecordID.String()
+		visibility, seen := visibilities[key]
+		if !seen {
+			visibility, err = s.auditDiffVisibility(ctx, row.Entity, row.RecordID, rc)
+			if err != nil {
+				return AuditPage{}, err
+			}
+			visibilities[key] = visibility
+		}
+		maskDiff(&row.Diff, visibility)
+	}
+	return page, nil
+}
+
+// readableAuditChildren lists the entities whose audit parent is entityName and which the caller
+// may read at the entity level.
+func (s *CrudService) readableAuditChildren(ctx context.Context, tenantID uuid.UUID, entityName string, rc *permission.RequestContext) ([]string, error) {
+	registry, err := s.registryFor(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	for i := range events {
-		maskDiff(&events[i].Diff, visibility)
+	var out []string
+	for _, def := range registry.Definitions() {
+		if def.AuditParentEntity() != entityName {
+			continue
+		}
+		snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, def.Name)
+		if err != nil {
+			return nil, err
+		}
+		if snapshot.CanPerformEntityAction(rc, def.Name, permission.ActionRead).Allowed {
+			out = append(out, def.Name)
+		}
 	}
-	return events, nil
+	return out, nil
+}
+
+// encodeAuditCursor/decodeAuditCursor: an opaque keyset position, "<RFC3339Nano>|<uuid>" in
+// base64url, so a client never builds one itself.
+func encodeAuditCursor(c audit.Cursor) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(c.OccurredAt.UTC().Format(time.RFC3339Nano) + "|" + c.ID.String()))
+}
+
+func decodeAuditCursor(raw string) (audit.Cursor, bool) {
+	b, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return audit.Cursor{}, false
+	}
+	at, id, found := strings.Cut(string(b), "|")
+	if !found {
+		return audit.Cursor{}, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, at)
+	if err != nil {
+		return audit.Cursor{}, false
+	}
+	u, err := uuid.Parse(id)
+	if err != nil {
+		return audit.Cursor{}, false
+	}
+	return audit.Cursor{OccurredAt: t, ID: u}, true
 }
 
 // diffVisibility is how much of this record's audit diffs the caller may see. nil fields means

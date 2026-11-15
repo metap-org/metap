@@ -190,6 +190,20 @@ func TestFullHTTPLifecycleOverARealServerAndARealJWT(t *testing.T) {
 	require.Equal(t, 200, openapi.StatusCode, "got %d", openapi.StatusCode)
 	openapi.Body.Close()
 
+	// entity-access: an admin may do everything with every registered entity
+	accessRes := doRequest(t, "GET", base+"/metadata/entity-access", token, nil)
+	require.Equal(t, 200, accessRes.StatusCode, "got %d", accessRes.StatusCode)
+	access := decodeJSON(t, accessRes)["data"].(map[string]any)
+	require.Equal(t, map[string]any{"canRead": true, "canCreate": true, "canUpdate": true, "canDelete": true}, access["test.orders"])
+	// ...and a user with no role and no policy may do nothing (default deny), but still gets the map
+	plainToken, err := peripherals.MintJWT(privPEM, tenantID, uuid.New(), 3600)
+	require.NoError(t, err)
+	plainRes := doRequest(t, "GET", base+"/metadata/entity-access", plainToken, nil)
+	require.Equal(t, 200, plainRes.StatusCode, "got %d", plainRes.StatusCode)
+	plain := decodeJSON(t, plainRes)["data"].(map[string]any)
+	require.Equal(t, map[string]any{"canRead": false, "canCreate": false, "canUpdate": false, "canDelete": false}, plain["test.orders"])
+	require.Equal(t, 401, doRequest(t, "GET", base+"/metadata/entity-access", "", nil).StatusCode)
+
 	// records route without a token -> 401, with requestId/traceId injected into the error body
 	unauthed := doRequest(t, "GET", base+"/api/test.orders", "", nil)
 	require.Equal(t, 401, unauthed.StatusCode, "got %d", unauthed.StatusCode)

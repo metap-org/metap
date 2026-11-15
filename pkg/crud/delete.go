@@ -132,7 +132,7 @@ func (s *CrudService) Delete(ctx context.Context, entityName string, id uuid.UUI
 	}
 
 	versionAfter := record.Version
-	s.recordAudit(ctx, entity, audit.Entry{
+	s.recordAudit(ctx, entity, record.Data, audit.Entry{
 		TenantID:    tenantID,
 		Entity:      entity.Name,
 		RecordID:    record.ID,

@@ -18,7 +18,7 @@ import (
 	"github.com/metap-org/metap/pkg/query"
 )
 
-var reservedQueryKeys = map[string]bool{"limit": true, "sort": true, "cursor": true, "listView": true, "jql": true}
+var reservedQueryKeys = map[string]bool{"limit": true, "sort": true, "cursor": true, "listView": true, "jql": true, "offset": true, "search": true, "withTotal": true}
 
 func parseListInput(w http.ResponseWriter, values map[string][]string) (query.ListInput, bool) {
 	limit := int64(30)
@@ -52,6 +52,18 @@ func parseListInput(w http.ResponseWriter, values map[string][]string) (query.Li
 	if v := firstValue(values, "jql"); v != "" {
 		input.JQL = &v
 	}
+	if v := firstValue(values, "search"); v != "" {
+		input.Search = &v
+	}
+	if raw := firstValue(values, "offset"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 0 {
+			writeServiceError(w, http.StatusBadRequest, errcode.InvalidOffset, "`offset` must be a non-negative integer.", nil)
+			return query.ListInput{}, false
+		}
+		input.Offset = n
+	}
+	input.WithTotal = firstValue(values, "withTotal") == "true"
 	return input, true
 }
 
@@ -78,8 +90,11 @@ func listRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeCrudError(w, err)
 		return
 	}
-	page := map[string]any{"limit": result.Page.Limit, "nextCursor": result.Page.NextCursor}
-	writeJSON(w, http.StatusOK, map[string]any{"data": result.Data, "page": page})
+	page := map[string]any{"limit": result.Page.Limit, "nextCursor": result.Page.NextCursor, "offset": result.Page.Offset}
+	if result.Page.Total != nil {
+		page["total"] = *result.Page.Total
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": result.Data, "page": page, "capabilities": result.Capabilities})
 }
 
 func getRecord(w http.ResponseWriter, r *http.Request, state *AppState) {

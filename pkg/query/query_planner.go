@@ -35,6 +35,31 @@ type ListInput struct {
 	Cursor   *string
 	ListView *string
 	JQL      *string
+	// Offset selects a numbered page (rows to skip) instead of a keyset Cursor; the two are
+	// mutually exclusive. Offset is bounded by MaxListOffset.
+	Offset int64
+	// Search is a free-text term matched against every searchable string/enum field of the
+	// entity (any field matching is enough). It is ANDed with Filters and JQL.
+	Search *string
+	// WithTotal asks List to also count the rows matching the filters (not just this page).
+	WithTotal bool
+}
+
+// MaxListOffset bounds Offset: a deep OFFSET scans and discards every skipped row, so numbered
+// paging past it should use a keyset cursor instead.
+const MaxListOffset = 100000
+
+// InvalidOffsetError: Offset negative or beyond MaxListOffset, or combined with a Cursor.
+type InvalidOffsetError struct{ Message string }
+
+func (e *InvalidOffsetError) Error() string { return e.Message }
+
+// SearchNotSupportedError: Search was requested for an entity that declares no searchable
+// string/enum field, so there is nothing to match against.
+type SearchNotSupportedError struct{ Entity string }
+
+func (e *SearchNotSupportedError) Error() string {
+	return "Entity " + e.Entity + " has no searchable field"
 }
 
 type PlannedListQuery struct {
@@ -42,7 +67,12 @@ type PlannedListQuery struct {
 	OrderBySQL   string
 	Params       []BindValue
 	Limit        int64
+	Offset       int64
 	ResolvedSort ResolvedSort
+	// CountWhereSQL is WhereSQL without the keyset-cursor condition; valid with the same Params
+	// as long as the query has no Cursor (a count of "everything after the cursor" is not what a
+	// caller means by a total).
+	CountWhereSQL string
 }
 
 func parseSort(candidate *string, sortableFields map[string]bool) *ResolvedSort {
@@ -205,6 +235,13 @@ func PlanList(metadataRegistry *metadata.MetadataRegistry, permissions TenantSco
 		limit = maxLimit
 	}
 
+	if input.Offset < 0 || input.Offset > MaxListOffset {
+		return nil, &InvalidOffsetError{Message: fmt.Sprintf("`offset` must be between 0 and %d.", MaxListOffset)}
+	}
+	if input.Offset > 0 && input.Cursor != nil {
+		return nil, &InvalidOffsetError{Message: "`offset` and `cursor` cannot be combined."}
+	}
+
 	params := NewParamBuilder()
 	params.SetEntity(entity)
 	var conditions []string
@@ -259,6 +296,14 @@ func PlanList(metadataRegistry *metadata.MetadataRegistry, permissions TenantSco
 		}
 	}
 
+	if input.Search != nil && strings.TrimSpace(*input.Search) != "" {
+		cond, ok := searchCondition(entity, strings.TrimSpace(*input.Search), params)
+		if !ok {
+			return nil, &SearchNotSupportedError{Entity: entity.Name}
+		}
+		conditions = append(conditions, cond)
+	}
+
 	var jqlOrderField string
 	var jqlOrderDesc, hasJqlOrder bool
 	if input.JQL != nil {
@@ -306,6 +351,8 @@ func PlanList(metadataRegistry *metadata.MetadataRegistry, permissions TenantSco
 	sortFieldDef := fieldsByName[resolvedSort.Field]
 	sortExpr, sortColT := sortFieldExpression(resolvedSort.Field, sortFieldDef, params)
 
+	countWhereSQL := strings.Join(conditions, " AND ")
+
 	if input.Cursor != nil {
 		cursor, ok := DecodeCursor(*input.Cursor)
 		if !ok {
@@ -343,12 +390,43 @@ func PlanList(metadataRegistry *metadata.MetadataRegistry, permissions TenantSco
 	orderBySQL := fmt.Sprintf("%s %s %s, id ASC", sortExpr, direction, nulls)
 
 	return &PlannedListQuery{
-		WhereSQL:     strings.Join(conditions, " AND "),
-		OrderBySQL:   orderBySQL,
-		Params:       params.Params,
-		Limit:        limit,
-		ResolvedSort: resolvedSort,
+		WhereSQL:      strings.Join(conditions, " AND "),
+		OrderBySQL:    orderBySQL,
+		Params:        params.Params,
+		Limit:         limit,
+		Offset:        input.Offset,
+		ResolvedSort:  resolvedSort,
+		CountWhereSQL: countWhereSQL,
 	}, nil
+}
+
+// searchCondition ORs a match on every searchable string/enum field: ILIKE substring, or the
+// tsvector match for a field declared with fts search mode. ok=false when no field qualifies.
+func searchCondition(entity metadata.EntityDefinition, term string, params *ParamBuilder) (string, bool) {
+	var parts []string
+	var likePh, ftsPh string
+	for i := range entity.Fields {
+		f := &entity.Fields[i]
+		if !boolOrFalse(f.Searchable) || (f.Kind != metadata.KindString && f.Kind != metadata.KindEnum) {
+			continue
+		}
+		expr := `"` + f.Name + `"`
+		if f.SearchMode != nil && *f.SearchMode == "fts" {
+			if ftsPh == "" {
+				ftsPh = params.Push(TextBind(term))
+			}
+			parts = append(parts, "to_tsvector('simple', "+expr+") @@ plainto_tsquery('simple', "+ftsPh+")")
+			continue
+		}
+		if likePh == "" {
+			likePh = params.Push(TextBind(ilikeEscape(term)))
+		}
+		parts = append(parts, expr+" ILIKE "+likePh)
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	return "(" + strings.Join(parts, " OR ") + ")", true
 }
 
 func boolOrFalse(p *bool) bool { return p != nil && *p }

@@ -39,6 +39,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  dev-tools reconcile-plan <tenantId> <entityJsonPath> <tableName> [--fail-on-destructive]")
 	fmt.Fprintln(os.Stderr, "  dev-tools restore-legacy-data <tenantId> <entityJsonPath> <tableName> [--all-tenants]")
 	fmt.Fprintln(os.Stderr, "  dev-tools migrate-to-native-columns <tenantId> <entityJsonPath> <tableName> [--all-tenants] [--drop-data]")
+	fmt.Fprintln(os.Stderr, "  dev-tools backfill-audit-parents <entityJsonPath> [entityJsonPath ...]")
 	os.Exit(1)
 }
 
@@ -87,6 +88,8 @@ func main() {
 		err = restoreLegacyData(args)
 	case "migrate-to-native-columns":
 		err = migrateToNativeColumns(args)
+	case "backfill-audit-parents":
+		err = backfillAuditParents(args)
 	default:
 		usage()
 	}

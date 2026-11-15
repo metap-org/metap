@@ -101,7 +101,12 @@ func (s *RecordService) List(ctx context.Context, req *pb.ListRequest) (*pb.List
 		nextCursor = *result.Page.NextCursor
 		hasMore = true
 	}
-	return &pb.ListResponse{Records: records, NextCursor: nextCursor, HasMore: hasMore}, nil
+	resp := &pb.ListResponse{Records: records, NextCursor: nextCursor, HasMore: hasMore}
+	resp.CanCreate, resp.CanUpdate, resp.CanDelete = result.Capabilities.CanCreate, result.Capabilities.CanUpdate, result.Capabilities.CanDelete
+	if result.Page.Total != nil {
+		resp.Total, resp.HasTotal = *result.Page.Total, true
+	}
+	return resp, nil
 }
 
 func (s *RecordService) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, error) {

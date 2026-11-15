@@ -44,6 +44,15 @@ func listInputFromQuery(q map[string]any) (query.ListInput, error) {
 	if s, ok := GetStr(q, "jql"); ok {
 		input.JQL = &s
 	}
+	if s, ok := GetStr(q, "search"); ok {
+		input.Search = &s
+	}
+	if n, ok := GetI64(q, "offset"); ok {
+		input.Offset = n
+	}
+	if b, ok := q["withTotal"].(bool); ok {
+		input.WithTotal = b
+	}
 	return input, nil
 }
 

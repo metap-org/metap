@@ -165,7 +165,7 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 	s.invalidateContextCacheIfConfigured(entity.Name, tenantID, data)
 
 	versionAfter := record.Version
-	s.recordAudit(ctx, entity, audit.Entry{
+	s.recordAudit(ctx, entity, record.Data, audit.Entry{
 		TenantID:     tenantID,
 		Entity:       entity.Name,
 		RecordID:     record.ID,

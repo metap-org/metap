@@ -31,6 +31,9 @@ func EntityFieldJSONSchema() map[string]any {
 			"minLength":       map[string]any{"type": "number"},
 			"maxLength":       map[string]any{"type": "number"},
 			"computed":        computedSpecJSONSchema(),
+			"widget": map[string]any{"type": "string", "enum": []string{
+				"switch", "checkbox", "select", "radio", "combobox", "textarea", "multiselect", "checkboxGroup", "tags",
+			}},
 		},
 		"required": []string{"name", "label", "kind"},
 	}

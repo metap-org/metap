@@ -91,7 +91,9 @@ func (s *CrudService) registryFor(ctx context.Context, tenantID uuid.UUID) (*met
 // *after* the caller's own business write has already committed — a store error is only logged,
 // never surfaced to the caller, since an audit-write failure must not turn an already-successful
 // business write into a failed response.
-func (s *CrudService) recordAudit(ctx context.Context, entity metadata.EntityDefinition, entry audit.Entry) {
+// recordAudit writes one audit entry. data is the record as written (read back from the row), the
+// source of the entry's parent when the entity declares EntityAuditConfig.Parent.
+func (s *CrudService) recordAudit(ctx context.Context, entity metadata.EntityDefinition, data JsonObject, entry audit.Entry) {
 	if s.auditStore == nil {
 		return
 	}
@@ -102,9 +104,29 @@ func (s *CrudService) recordAudit(ctx context.Context, entity metadata.EntityDef
 	// Write-side redaction, applied here rather than at each of the 4 call sites precisely
 	// because this is the one choke point all of them pass through.
 	audit.RedactDiffFields(entry.Diff, config.RedactedFields)
+	if parentEntity := entity.AuditParentEntity(); parentEntity != "" {
+		if id, ok := parentIDOf(data, config.Parent); ok {
+			entry.ParentEntity, entry.ParentID = &parentEntity, &id
+		}
+	}
 	if err := s.auditStore.Record(ctx, entry.TenantID, entry); err != nil {
 		slog.Error("failed to record audit trail entry", "entity", entity.Name, standard.LogError, err)
 	}
+}
+
+// parentIDOf reads the parent reference field's value (a uuid string) from a record's data; false
+// when it is absent, null or not a uuid (a record with no parent, e.g. a tenant-wide rule).
+func parentIDOf(data JsonObject, field string) (uuid.UUID, bool) {
+	raw, ok := data[field]
+	if !ok {
+		return uuid.Nil, false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil || s == "" {
+		return uuid.Nil, false
+	}
+	id, err := uuid.Parse(s)
+	return id, err == nil
 }
 
 // invalidateContextCacheIfConfigured no-ops unless contextInvalidation is configured *and*

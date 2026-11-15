@@ -18,6 +18,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
@@ -486,11 +487,79 @@ func TestAuditedEntityWritesAreRecordedAndUnauditedEntityWritesAreNot(t *testing
 	require.EqualValues(t, 0, plainCount, "expected no audit row for unaudited entity, got %d", plainCount)
 	require.EqualValues(t, 1, auditedCount, "expected exactly 1 audit row for audited entity, got %d", auditedCount)
 
-	events, err := crud.ListAuditEvents(ctx, "test.audited_orders", audited.ID, rc)
-	require.NoError(t, err, "list audit events failed: %v %+v", err, events)
+	page, err := crud.ListAuditEvents(ctx, "test.audited_orders", audited.ID, AuditQuery{}, rc)
+	require.NoError(t, err, "list audit events failed: %v %+v", err, page)
+	require.Len(t, page.Data, 1, "got %+v", page.Data)
+	require.Equal(t, "create", page.Data[0].Action, "got %+v", page.Data)
+	require.Nil(t, page.NextCursor)
+}
+
+// A child entity that declares Audit.Parent writes its parent into each entry, and the parent's
+// history with IncludeChildren shows the child's entries too — after the child is deleted as
+// well — one cursor page at a time.
+func TestAuditParentHistoryIncludesChildrenAndPages(t *testing.T) {
+	pool := testPool(t)
+	tenantID := uuid.New()
+	defer cleanupTenant(t, pool, tenantID)
+	ctx := context.Background()
+	rc := adminContext(tenantID)
+
+	parent := parentEntity()
+	parent.Audit = &metadata.EntityAuditConfig{Enabled: true}
+	child := childEntity()
+	child.Fields = append(child.Fields, metadata.EntityField{Name: "note", Label: "Note", Kind: metadata.KindString})
+	child.Audit = &metadata.EntityAuditConfig{Enabled: true, Parent: "parentId"}
+	require.NoError(t, metadata.Validate(child))
+
+	reg := metadata.NewMetadataRegistry()
+	for _, e := range []metadata.EntityDefinition{parent, child} {
+		reconcileEntities(pool, e)
+		require.NoError(t, reg.Register(e))
+	}
+	var ptr atomic.Pointer[metadata.MetadataRegistry]
+	ptr.Store(reg)
+	crud := WithAudit(testRouter(pool), &ptr, testPermissions(pool), audit.NewPostgresStore(pool))
+
+	p, err := crud.Create(ctx, "test.parents", JsonObject{"name": raw("zone")}, rc, nil)
 	require.NoError(t, err)
-	require.Len(t, events, 1, "got %+v", events)
-	require.Equal(t, "create", events[0].Action, "got %+v", events)
+	c, err := crud.Create(ctx, "test.children", JsonObject{"parentId": raw(p.ID.String()), "note": raw("a")}, rc, nil)
+	require.NoError(t, err)
+	c, err = crud.Update(ctx, "test.children", c.ID, c.Version, JsonObject{"note": raw("b")}, rc, nil)
+	require.NoError(t, err)
+	_, err = crud.Delete(ctx, "test.children", c.ID, c.Version, rc, nil)
+	require.NoError(t, err)
+
+	own, err := crud.ListAuditEvents(ctx, "test.parents", p.ID, AuditQuery{}, rc)
+	require.NoError(t, err)
+	require.Len(t, own.Data, 1, "without IncludeChildren, only the parent's own entry")
+
+	all, err := crud.ListAuditEvents(ctx, "test.parents", p.ID, AuditQuery{IncludeChildren: true}, rc)
+	require.NoError(t, err)
+	require.Len(t, all.Data, 4, "parent create + child create/update/delete, the deleted child included")
+	require.Equal(t, "delete", all.Data[0].Action, "newest first")
+	require.Equal(t, "test.children", all.Data[0].Entity)
+	require.Equal(t, "test.parents", *all.Data[0].ParentEntity)
+	require.Equal(t, p.ID, *all.Data[0].ParentID)
+
+	first, err := crud.ListAuditEvents(ctx, "test.parents", p.ID, AuditQuery{IncludeChildren: true, Limit: 3}, rc)
+	require.NoError(t, err)
+	require.Len(t, first.Data, 3)
+	require.NotNil(t, first.NextCursor)
+	rest, err := crud.ListAuditEvents(ctx, "test.parents", p.ID, AuditQuery{IncludeChildren: true, Limit: 3, Cursor: first.NextCursor}, rc)
+	require.NoError(t, err)
+	require.Len(t, rest.Data, 1)
+	require.Equal(t, "test.parents", rest.Data[0].Entity, "the oldest entry is the parent's create")
+	require.Nil(t, rest.NextCursor)
+
+	updates, err := crud.ListAuditEvents(ctx, "test.parents", p.ID, AuditQuery{IncludeChildren: true, Actions: []string{"update"}}, rc)
+	require.NoError(t, err)
+	require.Len(t, updates.Data, 1)
+
+	bad := "not-a-cursor"
+	_, err = crud.ListAuditEvents(ctx, "test.parents", p.ID, AuditQuery{Cursor: &bad}, rc)
+	var se *ServiceError
+	require.ErrorAs(t, err, &se)
+	require.Equal(t, errcode.InvalidCursor, se.Code)
 }
 
 func apiKeyEntity() metadata.EntityDefinition {

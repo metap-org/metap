@@ -48,6 +48,9 @@ func (f EntityField) Sort() EntityField { f.Sortable = Ptr(true); return f }
 // Search marks the field searchable.
 func (f EntityField) Search() EntityField { f.Searchable = Ptr(true); return f }
 
+// WithWidget picks the input control a generic form renders for the field.
+func (f EntityField) WithWidget(w FieldWidget) EntityField { f.Widget = &w; return f }
+
 // Uniq marks the field unique within a tenant.
 func (f EntityField) Uniq() EntityField { f.Unique = Ptr(true); return f }
 
