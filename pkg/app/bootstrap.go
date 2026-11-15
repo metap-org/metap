@@ -9,10 +9,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 
 	"github.com/metap-org/metap/pkg/bootstrap"
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
@@ -44,17 +46,21 @@ func BootstrapMain(opts BootstrapOptions) {
 //	<SecretRef>         one environment variable per declared user (see bootstrap.EnvPasswords)
 //
 // NODE_ENV=production makes a missing password for a new user fatal.
+//
+// It reads only what it uses (DATABASE_URL, NODE_ENV and the secret-store variables), not
+// infra.LoadConfig: a one-shot that only writes grants and users needs no RabbitMQ or token keys.
 func RunBootstrap(ctx context.Context, opts BootstrapOptions) error {
-	config, err := infra.LoadConfig()
+	_ = godotenv.Load()
+	databaseURL, err := env.Require("DATABASE_URL")
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err
 	}
-	pool, err := infra.Connect(ctx, config.DatabaseURL)
+	pool, err := infra.Connect(ctx, databaseURL)
 	if err != nil {
 		return fmt.Errorf("connecting to postgres: %w", err)
 	}
 	defer pool.Close()
-	secretStore, err := secrets.Build(ctx, secrets.ConfigFromAppConfig(config))
+	secretStore, err := secrets.Build(ctx, secrets.ConfigFromEnv())
 	if err != nil {
 		return fmt.Errorf("building secret store: %w", err)
 	}
@@ -75,7 +81,7 @@ func RunBootstrap(ctx context.Context, opts BootstrapOptions) error {
 	if err != nil {
 		return err
 	}
-	return ApplyBootstrap(ctx, registry, permissions, router, tenants, decl, config.NodeEnv == infra.NodeEnvProduction, opts.Name)
+	return ApplyBootstrap(ctx, registry, permissions, router, tenants, decl, env.String("NODE_ENV", "") == "production", opts.Name)
 }
 
 // declaration is everything the binary submitted, plus extra, plus the BOOTSTRAP_FILE overlay.
