@@ -269,6 +269,24 @@ type FieldDisplayHint struct {
 type EntityAuditConfig struct {
 	Enabled        bool     `json:"enabled"`
 	RedactedFields []string `json:"redactedFields,omitempty"`
+	// Parent names a reference field (with refEntity) whose target owns this record, e.g.
+	// "zoneId" on a zone's firewall rule. Each audit entry then also records that parent, so the
+	// parent's history can include its children's in one paged query, deleted children included.
+	Parent string `json:"parent,omitempty"`
+}
+
+// AuditParentEntity is the entity Audit.Parent points at ("" when there is none or it is not a
+// reference with refEntity, which Validate rejects).
+func (e EntityDefinition) AuditParentEntity() string {
+	if e.Audit == nil || e.Audit.Parent == "" {
+		return ""
+	}
+	for _, f := range e.Fields {
+		if f.Name == e.Audit.Parent && f.Kind == KindReference && f.RefEntity != nil {
+			return *f.RefEntity
+		}
+	}
+	return ""
 }
 
 type EntityDefinition struct {

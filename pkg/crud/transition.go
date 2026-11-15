@@ -186,7 +186,7 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 
 	versionAfter := record.Version
 	transitionAction := action
-	s.recordAudit(ctx, entity, audit.Entry{
+	s.recordAudit(ctx, entity, record.Data, audit.Entry{
 		TenantID:         tenantID,
 		Entity:           entity.Name,
 		RecordID:         record.ID,

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/reconciler"
 )
@@ -420,5 +421,42 @@ func restoreLegacyData(args []string) error {
 		return fmt.Errorf("restore is not clean; do not start the old release yet")
 	}
 	fmt.Println("Restore is clean. The previous release can be started.")
+	return nil
+}
+
+// backfillAuditParents fills the parent of audit entries written before each entity declared
+// EntityAuditConfig.Parent (or before migration 0039), so a parent's history includes them. Each
+// file is an entity definition whose audit.parent is set and whose tableName is its real table.
+// Works on the shared database (Schema-strategy tables); a DedicatedDb tenant's tables live in
+// that tenant's own database and are not covered.
+func backfillAuditParents(args []string) error {
+	paths := args[2:]
+	if len(paths) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: dev-tools backfill-audit-parents <entityJsonPath> [entityJsonPath ...]")
+		fmt.Fprintln(os.Stderr, "  Each file: a GET /metadata/entities/<entity> response or a bare entity definition,")
+		fmt.Fprintln(os.Stderr, "  with audit.parent naming a reference field and tableName the real table.")
+		os.Exit(1)
+	}
+	ctx := context.Background()
+	pool, err := connectShared(ctx, 2)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	for _, path := range paths {
+		entity, err := loadEntityFromFile(path)
+		if err != nil {
+			return err
+		}
+		parentEntity := entity.AuditParentEntity()
+		if parentEntity == "" {
+			return fmt.Errorf("%s: audit.parent is not set to a reference field with refEntity", entity.Name)
+		}
+		n, err := audit.BackfillParents(ctx, pool, entity.Name, entity.TableName, entity.Audit.Parent, parentEntity)
+		if err != nil {
+			return fmt.Errorf("%s: %w", entity.Name, err)
+		}
+		fmt.Printf("%s: %d audit entr(y/ies) now point at their %s parent.\n", entity.Name, n, parentEntity)
+	}
 	return nil
 }

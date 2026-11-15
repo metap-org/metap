@@ -51,6 +51,11 @@ type Entry struct {
 	Diff             JsonObject // {field: {"before": ..., "after": ...}}, changed keys only
 	VersionAfter     *int32
 	OccurredAt       time.Time
+	// ParentEntity/ParentID: the record that owns this one (EntityAuditConfig.Parent), so the
+	// parent's history can include this entry. Both nil when the entity declares no parent or
+	// this record has none (e.g. a tenant-wide rule with no zone).
+	ParentEntity *string
+	ParentID     *uuid.UUID
 }
 
 // Row is one row read back from metadata.audit_trail_entries — the read side of Store.Record's
@@ -67,6 +72,8 @@ type Row struct {
 	Diff             json.RawMessage `json:"diff"`
 	VersionAfter     *int32          `json:"versionAfter,omitempty"`
 	OccurredAt       time.Time       `json:"occurredAt"`
+	ParentEntity     *string         `json:"parentEntity,omitempty"`
+	ParentID         *uuid.UUID      `json:"parentId,omitempty"`
 }
 
 // RedactedMarker is the key of the marker that stands in for a redacted field's

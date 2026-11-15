@@ -119,7 +119,7 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 	}
 
 	versionAfter := record.Version
-	s.recordAudit(ctx, entity, audit.Entry{
+	s.recordAudit(ctx, entity, record.Data, audit.Entry{
 		TenantID:    tenantID,
 		Entity:      entity.Name,
 		RecordID:    record.ID,

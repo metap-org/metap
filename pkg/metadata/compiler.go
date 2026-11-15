@@ -407,6 +407,9 @@ func Validate(entity EntityDefinition) error {
 			}
 			seen[name] = true
 		}
+		if audit.Parent != "" && entity.AuditParentEntity() == "" {
+			issues = append(issues, fmt.Sprintf("audit.parent %q must name a reference field with refEntity", audit.Parent))
+		}
 	}
 
 	entityNameOK := strings.Contains(entity.Name, ".")

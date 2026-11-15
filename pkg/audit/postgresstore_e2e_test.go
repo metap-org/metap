@@ -38,7 +38,7 @@ func TestRecordThenListForRecordRoundTrips(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	rows, err := store.ListForRecord(ctx, tenant, "crm.customers", record)
+	rows, err := store.Query(ctx, tenant, Query{Entity: "crm.customers", RecordID: record})
 	require.NoError(t, err)
 	require.Len(t, rows, 1, "got %d rows, want 1", len(rows))
 	require.Equal(t, "update", rows[0].Action, "got %+v", rows[0])
@@ -71,7 +71,7 @@ func TestListForRecordReturnsNewestFirst(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	rows, err := store.ListForRecord(ctx, tenant, "crm.customers", record)
+	rows, err := store.Query(ctx, tenant, Query{Entity: "crm.customers", RecordID: record})
 	require.NoError(t, err)
 	require.Len(t, rows, 3, "got %d rows", len(rows))
 	for i := 0; i < len(rows)-1; i++ {
@@ -90,7 +90,7 @@ func TestCreateEntryHasNoBeforeStateByConvention(t *testing.T) {
 		Action: ActionCreate, Diff: diff, OccurredAt: time.Now(),
 	})
 	require.NoError(t, err)
-	rows, _ := store.ListForRecord(ctx, tenant, "crm.customers", record)
+	rows, _ := store.Query(ctx, tenant, Query{Entity: "crm.customers", RecordID: record})
 	var entry map[string]json.RawMessage
 	_ = json.Unmarshal(rows[0].Diff, &entry)
 	var nameEntry map[string]json.RawMessage
@@ -152,4 +152,105 @@ func TestAuditRowsRouteToMonthPartitionsAndDefaultRowsMoveWhenThePartitionIsCrea
 	again, err := EnsurePartitions(ctx, pool, monthsAhead)
 	require.NoError(t, err, "second run must be a no-op: created=%d err=", again)
 	require.Equal(t, 0, again, "second run must be a no-op: created=%d err=%v", again, err)
+}
+
+// A parent's history includes its children's entries (only for the child entities asked for),
+// pages by (occurredAt, id) without gaps or repeats, and filters by action and entity.
+func TestQueryIncludesChildrenPagesAndFilters(t *testing.T) {
+	store := NewPostgresStore(testPool(t))
+	ctx := context.Background()
+	tenant := uuid.New()
+	zone := uuid.New()
+	zoneEntity := "waf.zones"
+	base := time.Now().UTC().Add(-time.Hour)
+
+	record := func(entity string, id uuid.UUID, action AuditAction, parent bool, at time.Time) {
+		e := Entry{TenantID: tenant, Entity: entity, RecordID: id, Action: action, Diff: JsonObject{}, OccurredAt: at}
+		if parent {
+			e.ParentEntity, e.ParentID = &zoneEntity, &zone
+		}
+		require.NoError(t, store.Record(ctx, tenant, e))
+	}
+	record(zoneEntity, zone, ActionCreate, false, base)
+	rule := uuid.New()
+	for i := 0; i < 5; i++ {
+		action := ActionUpdate
+		if i == 0 {
+			action = ActionCreate
+		}
+		record("waf.firewall_rules", rule, action, true, base.Add(time.Duration(i+1)*time.Minute))
+	}
+	record("waf.ddos_policies", uuid.New(), ActionCreate, true, base.Add(10*time.Minute))
+	// Another zone's child must never show up.
+	other := uuid.New()
+	e := Entry{TenantID: tenant, Entity: "waf.firewall_rules", RecordID: uuid.New(), Action: ActionCreate,
+		Diff: JsonObject{}, OccurredAt: base, ParentEntity: &zoneEntity, ParentID: &other}
+	require.NoError(t, store.Record(ctx, tenant, e))
+
+	own, err := store.Query(ctx, tenant, Query{Entity: zoneEntity, RecordID: zone, Limit: 50})
+	require.NoError(t, err)
+	require.Len(t, own, 1, "without ChildEntities only the zone's own entry")
+
+	children := []string{"waf.firewall_rules", "waf.ddos_policies"}
+	all, err := store.Query(ctx, tenant, Query{Entity: zoneEntity, RecordID: zone, ChildEntities: children, Limit: 50})
+	require.NoError(t, err)
+	require.Len(t, all, 7)
+	require.Equal(t, "waf.ddos_policies", all[0].Entity, "newest first")
+	require.Equal(t, zoneEntity, *all[1].ParentEntity)
+
+	onlyRules, err := store.Query(ctx, tenant, Query{Entity: zoneEntity, RecordID: zone, ChildEntities: children[:1], Limit: 50})
+	require.NoError(t, err)
+	require.Len(t, onlyRules, 6, "a child entity not listed is left out")
+
+	// Pages of 3: the store returns Limit+1 rows; continuing after the 3rd yields the rest.
+	page1, err := store.Query(ctx, tenant, Query{Entity: zoneEntity, RecordID: zone, ChildEntities: children, Limit: 3})
+	require.NoError(t, err)
+	require.Len(t, page1, 4)
+	last := page1[2]
+	page2, err := store.Query(ctx, tenant, Query{Entity: zoneEntity, RecordID: zone, ChildEntities: children, Limit: 3,
+		After: &Cursor{OccurredAt: last.OccurredAt, ID: last.ID}})
+	require.NoError(t, err)
+	require.Len(t, page2, 4)
+	require.Equal(t, all[3].ID, page2[0].ID, "page 2 starts right after page 1")
+
+	creates, err := store.Query(ctx, tenant, Query{Entity: zoneEntity, RecordID: zone, ChildEntities: children,
+		Actions: []string{"create"}, Limit: 50})
+	require.NoError(t, err)
+	require.Len(t, creates, 3)
+
+	ddosOnly, err := store.Query(ctx, tenant, Query{Entity: zoneEntity, RecordID: zone, ChildEntities: children,
+		Entities: []string{"waf.ddos_policies"}, Limit: 50})
+	require.NoError(t, err)
+	require.Len(t, ddosOnly, 1)
+}
+
+// BackfillParents points pre-existing entries at their record's current parent, leaves records
+// with no parent (or no row) alone, and is a no-op on a second run.
+func TestBackfillParentsFillsFromTheRecordsParentColumn(t *testing.T) {
+	pool := testPool(t)
+	store := NewPostgresStore(pool)
+	ctx := context.Background()
+	tenant := uuid.New()
+	_, err := pool.Exec(ctx, `CREATE TABLE public.test_audit_rules (id uuid PRIMARY KEY, tenant_id uuid NOT NULL, "zoneId" uuid)`)
+	require.NoError(t, err)
+	t.Cleanup(func() { pool.Exec(context.Background(), `DROP TABLE IF EXISTS public.test_audit_rules`) })
+
+	zone, withZone, noZone, gone := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	_, err = pool.Exec(ctx, `INSERT INTO public.test_audit_rules VALUES ($1, $3, $4), ($2, $3, NULL)`, withZone, noZone, tenant, zone)
+	require.NoError(t, err)
+	for _, id := range []uuid.UUID{withZone, withZone, noZone, gone} {
+		require.NoError(t, store.Record(ctx, tenant, Entry{TenantID: tenant, Entity: "t.rules", RecordID: id,
+			Action: ActionUpdate, Diff: JsonObject{}, OccurredAt: time.Now()}))
+	}
+
+	n, err := BackfillParents(ctx, pool, "t.rules", "public.test_audit_rules", "zoneId", "t.zones")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, n)
+	rows, err := store.Query(ctx, tenant, Query{Entity: "t.zones", RecordID: zone, ChildEntities: []string{"t.rules"}, Limit: 50})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+
+	again, err := BackfillParents(ctx, pool, "t.rules", "public.test_audit_rules", "zoneId", "t.zones")
+	require.NoError(t, err)
+	require.EqualValues(t, 0, again)
 }

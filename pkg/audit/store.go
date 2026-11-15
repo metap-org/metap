@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -23,7 +24,33 @@ type Store interface {
 	// two match rather than trust the caller silently.
 	Record(ctx context.Context, tenantID uuid.UUID, entry Entry) error
 
-	// ListForRecord is the read side — every entry recorded for one (tenant, entity, record),
-	// newest first, capped the same way QueryPlanner enforces a max limit everywhere else.
-	ListForRecord(ctx context.Context, tenantID uuid.UUID, entity string, recordID uuid.UUID) ([]Row, error)
+	// Query is the read side: one record's entries (and, with ChildEntities, its children's),
+	// newest first, one page at a time.
+	Query(ctx context.Context, tenantID uuid.UUID, q Query) ([]Row, error)
+}
+
+// Query selects one page of a record's audit history.
+type Query struct {
+	Entity   string
+	RecordID uuid.UUID
+	// ChildEntities also includes entries whose parent is this record, for these entities only
+	// (the caller decides which child entities the reader may see). Empty: the record alone.
+	ChildEntities []string
+	// Entities, when set, keeps only entries of these entities (the record's own and children's).
+	Entities []string
+	// Actions, when set, keeps only these actions ("create", "update", "delete", "transition").
+	Actions     []string
+	ActorUserID *uuid.UUID
+	From, To    *time.Time // occurred_at >= From, < To
+	// After continues a previous page: entries strictly older than this (occurredAt, id) key.
+	After *Cursor
+	// Limit is the page size; the store returns up to Limit+1 rows so the caller can tell
+	// whether another page exists.
+	Limit int
+}
+
+// Cursor is the keyset position of the last entry on a page.
+type Cursor struct {
+	OccurredAt time.Time
+	ID         uuid.UUID
 }
