@@ -151,6 +151,11 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   `pkg/kit/errcode` (`errcode.ValidationFailed`, `RecordNotFound`, ...), never a quoted string; `ServiceError` constructors take
   `http.Status*`, not a number; the admin role and policy action names are `permission.RoleAdmin` / `permission.PolicyAction*`;
   the JWT clock-skew tolerance is `jwks.DefaultLeeway`. A new code, role, action or tunable goes in that one place first.
+  **`pkg/kit/standard` (wave 2)** holds the rest of what services must agree on: timestamp layouts (`TimestampMillis`,
+  `TimestampNanos`, `NowRFC3339()`), header and media-type names (`HeaderContentType`, `MediaTypeJSON`, `BearerPrefix`, ...),
+  Postgres schema names (`SchemaMetadata`/`SchemaControl`/`SchemaPublic`) and slog attribute keys (`LogError`, `LogTenantID`, ...);
+  `errcode` also carries the OAuth2 protocol codes (`OAuthInvalidClient`, ...). Never retype `"Content-Type"`,
+  `"application/json"`, a `time` layout string or `"error"` as a log key.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
