@@ -80,16 +80,14 @@ func pickToken(rc *permission.RequestContext, serviceToken *httpx.ServiceTokenSo
 	return serviceToken.Current()
 }
 
-// outgoingContext attaches the bearer token (via pickToken) and, if ctx is running inside a
-// traced call (httpx.CurrentTrace), the W3C traceparent — the one choke point every outbound
+// outgoingContext attaches the bearer token (via pickToken), this service's name, and whatever
+// request ids / W3C traceparent ctx carries (outgoingIDs) — the one choke point every outbound
 // RPC goes through, so a caller running inside an incoming request automatically propagates its
 // trace context to whichever upstream microservice this backend calls.
 func (b *GrpcBackend) outgoingContext(ctx context.Context, rc *permission.RequestContext) context.Context {
 	token := pickToken(rc, b.serviceToken)
 	md := grpcmd.Pairs("authorization", standard.BearerPrefix+token)
-	if tc, ok := httpx.CurrentTrace(ctx); ok {
-		md.Append(standard.HeaderTraceparent, tc.ToTraceparentHeader())
-	}
+	outgoingIDs(ctx, md)
 	return grpcmd.NewOutgoingContext(ctx, md)
 }
 

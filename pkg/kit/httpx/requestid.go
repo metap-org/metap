@@ -41,7 +41,7 @@ func headerOrNewUUID(h http.Header, name string) string {
 // TraceContextFromHeaders), making both ambient for the rest of the request through r.Context().
 func GenerateRequestIDs(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		traceID := headerOrNewUUID(r.Header, "x-trace-id")
+		traceID := headerOrNewUUID(r.Header, standard.HeaderLegacyTraceID)
 		// A mesh ingress sets x-request-id before this service sees the request and expects it
 		// preserved end-to-end — only mint a new one when genuinely absent.
 		requestID := headerOrNewUUID(r.Header, standard.HeaderRequestID)
@@ -52,4 +52,19 @@ func GenerateRequestIDs(next http.Handler) http.Handler {
 		ctx = WithTraceContext(ctx, traceCtx)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// WithRequestIDs makes ids ambient for CurrentRequestIDs — for a transport that is not net/http
+// (the gRPC server) and so never runs GenerateRequestIDs.
+func WithRequestIDs(ctx context.Context, ids RequestIDs) context.Context {
+	return context.WithValue(ctx, requestIDsKey{}, ids)
+}
+
+// OpaqueIDOrNew returns v when it is a valid opaque id (what GenerateRequestIDs accepts from an
+// incoming header), otherwise a fresh UUID.
+func OpaqueIDOrNew(v string) string {
+	if isValidOpaqueID(v) {
+		return v
+	}
+	return newUUID()
 }

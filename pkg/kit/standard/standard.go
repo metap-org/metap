@@ -31,7 +31,11 @@ const (
 	HeaderAuthorization = "Authorization"
 	HeaderTraceparent   = "traceparent"
 	HeaderRequestID     = "x-request-id"
-	HeaderCSRFToken     = "X-CSRF-Token"
+	// HeaderLegacyTraceID is the opaque per-call-chain id that predates W3C traceparent.
+	HeaderLegacyTraceID = "x-trace-id"
+	// HeaderCaller names the calling service on an internal (service-to-service) call.
+	HeaderCaller    = "x-metap-caller"
+	HeaderCSRFToken = "X-CSRF-Token"
 
 	MediaTypeJSON = "application/json"
 	MediaTypeHTML = "text/html; charset=utf-8"
@@ -60,4 +64,12 @@ const (
 	LogTriggerKind = "trigger_kind"
 	LogStepIndex   = "step_index"
 	LogLatencyMs   = "latency_ms"
+	LogUserID      = "user_id"
+	LogRequestID   = "request_id"
+	LogTraceID     = "trace_id"
+	LogSpanID      = "span_id"
+	LogEntity      = "entity"
+	LogRecordID    = "record_id"
+	LogAction      = "action"
+	LogCaller      = "caller"
 )

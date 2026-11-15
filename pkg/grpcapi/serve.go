@@ -2,7 +2,6 @@
 package grpcapi
 
 import (
-	"context"
 	"crypto/rsa"
 	"fmt"
 	"log/slog"
@@ -28,20 +27,7 @@ const (
 	rateBurst    = 300
 )
 
-// Logs the generic RPC method name (e.g. "/metap.crud.v1.RecordService/List") and latency/error.
-func logUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	start := time.Now()
-	resp, err := handler(ctx, req)
-	latency := time.Since(start)
-	if err != nil {
-		slog.Error("grpc request failed", "method", info.FullMethod, standard.LogLatencyMs, latency.Milliseconds(), standard.LogError, err)
-	} else {
-		slog.Info("grpc request completed", "method", info.FullMethod, standard.LogLatencyMs, latency.Milliseconds())
-	}
-	return resp, err
-}
-
-// NewServer builds the *grpc.Server (rate limiting + access logging, RecordService registered)
+// NewServer builds the *grpc.Server (access logging + rate limiting, RecordService registered)
 // without starting to serve — exposed separately from Serve so a caller that wants a stoppable
 // handle (GracefulStop) can call srv.Serve(lis) itself.
 //
@@ -50,7 +36,7 @@ func logUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInf
 // instead of reusing httpserver's RateLimit directly (that one wraps net/http, not grpc).
 func NewServer(service *RecordService, actions ...*ActionService) *grpc.Server {
 	limiter := newRateLimiter(rateInterval, rateBurst)
-	srv := grpc.NewServer(grpc.ChainUnaryInterceptor(limiter.UnaryInterceptor(), logUnaryInterceptor))
+	srv := grpc.NewServer(grpc.ChainUnaryInterceptor(callLogInterceptor, limiter.UnaryInterceptor()))
 	pb.RegisterRecordServiceServer(srv, service)
 	for _, a := range actions {
 		pb.RegisterActionServiceServer(srv, a)

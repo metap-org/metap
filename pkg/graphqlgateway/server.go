@@ -223,11 +223,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
 }
 
-func (s *Server) Router() *http.ServeMux {
+// Router is the gateway's HTTP handler. It mints/propagates the request and trace ids and logs
+// one access line per request, the same as every metap service: without them the gRPC calls a
+// query fans out into could not be tied back to the GraphQL request that caused them.
+func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/graphql", s.handleGraphQL)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("GET /metadata/entities", s.handleMetadataList)
 	mux.HandleFunc("GET /metadata/entities/{entity}", s.handleMetadata)
-	return mux
+	return httpx.GenerateRequestIDs(httpx.Trace(mux))
 }
