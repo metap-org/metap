@@ -18,6 +18,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/kit/errcode"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
@@ -457,10 +458,10 @@ func computeCapabilities(entity metadata.EntityDefinition, rc *permission.Reques
 func sortFieldValue(row RecordDto, field string) *string {
 	switch field {
 	case "createdAt":
-		s := row.CreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00")
+		s := row.CreatedAt.Format(standard.TimestampNanos)
 		return &s
 	case "updatedAt":
-		s := row.UpdatedAt.Format("2006-01-02T15:04:05.999999999Z07:00")
+		s := row.UpdatedAt.Format(standard.TimestampNanos)
 		return &s
 	}
 	raw, ok := row.Data[field]

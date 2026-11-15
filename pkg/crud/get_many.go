@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
 )
@@ -29,7 +30,7 @@ func (s *CrudService) GetMany(ctx context.Context, entityName string, ids []uuid
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return nil, NewServiceError(http.StatusNotFound, "entity_not_found")
+		return nil, NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
 	}
 
 	decision, err := s.permissions.CanReadEntity(ctx, rc, entity.Name)

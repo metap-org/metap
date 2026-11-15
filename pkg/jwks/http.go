@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // SharedKeyStore is the concurrency wrapper every caller of Handler needs — JwksKeyStore itself has
@@ -75,7 +77,7 @@ func (s *SharedKeyStore) Replace(store *JwksKeyStore) {
 
 func Handler(store *SharedKeyStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(standard.HeaderContentType, standard.MediaTypeJSON)
 		_ = json.NewEncoder(w).Encode(store.JwkSet())
 	}
 }

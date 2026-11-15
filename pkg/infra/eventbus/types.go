@@ -11,6 +11,8 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 const exchange = "metap.events"
@@ -50,14 +52,14 @@ func (e *ConsumedEvent) Nack(requeue bool) error {
 // visible, because it is the sign of duplicate deliveries a handler should be idempotent against.
 func (e *ConsumedEvent) AckLogged() {
 	if err := e.Ack(); err != nil {
-		slog.Warn("event ack failed; the broker will redeliver it", "routing_key", e.RoutingKey, "error", err)
+		slog.Warn("event ack failed; the broker will redeliver it", standard.LogRoutingKey, e.RoutingKey, standard.LogError, err)
 	}
 }
 
 // NackLogged is Nack with the same failure logging as AckLogged.
 func (e *ConsumedEvent) NackLogged(requeue bool) {
 	if err := e.Nack(requeue); err != nil {
-		slog.Warn("event nack failed; the broker will redeliver it", "routing_key", e.RoutingKey, "requeue", requeue, "error", err)
+		slog.Warn("event nack failed; the broker will redeliver it", standard.LogRoutingKey, e.RoutingKey, "requeue", requeue, standard.LogError, err)
 	}
 }
 
@@ -77,7 +79,7 @@ func (e *ConsumedEvent) RetryCount() uint32 {
 func (e *ConsumedEvent) RetryOrGiveUp(ctx context.Context, policy *RetryPolicy) error {
 	attempt := int(e.RetryCount())
 	if attempt >= len(policy.Delays) {
-		slog.Warn("retry attempts exhausted, routed to dead-letter queue", "queue", e.queue, "attempt", attempt)
+		slog.Warn("retry attempts exhausted, routed to dead-letter queue", standard.LogQueue, e.queue, standard.LogAttempt, attempt)
 		return e.Nack(false)
 	}
 

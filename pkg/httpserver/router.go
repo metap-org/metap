@@ -9,6 +9,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/runtime"
 )
 
@@ -27,7 +28,7 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 	cors := httpx.CORS(httpx.CORSOptions{
 		Origins: corsOrigins,
 		Methods: []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete},
-		Headers: []string{"Authorization", "Content-Type", "Accept"},
+		Headers: []string{standard.HeaderAuthorization, standard.HeaderContentType, "Accept"},
 	})
 
 	r.Use(httpx.GenerateRequestIDs)

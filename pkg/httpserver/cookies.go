@@ -7,6 +7,7 @@ package httpserver
 
 import (
 	"github.com/metap-org/metap/pkg/kit/httpx"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"net/http"
 	"strconv"
 )
@@ -62,7 +63,7 @@ func clearSessionCookies(secure bool) (*http.Cookie, *http.Cookie, *http.Cookie)
 // cross-site request), so only a request actually authenticating *by cookie* has to present the
 // double-submit pair.
 func credentialIssuingRequestAllowed(r *http.Request) bool {
-	if r.Header.Get("Authorization") != "" {
+	if r.Header.Get(standard.HeaderAuthorization) != "" {
 		return true
 	}
 	sessionCookie, err := r.Cookie(httpx.SessionCookieName)

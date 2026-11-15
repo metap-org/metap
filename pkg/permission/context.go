@@ -3,6 +3,8 @@ package permission
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 
 const (
@@ -133,10 +135,10 @@ type PermissionDecision struct {
 
 func Allowed() PermissionDecision { return PermissionDecision{Allowed: true} }
 func Forbidden() PermissionDecision {
-	return PermissionDecision{Allowed: false, Reason: "forbidden"}
+	return PermissionDecision{Allowed: false, Reason: errcode.Forbidden}
 }
 func ForbiddenField(field string) PermissionDecision {
-	return PermissionDecision{Allowed: false, Reason: "forbidden", Field: field}
+	return PermissionDecision{Allowed: false, Reason: errcode.Forbidden, Field: field}
 }
 
 // EntityAction is one of the 5 actions a policy can grant.

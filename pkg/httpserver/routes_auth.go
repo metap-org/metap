@@ -36,7 +36,7 @@ type loginBody struct {
 func login(w http.ResponseWriter, r *http.Request, state *AppState) {
 	// Checked before the credentials, so a non-issuer never acts as a password oracle.
 	if !state.CanIssueTokens() {
-		writeServiceError(w, http.StatusNotImplemented, "not_token_issuer", ErrNotTokenIssuer.Error(), nil)
+		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
 		return
 	}
 	var body loginBody
@@ -77,7 +77,7 @@ func login(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 
 	if user == nil {
-		writeServiceError(w, http.StatusUnauthorized, "invalid_credentials", "Invalid email or password.", nil)
+		writeServiceError(w, http.StatusUnauthorized, errcode.InvalidCredentials, "Invalid email or password.", nil)
 		return
 	}
 
@@ -85,7 +85,7 @@ func login(w http.ResponseWriter, r *http.Request, state *AppState) {
 	token, err := state.MintToken(user.TenantID, user.ID, ttl)
 	if err != nil {
 		if errors.Is(err, ErrNotTokenIssuer) {
-			writeServiceError(w, http.StatusNotImplemented, "not_token_issuer", err.Error(), nil)
+			writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, err.Error(), nil)
 			return
 		}
 		writeInternalError(w, err)
@@ -188,7 +188,7 @@ func tryRefreshSession(w http.ResponseWriter, r *http.Request, state *AppState, 
 // despite being a GET, since it mints a credential.
 func issueToken(w http.ResponseWriter, r *http.Request, state *AppState) {
 	if !state.CanIssueTokens() {
-		writeServiceError(w, http.StatusNotImplemented, "not_token_issuer", ErrNotTokenIssuer.Error(), nil)
+		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
 		return
 	}
 	rc, ok := requireAuth(w, r, state)
@@ -212,7 +212,7 @@ func issueToken(w http.ResponseWriter, r *http.Request, state *AppState) {
 	token, err := state.MintToken(tenantID, userID, sessionTTLSeconds(r, state, tenantID))
 	if err != nil {
 		if errors.Is(err, ErrNotTokenIssuer) {
-			writeServiceError(w, http.StatusNotImplemented, "not_token_issuer", err.Error(), nil)
+			writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, err.Error(), nil)
 			return
 		}
 		writeInternalError(w, err)

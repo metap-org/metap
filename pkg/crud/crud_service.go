@@ -11,6 +11,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 )
@@ -102,7 +103,7 @@ func (s *CrudService) recordAudit(ctx context.Context, entity metadata.EntityDef
 	// because this is the one choke point all of them pass through.
 	audit.RedactDiffFields(entry.Diff, config.RedactedFields)
 	if err := s.auditStore.Record(ctx, entry.TenantID, entry); err != nil {
-		slog.Error("failed to record audit trail entry", "entity", entity.Name, "error", err)
+		slog.Error("failed to record audit trail entry", "entity", entity.Name, standard.LogError, err)
 	}
 }
 

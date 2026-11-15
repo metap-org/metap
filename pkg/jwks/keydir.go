@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // Key directory layout (the issuer's JWKS_KEYS_DIR):
@@ -126,7 +128,7 @@ func WatchKeyDir(ctx context.Context, dir string, shared *SharedKeyStore, interv
 			case <-ticker.C:
 				store, err := LoadKeyDir(dir)
 				if err != nil {
-					slog.Warn("JWKS key dir reload failed; keeping the current key set", "dir", dir, "error", err)
+					slog.Warn("JWKS key dir reload failed; keeping the current key set", "dir", dir, standard.LogError, err)
 					continue
 				}
 				before := shared.SigningKey().Kid

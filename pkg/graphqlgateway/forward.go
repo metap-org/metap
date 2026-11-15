@@ -12,6 +12,7 @@ import (
 	"github.com/graphql-go/graphql"
 
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -45,8 +46,8 @@ func ForwardPost(ctx context.Context, url string, body interface{}) (interface{}
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+rc.ForwardedBearerToken)
+	req.Header.Set(standard.HeaderContentType, standard.MediaTypeJSON)
+	req.Header.Set(standard.HeaderAuthorization, standard.BearerPrefix+rc.ForwardedBearerToken)
 	resp, err := httpClientForForwarding().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("calling %s: %w", url, err)

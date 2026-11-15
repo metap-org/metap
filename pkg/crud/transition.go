@@ -28,7 +28,7 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return RecordDto{}, NewServiceError(http.StatusNotFound, "entity_not_found")
+		return RecordDto{}, NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
 	}
 
 	// Per-action entity check: `transition` covers every action, `transition:<action>` only
@@ -90,16 +90,16 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 
 	fromRaw, ok := existing.Data[workflowDef.StateField]
 	if !ok {
-		return RecordDto{}, NewServiceError(http.StatusConflict, "invalid_transition")
+		return RecordDto{}, NewServiceError(http.StatusConflict, errcode.InvalidTransition)
 	}
 	var fromState string
 	if json.Unmarshal(fromRaw, &fromState) != nil {
-		return RecordDto{}, NewServiceError(http.StatusConflict, "invalid_transition")
+		return RecordDto{}, NewServiceError(http.StatusConflict, errcode.InvalidTransition)
 	}
 
 	transition := workflow.FindTransition(entity, action, fromState)
 	if transition == nil {
-		return RecordDto{}, NewServiceError(http.StatusConflict, "invalid_transition")
+		return RecordDto{}, NewServiceError(http.StatusConflict, errcode.InvalidTransition)
 	}
 
 	if guardErr := workflow.RunGuard(transition, workflow.WithWorkflowContext(existing.Data, actors), rc); guardErr != nil {

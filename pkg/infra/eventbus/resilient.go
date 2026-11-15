@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // BackoffDelay: exponential, capped at 30s (1s, 2s, 4s, 8s, 16s, 30s, 30s, ...) — the reconnect
@@ -47,7 +49,7 @@ reconnect:
 		}
 		bus, err := connect()
 		if err != nil {
-			slog.Warn("failed to connect to event bus, retrying", "error", err, "attempt", attempt, "queue", queue)
+			slog.Warn("failed to connect to event bus, retrying", standard.LogError, err, standard.LogAttempt, attempt, standard.LogQueue, queue)
 			if !SleepOrShutdown(ctx, BackoffDelay(attempt)) {
 				return nil
 			}
@@ -57,7 +59,7 @@ reconnect:
 
 		events, err := bus.Subscribe(ctx, queue, routingKey, retryPolicy)
 		if err != nil {
-			slog.Warn("failed to subscribe, reconnecting", "error", err, "attempt", attempt, "queue", queue)
+			slog.Warn("failed to subscribe, reconnecting", standard.LogError, err, standard.LogAttempt, attempt, standard.LogQueue, queue)
 			_ = bus.Close()
 			if !SleepOrShutdown(ctx, BackoffDelay(attempt)) {
 				return nil
@@ -66,19 +68,19 @@ reconnect:
 			continue reconnect
 		}
 		if attempt > 0 {
-			slog.Info("reconnected to event bus", "attempt", attempt, "queue", queue)
+			slog.Info("reconnected to event bus", standard.LogAttempt, attempt, standard.LogQueue, queue)
 		}
 		attempt = 0
 
 		for {
 			select {
 			case <-ctx.Done():
-				slog.Info("shutdown signal received, exiting", "queue", queue)
+				slog.Info("shutdown signal received, exiting", standard.LogQueue, queue)
 				_ = bus.Close()
 				return nil
 			case event, ok := <-events:
 				if !ok {
-					slog.Warn("event stream closed unexpectedly (bus disconnected?), reconnecting", "queue", queue)
+					slog.Warn("event stream closed unexpectedly (bus disconnected?), reconnecting", standard.LogQueue, queue)
 					_ = bus.Close()
 					continue reconnect
 				}

@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // webhookAuthorizationKey is the config key whose credential a webhook may present
@@ -138,7 +139,7 @@ func RunWebhook(ctx context.Context, policy WebhookPolicy, secrets control.Secre
 	if err != nil {
 		return nil, fmt.Errorf("invalid HTTP method %q: %w", cfg.Method, err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(standard.HeaderContentType, standard.MediaTypeJSON)
 	for key, value := range cfg.Headers {
 		req.Header.Set(key, value)
 	}
@@ -146,7 +147,7 @@ func RunWebhook(ctx context.Context, policy WebhookPolicy, secrets control.Secre
 	// literal authorization, and this ordering means a future loosening there still could not
 	// replace the credential with a chosen value.
 	if hasCredential {
-		req.Header.Set("Authorization", credential)
+		req.Header.Set(standard.HeaderAuthorization, credential)
 	}
 	httpx.AttachTraceContext(ctx, req)
 

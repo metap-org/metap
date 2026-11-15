@@ -27,7 +27,7 @@ func (s *CrudService) Delete(ctx context.Context, entityName string, id uuid.UUI
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return RecordDto{}, NewServiceError(http.StatusNotFound, "entity_not_found")
+		return RecordDto{}, NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
 	}
 
 	decision, err := s.permissions.CanDeleteEntity(ctx, rc, entity.Name)

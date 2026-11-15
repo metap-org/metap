@@ -19,6 +19,7 @@ import (
 	"github.com/graphql-go/graphql/gqlerrors"
 
 	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 )
@@ -84,7 +85,7 @@ func (s *Server) handleMetadata(w http.ResponseWriter, r *http.Request) {
 		summary, found = s.registry.GetEntityMetadata(entity)
 	}
 	if !found {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": map[string]string{"code": "entity_not_found", "message": "Entity not found."}})
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": map[string]string{"code": errcode.EntityNotFound, "message": "Entity not found."}})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": summary})
@@ -194,7 +195,7 @@ const (
 // any state-changing method. /graphql is POST-only, so a cookie caller always needs the CSRF
 // header. Returns "" plus an error message when neither yields a usable token.
 func requestToken(r *http.Request) (string, string) {
-	if header := r.Header.Get("Authorization"); header != "" {
+	if header := r.Header.Get(standard.HeaderAuthorization); header != "" {
 		token, ok := httpx.BearerToken(header)
 		if !ok {
 			return "", "missing or malformed Authorization header"

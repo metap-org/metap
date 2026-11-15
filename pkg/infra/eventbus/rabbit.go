@@ -7,6 +7,8 @@ import (
 	"strconv"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // RabbitEventBus is the only EventBus impl today.
@@ -44,7 +46,7 @@ func RabbitMQConnector(url string) func() (EventBus, error) {
 
 func (b *RabbitEventBus) Publish(ctx context.Context, topic string, payload json.RawMessage) error {
 	err := b.channel.PublishWithContext(ctx, exchange, topic, false, false, amqp.Publishing{
-		ContentType:  "application/json",
+		ContentType:  standard.MediaTypeJSON,
 		DeliveryMode: amqp.Persistent,
 		Body:         payload,
 	})
@@ -108,7 +110,7 @@ func (b *RabbitEventBus) Subscribe(ctx context.Context, queue, routingKey string
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("subscribed", "queue", queue, "routing_key", routingKey)
+	slog.Info("subscribed", standard.LogQueue, queue, standard.LogRoutingKey, routingKey)
 
 	out := make(chan *ConsumedEvent)
 	go func() {
@@ -116,7 +118,7 @@ func (b *RabbitEventBus) Subscribe(ctx context.Context, queue, routingKey string
 		for delivery := range deliveries {
 			var payload json.RawMessage
 			if err := json.Unmarshal(delivery.Body, &payload); err != nil {
-				slog.Warn("dropping malformed message, routed to dead-letter queue", "queue", queue, "error", err)
+				slog.Warn("dropping malformed message, routed to dead-letter queue", standard.LogQueue, queue, standard.LogError, err)
 				_ = delivery.Nack(false, false)
 				continue
 			}

@@ -17,6 +17,7 @@ import (
 	"github.com/metap-org/metap/pkg/grpcapi/pb"
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/env"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 )
 
@@ -26,9 +27,9 @@ func logUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInf
 	resp, err := handler(ctx, req)
 	latency := time.Since(start)
 	if err != nil {
-		slog.Error("grpc request failed", "method", info.FullMethod, "latency_ms", latency.Milliseconds(), "error", err)
+		slog.Error("grpc request failed", "method", info.FullMethod, standard.LogLatencyMs, latency.Milliseconds(), standard.LogError, err)
 	} else {
-		slog.Info("grpc request completed", "method", info.FullMethod, "latency_ms", latency.Milliseconds())
+		slog.Info("grpc request completed", "method", info.FullMethod, standard.LogLatencyMs, latency.Milliseconds())
 	}
 	return resp, err
 }
@@ -117,7 +118,7 @@ func OptionalServe(host string, defaultPort int, cfg OptionalServeConfig) (*grpc
 	slog.Info("gRPC listening", "addr", addr)
 	go func() {
 		if err := srv.Serve(lis); err != nil {
-			slog.Error("gRPC server exited with error", "error", err)
+			slog.Error("gRPC server exited with error", standard.LogError, err)
 		}
 	}()
 	return srv, nil

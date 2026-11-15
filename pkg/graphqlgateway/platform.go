@@ -19,6 +19,8 @@ import (
 	"strconv"
 
 	"github.com/graphql-go/graphql"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // platformREST forwards one platform field to a metap REST route.
@@ -51,9 +53,9 @@ func (p *platformREST) call(ctx context.Context, method, path string, query url.
 		return nil, err
 	}
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(standard.HeaderContentType, standard.MediaTypeJSON)
 	}
-	req.Header.Set("Authorization", "Bearer "+rc.ForwardedBearerToken)
+	req.Header.Set(standard.HeaderAuthorization, standard.BearerPrefix+rc.ForwardedBearerToken)
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("calling %s %s: %w", method, path, err)

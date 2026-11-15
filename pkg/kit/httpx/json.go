@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/metap-org/metap/pkg/kit/errcode"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // DefaultMaxBodyBytes bounds a JSON request body unless the caller asks for another limit. An
@@ -18,7 +19,7 @@ var ErrBodyTooLarge = errors.New("request body too large")
 
 // WriteJSON writes v as a JSON response with the given status.
 func WriteJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(standard.HeaderContentType, standard.MediaTypeJSON)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
@@ -57,9 +58,9 @@ func DecodeJSONOrFail(w http.ResponseWriter, r *http.Request, dst any) bool {
 	case errors.Is(err, ErrBodyTooLarge):
 		WriteError(w, http.StatusRequestEntityTooLarge, errcode.PayloadTooLarge, "Request body is too large.")
 	case errors.Is(err, io.EOF):
-		WriteError(w, http.StatusBadRequest, "invalid_request_body", "Request body is empty.")
+		WriteError(w, http.StatusBadRequest, errcode.InvalidRequestBody, "Request body is empty.")
 	default:
-		WriteError(w, http.StatusBadRequest, "invalid_request_body", "Invalid request body.")
+		WriteError(w, http.StatusBadRequest, errcode.InvalidRequestBody, "Invalid request body.")
 	}
 	return false
 }

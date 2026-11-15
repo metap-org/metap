@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/oauthserver"
 )
 
@@ -26,7 +27,7 @@ func RunOAuthCleanup(ctx context.Context, pool *pgxpool.Pool, interval time.Dura
 	present, err := oauthTablesPresent(ctx, pool)
 	switch {
 	case err != nil:
-		slog.Warn("could not check for oauth2 tables — expired-token cleanup disabled", "error", err)
+		slog.Warn("could not check for oauth2 tables — expired-token cleanup disabled", standard.LogError, err)
 		<-ctx.Done()
 		return
 	case !present:

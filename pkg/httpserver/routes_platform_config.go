@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/metap-org/metap/pkg/config"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 
 func configLevelName(level config.Level) string {
@@ -44,7 +45,7 @@ func configErrorResponse(w http.ResponseWriter, err error) {
 		writeServiceError(w, http.StatusForbidden, "config_key_not_writable",
 			"Config key \""+cfgErr.Key+"\" cannot be set here: "+cfgErr.Reason, nil)
 	case config.ErrInvalid:
-		writeServiceError(w, http.StatusUnprocessableEntity, "invalid_config_value",
+		writeServiceError(w, http.StatusUnprocessableEntity, errcode.InvalidConfigValue,
 			"Invalid value for \""+cfgErr.Key+"\": "+cfgErr.Reason, nil)
 	default:
 		writeInternalError(w, cfgErr.Cause)

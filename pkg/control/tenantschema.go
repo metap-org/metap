@@ -11,6 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // tenantScopedTables: (source_schema, table_name), in FK-safe creation order — every table in
@@ -34,20 +36,20 @@ import (
 // transaction's search_path, so an unqualified users/user_roles query still resolves to the
 // shared table, still filtered by each row's own tenant_id column.
 var tenantScopedTables = [][2]string{
-	{"metadata", "dashboard_configs"},
-	{"metadata", "policies"},
-	{"metadata", "reconciler_backfill_progress"},
-	{"metadata", "reconciler_entity_deployments"},
-	{"metadata", "reconciler_entity_status"},
-	{"metadata", "tenant_auth_configs"},
-	{"metadata", "tenant_configs"},
-	{"metadata", "user_preferences"},
-	{"metadata", "workflow_events"},
-	{"metadata", "attachments"},
+	{standard.SchemaMetadata, "dashboard_configs"},
+	{standard.SchemaMetadata, "policies"},
+	{standard.SchemaMetadata, "reconciler_backfill_progress"},
+	{standard.SchemaMetadata, "reconciler_entity_deployments"},
+	{standard.SchemaMetadata, "reconciler_entity_status"},
+	{standard.SchemaMetadata, "tenant_auth_configs"},
+	{standard.SchemaMetadata, "tenant_configs"},
+	{standard.SchemaMetadata, "user_preferences"},
+	{standard.SchemaMetadata, "workflow_events"},
+	{standard.SchemaMetadata, "attachments"},
 	// These 3 have FKs to each other (below) — created last, in dependency order.
-	{"metadata", "cron_jobs"},
-	{"metadata", "cron_job_runs"},
-	{"metadata", "workflow_runs"},
+	{standard.SchemaMetadata, "cron_jobs"},
+	{standard.SchemaMetadata, "cron_job_runs"},
+	{standard.SchemaMetadata, "workflow_runs"},
 }
 
 // tenantScopedForeignKeys: (table, column, refTable, refColumn) — every FK among the tables

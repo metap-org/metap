@@ -1,5 +1,9 @@
 package metadata
 
+import (
+	"github.com/metap-org/metap/pkg/kit/standard"
+)
+
 func EntityFieldJSONSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -161,7 +165,7 @@ func GenerateOpenAPIDocument() map[string]any {
 					"200": map[string]any{
 						"description": "OK",
 						"content": map[string]any{
-							"application/json": map[string]any{
+							standard.MediaTypeJSON: map[string]any{
 								"schema": map[string]any{
 									"type": "object",
 									"properties": map[string]any{
@@ -181,7 +185,7 @@ func GenerateOpenAPIDocument() map[string]any {
 					"200": map[string]any{
 						"description": "OK",
 						"content": map[string]any{
-							"application/json": map[string]any{
+							standard.MediaTypeJSON: map[string]any{
 								"schema": map[string]any{
 									"type":       "object",
 									"properties": map[string]any{"data": map[string]any{"$ref": "#/components/schemas/EntitySummary"}},
@@ -200,7 +204,7 @@ func GenerateOpenAPIDocument() map[string]any {
 					"200": map[string]any{
 						"description": "OK",
 						"content": map[string]any{
-							"application/json": map[string]any{
+							standard.MediaTypeJSON: map[string]any{
 								"schema": map[string]any{
 									"type":       "object",
 									"properties": map[string]any{"data": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}},

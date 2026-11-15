@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -34,7 +35,7 @@ func (e *authError) respond(w http.ResponseWriter) {
 	if e.status == http.StatusForbidden {
 		code = errcode.Forbidden
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(standard.HeaderContentType, standard.MediaTypeJSON)
 	w.WriteHeader(e.status)
 	body, _ := json.Marshal(map[string]any{"error": map[string]string{"code": code, "message": e.message}})
 	_, _ = w.Write(body)
@@ -45,7 +46,7 @@ func (e *authError) respond(w http.ResponseWriter) {
 // request takes), CSRF-checked for any state-changing method.
 func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permission.RequestContext, *authError) {
 	var token string
-	header := r.Header.Get("Authorization")
+	header := r.Header.Get(standard.HeaderAuthorization)
 	if header != "" {
 		t, ok := httpx.BearerToken(header)
 		if !ok {

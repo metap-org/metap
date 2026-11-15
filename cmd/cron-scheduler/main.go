@@ -22,6 +22,7 @@ import (
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
 	"github.com/metap-org/metap/pkg/kit/env"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/secrets"
 )
 
@@ -29,7 +30,7 @@ func main() {
 	infra.InitTracing()
 	config, err := infra.LoadConfig()
 	if err != nil {
-		slog.Error("loading config", "error", err)
+		slog.Error("loading config", standard.LogError, err)
 		os.Exit(1)
 	}
 
@@ -61,7 +62,7 @@ func main() {
 	case hasEmail && hasPassword:
 		st, err := httpx.StartServiceTokenSource(ctx, httpClient, loginURL, serviceEmail, servicePassword)
 		if err != nil {
-			slog.Warn("failed to log in with CRON_SERVICE_EMAIL/CRON_SERVICE_PASSWORD — workflow_transition/bulk_query_action jobs will fail until this is fixed; webhook jobs are unaffected", "error", err)
+			slog.Warn("failed to log in with CRON_SERVICE_EMAIL/CRON_SERVICE_PASSWORD — workflow_transition/bulk_query_action jobs will fail until this is fixed; webhook jobs are unaffected", standard.LogError, err)
 			serviceToken = httpx.NewStaticServiceTokenSource("")
 		} else {
 			serviceToken = st
@@ -81,7 +82,7 @@ func main() {
 		backend, err := grpcapi.ConnectGrpcBackend(grpcAddr, serviceToken)
 		if err != nil {
 			slog.Warn("failed to connect to CRON_TARGET_GRPC_ADDR — workflow_transition/bulk_query_action jobs will fail until this is fixed; webhook/email jobs are unaffected",
-				"error", err, "addr", grpcAddr)
+				standard.LogError, err, "addr", grpcAddr)
 		} else {
 			targetGRPCBackend = backend
 		}
@@ -92,7 +93,7 @@ func main() {
 	slog.Info("connecting to postgres...")
 	pool, err := pgxpool.New(ctx, config.OutboxDatabaseURLOrDefault())
 	if err != nil {
-		slog.Error("connecting to postgres", "error", err)
+		slog.Error("connecting to postgres", standard.LogError, err)
 		os.Exit(1)
 	}
 	defer pool.Close()
@@ -103,7 +104,7 @@ func main() {
 	// at all, and only the jobs that asked for one should fail.
 	secretStore, err := secrets.Build(ctx, secrets.ConfigFromAppConfig(config))
 	if err != nil {
-		slog.Warn("no secret backend available — webhook jobs requesting their tenant's stored credential will fail; every other job type is unaffected", "error", err)
+		slog.Warn("no secret backend available — webhook jobs requesting their tenant's stored credential will fail; every other job type is unaffected", standard.LogError, err)
 		secretStore = nil
 	}
 
@@ -136,7 +137,7 @@ func main() {
 		} else {
 			oauthPool, err = pgxpool.New(ctx, config.DatabaseURL)
 			if err != nil {
-				slog.Error("connecting to postgres for oauth cleanup", "error", err)
+				slog.Error("connecting to postgres for oauth cleanup", standard.LogError, err)
 				os.Exit(1)
 			}
 		}
@@ -156,7 +157,7 @@ func main() {
 		default:
 			auditPool, err = pgxpool.New(ctx, config.DatabaseURL)
 			if err != nil {
-				slog.Error("connecting to postgres for audit partition maintenance", "error", err)
+				slog.Error("connecting to postgres for audit partition maintenance", standard.LogError, err)
 				os.Exit(1)
 			}
 		}
@@ -191,7 +192,7 @@ func main() {
 	}
 
 	if runErr != nil {
-		slog.Error("cron-scheduler exited with an error", "error", runErr)
+		slog.Error("cron-scheduler exited with an error", standard.LogError, runErr)
 		os.Exit(1)
 	}
 }

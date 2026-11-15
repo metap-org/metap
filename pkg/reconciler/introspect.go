@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 func Introspect(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entityName, table string) (*PhysicalSchema, error) {
@@ -18,7 +20,7 @@ func Introspect(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, ent
 	// name + schema name separately, never a dotted string.
 	schema, bareTable, ok := strings.Cut(table, ".")
 	if !ok {
-		schema, bareTable = "public", table
+		schema, bareTable = standard.SchemaPublic, table
 	}
 
 	var exists bool

@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	gocache "github.com/patrickmn/go-cache"
 	"golang.org/x/sync/singleflight"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // dedicatedPoolIdleTTL: idle eviction for Router's dedicated/schema pool caches — a dedicated
@@ -68,7 +70,7 @@ func (e *RouterError) Error() string {
 // tenant-scoped transaction. "public" is the legacy/unregistered-tenant fallback; anything else
 // must match ^t_[a-z0-9]+$.
 func ValidateSchemaName(name string) error {
-	if name == "public" {
+	if name == standard.SchemaPublic {
 		return nil
 	}
 	suffix, ok := strings.CutPrefix(name, "t_")
@@ -145,7 +147,7 @@ func (r *Router) dedicatedPool(ctx context.Context, dsnSecretRef string) (*pgxpo
 // correct here, even though Begin's own session-leak warning applies to the shared pool — the
 // difference is the pool: every connection in *this* pool only ever serves this one schema.
 func (r *Router) schemaPool(ctx context.Context, schemaName string) (*pgxpool.Pool, error) {
-	if schemaName == "public" {
+	if schemaName == standard.SchemaPublic {
 		return r.sharedPool, nil
 	}
 	if err := ValidateSchemaName(schemaName); err != nil {
@@ -189,7 +191,7 @@ func (r *Router) resolve(ctx context.Context, tenantID uuid.UUID) (TenantStrateg
 		return TenantStrategy{}, err
 	}
 	if routing == nil {
-		routing = &TenantRouting{Status: StatusActive, Strategy: SchemaStrategy("public")}
+		routing = &TenantRouting{Status: StatusActive, Strategy: SchemaStrategy(standard.SchemaPublic)}
 	}
 
 	switch routing.Status {

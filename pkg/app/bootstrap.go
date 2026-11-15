@@ -15,6 +15,7 @@ import (
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/kit/env"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
@@ -34,7 +35,7 @@ type BootstrapOptions struct {
 // this — the one-shot counterpart to db-migrate.
 func BootstrapMain(opts BootstrapOptions) {
 	if err := RunBootstrap(context.Background(), opts); err != nil {
-		slog.Error(opts.Name+" failed", "error", err)
+		slog.Error(opts.Name+" failed", standard.LogError, err)
 		os.Exit(1)
 	}
 }

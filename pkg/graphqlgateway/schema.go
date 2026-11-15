@@ -28,6 +28,7 @@ import (
 	"github.com/graphql-go/graphql"
 
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
@@ -97,9 +98,9 @@ func (h *recordHandle) envelope(key string) interface{} {
 	case "version":
 		return h.dto.Version
 	case "createdAt":
-		return h.dto.CreatedAt.Format("2006-01-02T15:04:05.000Z07:00")
+		return h.dto.CreatedAt.Format(standard.TimestampMillis)
 	case "updatedAt":
-		return h.dto.UpdatedAt.Format("2006-01-02T15:04:05.000Z07:00")
+		return h.dto.UpdatedAt.Format(standard.TimestampMillis)
 	case "capabilities":
 		if h.capabilities == nil {
 			return nil
