@@ -9,12 +9,26 @@ import (
 type PageInfo struct {
 	Limit      int64   `json:"limit"`
 	NextCursor *string `json:"nextCursor,omitempty"`
+	// Offset is the number of rows skipped (numbered paging); Total is the count of rows matching
+	// the filters, set only when the caller asked for it and did not page by cursor.
+	Offset int64  `json:"offset,omitempty"`
+	Total  *int64 `json:"total,omitempty"`
+}
+
+// EntityCapabilities: entity-level permission, the same checks the write path makes first.
+type EntityCapabilities struct {
+	CanCreate bool `json:"canCreate"`
+	CanUpdate bool `json:"canUpdate"`
+	CanDelete bool `json:"canDelete"`
 }
 
 // ListResult is what List returns: one page of records and where the next one starts.
 type ListResult struct {
-	Data []RecordDto
-	Page PageInfo
+	// Capabilities is what this caller may do with the entity as a whole (entity-level policy
+	// only; per-record answers stay on Get), so a UI can hide "New"/"Delete" before any row exists.
+	Capabilities EntityCapabilities
+	Data         []RecordDto
+	Page         PageInfo
 }
 
 // ServiceError is a failure the caller can act on: a status (HTTP-shaped, carried over gRPC and

@@ -26,6 +26,8 @@ const (
 	InvalidMultipart           = "invalid_multipart"
 	InvalidAggregate           = "invalid_aggregate"
 	InvalidCursor              = "invalid_cursor"
+	InvalidOffset              = "invalid_offset"
+	SearchNotSupported         = "search_not_supported"
 	InvalidCredentials         = "invalid_credentials"
 	InvalidJQL                 = "invalid_jql"
 	InvalidConfigValue         = "invalid_config_value"

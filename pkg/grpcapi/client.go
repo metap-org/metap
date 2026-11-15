@@ -171,6 +171,15 @@ func listInputToQuery(input query.ListInput) map[string]any {
 	if input.JQL != nil {
 		q["jql"] = *input.JQL
 	}
+	if input.Search != nil {
+		q["search"] = *input.Search
+	}
+	if input.Offset != 0 {
+		q["offset"] = input.Offset
+	}
+	if input.WithTotal {
+		q["withTotal"] = true
+	}
 	return q
 }
 
@@ -194,7 +203,13 @@ func (b *GrpcBackend) List(ctx context.Context, entity string, input query.ListI
 		nc := resp.GetNextCursor()
 		nextCursor = &nc
 	}
-	return crud.ListResult{Data: records, Page: crud.PageInfo{Limit: input.Limit, NextCursor: nextCursor}}, nil
+	page := crud.PageInfo{Limit: input.Limit, NextCursor: nextCursor, Offset: input.Offset}
+	if resp.GetHasTotal() {
+		total := resp.GetTotal()
+		page.Total = &total
+	}
+	caps := crud.EntityCapabilities{CanCreate: resp.GetCanCreate(), CanUpdate: resp.GetCanUpdate(), CanDelete: resp.GetCanDelete()}
+	return crud.ListResult{Capabilities: caps, Data: records, Page: page}, nil
 }
 
 func (b *GrpcBackend) Get(ctx context.Context, entity string, id uuid.UUID, rc *permission.RequestContext) (crud.GetResult, error) {

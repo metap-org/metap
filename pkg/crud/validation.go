@@ -6,6 +6,7 @@ package crud
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -90,6 +91,8 @@ func ValidatePayload(entity metadata.EntityDefinition, data JsonObject) (JsonObj
 					}
 				}
 			}
+		} else if field.Widget != nil && field.Widget.IsArrayWidget() {
+			valid = stringArrayAllowed(raw, field)
 		} else {
 			valid = kindMatches(field.Kind, raw)
 		}
@@ -139,4 +142,22 @@ func ValidatePayload(entity metadata.EntityDefinition, data JsonObject) (JsonObj
 		return result, nil
 	}
 	return nil, errs
+}
+
+// stringArrayAllowed: a multi-value field's value is a JSON array of strings; for the widgets
+// that pick from a fixed set (multiselect, checkboxGroup) every item must be one of enumValues.
+func stringArrayAllowed(raw json.RawMessage, field metadata.EntityField) bool {
+	var items []string
+	if json.Unmarshal(raw, &items) != nil {
+		return false
+	}
+	if *field.Widget == metadata.WidgetTags {
+		return true
+	}
+	for _, it := range items {
+		if !slices.Contains(field.EnumValues, it) {
+			return false
+		}
+	}
+	return true
 }

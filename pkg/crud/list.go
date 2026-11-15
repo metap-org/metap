@@ -43,12 +43,18 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 	if err != nil {
 		var invalidCursor *query.InvalidCursorError
 		var unknownListView *query.UnknownListViewError
+		var invalidOffset *query.InvalidOffsetError
+		var searchUnsupported *query.SearchNotSupportedError
 		var invalidJql *query.InvalidJqlError
 		var crossRecord *query.CrossRecordConditionInListError
 		var unsupportedContains *query.UnsupportedContainsConditionInListError
 		switch {
 		case errors.As(err, &invalidCursor):
 			return ListResult{}, NewServiceErrorMsg(http.StatusBadRequest, errcode.InvalidCursor, err.Error())
+		case errors.As(err, &invalidOffset):
+			return ListResult{}, NewServiceErrorMsg(http.StatusBadRequest, errcode.InvalidOffset, err.Error())
+		case errors.As(err, &searchUnsupported):
+			return ListResult{}, NewServiceErrorMsg(http.StatusBadRequest, errcode.SearchNotSupported, err.Error())
 		case errors.As(err, &unknownListView):
 			return ListResult{}, NewServiceErrorMsg(http.StatusBadRequest, "unknown_list_view", err.Error())
 		case errors.As(err, &invalidJql):
@@ -59,8 +65,8 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 		return ListResult{}, err
 	}
 
-	sql := fmt.Sprintf("SELECT %s FROM %s t WHERE %s ORDER BY %s LIMIT %d",
-		recordSelectList(entity), entity.TableName, planned.WhereSQL, planned.OrderBySQL, planned.Limit+1)
+	sql := fmt.Sprintf("SELECT %s FROM %s t WHERE %s ORDER BY %s LIMIT %d OFFSET %d",
+		recordSelectList(entity), entity.TableName, planned.WhereSQL, planned.OrderBySQL, planned.Limit+1, planned.Offset)
 
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
@@ -87,6 +93,16 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return ListResult{}, err
+	}
+
+	var total *int64
+	if input.WithTotal && input.Cursor == nil {
+		var n int64
+		countSQL := fmt.Sprintf("SELECT count(*) FROM %s t WHERE %s", entity.TableName, planned.CountWhereSQL)
+		if err := tx.QueryRow(ctx, countSQL, query.ArgsOf(planned.Params)...).Scan(&n); err != nil {
+			return ListResult{}, err
+		}
+		total = &n
 	}
 
 	hasMore := int64(len(pageDtos)) > planned.Limit
@@ -122,5 +138,10 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 		return ListResult{}, err
 	}
 
-	return ListResult{Data: data, Page: PageInfo{Limit: planned.Limit, NextCursor: nextCursor}}, nil
+	caps := EntityCapabilities{
+		CanCreate: snapshot.CanPerformEntityAction(rc, entity.Name, permission.ActionCreate).Allowed,
+		CanUpdate: snapshot.CanPerformEntityAction(rc, entity.Name, permission.ActionUpdate).Allowed,
+		CanDelete: snapshot.CanPerformEntityAction(rc, entity.Name, permission.ActionDelete).Allowed,
+	}
+	return ListResult{Capabilities: caps, Data: data, Page: PageInfo{Limit: planned.Limit, NextCursor: nextCursor, Offset: planned.Offset, Total: total}}, nil
 }

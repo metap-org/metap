@@ -126,6 +126,8 @@ type connectionHandle struct {
 	records    []*recordHandle
 	nextCursor interface{}
 	hasMore    bool
+	total      interface{}
+	caps       crud.EntityCapabilities
 }
 
 var envelopeFieldNames = map[string]bool{
@@ -420,6 +422,20 @@ func connectionType(entityName string, recordType *graphql.Object) *graphql.Obje
 					return p.Source.(*connectionHandle).hasMore, nil
 				},
 			},
+			// capabilities is the caller's entity-level permission (hide New/Delete before any row).
+			"capabilities": &graphql.Field{
+				Type: graphql.NewNonNull(jsonScalar),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(*connectionHandle).caps, nil
+				},
+			},
+			// total is set only when the list was asked withTotal and not paged by cursor.
+			"total": &graphql.Field{
+				Type: graphql.Int,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(*connectionHandle).total, nil
+				},
+			},
 		},
 	})
 }
@@ -461,6 +477,13 @@ func listInputFromArgs(args map[string]interface{}) (query.ListInput, error) {
 	input.Cursor = stringArg(args, "cursor")
 	input.ListView = stringArg(args, "listView")
 	input.JQL = stringArg(args, "jql")
+	input.Search = stringArg(args, "search")
+	if _, ok := args["offset"]; ok {
+		input.Offset = int64(int32Arg(args, "offset"))
+	}
+	if wt, ok := args["withTotal"].(bool); ok {
+		input.WithTotal = wt
+	}
 	if filter, ok := args["filter"].(map[string]interface{}); ok {
 		for k, v := range filter {
 			var s string
@@ -484,12 +507,15 @@ func (b *schemaBuilder) listField(entity string, connection *graphql.Object) *gr
 	return &graphql.Field{
 		Type: graphql.NewNonNull(connection),
 		Args: graphql.FieldConfigArgument{
-			"filter":   &graphql.ArgumentConfig{Type: jsonScalar},
-			"sort":     &graphql.ArgumentConfig{Type: graphql.String},
-			"cursor":   &graphql.ArgumentConfig{Type: graphql.String},
-			"limit":    &graphql.ArgumentConfig{Type: graphql.Int},
-			"listView": &graphql.ArgumentConfig{Type: graphql.String},
-			"jql":      &graphql.ArgumentConfig{Type: graphql.String},
+			"filter":    &graphql.ArgumentConfig{Type: jsonScalar},
+			"sort":      &graphql.ArgumentConfig{Type: graphql.String},
+			"cursor":    &graphql.ArgumentConfig{Type: graphql.String},
+			"limit":     &graphql.ArgumentConfig{Type: graphql.Int},
+			"listView":  &graphql.ArgumentConfig{Type: graphql.String},
+			"jql":       &graphql.ArgumentConfig{Type: graphql.String},
+			"search":    &graphql.ArgumentConfig{Type: graphql.String},
+			"offset":    &graphql.ArgumentConfig{Type: graphql.Int},
+			"withTotal": &graphql.ArgumentConfig{Type: graphql.Boolean},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 			input, err := listInputFromArgs(p.Args)
@@ -500,7 +526,7 @@ func (b *schemaBuilder) listField(entity string, connection *graphql.Object) *gr
 			if err != nil {
 				return nil, gqlError(err)
 			}
-			conn := &connectionHandle{records: make([]*recordHandle, 0, len(result.Data))}
+			conn := &connectionHandle{records: make([]*recordHandle, 0, len(result.Data)), caps: result.Capabilities}
 			for _, dto := range result.Data {
 				h, err := newRecordHandle(dto, nil)
 				if err != nil {
@@ -511,6 +537,9 @@ func (b *schemaBuilder) listField(entity string, connection *graphql.Object) *gr
 			if result.Page.NextCursor != nil {
 				conn.nextCursor = *result.Page.NextCursor
 				conn.hasMore = true
+			}
+			if result.Page.Total != nil {
+				conn.total = int(*result.Page.Total)
 			}
 			return conn, nil
 		},

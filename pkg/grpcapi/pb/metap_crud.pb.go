@@ -75,10 +75,18 @@ func (x *ListRequest) GetQuery() *structpb.Struct {
 }
 
 type ListResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Records       []*structpb.Struct     `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
-	NextCursor    string                 `protobuf:"bytes,2,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
-	HasMore       bool                   `protobuf:"varint,3,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Records    []*structpb.Struct     `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
+	NextCursor string                 `protobuf:"bytes,2,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
+	HasMore    bool                   `protobuf:"varint,3,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	// Rows matching the filters across all pages; meaningful only when has_total is set (the
+	// caller asked for it and did not page by cursor).
+	Total    int64 `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	HasTotal bool  `protobuf:"varint,5,opt,name=has_total,json=hasTotal,proto3" json:"has_total,omitempty"`
+	// Entity-level permission of the caller: can_create/can_update/can_delete.
+	CanCreate     bool `protobuf:"varint,6,opt,name=can_create,json=canCreate,proto3" json:"can_create,omitempty"`
+	CanUpdate     bool `protobuf:"varint,7,opt,name=can_update,json=canUpdate,proto3" json:"can_update,omitempty"`
+	CanDelete     bool `protobuf:"varint,8,opt,name=can_delete,json=canDelete,proto3" json:"can_delete,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -130,6 +138,41 @@ func (x *ListResponse) GetNextCursor() string {
 func (x *ListResponse) GetHasMore() bool {
 	if x != nil {
 		return x.HasMore
+	}
+	return false
+}
+
+func (x *ListResponse) GetTotal() int64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *ListResponse) GetHasTotal() bool {
+	if x != nil {
+		return x.HasTotal
+	}
+	return false
+}
+
+func (x *ListResponse) GetCanCreate() bool {
+	if x != nil {
+		return x.CanCreate
+	}
+	return false
+}
+
+func (x *ListResponse) GetCanUpdate() bool {
+	if x != nil {
+		return x.CanUpdate
+	}
+	return false
+}
+
+func (x *ListResponse) GetCanDelete() bool {
+	if x != nil {
+		return x.CanDelete
 	}
 	return false
 }
@@ -787,12 +830,20 @@ const file_metap_crud_proto_rawDesc = "" +
 	"\vListRequest\x12\x1f\n" +
 	"\ventity_name\x18\x01 \x01(\tR\n" +
 	"entityName\x12-\n" +
-	"\x05query\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05query\"}\n" +
+	"\x05query\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05query\"\x8d\x02\n" +
 	"\fListResponse\x121\n" +
 	"\arecords\x18\x01 \x03(\v2\x17.google.protobuf.StructR\arecords\x12\x1f\n" +
 	"\vnext_cursor\x18\x02 \x01(\tR\n" +
 	"nextCursor\x12\x19\n" +
-	"\bhas_more\x18\x03 \x01(\bR\ahasMore\"=\n" +
+	"\bhas_more\x18\x03 \x01(\bR\ahasMore\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x03R\x05total\x12\x1b\n" +
+	"\thas_total\x18\x05 \x01(\bR\bhasTotal\x12\x1d\n" +
+	"\n" +
+	"can_create\x18\x06 \x01(\bR\tcanCreate\x12\x1d\n" +
+	"\n" +
+	"can_update\x18\a \x01(\bR\tcanUpdate\x12\x1d\n" +
+	"\n" +
+	"can_delete\x18\b \x01(\bR\tcanDelete\"=\n" +
 	"\n" +
 	"GetRequest\x12\x1f\n" +
 	"\ventity_name\x18\x01 \x01(\tR\n" +

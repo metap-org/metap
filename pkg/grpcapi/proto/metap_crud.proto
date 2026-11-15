@@ -30,6 +30,14 @@ message ListResponse {
   repeated google.protobuf.Struct records = 1;
   string next_cursor = 2;
   bool has_more = 3;
+  // Rows matching the filters across all pages; meaningful only when has_total is set (the
+  // caller asked for it and did not page by cursor).
+  int64 total = 4;
+  bool has_total = 5;
+  // Entity-level permission of the caller: can_create/can_update/can_delete.
+  bool can_create = 6;
+  bool can_update = 7;
+  bool can_delete = 8;
 }
 
 message GetRequest {

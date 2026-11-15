@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -97,6 +98,17 @@ func Validate(entity EntityDefinition) error {
 		}
 		if field.Kind == KindEnum && len(field.EnumValues) == 0 {
 			issues = append(issues, fmt.Sprintf("field %q is kind \"enum\" but declares no enumValues", field.Name))
+		}
+		if field.Widget != nil {
+			allowed, known := widgetKinds[*field.Widget]
+			switch {
+			case !known:
+				issues = append(issues, fmt.Sprintf("field %q declares unknown widget %q", field.Name, *field.Widget))
+			case !slices.Contains(allowed, field.Kind):
+				issues = append(issues, fmt.Sprintf("field %q is kind %q, which widget %q does not support", field.Name, field.Kind, *field.Widget))
+			case (*field.Widget == WidgetMultiSelect || *field.Widget == WidgetCheckboxGroup) && len(field.EnumValues) == 0:
+				issues = append(issues, fmt.Sprintf("field %q uses widget %q but declares no enumValues", field.Name, *field.Widget))
+			}
 		}
 		if field.Kind == KindReference && field.RefEntity == nil {
 			issues = append(issues, fmt.Sprintf("field %q is kind \"reference\" but declares no refEntity", field.Name))
