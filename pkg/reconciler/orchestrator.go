@@ -161,15 +161,15 @@ func ClaimDue(ctx context.Context, pool *pgxpool.Pool, workerID, entityNameFilte
 		filter = &entityNameFilter
 	}
 	rows, err := pool.Query(ctx,
-		`UPDATE metadata.reconciler_entity_deployments SET status = 'running', lease_worker = $1,
+		`UPDATE metadata.reconciler_entity_deployments SET status = `+sqlLit(DeployRunning)+`, lease_worker = $1,
 		 lease_heartbeat = now(), attempts = attempts + 1, updated_at = now()
 		 WHERE (tenant_id, entity_name) IN (
 		   SELECT tenant_id, entity_name FROM metadata.reconciler_entity_deployments
 		   WHERE desired_version > COALESCE(applied_version, 0)
-		         AND (status IN ('pending', 'failed')
-		              OR (status = 'running' AND lease_heartbeat < $5))
+		         AND (status IN (`+sqlLit(DeployPending)+`, `+sqlLit(DeployFailed)+`)
+		              OR (status = `+sqlLit(DeployRunning)+` AND lease_heartbeat < $5))
 		         AND attempts < $2 AND ($4::text IS NULL OR entity_name = $4)
-		   ORDER BY (status = 'failed') ASC, priority_tier ASC, updated_at ASC
+		   ORDER BY (status = `+sqlLit(DeployFailed)+`) ASC, priority_tier ASC, updated_at ASC
 		   LIMIT $3 FOR UPDATE SKIP LOCKED
 		 ) RETURNING tenant_id, entity_name, desired_version`,
 		workerID, maxAttempts, limit, filter, staleBefore)
@@ -198,7 +198,7 @@ func EnqueueDeployment(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UU
 		`INSERT INTO metadata.reconciler_entity_deployments (tenant_id, entity_name, desired_version)
 		 VALUES ($1, $2, $3)
 		 ON CONFLICT (tenant_id, entity_name) DO UPDATE
-		 SET desired_version = EXCLUDED.desired_version, status = 'pending', attempts = 0,
+		 SET desired_version = EXCLUDED.desired_version, status = `+sqlLit(DeployPending)+`, attempts = 0,
 		     failure_class = NULL, last_error = NULL, updated_at = now()
 		 WHERE metadata.reconciler_entity_deployments.desired_version < EXCLUDED.desired_version`,
 		tenantID, entityName, desiredVersion)
@@ -249,7 +249,7 @@ func ClassifyError(err error) FailureClass {
 
 func RecordSuccess(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entityName string, appliedVersion int64) error {
 	_, err := pool.Exec(ctx,
-		`UPDATE metadata.reconciler_entity_deployments SET status = 'done', applied_version = $3,
+		`UPDATE metadata.reconciler_entity_deployments SET status = `+sqlLit(DeployDone)+`, applied_version = $3,
 		 failure_class = NULL, last_error = NULL, lease_worker = NULL, updated_at = now()
 		 WHERE tenant_id = $1 AND entity_name = $2`,
 		tenantID, entityName, appliedVersion)
@@ -262,9 +262,9 @@ func RecordSuccess(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, 
 // the same broken data or metadata.
 func RecordFailure(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entityName string, recErr error) (FailureClass, error) {
 	class := ClassifyError(recErr)
-	status := "blocked"
+	status := DeployBlocked
 	if class == FailureTransient {
-		status = "failed"
+		status = DeployFailed
 	}
 	_, err := pool.Exec(ctx,
 		`UPDATE metadata.reconciler_entity_deployments SET status = $3, failure_class = $4, last_error = $5,
@@ -433,7 +433,7 @@ func AdvanceWave(ctx context.Context, pool *pgxpool.Pool, entityName string, pac
 		`INSERT INTO metadata.reconciler_entity_deployments (tenant_id, entity_name, desired_version)
 		 SELECT unnest($1::uuid[]), $2, $3
 		 ON CONFLICT (tenant_id, entity_name) DO UPDATE
-		 SET desired_version = EXCLUDED.desired_version, status = 'pending', attempts = 0,
+		 SET desired_version = EXCLUDED.desired_version, status = `+sqlLit(DeployPending)+`, attempts = 0,
 		     failure_class = NULL, last_error = NULL, updated_at = now()
 		 WHERE metadata.reconciler_entity_deployments.desired_version < EXCLUDED.desired_version`,
 		cohort, entityName, packVersion)
@@ -450,7 +450,7 @@ func cohortErrorRatePercent(ctx context.Context, pool *pgxpool.Pool, entityName 
 	}
 	var total, blocked int64
 	err := pool.QueryRow(ctx,
-		`SELECT count(*), count(*) FILTER (WHERE status = 'blocked')
+		`SELECT count(*), count(*) FILTER (WHERE status = `+sqlLit(DeployBlocked)+`)
 		 FROM metadata.reconciler_entity_deployments
 		 WHERE entity_name = $1 AND desired_version = $2 AND tenant_id = ANY($3)`,
 		entityName, packVersion, cohort).Scan(&total, &blocked)

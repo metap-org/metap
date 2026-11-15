@@ -103,8 +103,8 @@ func resumeMatching(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID,
 		 FROM workflow_runs w
 		 JOIN cron_jobs j ON j.id = w.job_id
 		 JOIN cron_job_runs r ON r.id = w.cron_job_run_id
-		 WHERE w.tenant_id = $1 AND w.status = 'waiting' AND w.wait_entity = $2 AND w.%s = $3
-		 FOR UPDATE OF w SKIP LOCKED`, waitColumn)
+		 WHERE w.tenant_id = $1 AND w.status = '%s' AND w.wait_entity = $2 AND w.%s = $3
+		 FOR UPDATE OF w SKIP LOCKED`, WorkflowWaiting, waitColumn)
 	rows, err := tx.Query(ctx, query, tenantID, entity, detail)
 	if err != nil {
 		return nil, err

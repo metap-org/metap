@@ -11,12 +11,12 @@ import (
 // BackoffDelay: exponential, capped at 30s (1s, 2s, 4s, 8s, 16s, 30s, 30s, ...) — the reconnect
 // schedule after a connection loss.
 func BackoffDelay(attempt uint32) time.Duration {
-	if attempt > 4 {
-		attempt = 4
+	if attempt > maxBackoffExponent {
+		attempt = maxBackoffExponent
 	}
 	d := time.Duration(1<<attempt) * time.Second
-	if d > 30*time.Second {
-		d = 30 * time.Second
+	if d > maxBackoff {
+		d = maxBackoff
 	}
 	return d
 }
@@ -89,3 +89,9 @@ reconnect:
 		}
 	}
 }
+
+// Reconnect backoff: 1s doubling per attempt, the exponent capped so the delay tops out at maxBackoff.
+const (
+	maxBackoffExponent = 4
+	maxBackoff         = 30 * time.Second
+)

@@ -12,7 +12,7 @@ func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg.MaxConns = 5
+	cfg.MaxConns = defaultMaxConns
 	return pgxpool.NewWithConfig(ctx, cfg)
 }
 
@@ -32,3 +32,6 @@ func HealthCheck(ctx context.Context, pool *pgxpool.Pool) bool {
 	_, err := pool.Exec(ctx, "select 1")
 	return err == nil
 }
+
+// defaultMaxConns is the pool size of a service's main Postgres pool.
+const defaultMaxConns = 5

@@ -82,7 +82,7 @@ func NewAppState(pool *pgxpool.Pool, metadataBase *metadata.MetadataRegistry, md
 	return &AppState{
 		Pool: pool, Router: router, MetadataBase: metadataBase, Metadata: md, Permissions: permissions,
 		Crud: crudService, JWTPrivateKeyPEM: jwtPrivateKeyPEM, JWTPublicKey: jwtPublicKey,
-		ContextAttributesCache: control.NewContextAttributesCache(30 * time.Second),
+		ContextAttributesCache: control.NewContextAttributesCache(contextAttributesCacheTTL),
 		Config:                 config.Unloaded(pool),
 		CookieSecure:           true,
 		Metrics:                runtime.NewMetricsRegistry(),
@@ -154,3 +154,7 @@ func (s *AppState) EffectiveConfig(ctx context.Context, tenantID uuid.UUID) *con
 	tx.Commit(ctx) //nolint:errcheck
 	return s.Config.Effective(snapshot)
 }
+
+// contextAttributesCacheTTL is how long a user's resolved context attributes are reused before the
+// next request re-reads them (an explicit invalidation also clears the entry).
+const contextAttributesCacheTTL = 30 * time.Second

@@ -25,7 +25,7 @@ func RequestContextFrom(ctx context.Context) *permission.RequestContext {
 }
 
 func httpClientForForwarding() *http.Client {
-	return &http.Client{Timeout: 15 * time.Second}
+	return &http.Client{Timeout: forwardTimeout}
 }
 
 // ForwardPost forwards the caller's own bearer token to a POST REST endpoint of an upstream and
@@ -113,3 +113,6 @@ func ParseUUID(s string) (uuid.UUID, error) {
 	}
 	return id, nil
 }
+
+// forwardTimeout bounds one forwarded REST call to an upstream (platform fields, ForwardPost).
+const forwardTimeout = 15 * time.Second

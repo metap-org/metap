@@ -26,7 +26,7 @@ type StuckEntity struct {
 func FindStuckEntities(ctx context.Context, pool *pgxpool.Pool) ([]StuckEntity, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT tenant_id, entity_name, attempts FROM metadata.reconciler_entity_status
-		 WHERE status = 'migrating' AND lease_expires_at IS NOT NULL AND lease_expires_at < now()`)
+		 WHERE status = `+sqlLit(entityStatusMigrating)+` AND lease_expires_at IS NOT NULL AND lease_expires_at < now()`)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func FindStuckEntities(ctx context.Context, pool *pgxpool.Pool) ([]StuckEntity, 
 func RequeueOrFail(ctx context.Context, pool *pgxpool.Pool, stuck StuckEntity) error {
 	if stuck.Attempts+1 > maxRetryAttempts {
 		_, err := pool.Exec(ctx,
-			`UPDATE metadata.reconciler_entity_status SET status = 'error', attempts = attempts + 1,
+			`UPDATE metadata.reconciler_entity_status SET status = `+sqlLit(entityStatusError)+`, attempts = attempts + 1,
 			 last_error = $3, lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
 			 WHERE tenant_id = $1 AND entity_name = $2`,
 			stuck.TenantID, stuck.EntityName,

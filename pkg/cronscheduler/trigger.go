@@ -28,8 +28,10 @@ const (
 // not a permanent one — worth a few backed-off retries before giving up. 5s/30s/2m: enough
 // spacing that a brief DB hiccup clears well within the first tier, capped low enough that a
 // genuinely broken DB doesn't sit retrying for hours before landing in the dead-letter queue.
+var triggerRetryDelays = []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute}
+
 func triggerRetryPolicy() *eventbus.RetryPolicy {
-	return &eventbus.RetryPolicy{Delays: []time.Duration{5 * time.Second, 30 * time.Second, 120 * time.Second}}
+	return &eventbus.RetryPolicy{Delays: triggerRetryDelays}
 }
 
 // RunTriggerListener runs the consume-dispatch loop until ctx is canceled — a thin wrapper

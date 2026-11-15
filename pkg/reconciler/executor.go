@@ -90,7 +90,7 @@ func executeLocked(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, 
 		}
 	}
 	if hasHeavy {
-		if err := SetStatus(ctx, pool, tenantID, entityName, StatusMigrating, lockOwner, 10*time.Minute); err != nil {
+		if err := SetStatus(ctx, pool, tenantID, entityName, StatusMigrating, lockOwner, migrationLeaseTTL); err != nil {
 			return err
 		}
 	}
@@ -266,3 +266,7 @@ func buildSyncTriggerSQL(table, field, sqlType string) []string {
 			triggerName, quoteQualifiedIdent(table), qualifiedFn),
 	}
 }
+
+// migrationLeaseTTL is how long a reconcile holds an entity in the migrating state before the
+// watchdog may treat the lease as abandoned and requeue it.
+const migrationLeaseTTL = 10 * time.Minute
