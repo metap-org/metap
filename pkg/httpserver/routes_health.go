@@ -6,11 +6,12 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/metap-org/metap/pkg/kit/httpx"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 func mountHealth(r chi.Router) {
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(standard.HeaderContentType, standard.MediaTypeJSON)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metap-org/metap/pkg/cron"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 type activity struct {
@@ -67,7 +68,7 @@ func runStepRange(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfi
 				return nil, false, err
 			}
 			slog.Info("workflow chain paused at wait_event step",
-				"run_id", workflowRunID, "step_index", stepIndex, "entity", wait.Entity)
+				standard.LogRunID, workflowRunID, standard.LogStepIndex, stepIndex, "entity", wait.Entity)
 			return nil, true, nil
 		}
 
@@ -76,19 +77,19 @@ func runStepRange(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfi
 			message := fmt.Sprintf("step %d (%s) failed: %s", stepIndex, step.TargetType, err)
 			if recordErr := cron.FailWorkflowRun(ctx, pool, workflowRunID, stepIndex, message); recordErr != nil {
 				slog.Error("failed to record workflow run step failure",
-					"run_id", workflowRunID, "step_index", stepIndex, "error", recordErr)
+					standard.LogRunID, workflowRunID, standard.LogStepIndex, stepIndex, standard.LogError, recordErr)
 			}
 			return nil, false, errors.New(message)
 		}
 		if err := cron.AdvanceWorkflowRun(ctx, pool, workflowRunID, stepIndex, value); err != nil {
 			slog.Error("failed to record workflow run step progress",
-				"run_id", workflowRunID, "step_index", stepIndex, "error", err)
+				standard.LogRunID, workflowRunID, standard.LogStepIndex, stepIndex, standard.LogError, err)
 		}
 		results = append(results, value)
 	}
 
 	if err := cron.FinishWorkflowRun(ctx, pool, workflowRunID); err != nil {
-		slog.Error("failed to mark workflow run finished", "run_id", workflowRunID, "error", err)
+		slog.Error("failed to mark workflow run finished", standard.LogRunID, workflowRunID, standard.LogError, err)
 	}
 	summary, err := json.Marshal(map[string]any{"steps": results})
 	if err != nil {
@@ -113,10 +114,10 @@ func ResumeSteps(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig
 
 	var cfg stepsConfig
 	if err := json.Unmarshal(payload.TargetConfig, &cfg); err != nil {
-		slog.Error("failed to parse steps target_config on resume", "run_id", resumed.CronJobRunID, "error", err)
+		slog.Error("failed to parse steps target_config on resume", standard.LogRunID, resumed.CronJobRunID, standard.LogError, err)
 		msg := err.Error()
 		if recordErr := cron.FinishRunWithRetry(ctx, pool, &payload, cron.RunFailed, &msg, nil); recordErr != nil {
-			slog.Error("failed to record resumed cron job run result", "run_id", payload.RunID, "error", recordErr)
+			slog.Error("failed to record resumed cron job run result", standard.LogRunID, payload.RunID, standard.LogError, recordErr)
 		}
 		return
 	}
@@ -124,19 +125,19 @@ func ResumeSteps(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig
 	summary, waiting, err := runStepRange(ctx, pool, config, &payload, resumed.WorkflowRunID, cfg.Steps, int(resumed.ResumeFromStepIndex))
 	switch {
 	case err != nil:
-		slog.Warn("resumed cron job chain failed", "job_id", payload.JobID, "run_id", payload.RunID, "error", err)
+		slog.Warn("resumed cron job chain failed", standard.LogJobID, payload.JobID, standard.LogRunID, payload.RunID, standard.LogError, err)
 		msg := err.Error()
 		if recordErr := cron.FinishRunWithRetry(ctx, pool, &payload, cron.RunFailed, &msg, nil); recordErr != nil {
-			slog.Error("failed to record resumed cron job run result", "run_id", payload.RunID, "error", recordErr)
+			slog.Error("failed to record resumed cron job run result", standard.LogRunID, payload.RunID, standard.LogError, recordErr)
 		}
 	// Another wait_event step later in the same chain — already paused again by runStepRange/
 	// PauseWorkflowRun, nothing left to do here.
 	case waiting:
-		slog.Info("cron job chain paused again on a later wait_event", "job_id", payload.JobID, "run_id", payload.RunID)
+		slog.Info("cron job chain paused again on a later wait_event", standard.LogJobID, payload.JobID, standard.LogRunID, payload.RunID)
 	default:
-		slog.Info("cron job chain resumed and completed", "job_id", payload.JobID, "run_id", payload.RunID)
+		slog.Info("cron job chain resumed and completed", standard.LogJobID, payload.JobID, standard.LogRunID, payload.RunID)
 		if recordErr := cron.FinishRun(ctx, pool, payload.RunID, cron.RunSuccess, nil, summary); recordErr != nil {
-			slog.Error("failed to record resumed cron job run result", "run_id", payload.RunID, "error", recordErr)
+			slog.Error("failed to record resumed cron job run result", standard.LogRunID, payload.RunID, standard.LogError, recordErr)
 		}
 	}
 }

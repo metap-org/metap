@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // topicMatches reports whether routingKey matches pattern under AMQP topic-exchange rules:
@@ -100,7 +102,7 @@ func (r *HandlerRegistry) Run(ctx context.Context, queue string, retryPolicy *Re
 			return
 		}
 		for _, err := range failures {
-			slog.Warn("event handler failed", "routing_key", event.RoutingKey, "error", err)
+			slog.Warn("event handler failed", standard.LogRoutingKey, event.RoutingKey, standard.LogError, err)
 		}
 		if retryPolicy != nil {
 			_ = event.RetryOrGiveUp(ctx, retryPolicy)

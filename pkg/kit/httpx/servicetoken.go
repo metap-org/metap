@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // How often the background loop logs back in, as a fraction of the server's own token TTL
@@ -69,7 +71,7 @@ func StartServiceTokenSource(ctx context.Context, httpClient *http.Client, login
 				return nil, fmt.Errorf("logging into %s as %s (gave up after %s of retries): %w",
 					loginURL, email, serviceTokenInitialRetryBudget, outcome.err)
 			}
-			slog.Warn("upstream not reachable yet, retrying", "login_url", loginURL, "error", outcome.err,
+			slog.Warn("upstream not reachable yet, retrying", "login_url", loginURL, standard.LogError, outcome.err,
 				"retry_in", serviceTokenInitialRetryInterval)
 			time.Sleep(serviceTokenInitialRetryInterval)
 			continue
@@ -100,7 +102,7 @@ func StartServiceTokenSource(ctx context.Context, httpClient *http.Client, login
 			default:
 				nextDelay = serviceTokenRetryBackoff
 				slog.Error("failed to refresh service account token, keeping previous one",
-					"login_url", loginURL, "error", outcome.err, "retry_in", serviceTokenRetryBackoff)
+					"login_url", loginURL, standard.LogError, outcome.err, "retry_in", serviceTokenRetryBackoff)
 			}
 		}
 	}()
@@ -141,7 +143,7 @@ func loginOnce(ctx context.Context, httpClient *http.Client, loginURL, email, pa
 	if err != nil {
 		return loginOutcome{kind: outcomeFatal, err: fmt.Errorf("building request to %s: %w", loginURL, err)}
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(standard.HeaderContentType, standard.MediaTypeJSON)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

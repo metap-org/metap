@@ -4,12 +4,14 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"strings"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // BearerToken extracts the token from an Authorization header value ("Bearer <token>"). It
 // returns ("", false) when the scheme is missing or the token is empty.
 func BearerToken(header string) (string, bool) {
-	const prefix = "Bearer "
+	const prefix = standard.BearerPrefix
 	if !strings.HasPrefix(header, prefix) {
 		return "", false
 	}

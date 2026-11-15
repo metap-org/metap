@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // Error bodies are small JSON objects; this is just a sanity ceiling, not a tuned limit.
@@ -40,7 +42,7 @@ func (w *requestContextWriter) WriteHeader(status int) {
 	}
 	w.statusWritten = true
 	w.status = status
-	w.Header().Set("x-request-id", w.requestID)
+	w.Header().Set(standard.HeaderRequestID, w.requestID)
 	w.Header().Set("x-trace-id", w.traceID)
 	if status >= 400 {
 		w.bufferMode = true

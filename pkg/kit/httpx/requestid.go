@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"regexp"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // RequestIDs is the request_id/trace_id pair generated once per request, the single source
@@ -42,7 +44,7 @@ func GenerateRequestIDs(next http.Handler) http.Handler {
 		traceID := headerOrNewUUID(r.Header, "x-trace-id")
 		// A mesh ingress sets x-request-id before this service sees the request and expects it
 		// preserved end-to-end — only mint a new one when genuinely absent.
-		requestID := headerOrNewUUID(r.Header, "x-request-id")
+		requestID := headerOrNewUUID(r.Header, standard.HeaderRequestID)
 
 		traceCtx := TraceContextFromHeaders(r.Header)
 

@@ -26,6 +26,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/attachments"
 	"github.com/metap-org/metap/pkg/kit/errcode"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -90,7 +91,7 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 
 	mr, err := r.MultipartReader()
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_multipart", err.Error(), nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.InvalidMultipart, err.Error(), nil)
 		return
 	}
 	part, err := mr.NextPart()
@@ -99,14 +100,14 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 		return
 	}
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_multipart", err.Error(), nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.InvalidMultipart, err.Error(), nil)
 		return
 	}
 	filename := part.FileName()
 	if filename == "" {
 		filename = "upload"
 	}
-	contentType := part.Header.Get("Content-Type")
+	contentType := part.Header.Get(standard.HeaderContentType)
 	data, err := io.ReadAll(io.LimitReader(part, maxBytes+1))
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) || int64(len(data)) > maxBytes {
@@ -115,7 +116,7 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 		return
 	}
 	if err != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_multipart", err.Error(), nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.InvalidMultipart, err.Error(), nil)
 		return
 	}
 
@@ -268,7 +269,7 @@ func downloadAttachment(w http.ResponseWriter, r *http.Request, state *httpserve
 	}
 	// Content-Disposition: attachment — never inline — so a browser downloads rather than
 	// renders whatever contentType the uploader claimed (a caller-supplied, unverified value).
-	w.Header().Set("Content-Type", contentType)
+	w.Header().Set(standard.HeaderContentType, contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", record.Filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
@@ -328,7 +329,7 @@ func deleteAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 	// failed delete here leaves an orphaned object in storage, not a dangling metadata
 	// reference, so it's logged rather than turned into a failed request.
 	if err := state.ObjectStore.Delete(r.Context(), tenantID, record.Key); err != nil {
-		slog.Warn("failed to delete attachment blob from object storage", "key", record.Key, "error", err)
+		slog.Warn("failed to delete attachment blob from object storage", "key", record.Key, standard.LogError, err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

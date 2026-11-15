@@ -11,6 +11,7 @@ import (
 	"github.com/metap-org/metap/migrations"
 	"github.com/metap-org/metap/pkg/dbmigrate"
 	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 func main() {
@@ -26,7 +27,7 @@ func main() {
 	slog.Info("connecting to postgres...")
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
-		slog.Error("connecting to postgres", "error", err)
+		slog.Error("connecting to postgres", standard.LogError, err)
 		os.Exit(1)
 	}
 	defer pool.Close()
@@ -42,7 +43,7 @@ func main() {
 		result, err = dbmigrate.RunFS(ctx, pool, migrations.FS)
 	}
 	if err != nil {
-		slog.Error("migration failed", "error", err)
+		slog.Error("migration failed", standard.LogError, err)
 		os.Exit(1)
 	}
 

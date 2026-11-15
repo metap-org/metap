@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // TraceContext is W3C Trace Context (https://www.w3.org/TR/trace-context/) propagation — lets this
@@ -69,7 +71,7 @@ func parseTraceparent(header string) (traceID, parentID string, sampled bool, ok
 // TraceContextFromHeaders parses the incoming traceparent header if present and well-formed;
 // otherwise starts a new root trace.
 func TraceContextFromHeaders(h http.Header) TraceContext {
-	if traceID, parentID, sampled, ok := parseTraceparent(h.Get("traceparent")); ok {
+	if traceID, parentID, sampled, ok := parseTraceparent(h.Get(standard.HeaderTraceparent)); ok {
 		return TraceContext{TraceID: traceID, ParentSpanID: parentID, SpanID: newSpanID(), Sampled: sampled}
 	}
 	return TraceContext{TraceID: newTraceID(), SpanID: newSpanID(), Sampled: true}
@@ -102,6 +104,6 @@ func CurrentTrace(ctx context.Context) (TraceContext, bool) {
 // with no incoming request to propagate from.
 func AttachTraceContext(ctx context.Context, req *http.Request) {
 	if tc, ok := CurrentTrace(ctx); ok {
-		req.Header.Set("traceparent", tc.ToTraceparentHeader())
+		req.Header.Set(standard.HeaderTraceparent, tc.ToTraceparentHeader())
 	}
 }

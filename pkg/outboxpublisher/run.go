@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 type outboxRow struct {
@@ -79,7 +80,7 @@ func connectWithBackoff(ctx context.Context, connect func() (eventbus.EventBus, 
 		if err == nil {
 			return bus, nil
 		}
-		slog.Warn("failed to connect to event bus, retrying", "error", err, "attempt", *attempt)
+		slog.Warn("failed to connect to event bus, retrying", standard.LogError, err, standard.LogAttempt, *attempt)
 		if !eventbus.SleepOrShutdown(ctx, eventbus.BackoffDelay(*attempt)) {
 			return nil, nil
 		}
@@ -126,7 +127,7 @@ func publishPending(ctx context.Context, pool *pgxpool.Pool, bus eventbus.EventB
 				return false, err
 			}
 		} else {
-			slog.Warn("failed to publish outbox event, will retry next poll", "outbox_id", row.id, "topic", row.topic, "error", pubErr)
+			slog.Warn("failed to publish outbox event, will retry next poll", "outbox_id", row.id, "topic", row.topic, standard.LogError, pubErr)
 			if err := markFailed(ctx, tx, row.id, pubErr.Error()); err != nil {
 				return false, err
 			}

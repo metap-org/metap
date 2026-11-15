@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // CleanupGracePeriodSeconds: kept short — these rows carry no audit/compliance value once spent
@@ -122,7 +124,7 @@ func Run(ctx context.Context, pool *pgxpool.Pool, interval time.Duration) {
 		counts, err := DeleteExpired(ctx, pool)
 		switch {
 		case err != nil:
-			slog.Warn("oauth2 expired-token cleanup sweep failed", "error", err)
+			slog.Warn("oauth2 expired-token cleanup sweep failed", standard.LogError, err)
 		case counts.AuthorizationCodesDeleted > 0 || counts.RefreshTokensDeleted > 0 || counts.PendingAuthorizationsDeleted > 0:
 			slog.Info("oauth2 expired-token cleanup swept rows",
 				"authorization_codes_deleted", counts.AuthorizationCodesDeleted,

@@ -21,6 +21,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/oauth2"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 type OAuth2LoginConfig struct {
@@ -143,7 +145,7 @@ func OAuth2LoginVerifyCallback(
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	req.Header.Set(standard.HeaderAuthorization, standard.BearerPrefix+token.AccessToken)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err

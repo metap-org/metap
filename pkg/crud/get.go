@@ -26,7 +26,7 @@ func (s *CrudService) Get(ctx context.Context, entityName string, id uuid.UUID, 
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return GetResult{}, NewServiceError(http.StatusNotFound, "entity_not_found")
+		return GetResult{}, NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
 	}
 
 	decision, err := s.permissions.CanReadEntity(ctx, rc, entity.Name)

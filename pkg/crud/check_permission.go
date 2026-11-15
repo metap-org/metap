@@ -24,7 +24,7 @@ func (s *CrudService) CheckRecordPermission(ctx context.Context, entityName stri
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return NewServiceError(http.StatusNotFound, "entity_not_found")
+		return NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
 	}
 
 	var decision permission.PermissionDecision

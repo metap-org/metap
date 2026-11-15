@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/metadata"
 )
 
@@ -32,7 +33,7 @@ func mountMetadata(r chi.Router, state *AppState) {
 		}
 		summary, found := registry.GetEntityMetadata(chi.URLParam(r, "entity"))
 		if !found {
-			writeServiceError(w, http.StatusNotFound, "entity_not_found", "Entity not found.", nil)
+			writeServiceError(w, http.StatusNotFound, errcode.EntityNotFound, "Entity not found.", nil)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": summary})

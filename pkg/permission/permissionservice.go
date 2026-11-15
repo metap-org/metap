@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	mcache "github.com/metap-org/metap/pkg/cache"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 type PermissionService struct {
@@ -138,9 +139,9 @@ func (s *PermissionService) LoadSnapshot(ctx context.Context, tenantID uuid.UUID
 		if jerr := json.Unmarshal(bytes, &rows); jerr == nil {
 			return PermissionSnapshotFromRows(rows), nil
 		}
-		slog.Warn("policy cache entry failed to deserialize, falling back to store", "tenant_id", tenantID, "entity", entity)
+		slog.Warn("policy cache entry failed to deserialize, falling back to store", standard.LogTenantID, tenantID, "entity", entity)
 	} else if err != nil {
-		slog.Warn("policy cache read failed, falling back to store", "tenant_id", tenantID, "entity", entity, "error", err)
+		slog.Warn("policy cache read failed, falling back to store", standard.LogTenantID, tenantID, "entity", entity, standard.LogError, err)
 	}
 
 	rows, err := s.store.LoadAllPolicies(ctx, tenantID, entity)
@@ -149,7 +150,7 @@ func (s *PermissionService) LoadSnapshot(ctx context.Context, tenantID uuid.UUID
 	}
 	if bytes, err := json.Marshal(rows); err == nil {
 		if err := s.cache.Set(ctx, tenantID, key, bytes); err != nil {
-			slog.Warn("policy cache write failed (non-fatal)", "tenant_id", tenantID, "entity", entity, "error", err)
+			slog.Warn("policy cache write failed (non-fatal)", standard.LogTenantID, tenantID, "entity", entity, standard.LogError, err)
 		}
 	}
 	return PermissionSnapshotFromRows(rows), nil
@@ -197,7 +198,7 @@ func (s *PermissionService) invalidatePoliciesCache(ctx context.Context, tenantI
 		return
 	}
 	if err := s.cache.Invalidate(ctx, tenantID, policiesCacheKey(entity)); err != nil {
-		slog.Warn("policy cache invalidate failed (non-fatal, entry will expire via TTL)", "tenant_id", tenantID, "entity", entity, "error", err)
+		slog.Warn("policy cache invalidate failed (non-fatal, entry will expire via TTL)", standard.LogTenantID, tenantID, "entity", entity, standard.LogError, err)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metap-org/metap/pkg/events"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 type ClaimResult struct {
@@ -55,7 +56,7 @@ func ClaimDueJobs(ctx context.Context, pool *pgxpool.Pool, now time.Time, batchS
 
 	for _, job := range jobs {
 		if job.CronExpr == nil {
-			slog.Error("disabling cron job: schedule job with no cron_expr", "job_id", job.ID)
+			slog.Error("disabling cron job: schedule job with no cron_expr", standard.LogJobID, job.ID)
 			if _, err := tx.Exec(ctx, "UPDATE cron_jobs SET enabled = false, updated_at = now() WHERE id = $1", job.ID); err != nil {
 				return nil, err
 			}
@@ -63,7 +64,7 @@ func ClaimDueJobs(ctx context.Context, pool *pgxpool.Pool, now time.Time, batchS
 		}
 		next, err := NextRunAt(*job.CronExpr, job.Timezone, now)
 		if err != nil {
-			slog.Error("disabling cron job: cannot compute next run", "job_id", job.ID, "error", err)
+			slog.Error("disabling cron job: cannot compute next run", standard.LogJobID, job.ID, standard.LogError, err)
 			if _, err := tx.Exec(ctx, "UPDATE cron_jobs SET enabled = false, updated_at = now() WHERE id = $1", job.ID); err != nil {
 				return nil, err
 			}
@@ -85,7 +86,7 @@ func ClaimDueJobs(ctx context.Context, pool *pgxpool.Pool, now time.Time, batchS
 			return nil, err
 		}
 
-		slog.Info("cron job claimed", "job_id", job.ID, "run_id", runID, "name", job.Name, "dispatch_mode", job.DispatchMode)
+		slog.Info("cron job claimed", standard.LogJobID, job.ID, standard.LogRunID, runID, "name", job.Name, "dispatch_mode", job.DispatchMode)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -187,8 +188,8 @@ func fireMatchedJobs(ctx context.Context, tx pgx.Tx, jobs []*CronJob, triggerKin
 			return nil, err
 		}
 
-		slog.Info("cron job triggered", "job_id", job.ID, "run_id", runID, "name", job.Name,
-			"entity", entity, "trigger_kind", triggerKind, "detail", detail)
+		slog.Info("cron job triggered", standard.LogJobID, job.ID, standard.LogRunID, runID, "name", job.Name,
+			"entity", entity, standard.LogTriggerKind, triggerKind, "detail", detail)
 	}
 	return result, nil
 }
@@ -254,9 +255,9 @@ func ClaimDueRetries(ctx context.Context, pool *pgxpool.Pool, now time.Time, bat
 		}
 		if retry.reclaimed {
 			slog.Warn("cron job retry reclaimed (previous claim never finished — stale outbox or crashed executor)",
-				"job_id", retry.job.ID, "run_id", retry.runID, "attempt", retry.attempt)
+				standard.LogJobID, retry.job.ID, standard.LogRunID, retry.runID, standard.LogAttempt, retry.attempt)
 		} else {
-			slog.Info("cron job retry claimed", "job_id", retry.job.ID, "run_id", retry.runID, "attempt", retry.attempt)
+			slog.Info("cron job retry claimed", standard.LogJobID, retry.job.ID, standard.LogRunID, retry.runID, standard.LogAttempt, retry.attempt)
 		}
 	}
 

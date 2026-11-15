@@ -16,6 +16,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/cron"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 const (
@@ -69,7 +70,7 @@ func RunTriggerListener(ctx context.Context, connect func() (eventbus.EventBus, 
 }
 
 func rejectMalformed(event *eventbus.ConsumedEvent, reason string) {
-	slog.Warn("malformed trigger-worthy payload, routed to dead-letter queue", "routing_key", event.RoutingKey, "reason", reason)
+	slog.Warn("malformed trigger-worthy payload, routed to dead-letter queue", standard.LogRoutingKey, event.RoutingKey, "reason", reason)
 	event.NackLogged(false)
 }
 
@@ -104,8 +105,8 @@ func finishDispatch(ctx context.Context, pool *pgxpool.Pool, config *ExecutorCon
 	resumeQuery func() ([]cron.ResumedWorkflowRun, error), triggerKind string, tenantID uuid.UUID, entity, detail string) {
 	if fireErr != nil {
 		slog.Warn("failed to dispatch trigger matches, retrying with backoff",
-			"tenant_id", tenantID, "entity", entity, "trigger_kind", triggerKind, "detail", detail,
-			"error", fireErr, "retry_count", event.RetryCount())
+			standard.LogTenantID, tenantID, "entity", entity, standard.LogTriggerKind, triggerKind, "detail", detail,
+			standard.LogError, fireErr, "retry_count", event.RetryCount())
 		_ = event.RetryOrGiveUp(ctx, policy)
 		return
 	}
@@ -123,7 +124,7 @@ func finishDispatch(ctx context.Context, pool *pgxpool.Pool, config *ExecutorCon
 	resumed, err := resumeQuery()
 	if err != nil {
 		slog.Error("failed to resume wait_event chains for this event — any matching chain stays waiting",
-			"tenant_id", tenantID, "entity", entity, "trigger_kind", triggerKind, "detail", detail, "error", err)
+			standard.LogTenantID, tenantID, "entity", entity, standard.LogTriggerKind, triggerKind, "detail", detail, standard.LogError, err)
 	} else {
 		for i := range resumed {
 			ResumeSteps(ctx, pool, config, &resumed[i])

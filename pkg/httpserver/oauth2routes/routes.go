@@ -37,6 +37,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/kit/errcode"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/oauthserver"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/tenantauth"
@@ -142,7 +143,7 @@ func consentPageHTML(clientName, scope string, requestID uuid.UUID) string {
         const res = await fetch("/oauth/authorize/decision", {
           method: "POST",
           credentials: "include",
-          headers: { "content-type": "application/json", "x-csrf-token": csrfToken() },
+          headers: { "content-type": standard.MediaTypeJSON, "x-csrf-token": csrfToken() },
           body: JSON.stringify({ requestId: "%s", approve: approve }),
         });
         const body = await res.json();
@@ -178,7 +179,7 @@ func authorizeOAuth2(w http.ResponseWriter, r *http.Request, state *httpserver.A
 	}
 	q := r.URL.Query()
 	if q.Get("response_type") != "code" {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "unsupported_response_type", "Only response_type=code is supported.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthUnsupportedResponseType, "Only response_type=code is supported.", nil)
 		return
 	}
 	tenantID, err := state.Permissions.ScopedTenant(rc)
@@ -204,16 +205,16 @@ func authorizeOAuth2(w http.ResponseWriter, r *http.Request, state *httpserver.A
 		return
 	}
 	if withSecret == nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_client", "Unknown client_id.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidClient, "Unknown client_id.", nil)
 		return
 	}
 	client := withSecret.Client
 	if client.RevokedAt != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_client", "This client has been revoked.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidClient, "This client has been revoked.", nil)
 		return
 	}
 	if client.TenantID != tenantID {
-		httpserver.WriteServiceError(w, http.StatusForbidden, "invalid_client", "This client does not belong to your tenant.", nil)
+		httpserver.WriteServiceError(w, http.StatusForbidden, errcode.OAuthInvalidClient, "This client does not belong to your tenant.", nil)
 		return
 	}
 	registered := false
@@ -231,19 +232,19 @@ func authorizeOAuth2(w http.ResponseWriter, r *http.Request, state *httpserver.A
 		}
 	}
 	if !registered {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_request", "redirect_uri is not registered for this client.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidRequest, "redirect_uri is not registered for this client.", nil)
 		return
 	}
 	if codeChallengeMethod != nil && *codeChallengeMethod != "S256" {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_request", "Only code_challenge_method=S256 is supported.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidRequest, "Only code_challenge_method=S256 is supported.", nil)
 		return
 	}
 	if !client.IsConfidential && codeChallenge == nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_request", "code_challenge (PKCE) is required for a public client.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidRequest, "code_challenge (PKCE) is required for a public client.", nil)
 		return
 	}
 	if !oauthserver.ScopeIsSubset(scope, strings.Join(client.AllowedScopes, " ")) {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_scope", "Requested scope exceeds what this client is allowed to request.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidScope, "Requested scope exceeds what this client is allowed to request.", nil)
 		return
 	}
 
@@ -278,7 +279,7 @@ func authorizeOAuth2(w http.ResponseWriter, r *http.Request, state *httpserver.A
 		httpserver.WriteInternalError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(standard.HeaderContentType, "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(consentPageHTML(client.Name, scope, pending.ID)))
 }
@@ -321,7 +322,7 @@ func authorizeDecision(w http.ResponseWriter, r *http.Request, state *httpserver
 		return
 	}
 	if pending == nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_request",
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidRequest,
 			"This authorization request has expired or was already decided. Please start over.", nil)
 		return
 	}
@@ -347,7 +348,7 @@ func authorizeDecision(w http.ResponseWriter, r *http.Request, state *httpserver
 // extractClientAuth reads client_id/client_secret from Authorization: Basic (RFC 6749 §2.3.1's
 // preferred form) first, falling back to form fields — real client libraries use either.
 func extractClientAuth(r *http.Request) (string, string, bool) {
-	if header := r.Header.Get("Authorization"); header != "" {
+	if header := r.Header.Get(standard.HeaderAuthorization); header != "" {
 		if b64, ok := strings.CutPrefix(header, "Basic "); ok {
 			if decoded, err := base64.StdEncoding.DecodeString(b64); err == nil {
 				if id, secret, found := strings.Cut(string(decoded), ":"); found {
@@ -370,11 +371,11 @@ func authenticateOAuthClient(w http.ResponseWriter, r *http.Request, state *http
 		return nil, false
 	}
 	if client == nil {
-		httpserver.WriteServiceError(w, http.StatusUnauthorized, "invalid_client", "Unknown client.", nil)
+		httpserver.WriteServiceError(w, http.StatusUnauthorized, errcode.OAuthInvalidClient, "Unknown client.", nil)
 		return nil, false
 	}
 	if !oauthserver.VerifyClientSecret(client, clientSecret) {
-		httpserver.WriteServiceError(w, http.StatusUnauthorized, "invalid_client", "Invalid client credentials.", nil)
+		httpserver.WriteServiceError(w, http.StatusUnauthorized, errcode.OAuthInvalidClient, "Invalid client credentials.", nil)
 		return nil, false
 	}
 	return client, true
@@ -393,12 +394,12 @@ type oauthTokenResponse struct {
 
 func tokenEndpoint(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
 	if err := r.ParseForm(); err != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_request", "Invalid request body.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidRequest, "Invalid request body.", nil)
 		return
 	}
 	clientIDStr, clientSecret, ok := extractClientAuth(r)
 	if !ok {
-		httpserver.WriteServiceError(w, http.StatusUnauthorized, "invalid_client", "Client authentication is required.", nil)
+		httpserver.WriteServiceError(w, http.StatusUnauthorized, errcode.OAuthInvalidClient, "Client authentication is required.", nil)
 		return
 	}
 	client, ok := authenticateOAuthClient(w, r, state, clientIDStr, clientSecret)
@@ -406,7 +407,7 @@ func tokenEndpoint(w http.ResponseWriter, r *http.Request, state *httpserver.App
 		return
 	}
 	if client.Client.RevokedAt != nil {
-		httpserver.WriteServiceError(w, http.StatusUnauthorized, "invalid_client", "This client has been revoked.", nil)
+		httpserver.WriteServiceError(w, http.StatusUnauthorized, errcode.OAuthInvalidClient, "This client has been revoked.", nil)
 		return
 	}
 
@@ -418,7 +419,7 @@ func tokenEndpoint(w http.ResponseWriter, r *http.Request, state *httpserver.App
 	case "client_credentials":
 		clientCredentialsGrant(w, state, client)
 	default:
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "unsupported_grant_type",
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthUnsupportedGrantType,
 			"Only authorization_code, refresh_token, and client_credentials are supported.", nil)
 	}
 }
@@ -431,18 +432,18 @@ func tokenEndpoint(w http.ResponseWriter, r *http.Request, state *httpserver.App
 // at any time.
 func clientCredentialsGrant(w http.ResponseWriter, state *httpserver.AppState, client *oauthserver.ClientWithSecret) {
 	if !client.Client.IsConfidential {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "unauthorized_client", "client_credentials requires a confidential client.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthUnauthorizedClient, "client_credentials requires a confidential client.", nil)
 		return
 	}
 	if client.Client.ServiceUserID == nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "unauthorized_client",
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthUnauthorizedClient,
 			"This client has no service account provisioned; re-register it to use client_credentials.", nil)
 		return
 	}
 	requestedScope := ""
 	allowedScope := strings.Join(client.Client.AllowedScopes, " ")
 	if !oauthserver.ScopeIsSubset(requestedScope, allowedScope) {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_scope", "Requested scope exceeds what this client is allowed to request.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidScope, "Requested scope exceeds what this client is allowed to request.", nil)
 		return
 	}
 	accessToken, err := state.MintOAuthToken(client.Client.TenantID, *client.Client.ServiceUserID,
@@ -459,7 +460,7 @@ func clientCredentialsGrant(w http.ResponseWriter, state *httpserver.AppState, c
 func authorizationCodeGrant(w http.ResponseWriter, r *http.Request, state *httpserver.AppState, client *oauthserver.ClientWithSecret) {
 	code, redirectURI := r.FormValue("code"), r.FormValue("redirect_uri")
 	if code == "" || redirectURI == "" {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_request", "code and redirect_uri are required.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidRequest, "code and redirect_uri are required.", nil)
 		return
 	}
 
@@ -469,7 +470,7 @@ func authorizationCodeGrant(w http.ResponseWriter, r *http.Request, state *https
 		return
 	}
 	if record == nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_grant", "Invalid, expired, or already-used authorization code.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidGrant, "Invalid, expired, or already-used authorization code.", nil)
 		return
 	}
 
@@ -479,11 +480,11 @@ func authorizationCodeGrant(w http.ResponseWriter, r *http.Request, state *https
 	if record.CodeChallenge != nil {
 		verifier := r.FormValue("code_verifier")
 		if verifier == "" {
-			httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_grant", "code_verifier is required for this authorization code.", nil)
+			httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidGrant, "code_verifier is required for this authorization code.", nil)
 			return
 		}
 		if !oauthserver.VerifyPKCE(verifier, *record.CodeChallenge) {
-			httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_grant", "code_verifier does not match code_challenge.", nil)
+			httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidGrant, "code_verifier does not match code_challenge.", nil)
 			return
 		}
 	}
@@ -521,7 +522,7 @@ func authorizationCodeGrant(w http.ResponseWriter, r *http.Request, state *https
 func refreshTokenGrant(w http.ResponseWriter, r *http.Request, state *httpserver.AppState, client *oauthserver.ClientWithSecret) {
 	rawRefresh := r.FormValue("refresh_token")
 	if rawRefresh == "" {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_request", "refresh_token is required.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidRequest, "refresh_token is required.", nil)
 		return
 	}
 
@@ -540,7 +541,7 @@ func refreshTokenGrant(w http.ResponseWriter, r *http.Request, state *httpserver
 	switch outcome.Kind {
 	case oauthserver.RefreshInvalid:
 		tx.Rollback(r.Context()) //nolint:errcheck
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_grant", "Invalid, expired, or revoked refresh token.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidGrant, "Invalid, expired, or revoked refresh token.", nil)
 	case oauthserver.RefreshReused:
 		// The chain revocation already happened inside ConsumeRefreshToken — commit so it
 		// sticks, then report the failure.
@@ -548,7 +549,7 @@ func refreshTokenGrant(w http.ResponseWriter, r *http.Request, state *httpserver
 			httpserver.WriteInternalError(w, err)
 			return
 		}
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_grant",
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidGrant,
 			"Refresh token reuse detected; this client's token chain has been revoked. The user must re-authorize.", nil)
 	default: // RefreshRotated
 		requestedScope := r.FormValue("scope")
@@ -557,7 +558,7 @@ func refreshTokenGrant(w http.ResponseWriter, r *http.Request, state *httpserver
 		}
 		if !oauthserver.ScopeIsSubset(requestedScope, outcome.Record.Scope) {
 			tx.Rollback(r.Context()) //nolint:errcheck
-			httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_scope", "Requested scope exceeds the originally granted scope.", nil)
+			httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidScope, "Requested scope exceeds the originally granted scope.", nil)
 			return
 		}
 		accessToken, err := state.MintOAuthToken(outcome.Record.TenantID, outcome.Record.UserID, oauthAccessTokenTTLSeconds,
@@ -580,12 +581,12 @@ func refreshTokenGrant(w http.ResponseWriter, r *http.Request, state *httpserver
 
 func revokeEndpoint(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
 	if err := r.ParseForm(); err != nil {
-		httpserver.WriteServiceError(w, http.StatusBadRequest, "invalid_request", "Invalid request body.", nil)
+		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthInvalidRequest, "Invalid request body.", nil)
 		return
 	}
 	clientIDStr, clientSecret, ok := extractClientAuth(r)
 	if !ok {
-		httpserver.WriteServiceError(w, http.StatusUnauthorized, "invalid_client", "Client authentication is required.", nil)
+		httpserver.WriteServiceError(w, http.StatusUnauthorized, errcode.OAuthInvalidClient, "Client authentication is required.", nil)
 		return
 	}
 	client, ok := authenticateOAuthClient(w, r, state, clientIDStr, clientSecret)

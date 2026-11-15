@@ -9,12 +9,13 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 )
 
 func Check(ctx context.Context, pool *pgxpool.Pool, entities []metadata.EntitySummary) {
 	if err := checkInner(ctx, pool, entities); err != nil {
-		slog.Warn("metadata drift check skipped, could not reach the database", "error", err)
+		slog.Warn("metadata drift check skipped, could not reach the database", standard.LogError, err)
 	}
 }
 

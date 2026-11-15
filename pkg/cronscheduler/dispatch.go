@@ -14,6 +14,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/cron"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 const ExecutorQueue = "cron.executor"
@@ -28,7 +29,7 @@ func RunExecutor(ctx context.Context, connect func() (eventbus.EventBus, error),
 		func(ctx context.Context, event *eventbus.ConsumedEvent) {
 			var payload cron.CronJobDuePayload
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
-				slog.Warn("malformed cron.job.due payload, routed to dead-letter queue", "error", err)
+				slog.Warn("malformed cron.job.due payload, routed to dead-letter queue", standard.LogError, err)
 				event.NackLogged(false)
 				return
 			}
@@ -58,15 +59,15 @@ func Execute(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, pa
 
 	status, ok, err := cron.RunStatusOf(ctx, pool, payload.RunID)
 	if err != nil {
-		slog.Error("failed to check cron job run status, proceeding anyway", "run_id", payload.RunID, "error", err)
+		slog.Error("failed to check cron job run status, proceeding anyway", standard.LogRunID, payload.RunID, standard.LogError, err)
 	} else if ok && (status == cron.RunSuccess || status == cron.RunFailed || status == cron.RunWaiting) {
 		slog.Warn("cron job run already completed or waiting, skipping duplicate dispatch (redelivered message)",
-			"run_id", payload.RunID, "job_id", payload.JobID)
+			standard.LogRunID, payload.RunID, standard.LogJobID, payload.JobID)
 		return
 	}
 
 	if err := cron.StartRun(ctx, pool, payload.RunID); err != nil {
-		slog.Error("failed to mark cron job run started", "run_id", payload.RunID, "error", err)
+		slog.Error("failed to mark cron job run started", standard.LogRunID, payload.RunID, standard.LogError, err)
 	}
 
 	summary, waiting, dispatchErr := dispatch(ctx, pool, config, payload)
@@ -74,7 +75,7 @@ func Execute(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, pa
 		// run_steps already wrote cron_job_runs.status = "waiting" (via PauseWorkflowRun) before
 		// returning this — nothing left to record here, and calling FinishRunWithRetry would
 		// incorrectly mark the run finished while it's still durably paused.
-		slog.Info("cron job chain paused on wait_event", "job_id", payload.JobID, "run_id", payload.RunID)
+		slog.Info("cron job chain paused on wait_event", standard.LogJobID, payload.JobID, standard.LogRunID, payload.RunID)
 		return
 	}
 
@@ -85,14 +86,14 @@ func Execute(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, pa
 		status2 = cron.RunFailed
 		msg := dispatchErr.Error()
 		errMsg = &msg
-		slog.Warn("cron job execution failed", "job_id", payload.JobID, "run_id", payload.RunID, "error", msg)
+		slog.Warn("cron job execution failed", standard.LogJobID, payload.JobID, standard.LogRunID, payload.RunID, standard.LogError, msg)
 	} else {
 		responseSummary = summary
-		slog.Info("cron job executed", "job_id", payload.JobID, "run_id", payload.RunID)
+		slog.Info("cron job executed", standard.LogJobID, payload.JobID, standard.LogRunID, payload.RunID)
 	}
 
 	if err := cron.FinishRunWithRetry(ctx, pool, payload, status2, errMsg, responseSummary); err != nil {
-		slog.Error("failed to record cron job run result", "run_id", payload.RunID, "error", err)
+		slog.Error("failed to record cron job run result", standard.LogRunID, payload.RunID, standard.LogError, err)
 	}
 }
 

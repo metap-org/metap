@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // RunAuditPartitionMaintenance runs audit.EnsurePartitions once at start and then every
@@ -21,7 +22,7 @@ func RunAuditPartitionMaintenance(ctx context.Context, pool *pgxpool.Pool, inter
 	present, err := audit.PartitioningPresent(ctx, pool)
 	switch {
 	case err != nil:
-		slog.Warn("could not check for partitioned audit table — partition maintenance disabled", "error", err)
+		slog.Warn("could not check for partitioned audit table — partition maintenance disabled", standard.LogError, err)
 		<-ctx.Done()
 		return
 	case !present:
@@ -35,7 +36,7 @@ func RunAuditPartitionMaintenance(ctx context.Context, pool *pgxpool.Pool, inter
 	defer ticker.Stop()
 	for {
 		if created, err := audit.EnsurePartitions(ctx, pool, monthsAhead); err != nil {
-			slog.Error("audit partition maintenance failed", "error", err)
+			slog.Error("audit partition maintenance failed", standard.LogError, err)
 		} else if created > 0 {
 			slog.Info("audit partitions created", "count", created)
 		}

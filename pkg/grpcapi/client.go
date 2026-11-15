@@ -25,6 +25,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/grpcapi/pb"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
 )
@@ -75,7 +76,7 @@ func pickToken(rc *permission.RequestContext, serviceToken *httpx.ServiceTokenSo
 	// identity (a boot-time schema-discovery call, or a real bug upstream that dropped the
 	// header) authenticated as the shared service account with no trace of it having happened
 	// at all.
-	slog.Debug("no forwarded bearer token, falling back to service account token", "tenant_id", rc.TenantID)
+	slog.Debug("no forwarded bearer token, falling back to service account token", standard.LogTenantID, rc.TenantID)
 	return serviceToken.Current()
 }
 
@@ -85,9 +86,9 @@ func pickToken(rc *permission.RequestContext, serviceToken *httpx.ServiceTokenSo
 // trace context to whichever upstream microservice this backend calls.
 func (b *GrpcBackend) outgoingContext(ctx context.Context, rc *permission.RequestContext) context.Context {
 	token := pickToken(rc, b.serviceToken)
-	md := grpcmd.Pairs("authorization", "Bearer "+token)
+	md := grpcmd.Pairs("authorization", standard.BearerPrefix+token)
 	if tc, ok := httpx.CurrentTrace(ctx); ok {
-		md.Append("traceparent", tc.ToTraceparentHeader())
+		md.Append(standard.HeaderTraceparent, tc.ToTraceparentHeader())
 	}
 	return grpcmd.NewOutgoingContext(ctx, md)
 }

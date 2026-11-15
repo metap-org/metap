@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/metap-org/metap/pkg/kit/errcode"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // The {"error":{"code":...,"message":...}} response shape every metap-go service returns on
@@ -72,7 +73,7 @@ func BuildServiceError(status int, errorCode string, message string, fieldErrors
 // ServiceErrorResponse writes a known, expected failure directly to w.
 func ServiceErrorResponse(w http.ResponseWriter, status int, errorCode string, message string, fieldErrors map[string][]string) {
 	body := BuildServiceError(status, errorCode, message, fieldErrors)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(standard.HeaderContentType, standard.MediaTypeJSON)
 	w.WriteHeader(status)
 	_, _ = w.Write(body.MarshalEnvelope())
 }
@@ -80,8 +81,8 @@ func ServiceErrorResponse(w http.ResponseWriter, status int, errorCode string, m
 // InternalErrorResponse logs the real error and writes a body that hides its details from the
 // client.
 func InternalErrorResponse(w http.ResponseWriter, err error) {
-	slog.Error("internal error", "error", err)
-	w.Header().Set("Content-Type", "application/json")
+	slog.Error("internal error", standard.LogError, err)
+	w.Header().Set(standard.HeaderContentType, standard.MediaTypeJSON)
 	w.WriteHeader(http.StatusInternalServerError)
 	_, _ = w.Write([]byte(`{"error":{"code":errcode.InternalError,"message":"Internal server error."}}`))
 }

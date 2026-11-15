@@ -245,7 +245,7 @@ func aggregateRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 			writeServiceError(w, http.StatusRequestEntityTooLarge, errcode.PayloadTooLarge, "Request body is too large.", nil)
 			return
 		}
-		writeServiceError(w, http.StatusBadRequest, "invalid_aggregate", "Invalid request body.", nil)
+		writeServiceError(w, http.StatusBadRequest, errcode.InvalidAggregate, "Invalid request body.", nil)
 		return
 	}
 

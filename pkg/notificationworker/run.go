@@ -10,6 +10,7 @@ import (
 	"log/slog"
 
 	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 const Queue = "notification.workflow-transitioned"
@@ -31,7 +32,7 @@ func notify(event *eventbus.ConsumedEvent) {
 	t := events.ParseTopic(event.RoutingKey)
 	p, err := events.Decode[events.Transitioned](event.Payload)
 	if err != nil {
-		slog.Warn("notification: unreadable transition payload", "routing_key", event.RoutingKey, "error", err)
+		slog.Warn("notification: unreadable transition payload", standard.LogRoutingKey, event.RoutingKey, standard.LogError, err)
 	}
 	slog.Info("notification", "entity", t.Entity, "record_id", p.RecordID, "action", p.Action, "from", p.From, "to", p.To)
 }

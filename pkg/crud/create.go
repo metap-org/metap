@@ -23,7 +23,7 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 	}
 	entity, ok := registry.GetEntity(entityName)
 	if !ok {
-		return RecordDto{}, NewServiceError(http.StatusNotFound, "entity_not_found")
+		return RecordDto{}, NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
 	}
 
 	decision, err := s.permissions.CanCreateEntity(ctx, rc, entity.Name)

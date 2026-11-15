@@ -11,6 +11,7 @@ import (
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
 	"github.com/metap-org/metap/pkg/kit/env"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/outboxpublisher"
 )
 
@@ -18,7 +19,7 @@ func main() {
 	infra.InitTracing()
 	config, err := infra.LoadConfig()
 	if err != nil {
-		slog.Error("loading config", "error", err)
+		slog.Error("loading config", standard.LogError, err)
 		os.Exit(1)
 	}
 
@@ -31,7 +32,7 @@ func main() {
 
 	pool, err := pgxpool.New(ctx, config.OutboxDatabaseURLOrDefault())
 	if err != nil {
-		slog.Error("connecting to postgres", "error", err)
+		slog.Error("connecting to postgres", standard.LogError, err)
 		os.Exit(1)
 	}
 	defer pool.Close()
@@ -40,7 +41,7 @@ func main() {
 
 	connect := func() (eventbus.EventBus, error) { return eventbus.ConnectRabbitEventBus(config.RabbitMQURL) }
 	if err := outboxpublisher.Run(ctx, pool, connect, pollMs, batchSize); err != nil {
-		slog.Error("outbox publisher exited with an error", "error", err)
+		slog.Error("outbox publisher exited with an error", standard.LogError, err)
 		os.Exit(1)
 	}
 }

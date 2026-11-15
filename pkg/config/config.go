@@ -23,6 +23,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	gocache "github.com/patrickmn/go-cache"
+
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 // Snapshot is an immutable view of every stored platform-tier override. Values absent here fall
@@ -434,7 +436,7 @@ func (s *Store) SetTenant(ctx context.Context, e executor, tenantID uuid.UUID, k
 		return dbErr(err)
 	}
 	s.tenants.Delete(tenantID.String())
-	slog.Info("tenant config updated", "tenant_id", tenantID, "key", key)
+	slog.Info("tenant config updated", standard.LogTenantID, tenantID, "key", key)
 	return nil
 }
 
@@ -487,7 +489,7 @@ func (s *Store) SetTenantSecretMarker(ctx context.Context, e executor, tenantID 
 		return dbErr(err)
 	}
 	s.tenants.Delete(tenantID.String())
-	slog.Info("tenant credential stored", "tenant_id", tenantID, "key", key)
+	slog.Info("tenant credential stored", standard.LogTenantID, tenantID, "key", key)
 	return nil
 }
 

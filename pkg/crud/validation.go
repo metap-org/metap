@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/metadata"
 )
 
@@ -94,7 +95,7 @@ func ValidatePayload(entity metadata.EntityDefinition, data JsonObject) (JsonObj
 		}
 
 		if !valid {
-			errs[field.Name] = append(errs[field.Name], "invalid_type")
+			errs[field.Name] = append(errs[field.Name], errcode.InvalidType)
 			continue
 		}
 

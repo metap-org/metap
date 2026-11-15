@@ -15,6 +15,7 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
@@ -117,7 +118,7 @@ func ResolveRequestContext(ctx context.Context, router *Router, tenantID, userID
 			return result, tx.Commit(ctx)
 		})
 		if err != nil {
-			slog.Warn("failed to resolve context attributes", "tenant_id", tenantID, "user_id", userID, "error", err)
+			slog.Warn("failed to resolve context attributes", standard.LogTenantID, tenantID, "user_id", userID, standard.LogError, err)
 			contextAttributes = nil
 		}
 	}

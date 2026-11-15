@@ -39,6 +39,7 @@ import (
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/shutdown"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
@@ -94,7 +95,7 @@ func DefaultModules() []httpserver.Mount {
 // Main runs the service and exits the process with status 1 on any error.
 func Main(opts Options) {
 	if err := Run(context.Background(), opts); err != nil {
-		slog.Error(opts.Name+" exited with an error", "error", err)
+		slog.Error(opts.Name+" exited with an error", standard.LogError, err)
 		os.Exit(1)
 	}
 }
