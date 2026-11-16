@@ -135,9 +135,10 @@ func rolePermissionsMap(r *pb.RolePermissions) map[string]interface{} {
 	}
 	advanced := make([]interface{}, len(r.GetAdvanced()))
 	for i, p := range r.GetAdvanced() {
-		var cond interface{}
-		if p.GetConditionJson() != "" {
-			_ = json.Unmarshal([]byte(p.GetConditionJson()), &cond)
+		// Passed through as the service sent it, never decoded here.
+		var cond json.RawMessage
+		if c := p.GetConditionJson(); c != "" && json.Valid([]byte(c)) {
+			cond = json.RawMessage(c)
 		}
 		roles := p.GetRoles()
 		if roles == nil {

@@ -66,6 +66,14 @@ func (f *fakeUserAdmin) ListRoles(ctx context.Context, req *pb.ListRolesRequest)
 	}}, nil
 }
 
+func (f *fakeUserAdmin) GetRolePermissions(ctx context.Context, _ *pb.RoleNameRequest) (*pb.RolePermissions, error) {
+	f.token(ctx)
+	return &pb.RolePermissions{Role: "analyst",
+		Grants:   []*pb.RoleGrant{{Entity: "shop.customers", Action: "read"}},
+		Advanced: []*pb.RolePolicy{{Id: "p1", Entity: "shop.customers", Action: "delete", Roles: []string{"analyst"}, Effect: "allow", Subject: "context", ConditionJson: `{"field":"status","op":"eq","value":"x"}`}},
+	}, nil
+}
+
 func (f *fakeUserAdmin) DeleteRole(ctx context.Context, _ *pb.RoleNameRequest) (*pb.Empty, error) {
 	f.token(ctx)
 	return nil, grpcapi.SendServiceError(ctx, &crud.ServiceError{Status: 409, Code: "role_in_use",
@@ -147,8 +155,13 @@ func TestIdentityFieldsCallGRPCAsTheCaller(t *testing.T) {
 	assert.Equal(t, "role_in_use", r.errors[0]["code"])
 	assert.NotNil(t, r.errors[0]["fieldErrors"], "what blocks the delete reaches the client")
 
+	r = run(`{ rolePermissions(name: "analyst") { grants { entity action } advanced { action condition field } } }`, nil)
+	require.Empty(t, r.errors)
+	assert.JSONEq(t, `{"rolePermissions":{"grants":[{"entity":"shop.customers","action":"read"}],`+
+		`"advanced":[{"action":"delete","condition":{"field":"status","op":"eq","value":"x"},"field":null}]}}`, r.data)
+
 	for _, tok := range fake.tokens {
 		assert.Equal(t, "Bearer caller-token", tok)
 	}
-	assert.Len(t, fake.tokens, 7)
+	assert.Len(t, fake.tokens, 8)
 }
