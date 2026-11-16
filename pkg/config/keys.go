@@ -193,6 +193,7 @@ const (
 	HTTPRateLimitBurst             = "http.rateLimitBurst"
 	AuthSessionTTLSeconds          = "auth.sessionTtlSeconds"
 	AuthSessionAbsoluteMaxSeconds  = "auth.sessionAbsoluteMaxSeconds"
+	AuthPasswordMinLength          = "auth.passwordMinLength"
 	CronWebhookAuthorization       = "cron.webhookAuthorization"
 	ThemePrimaryColor              = "theme.primaryColor"
 	ThemeLogoURL                   = "theme.logoUrl"
@@ -216,6 +217,10 @@ var Registry = []KeyDef{
 	// --- Tenant: a fleet default a platform admin sets, that each tenant may override ---
 	{Key: AuthSessionTTLSeconds, Level: LevelTenant, Default: func() json.RawMessage { return num(3600) },
 		Validate: positiveIntIn(60, 2_592_000)},
+	// The shortest password a member of the tenant may choose (roadmap 113 P2). A person in several
+	// tenants must satisfy the strictest of them: their password is one, shared by every tenant.
+	{Key: AuthPasswordMinLength, Level: LevelTenant, Default: func() json.RawMessage { return num(8) },
+		Validate: positiveIntIn(8, 128)},
 	{Key: AuthSessionAbsoluteMaxSeconds, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(86_400) },
 		Validate: positiveIntIn(3600, 2_592_000)},
 	// --- Tenant + secret ---

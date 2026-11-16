@@ -71,5 +71,6 @@ func DecodeEdDSA(ctx context.Context, tokenString string, src KeySource, leeway 
 		JTI:        jti,
 		Scope:      wire.Scope,
 		ClientID:   wire.ClientID,
+		IssuedAt:   peripherals.IssuedAt(wire.IssuedAt),
 	}, nil
 }

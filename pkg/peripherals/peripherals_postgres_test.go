@@ -101,16 +101,16 @@ func TestCreateUserAndVerifyCredentialsRoundTrip(t *testing.T) {
 	require.Equal(t, email, created.Email, "unexpected created user: %+v", created)
 	require.Equal(t, tenantID, created.TenantID, "unexpected created user: %+v", created)
 
-	ok, err := VerifyCredentials(ctx, pool, email, "correct-password")
+	ok, err := VerifyCredentials(ctx, pool, email, "correct-password", nil)
 	require.NoError(t, err, "expected the correct password to verify, got %+v err=", ok)
 	require.NotNil(t, ok, "expected the correct password to verify, got %+v err=%v", ok, err)
 	require.Equal(t, created.ID, ok.ID, "expected the correct password to verify, got %+v err=%v", ok, err)
 
-	wrong, err := VerifyCredentials(ctx, pool, email, "wrong-password")
+	wrong, err := VerifyCredentials(ctx, pool, email, "wrong-password", nil)
 	require.NoError(t, err)
 	require.Nil(t, wrong, "expected a wrong password to fail verification")
 
-	missing, err := VerifyCredentials(ctx, pool, "does-not-exist-"+uuid.NewString()+"@example.com", "anything")
+	missing, err := VerifyCredentials(ctx, pool, "does-not-exist-"+uuid.NewString()+"@example.com", "anything", nil)
 	require.NoError(t, err)
 	require.Nil(t, missing, "expected an unknown email to fail verification, not error")
 

@@ -51,9 +51,9 @@ func seedAdmin(args []string) error {
 	return nil
 }
 
-// createUser is the dev-seeding counterpart to POST /admin/users — both call
-// peripherals.CreateUser, so a seeded dev user and an admin-provisioned one get their password
-// hashed identically.
+// createUser is the dev-seeding counterpart to UserAdminService.CreateUser — both go through
+// pkg/identity, so a seeded dev user and an admin-provisioned one get their password hashed
+// identically. An email that already has an account joins this tenant with its password unchanged.
 func createUser(args []string) error {
 	if len(args) < 5 {
 		fmt.Fprintln(os.Stderr, "Usage: dev-tools create-user <tenantId> <email> <password>")
@@ -72,17 +72,9 @@ func createUser(args []string) error {
 	}
 	email, password := args[3], args[4]
 
-	router := routerFor(pool)
-	tx, err := router.Begin(ctx, tenantID)
+	// Members live in the shared database for every tenant (pkg/identity), so no tenant routing.
+	user, err := peripherals.CreateUser(ctx, pool, tenantID, email, password)
 	if err != nil {
-		return fmt.Errorf("failed to resolve tenant %s's database: %w", tenantID, err)
-	}
-	defer tx.Rollback(ctx)
-	user, err := peripherals.CreateUser(ctx, tx, tenantID, email, password)
-	if err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 

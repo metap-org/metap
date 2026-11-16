@@ -2,7 +2,7 @@
 // everything else only ever verifies a bearer JWT someone else minted. Two responsibilities kept
 // together because they're both "identity", not because they're logically inseparable:
 //
-//   - CreateUser/VerifyCredentials: the users table (argon2id password hashing).
+//   - CreateUser/VerifyCredentials: thin wrappers over pkg/identity (identities + memberships).
 //   - MintJWT: the only JWT-encoding implementation in this package — both a CLI mint-token
 //     command and an HTTP login handler should call this instead of each
 //     hand-rolling their own Claims struct, so the two paths can't drift on claim shape.
@@ -10,13 +10,13 @@ package peripherals
 
 import (
 	"context"
-	"sync"
+	"errors"
 	"time"
 
-	"github.com/alexedwards/argon2id"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+
+	"github.com/metap-org/metap/pkg/identity"
 )
 
 // JWTIssuer/JWTAudience: iss/aud claim values every token this package mints carries, and the only
@@ -27,123 +27,82 @@ const (
 	JWTAudience = "metap-api"
 )
 
-var argon2idParams = &argon2id.Params{
-	Memory:      19456,
-	Iterations:  2,
-	Parallelism: 1,
-	SaltLength:  16,
-	KeyLength:   32,
-}
-
 type AuthUser struct {
 	ID       uuid.UUID
 	TenantID uuid.UUID
 	Email    string
 }
 
-func hashPassword(password string) (string, error) {
-	return argon2id.CreateHash(password, argon2idParams)
+func authUser(m *identity.Member) *AuthUser {
+	return &AuthUser{ID: m.ID, TenantID: m.TenantID, Email: m.Email}
 }
 
-func verifyPassword(password, hash string) (bool, error) {
-	match, err := argon2id.ComparePasswordAndHash(password, hash)
-	if err != nil {
-		return false, err
-	}
-	return match, nil
-}
-
-// dummyHash is a precomputed hash VerifyCredentials checks against when no user matches — so
-// "email doesn't exist" and "email exists, wrong password" both pay the same (deliberately slow)
-// argon2 verify cost instead of the former returning near-instantly, which would otherwise let a
-// caller enumerate registered emails by timing.
-var dummyHashOnce = sync.OnceValues(func() (string, error) {
-	return hashPassword("dummy-password-for-timing-safety")
-})
-
+// CreateUser adds email to tenantID as a local-login member, creating the person's identity
+// (with password) when they have none yet — see identity.AddMember. db must reach the shared
+// database (pool, or a transaction whose search_path includes metadata).
 func CreateUser(ctx context.Context, db DBTX, tenantID uuid.UUID, email, password string) (*AuthUser, error) {
-	passwordHash, err := hashPassword(password)
+	m, _, err := identity.AddMember(ctx, db, identity.NewMember{TenantID: tenantID, Email: email, Password: password})
 	if err != nil {
 		return nil, err
 	}
-	var u AuthUser
-	err = db.QueryRow(ctx,
-		"INSERT INTO users (tenant_id, email, password_hash) VALUES ($1, $2, $3) RETURNING id, tenant_id, email",
-		tenantID, email, passwordHash,
-	).Scan(&u.ID, &u.TenantID, &u.Email)
-	if err != nil {
-		return nil, err
-	}
-	return &u, nil
+	return authUser(m), nil
 }
 
-// FindUserByID looks up one user by id, scoped to the tenant so an id from another tenant can
+// FindUserByID looks up one member by id, scoped to the tenant so an id from another tenant can
 // never resolve. Returns (nil, nil) when not found.
 func FindUserByID(ctx context.Context, db DBTX, tenantID, userID uuid.UUID) (*AuthUser, error) {
-	var u AuthUser
-	err := db.QueryRow(ctx, "SELECT id, tenant_id, email FROM users WHERE id = $1 AND tenant_id = $2",
-		userID, tenantID).Scan(&u.ID, &u.TenantID, &u.Email)
+	m, err := identity.GetMember(ctx, db, tenantID, userID)
+	if errors.Is(err, identity.ErrNotFound) {
+		return nil, nil
+	}
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, nil
-		}
 		return nil, err
 	}
-	return &u, nil
+	return authUser(m), nil
 }
 
-// ListTenantUsers returns every user in the tenant, id+email only — the "pick a user" primitive
-// an app-level assignee/reporter picker needs. Any authenticated user may call the route this
-// backs — picking who to assign something to isn't an admin action, unlike granting a role
-// (role_assignment.ListUsers).
+// ListTenantUsers returns every active member of the tenant, id+email only — the "pick a user"
+// primitive an app-level assignee/reporter picker needs. Any authenticated user may call the route
+// this backs — picking who to assign something to isn't an admin action.
 func ListTenantUsers(ctx context.Context, db DBTX, tenantID uuid.UUID) ([]*AuthUser, error) {
-	rows, err := db.Query(ctx, "SELECT id, tenant_id, email FROM users WHERE tenant_id = $1 ORDER BY email", tenantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	// make(..., 0), not var out []*AuthUser — a nil Go slice marshals to JSON null, not [].
 	out := make([]*AuthUser, 0)
-	for rows.Next() {
-		var u AuthUser
-		if err := rows.Scan(&u.ID, &u.TenantID, &u.Email); err != nil {
+	for offset := 0; ; offset += identity.MaxListLimit {
+		page, total, err := identity.ListMembers(ctx, db, tenantID, identity.ListQuery{
+			Status: identity.StatusActive, Offset: offset, Limit: identity.MaxListLimit,
+		})
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, &u)
+		for i := range page {
+			out = append(out, authUser(&page[i]))
+		}
+		if offset+len(page) >= total || len(page) == 0 {
+			return out, nil
+		}
 	}
-	return out, rows.Err()
 }
 
-// VerifyCredentials returns (nil, nil) for either "no user with this email" or "wrong password"
-// — deliberately not distinguished, so a caller can't use this to enumerate registered emails.
-// Looks up email globally, not (tenant_id, email) — deliberate. One email means one account
-// platform-wide, by design, until a real tenant-picker UI exists.
-func VerifyCredentials(ctx context.Context, db DBTX, email, password string) (*AuthUser, error) {
-	var u AuthUser
-	var storedHash string
-	err := db.QueryRow(ctx, "SELECT id, tenant_id, email, password_hash FROM users WHERE email = $1", email).
-		Scan(&u.ID, &u.TenantID, &u.Email, &storedHash)
+// VerifyCredentials checks email + password and returns the member to sign in as: the member of
+// tenantID when it is set, else the person's only (or last used) tenant. (nil, nil) for wrong
+// credentials, no usable membership, or a person in several tenants with none chosen — the
+// caller cannot tell these apart, by design.
+func VerifyCredentials(ctx context.Context, db DBTX, email, password string, tenantID *uuid.UUID) (*AuthUser, error) {
+	ident, err := identity.Authenticate(ctx, db, email, password, time.Now())
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			dummy, dErr := dummyHashOnce()
-			if dErr != nil {
-				return nil, dErr
-			}
-			_, _ = verifyPassword(password, dummy)
+		if errors.Is(err, identity.ErrInvalidCredentials) || errors.Is(err, identity.ErrLocked) || errors.Is(err, identity.ErrDisabled) {
 			return nil, nil
 		}
 		return nil, err
 	}
-
-	ok, err := verifyPassword(password, storedHash)
+	memberships, err := identity.Memberships(ctx, db, ident.ID)
 	if err != nil {
 		return nil, err
 	}
+	m, ok := identity.PickMembership(memberships, tenantID, ident.LastTenantID)
 	if !ok {
 		return nil, nil
 	}
-	return &u, nil
+	return &AuthUser{ID: m.MemberID, TenantID: m.TenantID, Email: ident.Email}, nil
 }
 
 type claims struct {
@@ -180,6 +139,7 @@ func mintClaims(privateKeyPEM string, tenantID, userID uuid.UUID, ttlSeconds uin
 	c := claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID.String(),
+			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(ttlSeconds) * time.Second)),
 			Issuer:    JWTIssuer,
 			Audience:  jwt.ClaimStrings{JWTAudience},
@@ -203,6 +163,9 @@ type AccessClaims struct {
 	JTI        *string
 	Scope      *string
 	ClientID   *string
+	// IssuedAt lets the session check reject a token issued before its user's sessions were
+	// revoked (password change, disable). nil for a token minted before iat was added.
+	IssuedAt *time.Time
 }
 
 type accessClaimsWire struct {
@@ -244,5 +207,15 @@ func DecodeAccessToken(tokenString string, publicKey any, leeway time.Duration) 
 		JTI:        jti,
 		Scope:      wire.Scope,
 		ClientID:   wire.ClientID,
+		IssuedAt:   IssuedAt(wire.IssuedAt),
 	}, nil
+}
+
+// IssuedAt is nil for a token minted before tokens carried iat.
+func IssuedAt(d *jwt.NumericDate) *time.Time {
+	if d == nil {
+		return nil
+	}
+	t := d.Time
+	return &t
 }

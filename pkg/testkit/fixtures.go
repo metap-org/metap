@@ -28,4 +28,11 @@ func SeedRole(t testing.TB, pool *pgxpool.Pool, tenantID, userID uuid.UUID, role
 		tenantID, userID, role); err != nil {
 		t.Fatalf("testkit: seeding role %q for user %s: %v", role, userID, err)
 	}
+	// The role catalog holds every role in use (roadmap 114), as AssignRole keeps it.
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO metadata.roles (tenant_id, name, builtin) VALUES ($1, $2, $3)
+		 ON CONFLICT (tenant_id, name) DO NOTHING`,
+		tenantID, role, role == "admin" || (tenantID == uuid.Nil && role == "platform_admin")); err != nil {
+		t.Fatalf("testkit: seeding role %q in the catalog: %v", role, err)
+	}
 }

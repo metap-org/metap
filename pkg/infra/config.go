@@ -58,6 +58,8 @@ type AppConfig struct {
 	SMTPUser     string
 	SMTPPassword string
 	SMTPFrom     string
+	// PublicAppURL is the portal origin account emails link to (invitations, password reset).
+	PublicAppURL string
 }
 
 // OutboxDatabaseURLOrDefault is the URL a worker's outbox/event-publishing DB connection should
@@ -156,6 +158,7 @@ func LoadConfig() (*AppConfig, error) {
 	smtpUser, _ := env.Lookup("SMTP_USER")
 	smtpPassword, _ := env.Lookup("SMTP_PASSWORD")
 	smtpFrom, _ := env.Lookup("SMTP_FROM")
+	publicAppURL, _ := env.Lookup("PUBLIC_APP_URL")
 
 	return &AppConfig{
 		NodeEnv: nodeEnv, Host: hostStr, Port: port,
@@ -172,5 +175,6 @@ func LoadConfig() (*AppConfig, error) {
 		AuthContextEntity:   authContextEntity, AuthContextCacheTTLSeconds: authContextCacheTTLSeconds,
 		PolicyCacheRedisURL: policyCacheRedisURL, PolicyCacheTTLSeconds: policyCacheTTLSeconds,
 		SMTPHost: smtpHost, SMTPPort: smtpPort, SMTPUser: smtpUser, SMTPPassword: smtpPassword, SMTPFrom: smtpFrom,
+		PublicAppURL: publicAppURL,
 	}, nil
 }

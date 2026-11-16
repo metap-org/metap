@@ -6,6 +6,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
@@ -14,12 +15,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
 type authError struct {
 	status  int
+	code    string // "" = derived from status
 	message string
 }
 
@@ -31,9 +34,12 @@ func forbidden(message string) *authError {
 }
 
 func (e *authError) respond(w http.ResponseWriter) {
-	code := errcode.Unauthorized
-	if e.status == http.StatusForbidden {
-		code = errcode.Forbidden
+	code := e.code
+	if code == "" {
+		code = errcode.Unauthorized
+		if e.status == http.StatusForbidden {
+			code = errcode.Forbidden
+		}
 	}
 	w.Header().Set(standard.HeaderContentType, standard.MediaTypeJSON)
 	w.WriteHeader(e.status)
@@ -92,9 +98,14 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 	if claims.FunctionID != nil {
 		functionID = *claims.FunctionID
 	}
-	rc, err := control.ResolveRequestContext(ctx, state.Router, tenantID, userID, functionID,
+	rc, err := control.ResolveRequestContext(ctx, state.Router, tenantID, userID, functionID, claims.IssuedAt,
 		state.AuthContextEntity, state.Metadata, state.ContextAttributesCache)
-	if err != nil {
+	switch {
+	case errors.Is(err, identity.ErrSessionRevoked):
+		return nil, &authError{status: http.StatusUnauthorized, code: errcode.SessionRevoked, message: "Your session was revoked, sign in again."}
+	case errors.Is(err, identity.ErrDisabled):
+		return nil, &authError{status: http.StatusUnauthorized, code: errcode.AccountDisabled, message: "This account is disabled."}
+	case err != nil:
 		return nil, unauthorized("Failed to resolve roles.")
 	}
 

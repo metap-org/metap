@@ -197,7 +197,9 @@ type PgIdentity struct{ DB peripherals.DBTX }
 
 func (p PgIdentity) FindUserByEmail(ctx context.Context, tenantID uuid.UUID, email string) (uuid.UUID, bool, error) {
 	var id uuid.UUID
-	err := p.DB.QueryRow(ctx, "SELECT id FROM users WHERE tenant_id = $1 AND lower(email) = $2",
+	err := p.DB.QueryRow(ctx, `SELECT u.id FROM metadata.users u
+		JOIN metadata.identities i ON i.id = u.identity_id
+		WHERE u.tenant_id = $1 AND lower(i.email) = $2 AND u.deleted_at IS NULL`,
 		tenantID, strings.ToLower(email)).Scan(&id)
 	if err == pgx.ErrNoRows {
 		return uuid.Nil, false, nil
@@ -220,10 +222,12 @@ func (p PgIdentity) AssignRole(ctx context.Context, tenantID, userID uuid.UUID, 
 	return peripherals.AssignRole(ctx, p.DB, tenantID, userID, role, nil)
 }
 
-// ScopedIdentity is an Identity that resolves the right database per tenant (a dedicated_db tenant
-// keeps its users in its own database), through control.Router.PoolFor.
+// ScopedIdentity is an Identity for a mix of tenants: members always live in the shared database
+// (Shared), roles in each tenant's own (Pool, through control.Router.PoolFor — a dedicated_db
+// tenant keeps user_roles in its own database).
 type ScopedIdentity struct {
-	Pool func(ctx context.Context, tenantID uuid.UUID) (peripherals.DBTX, error)
+	Shared peripherals.DBTX
+	Pool   func(ctx context.Context, tenantID uuid.UUID) (peripherals.DBTX, error)
 }
 
 func (s ScopedIdentity) at(ctx context.Context, tenantID uuid.UUID) (PgIdentity, error) {
@@ -235,19 +239,11 @@ func (s ScopedIdentity) at(ctx context.Context, tenantID uuid.UUID) (PgIdentity,
 }
 
 func (s ScopedIdentity) FindUserByEmail(ctx context.Context, tenantID uuid.UUID, email string) (uuid.UUID, bool, error) {
-	p, err := s.at(ctx, tenantID)
-	if err != nil {
-		return uuid.Nil, false, err
-	}
-	return p.FindUserByEmail(ctx, tenantID, email)
+	return PgIdentity{DB: s.Shared}.FindUserByEmail(ctx, tenantID, email)
 }
 
 func (s ScopedIdentity) CreateUser(ctx context.Context, tenantID uuid.UUID, email, password string) (uuid.UUID, error) {
-	p, err := s.at(ctx, tenantID)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	return p.CreateUser(ctx, tenantID, email, password)
+	return PgIdentity{DB: s.Shared}.CreateUser(ctx, tenantID, email, password)
 }
 
 func (s ScopedIdentity) AssignRole(ctx context.Context, tenantID, userID uuid.UUID, role string) error {

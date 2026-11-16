@@ -26,6 +26,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
@@ -176,8 +177,17 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	state := httpserver.NewAppState(pool, registry, &mdPtr, permissions, tokens.PrivateKeyPEM, publicKey, router)
 	state.TokenSigner, state.TokenVerifier, state.JwksKeys = tokens.Signer, tokens.Verifier, tokens.Keys
-	state.Crud = crud.WithAudit(state.Router, state.Metadata, state.Permissions, audit.NewPostgresStore(state.Pool))
+	auditStore := audit.NewPostgresStore(state.Pool)
+	state.Crud = crud.WithAudit(state.Router, state.Metadata, state.Permissions, auditStore)
 	state.CookieSecure = false
+	state.Mailer = accountmail.New(accountmail.Config{
+		Host: config.SMTPHost, Port: config.SMTPPort, User: config.SMTPUser, Password: config.SMTPPassword,
+		From: config.SMTPFrom, PublicURL: config.PublicAppURL,
+	})
+	if state.CanIssueTokens() && !state.Mailer.Configured() {
+		slog.Warn("SMTP_HOST/SMTP_FROM not set: invitation and password-reset emails are not sent " +
+			"(an invitation's link is returned to the inviting admin instead)")
+	}
 	if opts.Configure != nil {
 		if err := opts.Configure(state); err != nil {
 			return fmt.Errorf("configuring app state: %w", err)
@@ -210,7 +220,7 @@ func Run(ctx context.Context, opts Options) error {
 		grpcServer, err := grpcapi.OptionalServe(config.Host, opts.GRPCPort, grpcapi.OptionalServeConfig{
 			Backend: backend, Router: state.Router, JWTPublicKey: tokens.PublicKey, TokenVerifierOverride: tokens.Verifier,
 			AuthContextEntity: state.AuthContextEntity, Metadata: state.Metadata, ContextAttributesCache: state.ContextAttributesCache,
-			Actions: invoker,
+			Actions: invoker, Identity: identityConfig(state, auditStore),
 		})
 		if err != nil {
 			return fmt.Errorf("starting gRPC server: %w", err)
@@ -230,6 +240,16 @@ func Run(ctx context.Context, opts Options) error {
 	serveCtx, stop := shutdown.Context(ctx)
 	defer stop()
 	return httpx.ServeContext(serveCtx, &http.Server{Addr: addr, Handler: handler}, httpx.DefaultShutdownTimeout)
+}
+
+// identityConfig serves user administration on the token issuer only (it owns identities); a
+// verify-only service returns nil.
+func identityConfig(state *httpserver.AppState, auditStore audit.Store) *grpcapi.IdentityConfig {
+	if !state.CanIssueTokens() {
+		return nil
+	}
+	return &grpcapi.IdentityConfig{Shared: state.Pool, Router: state.Router, Audit: auditStore,
+		Mailer: state.Mailer, PasswordPolicy: state.PasswordPolicy()}
 }
 
 // ReadPublicKey loads a PEM public key: PKIX ("PUBLIC KEY", any algorithm) first, falling back to

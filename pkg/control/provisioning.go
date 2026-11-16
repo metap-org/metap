@@ -83,8 +83,8 @@ func ProvisionSchemaTenant(ctx context.Context, sharedPool *pgxpool.Pool, regist
 
 // ProvisionDedicatedDbTenant is the paid tier — migrates dedicatedDatabaseURL (a fresh Postgres
 // database) with the same migrations/*.sql the main database runs, so
-// records/users/... exist there too, then writes the control.tenants row and creates the admin
-// user on the dedicated database. The caller is responsible for making dsnSecretRef resolvable
+// records/user_roles/... exist there too, then writes the control.tenants row, creates the admin
+// member in the shared database and grants its role on the dedicated database. The caller is responsible for making dsnSecretRef resolvable
 // (EnvStore reads it as an env var name) before this tenant is actually routed to — this
 // function only writes the registry row, it doesn't touch the running process's environment.
 func ProvisionDedicatedDbTenant(ctx context.Context, registry *PostgresTenantRegistry, tenantID uuid.UUID, dsnSecretRef, dedicatedDatabaseURL, migrationsDir, adminEmail, adminPassword string) (*ProvisionedTenant, error) {
@@ -112,7 +112,9 @@ func ProvisionDedicatedDbTenant(ctx context.Context, registry *PostgresTenantReg
 	if err := seedLocalAuthConfig(ctx, dedicatedPool, tenantID); err != nil {
 		return nil, err
 	}
-	user, err := peripherals.CreateUser(ctx, dedicatedPool, tenantID, adminEmail, adminPassword)
+	// Members live in the shared database for every tenant (pkg/identity); only the role goes
+	// into the tenant's own database.
+	user, err := peripherals.CreateUser(ctx, registry.pool, tenantID, adminEmail, adminPassword)
 	if err != nil {
 		return nil, err
 	}

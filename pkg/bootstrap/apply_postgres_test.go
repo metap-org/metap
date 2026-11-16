@@ -31,7 +31,7 @@ func TestApplyUsersAgainstPostgres(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Soc@Example.io"}, res.UsersCreated)
 
-	user, err := peripherals.VerifyCredentials(ctx, pool, "Soc@Example.io", "correct horse battery staple")
+	user, err := peripherals.VerifyCredentials(ctx, pool, "Soc@Example.io", "correct horse battery staple", nil)
 	require.NoError(t, err)
 	require.NotNil(t, user)
 	roles, err := peripherals.GetRolesForUser(ctx, pool, tenant, user.ID)

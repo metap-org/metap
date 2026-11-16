@@ -2,10 +2,8 @@ package crud
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -134,31 +132,9 @@ func (s *CrudService) readableAuditChildren(ctx context.Context, tenantID uuid.U
 	return out, nil
 }
 
-// encodeAuditCursor/decodeAuditCursor: an opaque keyset position, "<RFC3339Nano>|<uuid>" in
-// base64url, so a client never builds one itself.
-func encodeAuditCursor(c audit.Cursor) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(c.OccurredAt.UTC().Format(time.RFC3339Nano) + "|" + c.ID.String()))
-}
+func encodeAuditCursor(c audit.Cursor) string { return audit.EncodeCursor(c) }
 
-func decodeAuditCursor(raw string) (audit.Cursor, bool) {
-	b, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil {
-		return audit.Cursor{}, false
-	}
-	at, id, found := strings.Cut(string(b), "|")
-	if !found {
-		return audit.Cursor{}, false
-	}
-	t, err := time.Parse(time.RFC3339Nano, at)
-	if err != nil {
-		return audit.Cursor{}, false
-	}
-	u, err := uuid.Parse(id)
-	if err != nil {
-		return audit.Cursor{}, false
-	}
-	return audit.Cursor{OccurredAt: t, ID: u}, true
-}
+func decodeAuditCursor(raw string) (audit.Cursor, bool) { return audit.DecodeCursor(raw) }
 
 // diffVisibility is how much of this record's audit diffs the caller may see. nil fields means
 // "nothing" (record-level access itself is state-dependent); non-nil names the readable field

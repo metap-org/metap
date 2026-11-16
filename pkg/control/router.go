@@ -110,6 +110,9 @@ func NewRouter(sharedPool *pgxpool.Pool, registry *RegistryCache, secretStore Se
 // from env.
 func (r *Router) Secrets() SecretStore { return r.secretStore }
 
+// SharedPool is the shared database — where identities and members live for every tenant.
+func (r *Router) SharedPool() *pgxpool.Pool { return r.sharedPool }
+
 // dedicatedPool looks up (or opens and caches) the dedicated pool for a DedicatedDb tenant, keyed
 // by dsnSecretRef rather than tenant id — keying on the thing that actually determines the
 // physical connection is correct regardless of whether two tenants could share one by operator

@@ -1,4 +1,4 @@
-// Platform (non-entity) GraphQL fields: users/roles, policies, cron jobs, OAuth clients,
+// Platform (non-entity) GraphQL fields: policies, cron jobs, OAuth clients,
 // dashboards, preferences.
 // None of these is a MetadataRegistry entity, but every one of them already exists as a REST route
 // on every metap HTTP service (pkg/httpserver, cronroutes, oauth2routes, dashboardroutes), with
@@ -126,15 +126,6 @@ func jsonObject(name string, fields map[string]graphql.Output) *graphql.Object {
 }
 
 var (
-	adminUserSummaryType = jsonObject("AdminUserSummary", map[string]graphql.Output{
-		"userId": nn(graphql.ID), "roles": nnList(graphql.String),
-	})
-	createAdminUserResultType = jsonObject("CreateAdminUserResult", map[string]graphql.Output{
-		"userId": nn(graphql.ID), "email": nn(graphql.String), "roles": nnList(graphql.String),
-	})
-	tenantUserSummaryType = jsonObject("TenantUserSummary", map[string]graphql.Output{
-		"id": nn(graphql.ID), "email": nn(graphql.String),
-	})
 	policyType = jsonObject("Policy", map[string]graphql.Output{
 		"id": nn(graphql.ID), "tenantId": nn(graphql.ID), "entity": nn(graphql.String),
 		"action": nn(graphql.String), "field": graphql.String, "subject": nn(graphql.String),
@@ -299,8 +290,6 @@ func addPlatformFields(queryFields, mutationFields graphql.Fields, base string) 
 	}
 
 	// ---- queries ----
-	queryFields["adminUsers"] = &graphql.Field{Type: nnList(adminUserSummaryType), Resolve: getList("/admin/users")}
-	queryFields["tenantUsers"] = &graphql.Field{Type: nnList(tenantUserSummaryType), Resolve: getList("/users")}
 	queryFields["policies"] = &graphql.Field{
 		Type: nnList(policyType),
 		Args: graphql.FieldConfigArgument{"entity": optStrArg()},
@@ -362,39 +351,6 @@ func addPlatformFields(queryFields, mutationFields graphql.Fields, base string) 
 	queryFields["tenantConfig"] = &graphql.Field{Type: nnList(tenantConfigItemType), Resolve: getList("/admin/config")}
 
 	// ---- users / roles ----
-	mutationFields["createAdminUser"] = &graphql.Field{
-		Type: nn(createAdminUserResultType),
-		Args: graphql.FieldConfigArgument{
-			"email": strArg(), "password": strArg(),
-			"roles": &graphql.ArgumentConfig{Type: graphql.NewList(graphql.NewNonNull(graphql.String))},
-		},
-		Resolve: func(rp graphql.ResolveParams) (interface{}, error) {
-			return p.call(rp.Context, http.MethodPost, "/admin/users", nil, bodyFrom(rp.Args, "email", "password", "roles"), false)
-		},
-	}
-	mutationFields["assignUserRole"] = &graphql.Field{
-		Type: nn(graphql.Boolean),
-		Args: graphql.FieldConfigArgument{"userId": requiredIDArg(), "role": strArg()},
-		Resolve: func(rp graphql.ResolveParams) (interface{}, error) {
-			userID, err := pathID(rp.Args, "userId")
-			if err != nil {
-				return nil, err
-			}
-			return trueOn(p.call(rp.Context, http.MethodPost, "/admin/users/"+userID+"/roles", nil, bodyFrom(rp.Args, "role"), false))
-		},
-	}
-	mutationFields["revokeUserRole"] = &graphql.Field{
-		Type: nn(graphql.Boolean),
-		Args: graphql.FieldConfigArgument{"userId": requiredIDArg(), "role": strArg()},
-		Resolve: func(rp graphql.ResolveParams) (interface{}, error) {
-			userID, err := pathID(rp.Args, "userId")
-			if err != nil {
-				return nil, err
-			}
-			path := "/admin/users/" + userID + "/roles/" + url.PathEscape(argString(rp.Args, "role"))
-			return trueOn(p.call(rp.Context, http.MethodDelete, path, nil, nil, false))
-		},
-	}
 	mutationFields["invalidateUserContextCache"] = &graphql.Field{
 		Type: nn(graphql.Boolean),
 		Args: graphql.FieldConfigArgument{"userId": requiredIDArg()},
