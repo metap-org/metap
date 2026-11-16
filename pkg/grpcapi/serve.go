@@ -72,6 +72,16 @@ type OptionalServeConfig struct {
 	// Actions, when set, also serves ActionService over the same listener, running the handlers
 	// registered in it for the actions entities declare in EntityDefinition.Actions.
 	Actions crud.ActionInvoker
+	// Identity, when set, also serves UserAdminService, RoleAdminService and AccountService. Only the
+	// token-issuing service sets it: it owns identities.
+	Identity *IdentityConfig
+}
+
+// RegisterIdentity adds UserAdminService, RoleAdminService and AccountService to srv.
+func RegisterIdentity(srv *grpc.Server, auth AuthConfig, cfg IdentityConfig) {
+	pb.RegisterUserAdminServiceServer(srv, NewUserAdminService(auth, cfg))
+	pb.RegisterRoleAdminServiceServer(srv, NewRoleAdminService(auth, cfg))
+	pb.RegisterAccountServiceServer(srv, NewAccountService(auth, cfg))
 }
 
 // OptionalServe reads GRPC_ENABLED/GRPC_PORT (falling back to defaultPort) to decide whether to
@@ -108,7 +118,10 @@ func OptionalServe(host string, defaultPort int, cfg OptionalServeConfig) (*grpc
 		actions = append(actions, NewActionService(cfg.Actions, auth))
 	}
 	srv := NewServer(service, actions...)
-	slog.Info("gRPC listening", "addr", addr)
+	if cfg.Identity != nil {
+		RegisterIdentity(srv, auth, *cfg.Identity)
+	}
+	slog.Info("gRPC listening", "addr", addr, "identity", cfg.Identity != nil)
 	go func() {
 		if err := srv.Serve(lis); err != nil {
 			slog.Error("gRPC server exited with error", standard.LogError, err)

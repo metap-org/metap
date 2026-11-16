@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/peripherals"
 )
 
@@ -73,12 +74,15 @@ type LocalPasswordProvider struct{}
 
 func (LocalPasswordProvider) Kind() AuthProviderKind { return ProviderLocal }
 
+// Verify returns the member to sign in as — in tenantID when set, else the person's only or last
+// used tenant — or (nil, nil); see peripherals.VerifyCredentials.
 func (LocalPasswordProvider) Verify(
 	ctx context.Context,
 	db DBTX,
 	email, password string,
+	tenantID *uuid.UUID,
 ) (*peripherals.AuthUser, error) {
-	return peripherals.VerifyCredentials(ctx, db, email, password)
+	return peripherals.VerifyCredentials(ctx, db, email, password, tenantID)
 }
 
 // EnabledProviders: which providers a tenant currently has enabled. An empty result means
@@ -108,15 +112,11 @@ func EnabledProviders(ctx context.Context, db DBTX, tenantID uuid.UUID) ([]AuthP
 	return kinds, rows.Err()
 }
 
-func scanAuthUser(row pgx.Row) (*peripherals.AuthUser, error) {
-	var u peripherals.AuthUser
-	if err := row.Scan(&u.ID, &u.TenantID, &u.Email); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, nil
-		}
-		return nil, err
+func authUserOf(m *identity.Member) *peripherals.AuthUser {
+	if m == nil {
+		return nil
 	}
-	return &u, nil
+	return &peripherals.AuthUser{ID: m.ID, TenantID: m.TenantID, Email: m.Email}
 }
 
 // FindExternalUser: a user JIT-provisioned (or previously linked) by a prior login through an
@@ -129,10 +129,11 @@ func FindExternalUser(
 	tenantID uuid.UUID,
 	provider, externalSubject string,
 ) (*peripherals.AuthUser, error) {
-	row := db.QueryRow(ctx,
-		"SELECT id, tenant_id, email FROM users WHERE tenant_id = $1 AND auth_provider = $2 AND external_subject = $3",
-		tenantID, provider, externalSubject)
-	return scanAuthUser(row)
+	m, err := identity.FindExternalMember(ctx, db, tenantID, provider, externalSubject)
+	if err != nil {
+		return nil, err
+	}
+	return authUserOf(m), nil
 }
 
 func FindOidcUser(
@@ -145,29 +146,23 @@ func FindOidcUser(
 }
 
 // JitProvisionExternalUser: first-ever login through an external-identity provider for this
-// (tenantID, provider, externalSubject) — auto-creates the local user row (JIT provisioning, no
-// admin pre-creation required). No password hash (neither provider gives a local password to
-// verify against) and no role is assigned here: a JIT-provisioned user starts with zero roles,
-// same deny-by-default posture PermissionService already applies to any roleless caller.
+// (tenantID, provider, externalSubject) — auto-creates the member (JIT provisioning, no admin
+// pre-creation required), joining the identity that already has this email if there is one. No
+// password is set, and no role is assigned: a JIT-provisioned user starts with zero roles, same
+// deny-by-default posture PermissionService already applies to any roleless caller.
 func JitProvisionExternalUser(
 	ctx context.Context,
 	db DBTX,
 	tenantID uuid.UUID,
 	provider, email, externalSubject string,
 ) (*peripherals.AuthUser, error) {
-	row := db.QueryRow(
-		ctx,
-		"INSERT INTO users (tenant_id, email, auth_provider, external_subject) VALUES ($1, $2, $3, $4) RETURNING id, tenant_id, email",
-		tenantID,
-		email,
-		provider,
-		externalSubject,
-	)
-	u, err := scanAuthUser(row)
+	m, _, err := identity.AddMember(ctx, db, identity.NewMember{
+		TenantID: tenantID, Email: email, AuthProvider: provider, ExternalSubject: externalSubject,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return u, nil
+	return authUserOf(m), nil
 }
 
 func JitProvisionOidcUser(

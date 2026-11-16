@@ -53,17 +53,7 @@ func fakePlatformREST(t *testing.T) (*httptest.Server, *[]seenRequest) {
 
 		var data interface{}
 		switch r.Method + " " + r.URL.Path {
-		case "GET /admin/users":
-			data = []interface{}{map[string]interface{}{"userId": userID, "roles": []string{"admin"}}}
-		case "GET /users":
-			data = []interface{}{map[string]interface{}{"id": userID, "email": "a@x"}}
-		case "POST /admin/users":
-			w.WriteHeader(http.StatusCreated)
-			data = map[string]interface{}{"userId": userID, "email": req.body["email"], "roles": req.body["roles"]}
-		case "POST /admin/users/" + userID + "/roles":
-			w.WriteHeader(http.StatusCreated)
-			data = map[string]interface{}{"userId": userID, "role": "viewer"}
-		case "DELETE /admin/users/" + userID + "/roles/viewer", "DELETE /admin/policies/" + policyID, "DELETE /admin/cron-jobs/" + jobID:
+		case "DELETE /admin/policies/" + policyID, "DELETE /admin/cron-jobs/" + jobID:
 			w.WriteHeader(http.StatusNoContent)
 			return
 		case "GET /admin/policies", "PUT /admin/policies/matrix":
@@ -118,7 +108,7 @@ func exec(schema graphql.Schema, q string, vars map[string]interface{}) *graphql
 }
 
 // Every query/mutation string below is copied verbatim from @metap/platform-ui (adminApi.ts,
-// useTenantUsers.ts, LocaleProvider.tsx) or this repo's web/src/pages/SettingsPage.tsx.
+// LocaleProvider.tsx) or this repo's web/src/pages/SettingsPage.tsx.
 func TestPlatformUIQueriesForwardToREST(t *testing.T) {
 	srv, seen := fakePlatformREST(t)
 	schema := platformSchema(t, srv.URL)
@@ -129,14 +119,6 @@ func TestPlatformUIQueriesForwardToREST(t *testing.T) {
 		name, query, wantMethod, wantPath string
 		vars                              map[string]interface{}
 	}{
-		{"adminUsers", "{ adminUsers { userId roles } }", "GET", "/admin/users", nil},
-		{"tenantUsers", "{ tenantUsers { id email } }", "GET", "/users", nil},
-		{"createAdminUser", "mutation($email: String!, $password: String!, $roles: [String!]) { createAdminUser(email: $email, password: $password, roles: $roles) { userId email roles } }",
-			"POST", "/admin/users", map[string]interface{}{"email": "b@x", "password": "pw", "roles": []interface{}{"viewer"}}},
-		{"assignUserRole", "mutation($userId: ID!, $role: String!) { assignUserRole(userId: $userId, role: $role) }",
-			"POST", "/admin/users/" + userID + "/roles", map[string]interface{}{"userId": userID, "role": "viewer"}},
-		{"revokeUserRole", "mutation($userId: ID!, $role: String!) { revokeUserRole(userId: $userId, role: $role) }",
-			"DELETE", "/admin/users/" + userID + "/roles/viewer", map[string]interface{}{"userId": userID, "role": "viewer"}},
 		{"policies", "query($entity: String) { policies(entity: $entity) { " + policySel + " } }",
 			"GET", "/admin/policies", map[string]interface{}{"entity": "shop.customers"}},
 		{"createPolicy", "mutation($entity: String!, $action: String!, $roles: [String!], $condition: Json, $field: String, $subject: String, $effect: String) { createPolicy(entity: $entity, action: $action, roles: $roles, condition: $condition, field: $field, subject: $subject, effect: $effect) { " + policySel + " } }",
@@ -182,7 +164,6 @@ func TestPlatformUIQueriesForwardToREST(t *testing.T) {
 	}
 	assert.Equal(t, "entity=shop.customers", byName["policies"].query)
 	assert.NotContains(t, byName["createPolicy"].body, "condition", "a null optional arg is omitted, not sent as null")
-	assert.Equal(t, map[string]interface{}{"role": "viewer"}, byName["assignUserRole"].body)
 	grants := byName["syncPolicyMatrix"].body["grants"].([]interface{})
 	assert.Equal(t, map[string]interface{}{"role": nil, "action": "read"}, grants[1], "a role-less grant keeps role: null")
 	assert.NotContains(t, byName["createCronJob"].body, "triggerConfig")
@@ -194,10 +175,10 @@ func TestPlatformFieldResults(t *testing.T) {
 	srv, _ := fakePlatformREST(t)
 	schema := platformSchema(t, srv.URL)
 
-	result := exec(schema, "{ adminUsers { userId roles } deleted: cronJob(id: \""+jobID+"\") { id } }", nil)
+	result := exec(schema, "{ deleted: cronJob(id: \""+jobID+"\") { id } }", nil)
 	require.Empty(t, result.Errors)
 	b, _ := json.Marshal(result.Data)
-	assert.JSONEq(t, `{"adminUsers":[{"userId":"`+userID+`","roles":["admin"]}],"deleted":null}`, string(b),
+	assert.JSONEq(t, `{"deleted":null}`, string(b),
 		"a 404 on a nullable single-object field resolves to null")
 
 	result = exec(schema, `mutation { deletePolicy(id: "`+policyID+`") }`, nil)

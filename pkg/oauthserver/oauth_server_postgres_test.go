@@ -11,6 +11,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/testkit"
 	"github.com/stretchr/testify/require"
 
@@ -25,13 +26,11 @@ func testPool(t *testing.T) *pgxpool.Pool {
 }
 
 func makeTestUser(t *testing.T, pool *pgxpool.Pool, tenantID uuid.UUID) uuid.UUID {
-	var id uuid.UUID
-	err := pool.QueryRow(context.Background(),
-		"INSERT INTO users (tenant_id, email, password_hash) VALUES ($1, $2, 'test') RETURNING id",
-		tenantID, uuid.NewString()+"@example.com",
-	).Scan(&id)
+	m, _, err := identity.AddMember(context.Background(), pool, identity.NewMember{
+		TenantID: tenantID, Email: uuid.NewString() + "@example.com", Password: "test-password",
+	})
 	require.NoError(t, err)
-	return id
+	return m.ID
 }
 
 func makeConfidentialClient(t *testing.T, pool *pgxpool.Pool, tenantID uuid.UUID) (*OAuthClient, string) {

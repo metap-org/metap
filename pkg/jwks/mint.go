@@ -40,6 +40,7 @@ func mintJwksClaims(key *JwksKeyPair, tenantID, userID uuid.UUID, functionID *st
 	claims := jwksClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID.String(),
+			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(ttlSeconds) * time.Second)),
 			Issuer:    peripherals.JWTIssuer,
 			Audience:  jwt.ClaimStrings{peripherals.JWTAudience},

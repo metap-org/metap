@@ -32,7 +32,7 @@ func TestAdminUsersRolesAndPoliciesLifecycle(t *testing.T) {
 	t.Cleanup(func() {
 		pool.Exec(context.Background(), "DELETE FROM metadata.policies WHERE tenant_id = $1", tenantID)
 		pool.Exec(context.Background(), "DELETE FROM metadata.user_roles WHERE tenant_id = $1", tenantID)
-		pool.Exec(context.Background(), "DELETE FROM users WHERE tenant_id = $1", tenantID)
+		pool.Exec(context.Background(), "DELETE FROM metadata.users WHERE tenant_id = $1", tenantID)
 	})
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
@@ -40,43 +40,14 @@ func TestAdminUsersRolesAndPoliciesLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
-	// create a new user with a role, via the admin surface
-	createRes := doRequest(t, "POST", base+"/admin/users", adminToken, map[string]any{
-		"email": "new-user@example.com", "password": "hunter2", "roles": []string{"member"},
-	})
-	require.Equal(t, 201, createRes.StatusCode, "got %d", createRes.StatusCode)
-	created := decodeJSON(t, createRes)
-	createdData := created["data"].(map[string]any)
-	newUserID := createdData["userId"].(string)
-
-	// duplicate email -> 409
-	dupRes := doRequest(t, "POST", base+"/admin/users", adminToken, map[string]any{
-		"email": "new-user@example.com", "password": "hunter2",
-	})
-	require.Equal(t, 409, dupRes.StatusCode, "got %d", dupRes.StatusCode)
-
-	// GET /admin/users lists role assignments
-	listRes := doRequest(t, "GET", base+"/admin/users", adminToken, nil)
-	require.Equal(t, 200, listRes.StatusCode, "got %d", listRes.StatusCode)
-	listed := decodeJSON(t, listRes)
-	foundMember := false
-	for _, row := range listed["data"].([]any) {
-		m := row.(map[string]any)
-		if m["userId"] == newUserID {
-			foundMember = true
-		}
+	// Users and roles are gRPC now (grpcapi.UserAdminService); this route stays REST.
+	newUser, err := peripherals.CreateUser(ctx, pool, tenantID, "new-user@example.com", "hunter2")
+	require.NoError(t, err)
+	newUserID := newUser.ID.String()
+	for _, gone := range []string{"/admin/users", "/users"} {
+		res := doRequest(t, "GET", base+gone, adminToken, nil)
+		require.Equal(t, http.StatusNotFound, res.StatusCode, "%s moved to gRPC", gone)
 	}
-	require.True(t, foundMember, "expected the newly created user in %v", listed["data"])
-
-	// GET /users (the plain picker) also lists it
-	usersRes := doRequest(t, "GET", base+"/users", adminToken, nil)
-	require.Equal(t, 200, usersRes.StatusCode, "got %d", usersRes.StatusCode)
-
-	// assign/revoke an additional role
-	assignRes := doRequest(t, "POST", base+"/admin/users/"+newUserID+"/roles", adminToken, map[string]any{"role": "viewer"})
-	require.Equal(t, 201, assignRes.StatusCode, "got %d", assignRes.StatusCode)
-	revokeRes := doRequest(t, "DELETE", base+"/admin/users/"+newUserID+"/roles/viewer", adminToken, nil)
-	require.Equal(t, 204, revokeRes.StatusCode, "got %d", revokeRes.StatusCode)
 
 	// invalidate-context is a no-op 204 even with nothing cached
 	invalidateRes := doRequest(t, "POST", base+"/admin/users/"+newUserID+"/context/invalidate", adminToken, nil)

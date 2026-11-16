@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -179,6 +180,12 @@ func (s *PostgresPolicyStore) CreatePolicy(ctx context.Context, tenantID uuid.UU
 		fieldArg = &field
 	}
 
+	// Every role a policy names is in the tenant's role catalog (roadmap 114).
+	if hasRoles {
+		if err := peripherals.EnsureRoles(ctx, tx, tenantID, roles, createdBy); err != nil {
+			return permission.PolicyRow{}, err
+		}
+	}
 	row := tx.QueryRow(ctx,
 		"INSERT INTO policies (tenant_id, entity, action, roles, condition, created_by, field, subject, effect) "+
 			"VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING "+policyColumns,
@@ -214,6 +221,16 @@ func (s *PostgresPolicyStore) SyncBasicPolicies(ctx context.Context, tenantID uu
 	if _, err := tx.Exec(ctx,
 		"DELETE FROM policies WHERE tenant_id = $1 AND entity = $2 AND condition IS NULL AND field IS NULL AND subject = 'context' AND effect = 'allow'",
 		tenantID, entity); err != nil {
+		return nil, err
+	}
+
+	named := make([]string, 0, len(grants))
+	for _, g := range grants {
+		if g.HasRole {
+			named = append(named, g.Role)
+		}
+	}
+	if err := peripherals.EnsureRoles(ctx, tx, tenantID, named, createdBy); err != nil {
 		return nil, err
 	}
 

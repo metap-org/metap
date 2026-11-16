@@ -12,9 +12,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/peripherals"
@@ -58,6 +60,8 @@ type AppState struct {
 	ContextAttributesCache *control.ContextAttributesCache
 
 	Config *config.Store
+	// Mailer sends invitation and password-reset emails (roadmap 113 P2); nil sends none.
+	Mailer *accountmail.Mailer
 
 	// CookieSecure is the Secure attribute on the session/CSRF cookies — true.
 	CookieSecure bool
@@ -134,6 +138,16 @@ func (s *AppState) MetadataFor(ctx context.Context, tenantID uuid.UUID) (*metada
 		return s.MetadataResolver.Resolve(ctx, tenantID)
 	}
 	return s.Metadata.Load(), nil
+}
+
+// PasswordPolicy is each tenant's minimum password length (auth.passwordMinLength).
+func (s *AppState) PasswordPolicy() identity.PasswordPolicy {
+	return func(ctx context.Context, tenantID uuid.UUID) int {
+		if s.Config == nil {
+			return identity.MinPasswordLength
+		}
+		return int(s.EffectiveConfig(ctx, tenantID).GetU64(config.AuthPasswordMinLength))
+	}
 }
 
 // EffectiveConfig is one tenant's effective configuration — cache-first; a lookup failure

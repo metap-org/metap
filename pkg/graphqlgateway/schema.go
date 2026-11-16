@@ -28,6 +28,7 @@ import (
 	"github.com/graphql-go/graphql"
 
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/grpcapi"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
@@ -727,6 +728,7 @@ type Option func(*buildConfig)
 
 type buildConfig struct {
 	platformBase string
+	identity     *grpcapi.IdentityClient
 	extend       func(query, mutation graphql.Fields)
 }
 
@@ -787,6 +789,9 @@ func BuildSchema(registry *metadata.MetadataRegistry, backends map[string]crud.R
 
 	if cfg.platformBase != "" {
 		addPlatformFields(queryFields, mutationFields, cfg.platformBase)
+	}
+	if cfg.identity != nil {
+		addIdentityFields(queryFields, mutationFields, cfg.identity)
 	}
 	if cfg.extend != nil {
 		cfg.extend(queryFields, mutationFields)

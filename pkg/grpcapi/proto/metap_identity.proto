@@ -1,0 +1,298 @@
+syntax = "proto3";
+
+package metap.identity.v1;
+
+option go_package = "github.com/metap-org/metap/pkg/grpcapi/pb";
+
+// User, role and account administration (roadmaps 113, 114). Served by the token-issuing service, which owns
+// identities. Every call authenticates with the caller's bearer token, like RecordService;
+// UserAdminService also requires the admin role (and the admin OAuth2 scope for a scoped token).
+// Timestamps are RFC 3339 strings ("" when unset), the same as record data elsewhere.
+
+// A member of the caller's tenant.
+message User {
+  string id = 1;
+  string email = 2;
+  string display_name = 3;
+  // "active", "disabled" or "invited".
+  string status = 4;
+  repeated string roles = 5;
+  // "local", or the external IdP that provisioned the member ("oidc", "oauth2").
+  string auth_provider = 6;
+  bool has_password = 7;
+  string last_login_at = 8;
+  string created_at = 9;
+  string invited_by = 10;
+  // True when the person is also a member of another tenant: their password is not this
+  // tenant's to reset.
+  bool shared_identity = 11;
+  // For an invited member: when the open invitation expires ("" when none is open).
+  string invitation_expires_at = 12;
+}
+
+message ListUsersRequest {
+  // Case-insensitive substring of email or display name.
+  string search = 1;
+  string status = 2;
+  string role = 3;
+  int32 offset = 4;
+  // 1..200, default 50.
+  int32 limit = 5;
+}
+
+message ListUsersResponse {
+  repeated User users = 1;
+  int32 total = 2;
+}
+
+message UserIdRequest {
+  string id = 1;
+}
+
+message CreateUserRequest {
+  string email = 1;
+  // Used only when the person has no account yet; ignored (not an error) otherwise.
+  string password = 2;
+  string display_name = 3;
+  repeated string roles = 4;
+}
+
+message CreateUserResponse {
+  User user = 1;
+  // False when the email already had an account (added to this tenant, password unchanged).
+  bool created_identity = 2;
+}
+
+message InviteUserRequest {
+  string email = 1;
+  string display_name = 2;
+  repeated string roles = 3;
+}
+
+message InviteUserResponse {
+  // The invited member (status "invited" until they accept).
+  User user = 1;
+  string expires_at = 2;
+  // False when no email went out (SMTP not configured or the relay refused it): accept_url is then
+  // set, for the admin to pass on by hand.
+  bool email_sent = 3;
+  string accept_url = 4;
+}
+
+message UpdateUserRequest {
+  string id = 1;
+  string display_name = 2;
+}
+
+message ResetPasswordRequest {
+  string id = 1;
+  string password = 2;
+}
+
+message RoleRequest {
+  string id = 1;
+  string role = 2;
+}
+
+// One role of the tenant's catalog (roadmap 114).
+message Role {
+  // The key members and policies refer to; never changes.
+  string name = 1;
+  // Active members holding the role.
+  int32 user_count = 2;
+  // Defined by the platform (admin, platform_admin): can't be deleted.
+  bool builtin = 3;
+  string id = 4;
+  // "" = no label set; clients then show the name (translated if they know it).
+  string label = 5;
+  string description = 6;
+  // Policies naming the role, basic and advanced.
+  int32 policy_count = 7;
+  string created_at = 8;
+  string updated_at = 9;
+}
+
+message ListRolesRequest {
+  // Case-insensitive substring of name, label or description.
+  string search = 1;
+}
+
+message ListRolesResponse {
+  repeated Role roles = 1;
+}
+
+message AuditEvent {
+  string id = 1;
+  // "create", "update", "delete".
+  string action = 2;
+  string actor_user_id = 3;
+  string occurred_at = 4;
+  // JSON object {field: {"before": ..., "after": ...}}.
+  string diff_json = 5;
+}
+
+message ListUserAuditRequest {
+  string id = 1;
+  string cursor = 2;
+  int32 limit = 3;
+}
+
+message ListUserAuditResponse {
+  repeated AuditEvent events = 1;
+  string next_cursor = 2;
+}
+
+message Empty {}
+
+service UserAdminService {
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc GetUser(UserIdRequest) returns (User);
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  // Adds the person as an invited member and emails them a link (7 days, single use). A new account
+  // sets its password on accepting; an existing one confirms with its current password.
+  rpc InviteUser(InviteUserRequest) returns (InviteUserResponse);
+  // A fresh link for an invited member; the previous one stops working. Removing the member
+  // (RemoveUser) withdraws the invitation.
+  rpc ResendInvitation(UserIdRequest) returns (InviteUserResponse);
+  rpc UpdateUser(UpdateUserRequest) returns (User);
+  // Disabling revokes the member's sessions in this tenant at once.
+  rpc DisableUser(UserIdRequest) returns (User);
+  rpc EnableUser(UserIdRequest) returns (User);
+  // Removes the member (and their roles) from this tenant; the person's account and other
+  // memberships are untouched.
+  rpc RemoveUser(UserIdRequest) returns (Empty);
+  // Only for a person who belongs to this tenant alone (User.shared_identity false).
+  rpc ResetPassword(ResetPasswordRequest) returns (Empty);
+  rpc AssignRole(RoleRequest) returns (User);
+  rpc RevokeRole(RoleRequest) returns (User);
+  rpc ListUserAudit(ListUserAuditRequest) returns (ListUserAuditResponse);
+}
+
+message RoleNameRequest {
+  string name = 1;
+}
+
+message CreateRoleRequest {
+  // Lowercase letters, digits and underscores, starting with a letter; at most 80.
+  string name = 1;
+  string label = 2;
+  string description = 3;
+  // Starts the new role with this existing role's basic permissions (not its members).
+  string copy_from = 4;
+}
+
+message UpdateRoleRequest {
+  string name = 1;
+  string label = 2;
+  string description = 3;
+}
+
+message ListRoleAuditRequest {
+  string name = 1;
+  string cursor = 2;
+  int32 limit = 3;
+}
+
+// One basic permission: the role may do action on entity. action is read, create, update, delete,
+// transition (every workflow action) or transition:<workflow action> (that one only).
+message RoleGrant {
+  string entity = 1;
+  string action = 2;
+}
+
+// A policy naming the role that isn't a plain grant (a condition, a field, the record subject, or a
+// deny). Shown beside the grants; edited in the policy editor.
+message RolePolicy {
+  string id = 1;
+  string entity = 2;
+  string action = 3;
+  repeated string roles = 4;
+  // "allow" or "deny".
+  string effect = 5;
+  string field = 6;
+  // "context" or "record".
+  string subject = 7;
+  // JSON, "" when the policy has no condition.
+  string condition_json = 8;
+}
+
+message RolePermissions {
+  string role = 1;
+  repeated RoleGrant grants = 2;
+  repeated RolePolicy advanced = 3;
+}
+
+message SetRolePermissionsRequest {
+  string role = 1;
+  // The role's complete set of basic permissions after the call.
+  repeated RoleGrant grants = 2;
+}
+
+// The tenant's role catalog (roadmap 114). Requires the admin role like UserAdminService. Assigning
+// a role to a member stays UserAdminService.AssignRole / RevokeRole.
+service RoleAdminService {
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
+  rpc GetRole(RoleNameRequest) returns (Role);
+  rpc CreateRole(CreateRoleRequest) returns (Role);
+  // Label and description only: the name is the key and never changes.
+  rpc UpdateRole(UpdateRoleRequest) returns (Role);
+  // Refused (role_in_use) while any member holds the role or any policy names it; a built-in role
+  // is never deleted.
+  rpc DeleteRole(RoleNameRequest) returns (Empty);
+  rpc ListRoleAudit(ListRoleAuditRequest) returns (ListUserAuditResponse);
+  // The role's basic permissions across every entity, plus its advanced policies.
+  rpc GetRolePermissions(RoleNameRequest) returns (RolePermissions);
+  // Replaces the role's basic permissions in one transaction; advanced policies and other roles'
+  // permissions are untouched. Not for the built-in admin role, which bypasses every policy.
+  rpc SetRolePermissions(SetRolePermissionsRequest) returns (RolePermissions);
+}
+
+message Me {
+  string user_id = 1;
+  string tenant_id = 2;
+  string email = 3;
+  string display_name = 4;
+  repeated string roles = 5;
+}
+
+message UpdateProfileRequest {
+  string display_name = 1;
+}
+
+message MyTenant {
+  string tenant_id = 1;
+  string name = 2;
+  bool current = 3;
+}
+
+message ListMyTenantsResponse {
+  repeated MyTenant tenants = 1;
+}
+
+message ListTenantUsersRequest {
+  // Case-insensitive substring of email or display name; "" lists everyone.
+  string search = 1;
+  // 0 = every active member.
+  int32 limit = 2;
+}
+
+message TenantUser {
+  string id = 1;
+  string email = 2;
+  string display_name = 3;
+}
+
+message ListTenantUsersResponse {
+  repeated TenantUser users = 1;
+}
+
+// The caller's own account. Signing in, switching tenant and changing the password stay REST
+// (/auth/*) because they set the session cookie.
+service AccountService {
+  rpc GetMe(Empty) returns (Me);
+  rpc UpdateProfile(UpdateProfileRequest) returns (Me);
+  rpc ListMyTenants(Empty) returns (ListMyTenantsResponse);
+  // The active members of the caller's tenant, for "assign to" pickers: any signed-in member may
+  // call it, unlike UserAdminService.ListUsers.
+  rpc ListTenantUsers(ListTenantUsersRequest) returns (ListTenantUsersResponse);
+}

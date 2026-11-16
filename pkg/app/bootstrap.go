@@ -107,7 +107,7 @@ func ApplyBootstrap(ctx context.Context, registry *metadata.MetadataRegistry, pe
 	deps := bootstrap.Deps{
 		Registry: registry,
 		Policies: permissions,
-		Identity: bootstrap.ScopedIdentity{Pool: func(ctx context.Context, tenantID uuid.UUID) (peripherals.DBTX, error) {
+		Identity: bootstrap.ScopedIdentity{Shared: router.SharedPool(), Pool: func(ctx context.Context, tenantID uuid.UUID) (peripherals.DBTX, error) {
 			return router.PoolFor(ctx, tenantID)
 		}},
 	}

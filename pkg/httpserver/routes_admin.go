@@ -1,82 +1,20 @@
-// Admin-gated role/policy management over HTTP — the HTTP surface for peripherals.AssignRole/
-// RevokeRole/ListUsers and PermissionService.ListPolicies/CreatePolicy/DeletePolicy/Explain. Every
+// Admin-gated policy management over HTTP — PermissionService.ListPolicies/CreatePolicy/
+// DeletePolicy/Explain, plus the context-cache invalidation. Users and roles moved to gRPC
+// (grpcapi.UserAdminService, roadmap 113). Every
 // handler here uses requireAdmin, not requireAuth — the admin role check happens once, so it can't
 // be forgotten on a future route added to this file.
 package httpserver
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
-
-type createUserBody struct {
-	Email    string   `json:"email"`
-	Password string   `json:"password"`
-	Roles    []string `json:"roles,omitempty"`
-}
-
-// createUserAdmin provisions a new local-login user — the admin-driven counterpart to a dev
-// seeding CLI, both ultimately going through peripherals.CreateUser so the two can't diverge on
-// how a password gets hashed. Runs the insert and every role assignment inside one
-// Router.Begin(tenantID) transaction so a role assignment failing partway can't leave a user row
-// committed with only some roles granted.
-func createUserAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
-	var body createUserBody
-	if !decodeJSONBody(w, r, &body) {
-		return
-	}
-	tenantID, err := state.Permissions.ScopedTenant(rc)
-	if err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	tx, err := state.Router.Begin(r.Context(), tenantID)
-	if err != nil {
-		writeRouterUnavailable(w, err)
-		return
-	}
-
-	user, err := peripherals.CreateUser(r.Context(), tx, tenantID, body.Email, body.Password)
-	if err != nil {
-		tx.Rollback(r.Context()) //nolint:errcheck
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			writeServiceError(w, http.StatusConflict, "email_taken", "A user with this email already exists.", nil)
-			return
-		}
-		writeInternalError(w, err)
-		return
-	}
-
-	assignedBy := parseOptionalUUID(rc.UserID)
-	for _, role := range body.Roles {
-		if err := peripherals.AssignRole(r.Context(), tx, tenantID, user.ID, role, assignedBy); err != nil {
-			tx.Rollback(r.Context()) //nolint:errcheck
-			writeInternalError(w, err)
-			return
-		}
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"data": map[string]any{"userId": user.ID, "email": user.Email, "roles": body.Roles},
-	})
-}
 
 func policyToJSON(row permission.PolicyRow) map[string]any {
 	var field any
@@ -98,116 +36,6 @@ func policyToJSON(row permission.PolicyRow) map[string]any {
 	}
 }
 
-// listUsersAdmin is GET /admin/users — role assignments, a different shape from the plain {id,
-// email} picker at GET /users (routes_users.go): operation name differs there too to avoid an
-// OpenAPI/codegen collision.
-func listUsersAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
-	tenantID, err := state.Permissions.ScopedTenant(rc)
-	if err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	tx, err := state.Router.Begin(r.Context(), tenantID)
-	if err != nil {
-		writeRouterUnavailable(w, err)
-		return
-	}
-	users, err := peripherals.ListUsers(r.Context(), tx, tenantID)
-	if err != nil {
-		tx.Rollback(r.Context()) //nolint:errcheck
-		writeInternalError(w, err)
-		return
-	}
-	tx.Commit(r.Context()) //nolint:errcheck
-
-	data := make([]map[string]any, len(users))
-	for i, u := range users {
-		data[i] = map[string]any{"userId": u.UserID, "roles": u.Roles}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": data})
-}
-
-type assignRoleBody struct {
-	Role string `json:"role"`
-}
-
-func assignRoleAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
-	userID, err := uuid.Parse(chi.URLParam(r, "userId"))
-	if err != nil {
-		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`userId` must be a UUID.", nil)
-		return
-	}
-	var body assignRoleBody
-	if !decodeJSONBody(w, r, &body) {
-		return
-	}
-	tenantID, err := state.Permissions.ScopedTenant(rc)
-	if err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	assignedBy := parseOptionalUUID(rc.UserID)
-	tx, err := state.Router.Begin(r.Context(), tenantID)
-	if err != nil {
-		writeRouterUnavailable(w, err)
-		return
-	}
-	if err := peripherals.AssignRole(r.Context(), tx, tenantID, userID, body.Role, assignedBy); err != nil {
-		tx.Rollback(r.Context()) //nolint:errcheck
-		writeInternalError(w, err)
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"data": map[string]any{"userId": userID, "role": body.Role}})
-}
-
-func revokeRoleAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
-	userID, err := uuid.Parse(chi.URLParam(r, "userId"))
-	if err != nil {
-		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`userId` must be a UUID.", nil)
-		return
-	}
-	role := chi.URLParam(r, "role")
-	tenantID, err := state.Permissions.ScopedTenant(rc)
-	if err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	tx, err := state.Router.Begin(r.Context(), tenantID)
-	if err != nil {
-		writeRouterUnavailable(w, err)
-		return
-	}
-	if err := peripherals.RevokeRole(r.Context(), tx, tenantID, userID, role); err != nil {
-		tx.Rollback(r.Context()) //nolint:errcheck
-		writeInternalError(w, err)
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// invalidateContextAdmin is an operator's second option alongside just waiting out the TTL
-// (control.ContextAttributesCache) after editing a user's membership record — a no-op (still
-// 204) if the cache had nothing for this user.
 func invalidateContextAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
 	rc, ok := requireAdmin(w, r, state)
 	if !ok {
@@ -503,10 +331,6 @@ func mountAdmin(r chi.Router, state *AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	r.Get("/admin/users", wrap(listUsersAdmin))
-	r.Post("/admin/users", wrap(createUserAdmin))
-	r.Post("/admin/users/{userId}/roles", wrap(assignRoleAdmin))
-	r.Delete("/admin/users/{userId}/roles/{role}", wrap(revokeRoleAdmin))
 	r.Post("/admin/users/{userId}/context/invalidate", wrap(invalidateContextAdmin))
 	r.Get("/admin/policies", wrap(listPoliciesAdmin))
 	r.Post("/admin/policies", wrap(createPolicyAdmin))

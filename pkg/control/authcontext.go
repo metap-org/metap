@@ -15,6 +15,7 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/peripherals"
@@ -75,8 +76,14 @@ func (c *ContextAttributesCache) Invalidate(tenantID, userID uuid.UUID) {
 // roles is unusable), while a failure resolving context attributes only logs and yields nil
 // (supplementary ABAC context, never blocks auth).
 // metadataRegistry is an *atomic.Pointer[metadata.MetadataRegistry].
-func ResolveRequestContext(ctx context.Context, router *Router, tenantID, userID uuid.UUID, functionID string,
+//
+// issuedAt is the token's iat: a token for a member who was disabled or removed, or issued before
+// their sessions were revoked, fails with identity.ErrDisabled / identity.ErrSessionRevoked.
+func ResolveRequestContext(ctx context.Context, router *Router, tenantID, userID uuid.UUID, functionID string, issuedAt *time.Time,
 	authContextEntity string, metadataRegistry *atomic.Pointer[metadata.MetadataRegistry], contextAttributesCache *ContextAttributesCache) (*permission.RequestContext, error) {
+	if err := identity.CheckSession(ctx, router.sharedPool, tenantID, userID, issuedAt); err != nil {
+		return nil, err
+	}
 	// Routed through Router, not a bare pool — a DedicatedDb-strategy tenant's user_roles table
 	// lives only in that tenant's own database.
 	tx, err := router.Begin(ctx, tenantID)

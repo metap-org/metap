@@ -8,6 +8,7 @@ package grpcapi
 
 import (
 	"context"
+	"errors"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"sync/atomic"
 
@@ -17,7 +18,10 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 )
@@ -74,9 +78,14 @@ func authenticate(ctx context.Context, config AuthConfig) (*permission.RequestCo
 		functionID = *claims.FunctionID
 	}
 
-	rc, err := control.ResolveRequestContext(ctx, config.Router, tenantID, userID, functionID,
+	rc, err := control.ResolveRequestContext(ctx, config.Router, tenantID, userID, functionID, claims.IssuedAt,
 		config.AuthContextEntity, config.Metadata, config.ContextAttributesCache)
-	if err != nil {
+	switch {
+	case errors.Is(err, identity.ErrSessionRevoked):
+		return nil, sendServiceError(ctx, crud.NewServiceErrorMsg(401, errcode.SessionRevoked, "Your session was revoked, sign in again."))
+	case errors.Is(err, identity.ErrDisabled):
+		return nil, sendServiceError(ctx, crud.NewServiceErrorMsg(401, errcode.AccountDisabled, "This account is disabled."))
+	case err != nil:
 		return nil, status.Error(codes.Unauthenticated, "failed to resolve roles")
 	}
 
