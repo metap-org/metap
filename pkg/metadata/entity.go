@@ -302,6 +302,12 @@ type EntityDefinition struct {
 	// ...). Declared once here, they are served over gRPC (ActionService.Invoke) and exposed by the
 	// GraphQL gateway as one mutation each; the handler is registered with crud.ActionRegistry.
 	Actions []EntityAction `json:"actions,omitempty"`
+	// Scopes say which scopes a record of this entity belongs to, so a role granted only inside a
+	// scope (roadmap 115 M1) reaches exactly those records: {type: "zone", field: "zoneId"} puts a
+	// record in the zone its zoneId names; field "id" is the record itself (a Zone is in scope
+	// "zone"); array: true for a list field (groupIds). An entity with no scope binding for a type is
+	// never reached by a role scoped to that type.
+	Scopes []permission.ScopeBinding `json:"scopes,omitempty"`
 }
 
 // Action scopes.

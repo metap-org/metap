@@ -14,10 +14,13 @@ const (
 )
 
 type RequestContext struct {
-	TenantID          string
-	UserID            string // "" means absent
-	Roles             []string
-	HasRoles          bool
+	TenantID string
+	UserID   string // "" means absent
+	Roles    []string
+	HasRoles bool
+	// ScopedRoles are roles held only inside a scope (roadmap 115 M1). Roles above stay the
+	// tenant-wide ones: IsAdmin and every existing check look at them alone.
+	ScopedRoles       []ScopedRole
 	FunctionID        string
 	ContextAttributes map[string]json.RawMessage // nil means absent
 	// ForwardedBearerToken is a transport concern for a gRPC client, never ABAC-visible — deliberately

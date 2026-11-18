@@ -87,11 +87,11 @@ func (s *CrudService) GetMany(ctx context.Context, entityName string, ids []uuid
 		if err != nil {
 			return nil, err
 		}
-		recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(enriched), permission.ActionRead)
+		recordDecision := snapshot.CanAccessRecord(rc, entity.Name, entity.Scopes, record.ID.String(), permission.JsonObject(enriched), permission.ActionRead, "")
 		if !recordDecision.Allowed {
 			continue
 		}
-		capabilities := computeCapabilities(entity, rc, snapshot, enriched, actorsByRecord[record.ID])
+		capabilities := computeCapabilities(entity, rc, snapshot, record.ID, enriched, actorsByRecord[record.ID])
 		id := record.ID
 		masked := maskRecordForRead(entity, rc, snapshot, record)
 		byID[id] = GetManyResult{ID: id, Record: masked, Capabilities: capabilities}

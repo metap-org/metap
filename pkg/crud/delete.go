@@ -66,7 +66,7 @@ func (s *CrudService) Delete(ctx context.Context, entityName string, id uuid.UUI
 	if err != nil {
 		return RecordDto{}, err
 	}
-	recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(enriched), permission.ActionDelete)
+	recordDecision := snapshot.CanAccessRecord(rc, entity.Name, entity.Scopes, existing.ID.String(), permission.JsonObject(enriched), permission.ActionDelete, "")
 	if !recordDecision.Allowed {
 		return RecordDto{}, forbidden(recordDecision)
 	}

@@ -28,6 +28,15 @@ message User {
   bool shared_identity = 11;
   // For an invited member: when the open invitation expires ("" when none is open).
   string invitation_expires_at = 12;
+  // Roles held only inside a scope (roles above are tenant-wide).
+  repeated ScopedRole scoped_roles = 13;
+}
+
+// A role held only on the records of one scope (roadmap 115 M1): "analyst on zone Z".
+message ScopedRole {
+  string role = 1;
+  string scope_type = 2;
+  string scope_id = 3;
 }
 
 message ListUsersRequest {
@@ -92,6 +101,25 @@ message ResetPasswordRequest {
 message RoleRequest {
   string id = 1;
   string role = 2;
+  // Both set: assign or revoke the role only on this scope. Both empty: the tenant-wide role.
+  string scope_type = 3;
+  string scope_id = 4;
+}
+
+message ScopeRequest {
+  string scope_type = 1;
+  string scope_id = 2;
+}
+
+message ScopeMember {
+  string user_id = 1;
+  string email = 2;
+  string display_name = 3;
+  string role = 4;
+}
+
+message ListScopeMembersResponse {
+  repeated ScopeMember members = 1;
 }
 
 // One role of the tenant's catalog (roadmap 114).
@@ -165,6 +193,8 @@ service UserAdminService {
   rpc ResetPassword(ResetPasswordRequest) returns (Empty);
   rpc AssignRole(RoleRequest) returns (User);
   rpc RevokeRole(RoleRequest) returns (User);
+  // Who holds which role on one scope ("who can see this zone").
+  rpc ListScopeMembers(ScopeRequest) returns (ListScopeMembersResponse);
   rpc ListUserAudit(ListUserAuditRequest) returns (ListUserAuditResponse);
 }
 

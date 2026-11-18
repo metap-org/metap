@@ -95,6 +95,13 @@ func ResolveRequestContext(ctx context.Context, router *Router, tenantID, userID
 		tx.Rollback(ctx)
 		return nil, err
 	}
+	// Roles held only inside a scope (roadmap 115 M1), from the same transaction and so the same
+	// freshness as the roles above: never cached.
+	scopedRoles, err := peripherals.ScopedRolesForUser(ctx, tx, tenantID, userID)
+	if err != nil {
+		tx.Rollback(ctx)
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -146,6 +153,7 @@ func ResolveRequestContext(ctx context.Context, router *Router, tenantID, userID
 		TenantID:          tenantID.String(),
 		UserID:            userID.String(),
 		Roles:             roles,
+		ScopedRoles:       scopedRoles,
 		HasRoles:          true,
 		FunctionID:        functionID,
 		ContextAttributes: contextAttributesJSON,

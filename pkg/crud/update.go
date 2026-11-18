@@ -66,7 +66,7 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 	if err != nil {
 		return RecordDto{}, err
 	}
-	recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(enriched), permission.ActionUpdate)
+	recordDecision := snapshot.CanAccessRecord(rc, entity.Name, entity.Scopes, existing.ID.String(), permission.JsonObject(enriched), permission.ActionUpdate, "")
 	if !recordDecision.Allowed {
 		return RecordDto{}, forbidden(recordDecision)
 	}
@@ -108,6 +108,14 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 		return RecordDto{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fieldErrors)
 	}
 	recomputeFields(entity, data)
+
+	// The record as it will be must still be reachable: an update cannot move a record out of the
+	// caller's scopes (nor into one they have no update right in).
+	if len(rc.ScopedRoles) > 0 {
+		if d := snapshot.CanAccessRecord(rc, entity.Name, entity.Scopes, existing.ID.String(), permission.JsonObject(data), permission.ActionUpdate, ""); !d.Allowed {
+			return RecordDto{}, forbidden(d)
+		}
+	}
 
 	var code *string
 	if raw, ok := data["code"]; ok {

@@ -394,17 +394,17 @@ func maskRecordForRead(entity metadata.EntityDefinition, rc *permission.RequestC
 // the same checks the write path makes — entity-level policy, record-level policy, and for a
 // transition the per-action policy and the guard — so a capability is never offered and then
 // refused. actors is `$workflow.actors` for this record (nil when no guard reads it).
-func computeCapabilities(entity metadata.EntityDefinition, rc *permission.RequestContext, snapshot *permission.PermissionSnapshot, existingData JsonObject, actors map[string]string) RecordCapabilities {
+func computeCapabilities(entity metadata.EntityDefinition, rc *permission.RequestContext, snapshot *permission.PermissionSnapshot, id uuid.UUID, existingData JsonObject, actors map[string]string) RecordCapabilities {
 	allFieldNames := make([]string, len(entity.Fields))
 	for i, f := range entity.Fields {
 		allFieldNames[i] = f.Name
 	}
 	writableFields := snapshot.WritableFields(rc, allFieldNames, permission.JsonObject(existingData), true)
 
-	recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(existingData), permission.ActionUpdate)
+	recordDecision := snapshot.CanAccessRecord(rc, entity.Name, entity.Scopes, id.String(), permission.JsonObject(existingData), permission.ActionUpdate, "")
 	canUpdate := recordDecision.Allowed && snapshot.CanPerformEntityAction(rc, entity.Name, permission.ActionUpdate).Allowed
-	transitionDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(existingData), permission.ActionTransition)
-	deleteDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(existingData), permission.ActionDelete)
+	transitionDecision := snapshot.CanAccessRecord(rc, entity.Name, entity.Scopes, id.String(), permission.JsonObject(existingData), permission.ActionTransition, "")
+	deleteDecision := snapshot.CanAccessRecord(rc, entity.Name, entity.Scopes, id.String(), permission.JsonObject(existingData), permission.ActionDelete, "")
 	canDelete := deleteDecision.Allowed && snapshot.CanPerformEntityAction(rc, entity.Name, permission.ActionDelete).Allowed
 	guardSubject := workflow.WithWorkflowContext(existingData, actors)
 

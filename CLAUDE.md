@@ -156,6 +156,21 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   Postgres schema names (`SchemaMetadata`/`SchemaControl`/`SchemaPublic`) and slog attribute keys (`LogError`, `LogTenantID`, ...);
   `errcode` also carries the OAuth2 protocol codes (`OAuthInvalidClient`, ...). Never retype `"Content-Type"`,
   `"application/json"`, a `time` layout string or `"error"` as a log key.
+- **Roles scoped to a resource set (2026-11-18, roadmap 115 M1).** `user_roles` stays the tenant-wide role; a row in
+  `metadata.role_assignments` (migration 0045) gives a role only inside one scope — "analyst on zone Z". An entity declares
+  which scopes its records belong to with `EntityDefinition.Scopes` (`metadata.Scope("zone", "zoneId")`, `ScopeIn` for a list
+  field, `ScopeSelf` when the entity IS the scope); an entity with no binding for a type is never reached by a role scoped to
+  that type. `RequestContext.ScopedRoles` is loaded with the roles on every request (never cached); `Roles` and `IsAdmin()`
+  still mean tenant-wide only, so a scoped `admin` is not a tenant admin. **The rule that keeps it safe** (`pkg/permission/scope.go`):
+  access is the OR of *role groups* — the tenant-wide group plus one per distinct role set scoped assignments produce — and a
+  record is reachable iff some group allows the action on the entity, covers the record, and passes the record-level policies
+  under THAT group's roles alone. Never evaluate policies with the union of every role a user holds anywhere: a role granted on
+  zone A would leak onto zone B (`TestScopedRoleDoesNotLeakAcrossScopes`). Use `snapshot.CanAccessRecord` (not
+  `CanPerformRecordCondition`) for any per-record check, `PlanAccess` + `query.WithAccessPlan` for lists and aggregates,
+  `CanCreateInScope` for create; each falls back to the old behaviour when the caller has no scoped roles. Admin API:
+  `AssignRole`/`RevokeRole` with `scope_type`+`scope_id`, `ListScopeMembers`; gateway `assignUserRole(..., scopeType, scopeId)`,
+  `scopeMembers`. Not done: an HTTP/gRPC record check for transitions on a scoped workflow action is covered, but deny policies
+  are evaluated per group (a deny gated to a role the user holds on scope A does not apply on scope B).
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

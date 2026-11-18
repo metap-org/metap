@@ -289,7 +289,7 @@ func clampInt64(v, lo, hi int64) int64 {
 
 // PlanAggregate has the same signature shape as PlanList (metadata + permissions injected,
 // record read policies passed in by the caller that already loaded the snapshot).
-func PlanAggregate(metadataRegistry *metadata.MetadataRegistry, permissions TenantScoper, entityName string, input AggregateInput, context *permission.RequestContext, recordReadPolicies []permission.PolicyRow) (*PlannedAggregateQuery, error) {
+func PlanAggregate(metadataRegistry *metadata.MetadataRegistry, permissions TenantScoper, entityName string, input AggregateInput, context *permission.RequestContext, recordReadPolicies []permission.PolicyRow, opts ...PlanOption) (*PlannedAggregateQuery, error) {
 	entity, ok := metadataRegistry.GetEntity(entityName)
 	if !ok {
 		return nil, fmt.Errorf("Entity not found: %s", entityName)
@@ -317,7 +317,7 @@ func PlanAggregate(metadataRegistry *metadata.MetadataRegistry, permissions Tena
 	conditions = append(conditions, "tenant_id = "+params.Push(UUIDBind(tenantID)))
 	conditions = append(conditions, "deleted = false")
 
-	if recordCondition, ok, err := RecordPolicyWhereClause(recordReadPolicies, context, params); err != nil {
+	if recordCondition, ok, err := recordVisibility(entity, recordReadPolicies, context, params, opts); err != nil {
 		return nil, err
 	} else if ok {
 		conditions = append(conditions, recordCondition)

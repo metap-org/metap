@@ -1,5 +1,7 @@
 package metadata
 
+import "github.com/metap-org/metap/pkg/permission"
+
 // Entity-declaration DSL. Every service used to carry its own copy of field/enumField/refField/
 // boolPtr/strPtr with a different argument order; declare fields with these instead:
 //
@@ -67,4 +69,20 @@ func (f EntityField) SystemOnly() EntityField { f.System = Ptr(true); return f }
 // Transition declares an unguarded workflow transition.
 func Transition(action, from, to, label string) WorkflowTransition {
 	return WorkflowTransition{Action: action, From: from, To: to, Label: label}
+}
+
+// Scope declares that a record of the entity belongs to the scope of typ named by field (see
+// EntityDefinition.Scopes). ScopeSelf: the record is the scope itself.
+func Scope(typ, field string) permission.ScopeBinding {
+	return permission.ScopeBinding{Type: typ, Field: field}
+}
+
+// ScopeIn is Scope for a field holding a list of scope ids.
+func ScopeIn(typ, field string) permission.ScopeBinding {
+	return permission.ScopeBinding{Type: typ, Field: field, Array: true}
+}
+
+// ScopeSelf is Scope for the entity that IS the scope (a Zone in scope "zone").
+func ScopeSelf(typ string) permission.ScopeBinding {
+	return permission.ScopeBinding{Type: typ, Field: "id"}
 }

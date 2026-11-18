@@ -58,6 +58,11 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 
 	recomputeFields(entity, data)
 
+	// A caller whose role is scoped may create only inside their scopes (roadmap 115 M1).
+	if d := snapshot.CanCreateInScope(rc, entity.Name, entity.Scopes, permission.JsonObject(data)); !d.Allowed {
+		return RecordDto{}, forbidden(d)
+	}
+
 	status, hasStatus := workflow.GetInitialStatus(entity, data)
 	// The state field has to be written into data explicitly here — otherwise the top-level
 	// status column and the data blob disagree the moment a caller omits it, which

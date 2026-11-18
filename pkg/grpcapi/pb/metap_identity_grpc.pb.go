@@ -31,6 +31,7 @@ const (
 	UserAdminService_ResetPassword_FullMethodName    = "/metap.identity.v1.UserAdminService/ResetPassword"
 	UserAdminService_AssignRole_FullMethodName       = "/metap.identity.v1.UserAdminService/AssignRole"
 	UserAdminService_RevokeRole_FullMethodName       = "/metap.identity.v1.UserAdminService/RevokeRole"
+	UserAdminService_ListScopeMembers_FullMethodName = "/metap.identity.v1.UserAdminService/ListScopeMembers"
 	UserAdminService_ListUserAudit_FullMethodName    = "/metap.identity.v1.UserAdminService/ListUserAudit"
 )
 
@@ -58,6 +59,8 @@ type UserAdminServiceClient interface {
 	ResetPassword(ctx context.Context, in *ResetPasswordRequest, opts ...grpc.CallOption) (*Empty, error)
 	AssignRole(ctx context.Context, in *RoleRequest, opts ...grpc.CallOption) (*User, error)
 	RevokeRole(ctx context.Context, in *RoleRequest, opts ...grpc.CallOption) (*User, error)
+	// Who holds which role on one scope ("who can see this zone").
+	ListScopeMembers(ctx context.Context, in *ScopeRequest, opts ...grpc.CallOption) (*ListScopeMembersResponse, error)
 	ListUserAudit(ctx context.Context, in *ListUserAuditRequest, opts ...grpc.CallOption) (*ListUserAuditResponse, error)
 }
 
@@ -189,6 +192,16 @@ func (c *userAdminServiceClient) RevokeRole(ctx context.Context, in *RoleRequest
 	return out, nil
 }
 
+func (c *userAdminServiceClient) ListScopeMembers(ctx context.Context, in *ScopeRequest, opts ...grpc.CallOption) (*ListScopeMembersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListScopeMembersResponse)
+	err := c.cc.Invoke(ctx, UserAdminService_ListScopeMembers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *userAdminServiceClient) ListUserAudit(ctx context.Context, in *ListUserAuditRequest, opts ...grpc.CallOption) (*ListUserAuditResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListUserAuditResponse)
@@ -223,6 +236,8 @@ type UserAdminServiceServer interface {
 	ResetPassword(context.Context, *ResetPasswordRequest) (*Empty, error)
 	AssignRole(context.Context, *RoleRequest) (*User, error)
 	RevokeRole(context.Context, *RoleRequest) (*User, error)
+	// Who holds which role on one scope ("who can see this zone").
+	ListScopeMembers(context.Context, *ScopeRequest) (*ListScopeMembersResponse, error)
 	ListUserAudit(context.Context, *ListUserAuditRequest) (*ListUserAuditResponse, error)
 	mustEmbedUnimplementedUserAdminServiceServer()
 }
@@ -269,6 +284,9 @@ func (UnimplementedUserAdminServiceServer) AssignRole(context.Context, *RoleRequ
 }
 func (UnimplementedUserAdminServiceServer) RevokeRole(context.Context, *RoleRequest) (*User, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeRole not implemented")
+}
+func (UnimplementedUserAdminServiceServer) ListScopeMembers(context.Context, *ScopeRequest) (*ListScopeMembersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListScopeMembers not implemented")
 }
 func (UnimplementedUserAdminServiceServer) ListUserAudit(context.Context, *ListUserAuditRequest) (*ListUserAuditResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListUserAudit not implemented")
@@ -510,6 +528,24 @@ func _UserAdminService_RevokeRole_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserAdminService_ListScopeMembers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ScopeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).ListScopeMembers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_ListScopeMembers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).ListScopeMembers(ctx, req.(*ScopeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _UserAdminService_ListUserAudit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListUserAuditRequest)
 	if err := dec(in); err != nil {
@@ -582,6 +618,10 @@ var UserAdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RevokeRole",
 			Handler:    _UserAdminService_RevokeRole_Handler,
+		},
+		{
+			MethodName: "ListScopeMembers",
+			Handler:    _UserAdminService_ListScopeMembers_Handler,
 		},
 		{
 			MethodName: "ListUserAudit",

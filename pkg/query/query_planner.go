@@ -200,7 +200,7 @@ type TenantScoper interface {
 	ScopedTenant(rc *permission.RequestContext) (uuid.UUID, error)
 }
 
-func PlanList(metadataRegistry *metadata.MetadataRegistry, permissions TenantScoper, entityName string, input ListInput, context *permission.RequestContext, recordReadPolicies []permission.PolicyRow) (*PlannedListQuery, error) {
+func PlanList(metadataRegistry *metadata.MetadataRegistry, permissions TenantScoper, entityName string, input ListInput, context *permission.RequestContext, recordReadPolicies []permission.PolicyRow, opts ...PlanOption) (*PlannedListQuery, error) {
 	entity, ok := metadataRegistry.GetEntity(entityName)
 	if !ok {
 		return nil, fmt.Errorf("Entity not found: %s", entityName)
@@ -249,7 +249,7 @@ func PlanList(metadataRegistry *metadata.MetadataRegistry, permissions TenantSco
 	conditions = append(conditions, "tenant_id = "+params.Push(UUIDBind(tenantID)))
 	conditions = append(conditions, "deleted = false")
 
-	if recordCondition, ok, err := RecordPolicyWhereClause(recordReadPolicies, context, params); err != nil {
+	if recordCondition, ok, err := recordVisibility(entity, recordReadPolicies, context, params, opts); err != nil {
 		return nil, err
 	} else if ok {
 		conditions = append(conditions, recordCondition)

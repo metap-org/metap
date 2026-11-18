@@ -367,6 +367,23 @@ func Validate(entity EntityDefinition) error {
 		}
 	}
 
+	seenScopeTypes := map[string]bool{}
+	for _, scope := range entity.Scopes {
+		switch {
+		case !isScopeTypeName(scope.Type):
+			issues = append(issues, fmt.Sprintf("scopes entry type %q must match ^[a-z][a-z0-9_]*$", scope.Type))
+		case seenScopeTypes[scope.Type]:
+			issues = append(issues, fmt.Sprintf("scopes has more than one entry for type %q", scope.Type))
+		}
+		seenScopeTypes[scope.Type] = true
+		if scope.Field != "id" && !fieldNames[scope.Field] {
+			issues = append(issues, fmt.Sprintf("scopes entry %q references unknown field %q (use \"id\" for the record itself)", scope.Type, scope.Field))
+		}
+		if scope.Field == "id" && scope.Array {
+			issues = append(issues, fmt.Sprintf("scopes entry %q: the record id cannot be a list", scope.Type))
+		}
+	}
+
 	seenFieldSets := map[string]bool{}
 	for _, constraint := range entity.UniqueConstraints {
 		if constraint.Scope != nil && *constraint.Scope != UniqueScopeTenant && *constraint.Scope != UniqueScopeGlobal {
@@ -455,6 +472,20 @@ func isActionName(name string) bool {
 	}
 	for _, c := range name {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// isScopeTypeName: the identifier a scope type is stored and compared as.
+func isScopeTypeName(s string) bool {
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
 			return false
 		}
 	}

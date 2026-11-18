@@ -39,7 +39,11 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 	}
 	recordPolicies := snapshot.GetRecordPolicies(permission.ActionRead)
 
-	planned, err := query.PlanList(md, s.permissions, entity.Name, input, rc, recordPolicies)
+	var planOpts []query.PlanOption
+	if access, ok := snapshot.PlanAccess(rc, entity.Name, permission.ActionRead); ok {
+		planOpts = append(planOpts, query.WithAccessPlan(access))
+	}
+	planned, err := query.PlanList(md, s.permissions, entity.Name, input, rc, recordPolicies, planOpts...)
 	if err != nil {
 		var invalidCursor *query.InvalidCursorError
 		var unknownListView *query.UnknownListViewError
