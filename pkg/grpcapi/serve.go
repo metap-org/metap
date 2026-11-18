@@ -77,11 +77,12 @@ type OptionalServeConfig struct {
 	Identity *IdentityConfig
 }
 
-// RegisterIdentity adds UserAdminService, RoleAdminService and AccountService to srv.
+// RegisterIdentity adds UserAdminService, RoleAdminService, AccountService and TenantAdminService to srv.
 func RegisterIdentity(srv *grpc.Server, auth AuthConfig, cfg IdentityConfig) {
 	pb.RegisterUserAdminServiceServer(srv, NewUserAdminService(auth, cfg))
 	pb.RegisterRoleAdminServiceServer(srv, NewRoleAdminService(auth, cfg))
 	pb.RegisterAccountServiceServer(srv, NewAccountService(auth, cfg))
+	pb.RegisterTenantAdminServiceServer(srv, NewTenantAdminService(auth, cfg))
 }
 
 // OptionalServe reads GRPC_ENABLED/GRPC_PORT (falling back to defaultPort) to decide whether to

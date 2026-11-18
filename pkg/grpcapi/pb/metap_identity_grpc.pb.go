@@ -1203,3 +1203,381 @@ var AccountService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "metap_identity.proto",
 }
+
+const (
+	TenantAdminService_ListTenants_FullMethodName           = "/metap.identity.v1.TenantAdminService/ListTenants"
+	TenantAdminService_GetTenant_FullMethodName             = "/metap.identity.v1.TenantAdminService/GetTenant"
+	TenantAdminService_CreateTenant_FullMethodName          = "/metap.identity.v1.TenantAdminService/CreateTenant"
+	TenantAdminService_UpdateTenant_FullMethodName          = "/metap.identity.v1.TenantAdminService/UpdateTenant"
+	TenantAdminService_SuspendTenant_FullMethodName         = "/metap.identity.v1.TenantAdminService/SuspendTenant"
+	TenantAdminService_ResumeTenant_FullMethodName          = "/metap.identity.v1.TenantAdminService/ResumeTenant"
+	TenantAdminService_RequestTenantDeletion_FullMethodName = "/metap.identity.v1.TenantAdminService/RequestTenantDeletion"
+	TenantAdminService_CancelTenantDeletion_FullMethodName  = "/metap.identity.v1.TenantAdminService/CancelTenantDeletion"
+)
+
+// TenantAdminServiceClient is the client API for TenantAdminService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Tenant administration (roadmap 113 P3). Platform admins only: the caller's token must be a
+// platform-tenant `platform_admin`. A tenant that asks to be deleted is suspended at once and
+// removed after a retention window in which the request can be cancelled.
+type TenantAdminServiceClient interface {
+	ListTenants(ctx context.Context, in *ListTenantsRequest, opts ...grpc.CallOption) (*ListTenantsResponse, error)
+	GetTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error)
+	// Registers a tenant and invites its first admin by email.
+	CreateTenant(ctx context.Context, in *CreateTenantRequest, opts ...grpc.CallOption) (*CreateTenantResponse, error)
+	UpdateTenant(ctx context.Context, in *UpdateTenantRequest, opts ...grpc.CallOption) (*Tenant, error)
+	SuspendTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error)
+	ResumeTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error)
+	RequestTenantDeletion(ctx context.Context, in *RequestTenantDeletionRequest, opts ...grpc.CallOption) (*Tenant, error)
+	CancelTenantDeletion(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error)
+}
+
+type tenantAdminServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewTenantAdminServiceClient(cc grpc.ClientConnInterface) TenantAdminServiceClient {
+	return &tenantAdminServiceClient{cc}
+}
+
+func (c *tenantAdminServiceClient) ListTenants(ctx context.Context, in *ListTenantsRequest, opts ...grpc.CallOption) (*ListTenantsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListTenantsResponse)
+	err := c.cc.Invoke(ctx, TenantAdminService_ListTenants_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) GetTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_GetTenant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) CreateTenant(ctx context.Context, in *CreateTenantRequest, opts ...grpc.CallOption) (*CreateTenantResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateTenantResponse)
+	err := c.cc.Invoke(ctx, TenantAdminService_CreateTenant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) UpdateTenant(ctx context.Context, in *UpdateTenantRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_UpdateTenant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) SuspendTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_SuspendTenant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) ResumeTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_ResumeTenant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) RequestTenantDeletion(ctx context.Context, in *RequestTenantDeletionRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_RequestTenantDeletion_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) CancelTenantDeletion(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_CancelTenantDeletion_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// TenantAdminServiceServer is the server API for TenantAdminService service.
+// All implementations must embed UnimplementedTenantAdminServiceServer
+// for forward compatibility.
+//
+// Tenant administration (roadmap 113 P3). Platform admins only: the caller's token must be a
+// platform-tenant `platform_admin`. A tenant that asks to be deleted is suspended at once and
+// removed after a retention window in which the request can be cancelled.
+type TenantAdminServiceServer interface {
+	ListTenants(context.Context, *ListTenantsRequest) (*ListTenantsResponse, error)
+	GetTenant(context.Context, *TenantIdRequest) (*Tenant, error)
+	// Registers a tenant and invites its first admin by email.
+	CreateTenant(context.Context, *CreateTenantRequest) (*CreateTenantResponse, error)
+	UpdateTenant(context.Context, *UpdateTenantRequest) (*Tenant, error)
+	SuspendTenant(context.Context, *TenantIdRequest) (*Tenant, error)
+	ResumeTenant(context.Context, *TenantIdRequest) (*Tenant, error)
+	RequestTenantDeletion(context.Context, *RequestTenantDeletionRequest) (*Tenant, error)
+	CancelTenantDeletion(context.Context, *TenantIdRequest) (*Tenant, error)
+	mustEmbedUnimplementedTenantAdminServiceServer()
+}
+
+// UnimplementedTenantAdminServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedTenantAdminServiceServer struct{}
+
+func (UnimplementedTenantAdminServiceServer) ListTenants(context.Context, *ListTenantsRequest) (*ListTenantsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListTenants not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) GetTenant(context.Context, *TenantIdRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTenant not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) CreateTenant(context.Context, *CreateTenantRequest) (*CreateTenantResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateTenant not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) UpdateTenant(context.Context, *UpdateTenantRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateTenant not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) SuspendTenant(context.Context, *TenantIdRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method SuspendTenant not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) ResumeTenant(context.Context, *TenantIdRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResumeTenant not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) RequestTenantDeletion(context.Context, *RequestTenantDeletionRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestTenantDeletion not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) CancelTenantDeletion(context.Context, *TenantIdRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelTenantDeletion not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) mustEmbedUnimplementedTenantAdminServiceServer() {}
+func (UnimplementedTenantAdminServiceServer) testEmbeddedByValue()                            {}
+
+// UnsafeTenantAdminServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to TenantAdminServiceServer will
+// result in compilation errors.
+type UnsafeTenantAdminServiceServer interface {
+	mustEmbedUnimplementedTenantAdminServiceServer()
+}
+
+func RegisterTenantAdminServiceServer(s grpc.ServiceRegistrar, srv TenantAdminServiceServer) {
+	// If the following call panics, it indicates UnimplementedTenantAdminServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&TenantAdminService_ServiceDesc, srv)
+}
+
+func _TenantAdminService_ListTenants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListTenantsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).ListTenants(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_ListTenants_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).ListTenants(ctx, req.(*ListTenantsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_GetTenant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).GetTenant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_GetTenant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).GetTenant(ctx, req.(*TenantIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_CreateTenant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateTenantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).CreateTenant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_CreateTenant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).CreateTenant(ctx, req.(*CreateTenantRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_UpdateTenant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateTenantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).UpdateTenant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_UpdateTenant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).UpdateTenant(ctx, req.(*UpdateTenantRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_SuspendTenant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).SuspendTenant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_SuspendTenant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).SuspendTenant(ctx, req.(*TenantIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_ResumeTenant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).ResumeTenant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_ResumeTenant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).ResumeTenant(ctx, req.(*TenantIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_RequestTenantDeletion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestTenantDeletionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).RequestTenantDeletion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_RequestTenantDeletion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).RequestTenantDeletion(ctx, req.(*RequestTenantDeletionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_CancelTenantDeletion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).CancelTenantDeletion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_CancelTenantDeletion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).CancelTenantDeletion(ctx, req.(*TenantIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// TenantAdminService_ServiceDesc is the grpc.ServiceDesc for TenantAdminService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var TenantAdminService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "metap.identity.v1.TenantAdminService",
+	HandlerType: (*TenantAdminServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ListTenants",
+			Handler:    _TenantAdminService_ListTenants_Handler,
+		},
+		{
+			MethodName: "GetTenant",
+			Handler:    _TenantAdminService_GetTenant_Handler,
+		},
+		{
+			MethodName: "CreateTenant",
+			Handler:    _TenantAdminService_CreateTenant_Handler,
+		},
+		{
+			MethodName: "UpdateTenant",
+			Handler:    _TenantAdminService_UpdateTenant_Handler,
+		},
+		{
+			MethodName: "SuspendTenant",
+			Handler:    _TenantAdminService_SuspendTenant_Handler,
+		},
+		{
+			MethodName: "ResumeTenant",
+			Handler:    _TenantAdminService_ResumeTenant_Handler,
+		},
+		{
+			MethodName: "RequestTenantDeletion",
+			Handler:    _TenantAdminService_RequestTenantDeletion_Handler,
+		},
+		{
+			MethodName: "CancelTenantDeletion",
+			Handler:    _TenantAdminService_CancelTenantDeletion_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "metap_identity.proto",
+}

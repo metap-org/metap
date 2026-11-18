@@ -296,3 +296,84 @@ service AccountService {
   // call it, unlike UserAdminService.ListUsers.
   rpc ListTenantUsers(ListTenantUsersRequest) returns (ListTenantUsersResponse);
 }
+
+// Tenant administration (roadmap 113 P3). Platform admins only: the caller's token must be a
+// platform-tenant `platform_admin`. A tenant that asks to be deleted is suspended at once and
+// removed after a retention window in which the request can be cancelled.
+service TenantAdminService {
+  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse);
+  rpc GetTenant(TenantIdRequest) returns (Tenant);
+  // Registers a tenant and invites its first admin by email.
+  rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse);
+  rpc UpdateTenant(UpdateTenantRequest) returns (Tenant);
+  rpc SuspendTenant(TenantIdRequest) returns (Tenant);
+  rpc ResumeTenant(TenantIdRequest) returns (Tenant);
+  rpc RequestTenantDeletion(RequestTenantDeletionRequest) returns (Tenant);
+  rpc CancelTenantDeletion(TenantIdRequest) returns (Tenant);
+}
+
+message Tenant {
+  string id = 1;
+  string name = 2;
+  string tier = 3;
+  // "schema" (shared tables or a schema of its own) or "dedicated_db".
+  string strategy = 4;
+  // "provisioning", "active", "migrating", "suspended", "expired" or "deleted".
+  string status = 5;
+  string product = 6;
+  string created_at = 7;
+  string trial_expires_at = 8;
+  // Both set while a deletion is pending ("" otherwise).
+  string deletion_requested_at = 9;
+  string deletion_effective_at = 10;
+  int32 member_count = 11;
+}
+
+message TenantIdRequest {
+  string id = 1;
+}
+
+message ListTenantsRequest {
+  // Case-insensitive substring of the name, or an exact tenant id.
+  string query = 1;
+  string status = 2;
+  string tier = 3;
+  // 0 = 50; at most 200.
+  int32 limit = 4;
+  int32 offset = 5;
+}
+
+message ListTenantsResponse {
+  repeated Tenant tenants = 1;
+  int32 total = 2;
+}
+
+message CreateTenantRequest {
+  string name = 1;
+  // "" = "trial".
+  string tier = 2;
+  string admin_email = 3;
+  string admin_display_name = 4;
+  string product = 5;
+}
+
+message CreateTenantResponse {
+  Tenant tenant = 1;
+  string admin_member_id = 2;
+  string expires_at = 3;
+  bool email_sent = 4;
+  // Set when the email could not be sent: the link to pass on by hand.
+  string accept_url = 5;
+}
+
+message UpdateTenantRequest {
+  string id = 1;
+  optional string name = 2;
+  optional string tier = 3;
+}
+
+message RequestTenantDeletionRequest {
+  string id = 1;
+  // 0 = 30 days.
+  int32 retention_days = 2;
+}
