@@ -169,8 +169,8 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   `CanPerformRecordCondition`) for any per-record check, `PlanAccess` + `query.WithAccessPlan` for lists and aggregates,
   `CanCreateInScope` for create; each falls back to the old behaviour when the caller has no scoped roles. Admin API:
   `AssignRole`/`RevokeRole` with `scope_type`+`scope_id`, `ListScopeMembers`; gateway `assignUserRole(..., scopeType, scopeId)`,
-  `scopeMembers`. Not done: an HTTP/gRPC record check for transitions on a scoped workflow action is covered, but deny policies
-  are evaluated per group (a deny gated to a role the user holds on scope A does not apply on scope B).
+  `scopeMembers`. Limitation: deny policies are evaluated per group, so a deny gated to a role the user holds on scope A does
+  not apply on scope B.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
