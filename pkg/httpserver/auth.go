@@ -127,6 +127,12 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 	case err != nil:
 		return nil, unauthorized("Failed to resolve roles.")
 	}
+	if err := control.ApplySessionClaim(ctx, state.Router, rc, claims.SessionID, time.Now()); err != nil {
+		if errors.Is(err, identity.ErrSessionRevoked) {
+			return nil, &authError{status: http.StatusUnauthorized, code: errcode.SessionRevoked, message: "Your session was ended, sign in again."}
+		}
+		return nil, unauthorized("Failed to check the session.")
+	}
 
 	// A token minted by the OAuth2 token endpoint (a later wave) carries a granted scope/client
 	// — ApplyOAuthGrant records it and PermissionService enforces it. An ordinary session token

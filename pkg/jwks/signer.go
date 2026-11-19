@@ -47,6 +47,17 @@ func MintWithSigner(signer *TokenSigner, tenantID, userID uuid.UUID, functionID 
 	}
 }
 
+// MintSessionWithSigner mints a login-session token (carrying "sid") via whichever trust root
+// signer names.
+func MintSessionWithSigner(signer *TokenSigner, tenantID, userID uuid.UUID, ttlSeconds uint64, sessionID string) (string, error) {
+	switch signer.Kind {
+	case SignerStatic:
+		return peripherals.MintSessionJWT(signer.PrivateKeyPEM, tenantID, userID, ttlSeconds, sessionID)
+	default:
+		return MintSessionJWT(signer.jwksKey(), tenantID, userID, ttlSeconds, sessionID)
+	}
+}
+
 // MintOAuthTokenWithSigner is the OAuth2-authorization-server counterpart to MintWithSigner.
 func MintOAuthTokenWithSigner(signer *TokenSigner, tenantID, userID uuid.UUID, ttlSeconds uint64, scope, clientID string) (string, error) {
 	switch signer.Kind {

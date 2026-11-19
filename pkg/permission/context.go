@@ -26,6 +26,9 @@ type RequestContext struct {
 	// ForwardedBearerToken is a transport concern for a gRPC client, never ABAC-visible — deliberately
 	// excluded from ToValue().
 	ForwardedBearerToken string
+	// SessionID is the login session behind the request (roadmap 115 M4); "" for a token that is not
+	// a login session (API key, OAuth2, service token). Not ABAC-visible.
+	SessionID string
 }
 
 func (c *RequestContext) IsAdmin() bool {

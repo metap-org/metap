@@ -109,6 +109,12 @@ func authenticate(ctx context.Context, config AuthConfig) (*permission.RequestCo
 		return nil, status.Error(codes.Unauthenticated, "failed to resolve roles")
 	}
 
+	if err := control.ApplySessionClaim(ctx, config.Router, rc, claims.SessionID, time.Now()); err != nil {
+		if errors.Is(err, identity.ErrSessionRevoked) {
+			return nil, sendServiceError(ctx, crud.NewServiceErrorMsg(401, errcode.SessionRevoked, "Your session was ended, sign in again."))
+		}
+		return nil, status.Error(codes.Unauthenticated, "failed to check the session")
+	}
 	// Same as metap-http's AuthContext: a token minted for an OAuth2 client carries a granted
 	// scope, and every transport must surface it or a scoped token would be served as a full
 	// session over gRPC (including via graphql-gateway, which forwards the caller's own token).

@@ -98,8 +98,15 @@ func startSession(w http.ResponseWriter, r *http.Request, state *AppState, ident
 // startSessionWith is startSession plus extra fields in the response (the recovery codes shown
 // once when a required-MFA setup finishes the sign-in).
 func startSessionWith(w http.ResponseWriter, r *http.Request, state *AppState, identityID uuid.UUID, m identity.Membership, now time.Time, extra map[string]any) {
+	_ = identity.PurgeSessions(r.Context(), state.Pool, now)
 	ttl := sessionTTLSeconds(r, state, m.TenantID)
-	token, err := state.MintToken(m.TenantID, m.MemberID, ttl)
+	sessionID, err := identity.CreateSession(r.Context(), state.Pool, identityID, m.MemberID, m.TenantID,
+		time.Duration(ttl)*time.Second, clientIP(r), r.UserAgent(), now)
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	token, err := state.MintSessionToken(m.TenantID, m.MemberID, ttl, sessionID.String())
 	if err != nil {
 		if errors.Is(err, ErrNotTokenIssuer) {
 			writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, err.Error(), nil)
@@ -247,7 +254,16 @@ func changePassword(w http.ResponseWriter, r *http.Request, state *AppState) {
 	startSession(w, r, state, identityID, identity.Membership{MemberID: userID, TenantID: tenantID}, now)
 }
 
-func logout(w http.ResponseWriter, _ *http.Request, state *AppState) {
+func logout(w http.ResponseWriter, r *http.Request, state *AppState) {
+	// Ending the browser's session on the server too (not just dropping the cookie) means a copied
+	// token stops working. Best effort: with no valid session there is nothing to end.
+	if rc, aerr := authenticate(r.Context(), state, r); aerr == nil && rc.SessionID != "" {
+		if sid, err := uuid.Parse(rc.SessionID); err == nil {
+			if ident, err := identity.IdentityOf(r.Context(), state.Pool, uuidOf(rc.TenantID), uuidOf(rc.UserID)); err == nil {
+				_ = identity.RevokeSession(r.Context(), state.Pool, ident, sid, time.Now())
+			}
+		}
+	}
 	session, csrf, startedAt := clearSessionCookies(state.CookieSecure)
 	http.SetCookie(w, session)
 	http.SetCookie(w, csrf)
@@ -318,9 +334,12 @@ func tryRefreshSession(w http.ResponseWriter, r *http.Request, state *AppState, 
 	}
 
 	ttl := effective.GetU64(config.AuthSessionTTLSeconds)
-	token, err := state.MintToken(tenantID, userID, ttl)
+	token, err := state.MintSessionToken(tenantID, userID, ttl, rc.SessionID)
 	if err != nil {
 		return
+	}
+	if sid, err := uuid.Parse(rc.SessionID); err == nil {
+		_ = identity.ExtendSession(r.Context(), state.Pool, sid, time.Duration(ttl)*time.Second, time.Now())
 	}
 	session, csrf := sessionCookies(token, csrfCookie.Value, int(ttl), state.CookieSecure)
 	http.SetCookie(w, session)
@@ -354,7 +373,7 @@ func issueToken(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeInternalError(w, err)
 		return
 	}
-	token, err := state.MintToken(tenantID, userID, sessionTTLSeconds(r, state, tenantID))
+	token, err := state.MintSessionToken(tenantID, userID, sessionTTLSeconds(r, state, tenantID), rc.SessionID)
 	if err != nil {
 		if errors.Is(err, ErrNotTokenIssuer) {
 			writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, err.Error(), nil)
@@ -406,4 +425,9 @@ func mountAuth(r chi.Router, state *AppState) {
 	r.Post("/auth/password/forgot", wrap(forgotPassword))
 	r.Post("/auth/password/reset", wrap(resetPassword))
 	r.Get("/auth/token", wrap(issueToken))
+}
+
+func uuidOf(s string) uuid.UUID {
+	id, _ := uuid.Parse(s)
+	return id
 }

@@ -1266,6 +1266,9 @@ const (
 	AccountService_ConfirmMfaEnrollment_FullMethodName    = "/metap.identity.v1.AccountService/ConfirmMfaEnrollment"
 	AccountService_DisableMfa_FullMethodName              = "/metap.identity.v1.AccountService/DisableMfa"
 	AccountService_RegenerateRecoveryCodes_FullMethodName = "/metap.identity.v1.AccountService/RegenerateRecoveryCodes"
+	AccountService_ListMySessions_FullMethodName          = "/metap.identity.v1.AccountService/ListMySessions"
+	AccountService_RevokeMySession_FullMethodName         = "/metap.identity.v1.AccountService/RevokeMySession"
+	AccountService_RevokeOtherSessions_FullMethodName     = "/metap.identity.v1.AccountService/RevokeOtherSessions"
 )
 
 // AccountServiceClient is the client API for AccountService service.
@@ -1291,6 +1294,13 @@ type AccountServiceClient interface {
 	// Turning it off, or replacing the recovery codes, needs a current code (or a recovery code).
 	DisableMfa(ctx context.Context, in *MfaCodeRequest, opts ...grpc.CallOption) (*Empty, error)
 	RegenerateRecoveryCodes(ctx context.Context, in *MfaCodeRequest, opts ...grpc.CallOption) (*MfaRecoveryCodes, error)
+	// Where the caller is signed in (every tenant), newest activity first; the one making this call is
+	// marked current. Only login sessions are listed — API keys and OAuth2 tokens are not sessions.
+	ListMySessions(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListSessionsResponse, error)
+	// Ends one of the caller's own sessions at once (it may be the current one).
+	RevokeMySession(ctx context.Context, in *SessionIdRequest, opts ...grpc.CallOption) (*Empty, error)
+	// Ends every other session of the caller, keeping this one.
+	RevokeOtherSessions(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*RevokedSessions, error)
 }
 
 type accountServiceClient struct {
@@ -1391,6 +1401,36 @@ func (c *accountServiceClient) RegenerateRecoveryCodes(ctx context.Context, in *
 	return out, nil
 }
 
+func (c *accountServiceClient) ListMySessions(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListSessionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSessionsResponse)
+	err := c.cc.Invoke(ctx, AccountService_ListMySessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *accountServiceClient) RevokeMySession(ctx context.Context, in *SessionIdRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, AccountService_RevokeMySession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *accountServiceClient) RevokeOtherSessions(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*RevokedSessions, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevokedSessions)
+	err := c.cc.Invoke(ctx, AccountService_RevokeOtherSessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AccountServiceServer is the server API for AccountService service.
 // All implementations must embed UnimplementedAccountServiceServer
 // for forward compatibility.
@@ -1414,6 +1454,13 @@ type AccountServiceServer interface {
 	// Turning it off, or replacing the recovery codes, needs a current code (or a recovery code).
 	DisableMfa(context.Context, *MfaCodeRequest) (*Empty, error)
 	RegenerateRecoveryCodes(context.Context, *MfaCodeRequest) (*MfaRecoveryCodes, error)
+	// Where the caller is signed in (every tenant), newest activity first; the one making this call is
+	// marked current. Only login sessions are listed — API keys and OAuth2 tokens are not sessions.
+	ListMySessions(context.Context, *Empty) (*ListSessionsResponse, error)
+	// Ends one of the caller's own sessions at once (it may be the current one).
+	RevokeMySession(context.Context, *SessionIdRequest) (*Empty, error)
+	// Ends every other session of the caller, keeping this one.
+	RevokeOtherSessions(context.Context, *Empty) (*RevokedSessions, error)
 	mustEmbedUnimplementedAccountServiceServer()
 }
 
@@ -1450,6 +1497,15 @@ func (UnimplementedAccountServiceServer) DisableMfa(context.Context, *MfaCodeReq
 }
 func (UnimplementedAccountServiceServer) RegenerateRecoveryCodes(context.Context, *MfaCodeRequest) (*MfaRecoveryCodes, error) {
 	return nil, status.Error(codes.Unimplemented, "method RegenerateRecoveryCodes not implemented")
+}
+func (UnimplementedAccountServiceServer) ListMySessions(context.Context, *Empty) (*ListSessionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListMySessions not implemented")
+}
+func (UnimplementedAccountServiceServer) RevokeMySession(context.Context, *SessionIdRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeMySession not implemented")
+}
+func (UnimplementedAccountServiceServer) RevokeOtherSessions(context.Context, *Empty) (*RevokedSessions, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeOtherSessions not implemented")
 }
 func (UnimplementedAccountServiceServer) mustEmbedUnimplementedAccountServiceServer() {}
 func (UnimplementedAccountServiceServer) testEmbeddedByValue()                        {}
@@ -1634,6 +1690,60 @@ func _AccountService_RegenerateRecoveryCodes_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AccountService_ListMySessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AccountServiceServer).ListMySessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AccountService_ListMySessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AccountServiceServer).ListMySessions(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AccountService_RevokeMySession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SessionIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AccountServiceServer).RevokeMySession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AccountService_RevokeMySession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AccountServiceServer).RevokeMySession(ctx, req.(*SessionIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AccountService_RevokeOtherSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AccountServiceServer).RevokeOtherSessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AccountService_RevokeOtherSessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AccountServiceServer).RevokeOtherSessions(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AccountService_ServiceDesc is the grpc.ServiceDesc for AccountService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1676,6 +1786,18 @@ var AccountService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegenerateRecoveryCodes",
 			Handler:    _AccountService_RegenerateRecoveryCodes_Handler,
+		},
+		{
+			MethodName: "ListMySessions",
+			Handler:    _AccountService_ListMySessions_Handler,
+		},
+		{
+			MethodName: "RevokeMySession",
+			Handler:    _AccountService_RevokeMySession_Handler,
+		},
+		{
+			MethodName: "RevokeOtherSessions",
+			Handler:    _AccountService_RevokeOtherSessions_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

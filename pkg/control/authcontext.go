@@ -177,3 +177,29 @@ func ResolveAPIKeyContext(ctx context.Context, router *Router, token string, now
 	return ResolveRequestContext(ctx, router, key.TenantID, key.MemberID, "", &created,
 		authContextEntity, metadataRegistry, contextAttributesCache)
 }
+
+// ApplySessionClaim checks the login session behind a token's "sid" claim (roadmap 115 M4): a
+// revoked or unknown session fails with identity.ErrSessionRevoked. A token with no "sid" is not a
+// login session and passes untouched.
+func ApplySessionClaim(ctx context.Context, router *Router, rc *permission.RequestContext, sessionID *string, now time.Time) error {
+	if sessionID == nil {
+		return nil
+	}
+	sid, err := uuid.Parse(*sessionID)
+	if err != nil {
+		return identity.ErrSessionRevoked
+	}
+	tenant, err := uuid.Parse(rc.TenantID)
+	if err != nil {
+		return identity.ErrSessionRevoked
+	}
+	user, err := uuid.Parse(rc.UserID)
+	if err != nil {
+		return identity.ErrSessionRevoked
+	}
+	if err := identity.CheckSessionID(ctx, router.sharedPool, tenant, user, sid, now); err != nil {
+		return err
+	}
+	rc.SessionID = *sessionID
+	return nil
+}

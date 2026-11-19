@@ -152,3 +152,52 @@ func TestTenantRequiringMFAForcesSetup(t *testing.T) {
 	assert.NotEmpty(t, done["token"], "finishing setup finishes the sign-in")
 	assert.Len(t, done["recoveryCodes"], 10)
 }
+
+// Roadmap 115 M4: every sign-in is its own session; ending one ends only its tokens, and logout
+// ends the session on the server instead of just dropping the cookie.
+func TestEachSignInIsASessionAndLogoutEndsIt(t *testing.T) {
+	pool := httpTestPool(t)
+	ctx := context.Background()
+	tenant := uuid.New()
+	email := uuid.NewString() + "@example.com"
+	m, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: email, Password: "first-password"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), "DELETE FROM metadata.sessions WHERE identity_id = $1", m.IdentityID)
+		pool.Exec(context.Background(), "DELETE FROM metadata.users WHERE identity_id = $1", m.IdentityID)
+		pool.Exec(context.Background(), "DELETE FROM metadata.identities WHERE id = $1", m.IdentityID)
+	})
+	state, _ := newTestAppState(t, pool, httpTestEntity())
+	base := startTestServer(t, state, nil)
+	login := func() string {
+		res := doRequest(t, "POST", base+"/auth/login", "", map[string]any{"email": email, "password": "first-password"})
+		require.Equal(t, 200, res.StatusCode)
+		return decodeJSON(t, res)["data"].(map[string]any)["token"].(string)
+	}
+	a, b := login(), login()
+
+	live, err := identity.ListSessions(ctx, pool, m.IdentityID, time.Now())
+	require.NoError(t, err)
+	require.Len(t, live, 2)
+
+	for _, tok := range []string{a, b} {
+		assert.Equal(t, 200, doRequest(t, "GET", base+"/auth/me", tok, nil).StatusCode)
+	}
+
+	// Ending one session at the server ends that token and not the other.
+	require.NoError(t, identity.RevokeSession(ctx, pool, m.IdentityID, live[0].ID, time.Now()))
+	statuses := []int{doRequest(t, "GET", base+"/auth/me", a, nil).StatusCode, doRequest(t, "GET", base+"/auth/me", b, nil).StatusCode}
+	assert.ElementsMatch(t, []int{200, 401}, statuses)
+
+	// Logging out with the surviving token ends its session too: a copied token is dead.
+	survivor := a
+	if statuses[0] == 401 {
+		survivor = b
+	}
+	res := doRequest(t, "POST", base+"/auth/logout", survivor, nil)
+	assert.Equal(t, 204, res.StatusCode)
+	assert.Equal(t, 401, doRequest(t, "GET", base+"/auth/me", survivor, nil).StatusCode)
+	live, err = identity.ListSessions(ctx, pool, m.IdentityID, time.Now())
+	require.NoError(t, err)
+	assert.Empty(t, live)
+}
