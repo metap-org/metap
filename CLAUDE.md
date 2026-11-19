@@ -156,6 +156,30 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   Postgres schema names (`SchemaMetadata`/`SchemaControl`/`SchemaPublic`) and slog attribute keys (`LogError`, `LogTenantID`, ...);
   `errcode` also carries the OAuth2 protocol codes (`OAuthInvalidClient`, ...). Never retype `"Content-Type"`,
   `"application/json"`, a `time` layout string or `"error"` as a log key.
+- **Roles scoped to a resource set (2026-11-18, roadmap 115 M1).** `user_roles` stays the tenant-wide role; a row in
+  `metadata.role_assignments` (migration 0045) gives a role only inside one scope — "analyst on zone Z". An entity declares
+  which scopes its records belong to with `EntityDefinition.Scopes` (`metadata.Scope("zone", "zoneId")`, `ScopeIn` for a list
+  field, `ScopeSelf` when the entity IS the scope); an entity with no binding for a type is never reached by a role scoped to
+  that type. `RequestContext.ScopedRoles` is loaded with the roles on every request (never cached); `Roles` and `IsAdmin()`
+  still mean tenant-wide only, so a scoped `admin` is not a tenant admin. **The rule that keeps it safe** (`pkg/permission/scope.go`):
+  access is the OR of *role groups* — the tenant-wide group plus one per distinct role set scoped assignments produce — and a
+  record is reachable iff some group allows the action on the entity, covers the record, and passes the record-level policies
+  under THAT group's roles alone. Never evaluate policies with the union of every role a user holds anywhere: a role granted on
+  zone A would leak onto zone B (`TestScopedRoleDoesNotLeakAcrossScopes`). Use `snapshot.CanAccessRecord` (not
+  `CanPerformRecordCondition`) for any per-record check, `PlanAccess` + `query.WithAccessPlan` for lists and aggregates,
+  `CanCreateInScope` for create; each falls back to the old behaviour when the caller has no scoped roles. Admin API:
+  `AssignRole`/`RevokeRole` with `scope_type`+`scope_id`, `ListScopeMembers`; gateway `assignUserRole(..., scopeType, scopeId)`,
+  `scopeMembers`. Limitation: deny policies are evaluated per group, so a deny gated to a role the user holds on scope A does
+  not apply on scope B.
+- **API keys and service accounts (2026-11-19, roadmap 115 M5).** A service account is a password-less member
+  (`identity.ServiceAccountProvider`, hidden from `ListMembers`, listed by `ListServiceAccounts`); an API key
+  (`metadata.api_keys`, migration 0046, only the SHA-256 hash stored, `mk_` prefix) authenticates AS its member, so it
+  has exactly that member's roles. Both transports (`httpserver.authenticate`, `grpcapi.authenticate`) branch on
+  `identity.IsAPIKey(token)` to `control.ResolveAPIKeyContext`, which treats the key as a session issued at its
+  creation: disabling the member or "revoke sessions" kills its keys at once, revoke/expiry are checked in SQL. A key
+  carries no OAuth scope. Admin API on `UserAdminService`: `CreateServiceAccount`, `ListServiceAccounts`,
+  `CreateApiKey` (token returned once), `ListApiKeys`, `RevokeApiKey`; gateway fields `serviceAccounts`, `apiKeys(userId)`, `createServiceAccount`, `createApiKey`, `revokeApiKey`. Not built yet:
+  a tenant lifetime cap config key, per-key scopes.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

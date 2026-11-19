@@ -49,6 +49,9 @@ const (
 	InvitationNeedsSignIn = "invitation_needs_sign_in" // 409: the account signs in through an identity provider
 	ResetTokenInvalid     = "reset_token_invalid"      // 400: unknown, expired or used reset link
 
+	// Tenant administration (roadmap 113 P3).
+	TenantInvalidState = "tenant_invalid_state" // 409: the tenant's state does not allow this (suspend a deleted tenant, delete twice, ...)
+
 	// Role catalog (roadmap 114).
 	RoleInUse  = "role_in_use" // 409: delete blocked, members hold the role or policies name it
 	RoleExists = "role_exists" // 409: the tenant already has a role of that name

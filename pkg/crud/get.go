@@ -78,12 +78,12 @@ func (s *CrudService) Get(ctx context.Context, entityName string, id uuid.UUID, 
 	if err != nil {
 		return GetResult{}, err
 	}
-	recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(enriched), permission.ActionRead)
+	recordDecision := snapshot.CanAccessRecord(rc, entity.Name, entity.Scopes, existing.ID.String(), permission.JsonObject(enriched), permission.ActionRead, "")
 	if !recordDecision.Allowed {
 		return GetResult{}, forbidden(recordDecision)
 	}
 
-	capabilities := computeCapabilities(entity, rc, snapshot, enriched, actors)
+	capabilities := computeCapabilities(entity, rc, snapshot, existing.ID, enriched, actors)
 	masked := maskRecordForRead(entity, rc, snapshot, *existing)
 	return GetResult{Record: masked, Capabilities: capabilities}, nil
 }

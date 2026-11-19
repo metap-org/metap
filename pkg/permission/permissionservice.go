@@ -62,17 +62,29 @@ func (s *PermissionService) checkAction(goCtx context.Context, ctx *RequestConte
 		return PermissionDecision{}, err
 	}
 
+	// The tenant-wide group first (exactly the behaviour before scoped roles existed), then every
+	// scoped group: the entity level is open when some group allows it. Which RECORDS that
+	// reaches is decided later, per record, by the snapshot (roadmap 115 M1).
+	groups := ctx.RoleGroups()
 	switch EvaluatePolicies(rows, ctx, nil, false) {
 	case VerdictAllow:
 		slog.Debug("allowed: policy matched", "entity", entityName, "action", action.String(), "user_id", userID)
 		return Allowed(), nil
 	case VerdictDeny:
-		slog.Warn("denied: an explicit deny policy matched", "entity", entityName, "action", action.String(), "user_id", userID)
-		return Forbidden(), nil
-	default:
-		slog.Warn("denied: no policy matched (default-deny for non-admin)", "entity", entityName, "action", action.String(), "user_id", userID, "policy_count", len(rows))
-		return Forbidden(), nil
+		if len(groups) == 1 {
+			slog.Warn("denied: an explicit deny policy matched", "entity", entityName, "action", action.String(), "user_id", userID)
+			return Forbidden(), nil
+		}
 	}
+	for _, g := range groups[1:] {
+		gctx := ctx.WithRoles(g.Roles)
+		if gctx.IsAdmin() || EvaluatePolicies(rows, gctx, nil, false) == VerdictAllow {
+			slog.Debug("allowed: policy matched in a scoped role group", "entity", entityName, "action", action.String(), "user_id", userID)
+			return Allowed(), nil
+		}
+	}
+	slog.Warn("denied: no policy matched (default-deny for non-admin)", "entity", entityName, "action", action.String(), "user_id", userID, "policy_count", len(rows))
+	return Forbidden(), nil
 }
 
 func (s *PermissionService) CanReadEntity(ctx context.Context, rc *RequestContext, entity string) (PermissionDecision, error) {
@@ -116,7 +128,22 @@ func (s *PermissionService) CanTransitionAction(goCtx context.Context, ctx *Requ
 	if err != nil {
 		return PermissionDecision{}, err
 	}
-	return contextVerdict(append(generic, specific...), ctx), nil
+	return contextVerdictGroups(append(generic, specific...), ctx), nil
+}
+
+// contextVerdictGroups is contextVerdict over every role group: allowed when any group is.
+func contextVerdictGroups(rows []PolicyRow, ctx *RequestContext) PermissionDecision {
+	if contextVerdict(rows, ctx).Allowed {
+		return Allowed()
+	}
+	groups := ctx.RoleGroups()
+	for _, g := range groups[1:] {
+		gctx := ctx.WithRoles(g.Roles)
+		if gctx.IsAdmin() || contextVerdict(rows, gctx).Allowed {
+			return Allowed()
+		}
+	}
+	return Forbidden()
 }
 
 // contextVerdict turns a set of context-subject policies into a decision: allow only on an

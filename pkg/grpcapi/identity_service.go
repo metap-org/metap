@@ -167,9 +167,13 @@ func (d identityDeps) toUsers(ctx context.Context, tenant uuid.UUID, ms []identi
 		ids[i], identities[i] = m.ID, m.IdentityID
 	}
 	var roles map[uuid.UUID][]string
+	var scoped map[uuid.UUID][]permission.ScopedRole
 	if err := d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
 		var err error
-		roles, err = peripherals.RolesForUsers(ctx, db, tenant, ids)
+		if roles, err = peripherals.RolesForUsers(ctx, db, tenant, ids); err != nil {
+			return err
+		}
+		scoped, err = peripherals.ScopedRolesForUsers(ctx, db, tenant, ids)
 		return err
 	}); err != nil {
 		return nil, err
@@ -188,6 +192,9 @@ func (d identityDeps) toUsers(ctx context.Context, tenant uuid.UUID, ms []identi
 		}
 		if u.Roles == nil {
 			u.Roles = []string{}
+		}
+		for _, sr := range scoped[m.ID] {
+			u.ScopedRoles = append(u.ScopedRoles, &pb.ScopedRole{Role: sr.Role, ScopeType: sr.ScopeType, ScopeId: sr.ScopeID})
 		}
 		if m.InvitedBy != nil {
 			u.InvitedBy = m.InvitedBy.String()
@@ -551,6 +558,9 @@ func (s *UserAdminService) changeRole(ctx context.Context, req *pb.RoleRequest, 
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
+	if req.GetScopeType() != "" || req.GetScopeId() != "" {
+		return s.changeScopedRole(ctx, c, id, role, req.GetScopeType(), req.GetScopeId(), assign, before)
+	}
 	if assign {
 		if err := s.d.checkRoles(ctx, c.tenant, []string{role}); err != nil {
 			return nil, err
@@ -580,6 +590,75 @@ func (s *UserAdminService) changeRole(ctx context.Context, req *pb.RoleRequest, 
 		s.d.record(ctx, c, id, audit.ActionUpdate, map[string][2]any{"roles": {before.Roles, after.Roles}})
 	}
 	return after, nil
+}
+
+// changeScopedRole assigns or revokes a role only on one scope (roadmap 115 M1). There is no
+// last-admin guard here: a role held on a scope is never the tenant's admin.
+func (s *UserAdminService) changeScopedRole(ctx context.Context, c caller, id uuid.UUID, role, scopeType, scopeID string, assign bool, before *pb.User) (*pb.User, error) {
+	if err := peripherals.ValidateScope(scopeType, scopeID); err != nil {
+		return nil, sendServiceError(ctx, &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed,
+			Message: err.Error(), FieldErrors: map[string][]string{"scope": {err.Error()}}})
+	}
+	if assign {
+		if err := s.d.checkRoles(ctx, c.tenant, []string{role}); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
+		if assign {
+			return peripherals.AssignScopedRole(ctx, db, c.tenant, id, role, scopeType, scopeID, c.selfPtr())
+		}
+		return peripherals.RevokeScopedRole(ctx, db, c.tenant, id, role, scopeType, scopeID)
+	}); err != nil {
+		return nil, rpcError(ctx, err)
+	}
+	after, err := s.d.user(ctx, c.tenant, id)
+	if err != nil {
+		return nil, identityErr(ctx, err)
+	}
+	if !slices.EqualFunc(before.ScopedRoles, after.ScopedRoles, func(a, b *pb.ScopedRole) bool {
+		return a.GetRole() == b.GetRole() && a.GetScopeType() == b.GetScopeType() && a.GetScopeId() == b.GetScopeId()
+	}) {
+		s.d.record(ctx, c, id, audit.ActionUpdate, map[string][2]any{"scopedRoles": {scopedRolesForAudit(before.ScopedRoles), scopedRolesForAudit(after.ScopedRoles)}})
+	}
+	return after, nil
+}
+
+func scopedRolesForAudit(in []*pb.ScopedRole) []string {
+	out := make([]string, len(in))
+	for i, r := range in {
+		out[i] = r.GetRole() + "@" + r.GetScopeType() + ":" + r.GetScopeId()
+	}
+	return out
+}
+
+// ListScopeMembers answers "who can see this zone": every user holding a role on the scope.
+func (s *UserAdminService) ListScopeMembers(ctx context.Context, req *pb.ScopeRequest) (*pb.ListScopeMembersResponse, error) {
+	c, err := s.admin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := peripherals.ValidateScope(req.GetScopeType(), req.GetScopeId()); err != nil {
+		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, err.Error())
+	}
+	var members []peripherals.ScopeMember
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
+		var err error
+		members, err = peripherals.MembersOfScope(ctx, db, c.tenant, req.GetScopeType(), req.GetScopeId())
+		return err
+	}); err != nil {
+		return nil, rpcError(ctx, err)
+	}
+	resp := &pb.ListScopeMembersResponse{Members: []*pb.ScopeMember{}}
+	for _, m := range members {
+		mem, err := identity.GetMember(ctx, s.d.cfg.Shared, c.tenant, m.UserID)
+		if err != nil {
+			continue // removed since: the assignment is stale and shows no one
+		}
+		resp.Members = append(resp.Members, &pb.ScopeMember{UserId: m.UserID.String(), Email: mem.Email,
+			DisplayName: mem.DisplayName, Role: m.Role})
+	}
+	return resp, nil
 }
 
 func (s *UserAdminService) AssignRole(ctx context.Context, req *pb.RoleRequest) (*pb.User, error) {

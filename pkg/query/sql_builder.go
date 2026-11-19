@@ -16,6 +16,8 @@ const (
 	bindText bindKind = iota
 	bindBool
 	bindUUID
+	bindUUIDArray
+	bindTextArray
 )
 
 type BindValue struct {
@@ -23,11 +25,17 @@ type BindValue struct {
 	text string
 	b    bool
 	u    uuid.UUID
+	us   []uuid.UUID
+	ts   []string
 }
 
 func TextBind(s string) BindValue    { return BindValue{kind: bindText, text: s} }
 func BoolBind(b bool) BindValue      { return BindValue{kind: bindBool, b: b} }
 func UUIDBind(u uuid.UUID) BindValue { return BindValue{kind: bindUUID, u: u} }
+
+// UUIDArrayBind and TextArrayBind bind a list for `= ANY($n)` / `?| $n`.
+func UUIDArrayBind(us []uuid.UUID) BindValue { return BindValue{kind: bindUUIDArray, us: us} }
+func TextArrayBind(ts []string) BindValue    { return BindValue{kind: bindTextArray, ts: ts} }
 
 // Arg returns the Go value pgx should bind for this parameter, in encounter order — the runtime
 // counterpart to ParamBuilder's $N numbering. pgx matches positional args to $1, $2, ... in the
@@ -41,6 +49,10 @@ func (v BindValue) Arg() any {
 		return v.b
 	case bindUUID:
 		return v.u
+	case bindUUIDArray:
+		return v.us
+	case bindTextArray:
+		return v.ts
 	default:
 		return nil
 	}

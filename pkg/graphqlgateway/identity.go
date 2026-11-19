@@ -23,11 +23,18 @@ func WithIdentity(client *grpcapi.IdentityClient) Option {
 }
 
 var (
+	scopedRoleType = jsonObject("ScopedRole", map[string]graphql.Output{
+		"role": nn(graphql.String), "scopeType": nn(graphql.String), "scopeId": nn(graphql.String),
+	})
+	scopeMemberType = jsonObject("ScopeMember", map[string]graphql.Output{
+		"userId": nn(graphql.ID), "email": nn(graphql.String), "displayName": nn(graphql.String), "role": nn(graphql.String),
+	})
 	userType = jsonObject("User", map[string]graphql.Output{
 		"id": nn(graphql.ID), "email": nn(graphql.String), "displayName": nn(graphql.String),
 		"status": nn(graphql.String), "roles": nnList(graphql.String), "authProvider": nn(graphql.String),
 		"hasPassword": nn(graphql.Boolean), "lastLoginAt": graphql.String, "createdAt": nn(graphql.String),
 		"invitedBy": graphql.ID, "sharedIdentity": nn(graphql.Boolean), "invitationExpiresAt": graphql.String,
+		"scopedRoles": nnList(scopedRoleType),
 	})
 	userPageType = jsonObject("UserPage", map[string]graphql.Output{
 		"users": nnList(userType), "total": nn(graphql.Int),
@@ -110,8 +117,13 @@ func userMap(u *pb.User) map[string]interface{} {
 	if roles == nil {
 		roles = []string{}
 	}
+	scoped := make([]interface{}, len(u.GetScopedRoles()))
+	for i, r := range u.GetScopedRoles() {
+		scoped[i] = map[string]interface{}{"role": r.GetRole(), "scopeType": r.GetScopeType(), "scopeId": r.GetScopeId()}
+	}
 	return map[string]interface{}{
-		"id": u.GetId(), "email": u.GetEmail(), "displayName": u.GetDisplayName(), "status": u.GetStatus(),
+		"scopedRoles": scoped,
+		"id":          u.GetId(), "email": u.GetEmail(), "displayName": u.GetDisplayName(), "status": u.GetStatus(),
 		"roles": roles, "authProvider": u.GetAuthProvider(), "hasPassword": u.GetHasPassword(),
 		"lastLoginAt": nullIfEmpty(u.GetLastLoginAt()), "createdAt": u.GetCreatedAt(),
 		"invitedBy": nullIfEmpty(u.GetInvitedBy()), "sharedIdentity": u.GetSharedIdentity(),
@@ -192,6 +204,8 @@ func idArgs() graphql.FieldConfigArgument {
 }
 
 func addIdentityFields(query, mutation graphql.Fields, c *grpcapi.IdentityClient) {
+	addTenantFields(query, mutation, c)
+	addAPIKeyFields(query, mutation, c)
 	asUser := func(call func(ctx context.Context, opts ...grpc.CallOption) (*pb.User, error), ctx context.Context) (interface{}, error) {
 		u, err := identityCall(ctx, call)
 		if err != nil {
@@ -220,6 +234,24 @@ func addIdentityFields(query, mutation graphql.Fields, c *grpcapi.IdentityClient
 				users[i] = userMap(u)
 			}
 			return map[string]interface{}{"users": users, "total": int(res.GetTotal())}, nil
+		},
+	}
+	query["scopeMembers"] = &graphql.Field{
+		Type: nnList(scopeMemberType),
+		Args: graphql.FieldConfigArgument{"scopeType": strArg(), "scopeId": strArg()},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			req := &pb.ScopeRequest{ScopeType: argString(p.Args, "scopeType"), ScopeId: argString(p.Args, "scopeId")}
+			res, err := identityCall(p.Context, func(ctx context.Context, o ...grpc.CallOption) (*pb.ListScopeMembersResponse, error) {
+				return c.Admin.ListScopeMembers(ctx, req, o...)
+			})
+			if err != nil {
+				return nil, err
+			}
+			out := make([]interface{}, len(res.GetMembers()))
+			for i, m := range res.GetMembers() {
+				out[i] = map[string]interface{}{"userId": m.GetUserId(), "email": m.GetEmail(), "displayName": m.GetDisplayName(), "role": m.GetRole()}
+			}
+			return out, nil
 		},
 	}
 	query["user"] = &graphql.Field{
@@ -463,9 +495,11 @@ func addIdentityFields(query, mutation graphql.Fields, c *grpcapi.IdentityClient
 	roleMutation := func(assign bool) *graphql.Field {
 		return &graphql.Field{
 			Type: nn(userType),
-			Args: graphql.FieldConfigArgument{"userId": requiredIDArg(), "role": strArg()},
+			// scopeType + scopeId together make the role hold only on that scope (roadmap 115 M1).
+			Args: graphql.FieldConfigArgument{"userId": requiredIDArg(), "role": strArg(), "scopeType": optStrArg(), "scopeId": optStrArg()},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				req := &pb.RoleRequest{Id: argString(p.Args, "userId"), Role: argString(p.Args, "role")}
+				req := &pb.RoleRequest{Id: argString(p.Args, "userId"), Role: argString(p.Args, "role"),
+					ScopeType: argString(p.Args, "scopeType"), ScopeId: argString(p.Args, "scopeId")}
 				return asUser(func(ctx context.Context, o ...grpc.CallOption) (*pb.User, error) {
 					if assign {
 						return c.Admin.AssignRole(ctx, req, o...)

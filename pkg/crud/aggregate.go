@@ -41,7 +41,11 @@ func (s *CrudService) AggregateWithInput(ctx context.Context, entityName string,
 	}
 	recordPolicies := snapshot.GetRecordPolicies(permission.ActionRead)
 
-	planned, err := query.PlanAggregate(md, s.permissions, entity.Name, input, rc, recordPolicies)
+	var planOpts []query.PlanOption
+	if access, ok := snapshot.PlanAccess(rc, entity.Name, permission.ActionRead); ok {
+		planOpts = append(planOpts, query.WithAccessPlan(access))
+	}
+	planned, err := query.PlanAggregate(md, s.permissions, entity.Name, input, rc, recordPolicies, planOpts...)
 	if err != nil {
 		var invalidAggregate *query.InvalidAggregateError
 		var crossRecord *query.CrossRecordConditionInListError

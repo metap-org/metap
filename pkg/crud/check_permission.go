@@ -73,7 +73,7 @@ func (s *CrudService) CheckRecordPermission(ctx context.Context, entityName stri
 	if err != nil {
 		return err
 	}
-	recordDecision := snapshot.CanPerformRecordCondition(rc, permission.JsonObject(enriched), action)
+	recordDecision := snapshot.CanAccessRecord(rc, entity.Name, entity.Scopes, existing.ID.String(), permission.JsonObject(enriched), action, "")
 	if !recordDecision.Allowed {
 		return forbidden(recordDecision)
 	}

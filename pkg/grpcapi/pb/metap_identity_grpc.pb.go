@@ -19,19 +19,25 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	UserAdminService_ListUsers_FullMethodName        = "/metap.identity.v1.UserAdminService/ListUsers"
-	UserAdminService_GetUser_FullMethodName          = "/metap.identity.v1.UserAdminService/GetUser"
-	UserAdminService_CreateUser_FullMethodName       = "/metap.identity.v1.UserAdminService/CreateUser"
-	UserAdminService_InviteUser_FullMethodName       = "/metap.identity.v1.UserAdminService/InviteUser"
-	UserAdminService_ResendInvitation_FullMethodName = "/metap.identity.v1.UserAdminService/ResendInvitation"
-	UserAdminService_UpdateUser_FullMethodName       = "/metap.identity.v1.UserAdminService/UpdateUser"
-	UserAdminService_DisableUser_FullMethodName      = "/metap.identity.v1.UserAdminService/DisableUser"
-	UserAdminService_EnableUser_FullMethodName       = "/metap.identity.v1.UserAdminService/EnableUser"
-	UserAdminService_RemoveUser_FullMethodName       = "/metap.identity.v1.UserAdminService/RemoveUser"
-	UserAdminService_ResetPassword_FullMethodName    = "/metap.identity.v1.UserAdminService/ResetPassword"
-	UserAdminService_AssignRole_FullMethodName       = "/metap.identity.v1.UserAdminService/AssignRole"
-	UserAdminService_RevokeRole_FullMethodName       = "/metap.identity.v1.UserAdminService/RevokeRole"
-	UserAdminService_ListUserAudit_FullMethodName    = "/metap.identity.v1.UserAdminService/ListUserAudit"
+	UserAdminService_ListUsers_FullMethodName            = "/metap.identity.v1.UserAdminService/ListUsers"
+	UserAdminService_GetUser_FullMethodName              = "/metap.identity.v1.UserAdminService/GetUser"
+	UserAdminService_CreateUser_FullMethodName           = "/metap.identity.v1.UserAdminService/CreateUser"
+	UserAdminService_InviteUser_FullMethodName           = "/metap.identity.v1.UserAdminService/InviteUser"
+	UserAdminService_ResendInvitation_FullMethodName     = "/metap.identity.v1.UserAdminService/ResendInvitation"
+	UserAdminService_UpdateUser_FullMethodName           = "/metap.identity.v1.UserAdminService/UpdateUser"
+	UserAdminService_DisableUser_FullMethodName          = "/metap.identity.v1.UserAdminService/DisableUser"
+	UserAdminService_EnableUser_FullMethodName           = "/metap.identity.v1.UserAdminService/EnableUser"
+	UserAdminService_RemoveUser_FullMethodName           = "/metap.identity.v1.UserAdminService/RemoveUser"
+	UserAdminService_ResetPassword_FullMethodName        = "/metap.identity.v1.UserAdminService/ResetPassword"
+	UserAdminService_AssignRole_FullMethodName           = "/metap.identity.v1.UserAdminService/AssignRole"
+	UserAdminService_RevokeRole_FullMethodName           = "/metap.identity.v1.UserAdminService/RevokeRole"
+	UserAdminService_ListScopeMembers_FullMethodName     = "/metap.identity.v1.UserAdminService/ListScopeMembers"
+	UserAdminService_ListUserAudit_FullMethodName        = "/metap.identity.v1.UserAdminService/ListUserAudit"
+	UserAdminService_CreateServiceAccount_FullMethodName = "/metap.identity.v1.UserAdminService/CreateServiceAccount"
+	UserAdminService_ListServiceAccounts_FullMethodName  = "/metap.identity.v1.UserAdminService/ListServiceAccounts"
+	UserAdminService_CreateApiKey_FullMethodName         = "/metap.identity.v1.UserAdminService/CreateApiKey"
+	UserAdminService_ListApiKeys_FullMethodName          = "/metap.identity.v1.UserAdminService/ListApiKeys"
+	UserAdminService_RevokeApiKey_FullMethodName         = "/metap.identity.v1.UserAdminService/RevokeApiKey"
 )
 
 // UserAdminServiceClient is the client API for UserAdminService service.
@@ -58,7 +64,17 @@ type UserAdminServiceClient interface {
 	ResetPassword(ctx context.Context, in *ResetPasswordRequest, opts ...grpc.CallOption) (*Empty, error)
 	AssignRole(ctx context.Context, in *RoleRequest, opts ...grpc.CallOption) (*User, error)
 	RevokeRole(ctx context.Context, in *RoleRequest, opts ...grpc.CallOption) (*User, error)
+	// Who holds which role on one scope ("who can see this zone").
+	ListScopeMembers(ctx context.Context, in *ScopeRequest, opts ...grpc.CallOption) (*ListScopeMembersResponse, error)
 	ListUserAudit(ctx context.Context, in *ListUserAuditRequest, opts ...grpc.CallOption) (*ListUserAuditResponse, error)
+	// A machine member: no password, signs in only through an API key. Listed by ListServiceAccounts,
+	// never by ListUsers.
+	CreateServiceAccount(ctx context.Context, in *CreateServiceAccountRequest, opts ...grpc.CallOption) (*User, error)
+	ListServiceAccounts(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListUsersResponse, error)
+	// The token in the response is shown once; only its hash is stored. The key acts as its member.
+	CreateApiKey(ctx context.Context, in *CreateApiKeyRequest, opts ...grpc.CallOption) (*CreateApiKeyResponse, error)
+	ListApiKeys(ctx context.Context, in *UserIdRequest, opts ...grpc.CallOption) (*ListApiKeysResponse, error)
+	RevokeApiKey(ctx context.Context, in *ApiKeyIdRequest, opts ...grpc.CallOption) (*Empty, error)
 }
 
 type userAdminServiceClient struct {
@@ -189,10 +205,70 @@ func (c *userAdminServiceClient) RevokeRole(ctx context.Context, in *RoleRequest
 	return out, nil
 }
 
+func (c *userAdminServiceClient) ListScopeMembers(ctx context.Context, in *ScopeRequest, opts ...grpc.CallOption) (*ListScopeMembersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListScopeMembersResponse)
+	err := c.cc.Invoke(ctx, UserAdminService_ListScopeMembers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *userAdminServiceClient) ListUserAudit(ctx context.Context, in *ListUserAuditRequest, opts ...grpc.CallOption) (*ListUserAuditResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListUserAuditResponse)
 	err := c.cc.Invoke(ctx, UserAdminService_ListUserAudit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userAdminServiceClient) CreateServiceAccount(ctx context.Context, in *CreateServiceAccountRequest, opts ...grpc.CallOption) (*User, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(User)
+	err := c.cc.Invoke(ctx, UserAdminService_CreateServiceAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userAdminServiceClient) ListServiceAccounts(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListUsersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListUsersResponse)
+	err := c.cc.Invoke(ctx, UserAdminService_ListServiceAccounts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userAdminServiceClient) CreateApiKey(ctx context.Context, in *CreateApiKeyRequest, opts ...grpc.CallOption) (*CreateApiKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateApiKeyResponse)
+	err := c.cc.Invoke(ctx, UserAdminService_CreateApiKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userAdminServiceClient) ListApiKeys(ctx context.Context, in *UserIdRequest, opts ...grpc.CallOption) (*ListApiKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListApiKeysResponse)
+	err := c.cc.Invoke(ctx, UserAdminService_ListApiKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userAdminServiceClient) RevokeApiKey(ctx context.Context, in *ApiKeyIdRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, UserAdminService_RevokeApiKey_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +299,17 @@ type UserAdminServiceServer interface {
 	ResetPassword(context.Context, *ResetPasswordRequest) (*Empty, error)
 	AssignRole(context.Context, *RoleRequest) (*User, error)
 	RevokeRole(context.Context, *RoleRequest) (*User, error)
+	// Who holds which role on one scope ("who can see this zone").
+	ListScopeMembers(context.Context, *ScopeRequest) (*ListScopeMembersResponse, error)
 	ListUserAudit(context.Context, *ListUserAuditRequest) (*ListUserAuditResponse, error)
+	// A machine member: no password, signs in only through an API key. Listed by ListServiceAccounts,
+	// never by ListUsers.
+	CreateServiceAccount(context.Context, *CreateServiceAccountRequest) (*User, error)
+	ListServiceAccounts(context.Context, *Empty) (*ListUsersResponse, error)
+	// The token in the response is shown once; only its hash is stored. The key acts as its member.
+	CreateApiKey(context.Context, *CreateApiKeyRequest) (*CreateApiKeyResponse, error)
+	ListApiKeys(context.Context, *UserIdRequest) (*ListApiKeysResponse, error)
+	RevokeApiKey(context.Context, *ApiKeyIdRequest) (*Empty, error)
 	mustEmbedUnimplementedUserAdminServiceServer()
 }
 
@@ -270,8 +356,26 @@ func (UnimplementedUserAdminServiceServer) AssignRole(context.Context, *RoleRequ
 func (UnimplementedUserAdminServiceServer) RevokeRole(context.Context, *RoleRequest) (*User, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeRole not implemented")
 }
+func (UnimplementedUserAdminServiceServer) ListScopeMembers(context.Context, *ScopeRequest) (*ListScopeMembersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListScopeMembers not implemented")
+}
 func (UnimplementedUserAdminServiceServer) ListUserAudit(context.Context, *ListUserAuditRequest) (*ListUserAuditResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListUserAudit not implemented")
+}
+func (UnimplementedUserAdminServiceServer) CreateServiceAccount(context.Context, *CreateServiceAccountRequest) (*User, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateServiceAccount not implemented")
+}
+func (UnimplementedUserAdminServiceServer) ListServiceAccounts(context.Context, *Empty) (*ListUsersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListServiceAccounts not implemented")
+}
+func (UnimplementedUserAdminServiceServer) CreateApiKey(context.Context, *CreateApiKeyRequest) (*CreateApiKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateApiKey not implemented")
+}
+func (UnimplementedUserAdminServiceServer) ListApiKeys(context.Context, *UserIdRequest) (*ListApiKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListApiKeys not implemented")
+}
+func (UnimplementedUserAdminServiceServer) RevokeApiKey(context.Context, *ApiKeyIdRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeApiKey not implemented")
 }
 func (UnimplementedUserAdminServiceServer) mustEmbedUnimplementedUserAdminServiceServer() {}
 func (UnimplementedUserAdminServiceServer) testEmbeddedByValue()                          {}
@@ -510,6 +614,24 @@ func _UserAdminService_RevokeRole_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserAdminService_ListScopeMembers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ScopeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).ListScopeMembers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_ListScopeMembers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).ListScopeMembers(ctx, req.(*ScopeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _UserAdminService_ListUserAudit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListUserAuditRequest)
 	if err := dec(in); err != nil {
@@ -524,6 +646,96 @@ func _UserAdminService_ListUserAudit_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(UserAdminServiceServer).ListUserAudit(ctx, req.(*ListUserAuditRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserAdminService_CreateServiceAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateServiceAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).CreateServiceAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_CreateServiceAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).CreateServiceAccount(ctx, req.(*CreateServiceAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserAdminService_ListServiceAccounts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).ListServiceAccounts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_ListServiceAccounts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).ListServiceAccounts(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserAdminService_CreateApiKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateApiKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).CreateApiKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_CreateApiKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).CreateApiKey(ctx, req.(*CreateApiKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserAdminService_ListApiKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UserIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).ListApiKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_ListApiKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).ListApiKeys(ctx, req.(*UserIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserAdminService_RevokeApiKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApiKeyIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).RevokeApiKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_RevokeApiKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).RevokeApiKey(ctx, req.(*ApiKeyIdRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -584,8 +796,32 @@ var UserAdminService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _UserAdminService_RevokeRole_Handler,
 		},
 		{
+			MethodName: "ListScopeMembers",
+			Handler:    _UserAdminService_ListScopeMembers_Handler,
+		},
+		{
 			MethodName: "ListUserAudit",
 			Handler:    _UserAdminService_ListUserAudit_Handler,
+		},
+		{
+			MethodName: "CreateServiceAccount",
+			Handler:    _UserAdminService_CreateServiceAccount_Handler,
+		},
+		{
+			MethodName: "ListServiceAccounts",
+			Handler:    _UserAdminService_ListServiceAccounts_Handler,
+		},
+		{
+			MethodName: "CreateApiKey",
+			Handler:    _UserAdminService_CreateApiKey_Handler,
+		},
+		{
+			MethodName: "ListApiKeys",
+			Handler:    _UserAdminService_ListApiKeys_Handler,
+		},
+		{
+			MethodName: "RevokeApiKey",
+			Handler:    _UserAdminService_RevokeApiKey_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1198,6 +1434,384 @@ var AccountService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListTenantUsers",
 			Handler:    _AccountService_ListTenantUsers_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "metap_identity.proto",
+}
+
+const (
+	TenantAdminService_ListTenants_FullMethodName           = "/metap.identity.v1.TenantAdminService/ListTenants"
+	TenantAdminService_GetTenant_FullMethodName             = "/metap.identity.v1.TenantAdminService/GetTenant"
+	TenantAdminService_CreateTenant_FullMethodName          = "/metap.identity.v1.TenantAdminService/CreateTenant"
+	TenantAdminService_UpdateTenant_FullMethodName          = "/metap.identity.v1.TenantAdminService/UpdateTenant"
+	TenantAdminService_SuspendTenant_FullMethodName         = "/metap.identity.v1.TenantAdminService/SuspendTenant"
+	TenantAdminService_ResumeTenant_FullMethodName          = "/metap.identity.v1.TenantAdminService/ResumeTenant"
+	TenantAdminService_RequestTenantDeletion_FullMethodName = "/metap.identity.v1.TenantAdminService/RequestTenantDeletion"
+	TenantAdminService_CancelTenantDeletion_FullMethodName  = "/metap.identity.v1.TenantAdminService/CancelTenantDeletion"
+)
+
+// TenantAdminServiceClient is the client API for TenantAdminService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Tenant administration (roadmap 113 P3). Platform admins only: the caller's token must be a
+// platform-tenant `platform_admin`. A tenant that asks to be deleted is suspended at once and
+// removed after a retention window in which the request can be cancelled.
+type TenantAdminServiceClient interface {
+	ListTenants(ctx context.Context, in *ListTenantsRequest, opts ...grpc.CallOption) (*ListTenantsResponse, error)
+	GetTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error)
+	// Registers a tenant and invites its first admin by email.
+	CreateTenant(ctx context.Context, in *CreateTenantRequest, opts ...grpc.CallOption) (*CreateTenantResponse, error)
+	UpdateTenant(ctx context.Context, in *UpdateTenantRequest, opts ...grpc.CallOption) (*Tenant, error)
+	SuspendTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error)
+	ResumeTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error)
+	RequestTenantDeletion(ctx context.Context, in *RequestTenantDeletionRequest, opts ...grpc.CallOption) (*Tenant, error)
+	CancelTenantDeletion(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error)
+}
+
+type tenantAdminServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewTenantAdminServiceClient(cc grpc.ClientConnInterface) TenantAdminServiceClient {
+	return &tenantAdminServiceClient{cc}
+}
+
+func (c *tenantAdminServiceClient) ListTenants(ctx context.Context, in *ListTenantsRequest, opts ...grpc.CallOption) (*ListTenantsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListTenantsResponse)
+	err := c.cc.Invoke(ctx, TenantAdminService_ListTenants_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) GetTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_GetTenant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) CreateTenant(ctx context.Context, in *CreateTenantRequest, opts ...grpc.CallOption) (*CreateTenantResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateTenantResponse)
+	err := c.cc.Invoke(ctx, TenantAdminService_CreateTenant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) UpdateTenant(ctx context.Context, in *UpdateTenantRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_UpdateTenant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) SuspendTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_SuspendTenant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) ResumeTenant(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_ResumeTenant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) RequestTenantDeletion(ctx context.Context, in *RequestTenantDeletionRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_RequestTenantDeletion_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tenantAdminServiceClient) CancelTenantDeletion(ctx context.Context, in *TenantIdRequest, opts ...grpc.CallOption) (*Tenant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Tenant)
+	err := c.cc.Invoke(ctx, TenantAdminService_CancelTenantDeletion_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// TenantAdminServiceServer is the server API for TenantAdminService service.
+// All implementations must embed UnimplementedTenantAdminServiceServer
+// for forward compatibility.
+//
+// Tenant administration (roadmap 113 P3). Platform admins only: the caller's token must be a
+// platform-tenant `platform_admin`. A tenant that asks to be deleted is suspended at once and
+// removed after a retention window in which the request can be cancelled.
+type TenantAdminServiceServer interface {
+	ListTenants(context.Context, *ListTenantsRequest) (*ListTenantsResponse, error)
+	GetTenant(context.Context, *TenantIdRequest) (*Tenant, error)
+	// Registers a tenant and invites its first admin by email.
+	CreateTenant(context.Context, *CreateTenantRequest) (*CreateTenantResponse, error)
+	UpdateTenant(context.Context, *UpdateTenantRequest) (*Tenant, error)
+	SuspendTenant(context.Context, *TenantIdRequest) (*Tenant, error)
+	ResumeTenant(context.Context, *TenantIdRequest) (*Tenant, error)
+	RequestTenantDeletion(context.Context, *RequestTenantDeletionRequest) (*Tenant, error)
+	CancelTenantDeletion(context.Context, *TenantIdRequest) (*Tenant, error)
+	mustEmbedUnimplementedTenantAdminServiceServer()
+}
+
+// UnimplementedTenantAdminServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedTenantAdminServiceServer struct{}
+
+func (UnimplementedTenantAdminServiceServer) ListTenants(context.Context, *ListTenantsRequest) (*ListTenantsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListTenants not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) GetTenant(context.Context, *TenantIdRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTenant not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) CreateTenant(context.Context, *CreateTenantRequest) (*CreateTenantResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateTenant not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) UpdateTenant(context.Context, *UpdateTenantRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateTenant not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) SuspendTenant(context.Context, *TenantIdRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method SuspendTenant not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) ResumeTenant(context.Context, *TenantIdRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResumeTenant not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) RequestTenantDeletion(context.Context, *RequestTenantDeletionRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestTenantDeletion not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) CancelTenantDeletion(context.Context, *TenantIdRequest) (*Tenant, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelTenantDeletion not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) mustEmbedUnimplementedTenantAdminServiceServer() {}
+func (UnimplementedTenantAdminServiceServer) testEmbeddedByValue()                            {}
+
+// UnsafeTenantAdminServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to TenantAdminServiceServer will
+// result in compilation errors.
+type UnsafeTenantAdminServiceServer interface {
+	mustEmbedUnimplementedTenantAdminServiceServer()
+}
+
+func RegisterTenantAdminServiceServer(s grpc.ServiceRegistrar, srv TenantAdminServiceServer) {
+	// If the following call panics, it indicates UnimplementedTenantAdminServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&TenantAdminService_ServiceDesc, srv)
+}
+
+func _TenantAdminService_ListTenants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListTenantsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).ListTenants(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_ListTenants_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).ListTenants(ctx, req.(*ListTenantsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_GetTenant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).GetTenant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_GetTenant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).GetTenant(ctx, req.(*TenantIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_CreateTenant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateTenantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).CreateTenant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_CreateTenant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).CreateTenant(ctx, req.(*CreateTenantRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_UpdateTenant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateTenantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).UpdateTenant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_UpdateTenant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).UpdateTenant(ctx, req.(*UpdateTenantRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_SuspendTenant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).SuspendTenant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_SuspendTenant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).SuspendTenant(ctx, req.(*TenantIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_ResumeTenant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).ResumeTenant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_ResumeTenant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).ResumeTenant(ctx, req.(*TenantIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_RequestTenantDeletion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestTenantDeletionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).RequestTenantDeletion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_RequestTenantDeletion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).RequestTenantDeletion(ctx, req.(*RequestTenantDeletionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TenantAdminService_CancelTenantDeletion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).CancelTenantDeletion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_CancelTenantDeletion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).CancelTenantDeletion(ctx, req.(*TenantIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// TenantAdminService_ServiceDesc is the grpc.ServiceDesc for TenantAdminService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var TenantAdminService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "metap.identity.v1.TenantAdminService",
+	HandlerType: (*TenantAdminServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ListTenants",
+			Handler:    _TenantAdminService_ListTenants_Handler,
+		},
+		{
+			MethodName: "GetTenant",
+			Handler:    _TenantAdminService_GetTenant_Handler,
+		},
+		{
+			MethodName: "CreateTenant",
+			Handler:    _TenantAdminService_CreateTenant_Handler,
+		},
+		{
+			MethodName: "UpdateTenant",
+			Handler:    _TenantAdminService_UpdateTenant_Handler,
+		},
+		{
+			MethodName: "SuspendTenant",
+			Handler:    _TenantAdminService_SuspendTenant_Handler,
+		},
+		{
+			MethodName: "ResumeTenant",
+			Handler:    _TenantAdminService_ResumeTenant_Handler,
+		},
+		{
+			MethodName: "RequestTenantDeletion",
+			Handler:    _TenantAdminService_RequestTenantDeletion_Handler,
+		},
+		{
+			MethodName: "CancelTenantDeletion",
+			Handler:    _TenantAdminService_CancelTenantDeletion_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

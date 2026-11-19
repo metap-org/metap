@@ -348,3 +348,16 @@ func TestValidateActions(t *testing.T) {
 	assert.ErrorContains(t, Validate(base(EntityAction{Name: "x", Scope: "weird"})), "scope")
 	assert.ErrorContains(t, Validate(base(EntityAction{Name: "x", Scope: ActionScopeRecord}, EntityAction{Name: "x", Scope: ActionScopeEntity})), "duplicate action")
 }
+
+func TestScopesValidation(t *testing.T) {
+	withScopes := func(scopes ...permission.ScopeBinding) EntityDefinition {
+		e := validEntity(f("name", KindString), f("zoneId", KindString), f("groupIds", KindJSON))
+		e.Scopes = scopes
+		return e
+	}
+	require.NoError(t, Validate(withScopes(Scope("zone", "zoneId"), ScopeIn("group", "groupIds"), ScopeSelf("customer"))))
+	mustHaveIssueContaining(t, Validate(withScopes(Scope("Zone", "zoneId"))), "must match")
+	mustHaveIssueContaining(t, Validate(withScopes(Scope("zone", "zoneId"), Scope("zone", "name"))), "more than one entry")
+	mustHaveIssueContaining(t, Validate(withScopes(Scope("zone", "nope"))), "unknown field")
+	mustHaveIssueContaining(t, Validate(withScopes(permission.ScopeBinding{Type: "x", Field: "id", Array: true})), "cannot be a list")
+}

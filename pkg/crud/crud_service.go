@@ -310,7 +310,7 @@ func (s *CrudService) hydrateRelatedDisplay(ctx context.Context, entity metadata
 		}
 		values := map[uuid.UUID]string{}
 		for id, relatedData := range related {
-			recordDecision := relatedSnapshot.CanPerformRecordCondition(rc, permission.JsonObject(relatedData), permission.ActionRead)
+			recordDecision := relatedSnapshot.CanAccessRecord(rc, refEntity, refEntityDef.Scopes, id.String(), permission.JsonObject(relatedData), permission.ActionRead, "")
 			if !recordDecision.Allowed {
 				continue
 			}

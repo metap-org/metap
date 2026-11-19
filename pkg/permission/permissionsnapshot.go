@@ -59,7 +59,7 @@ func (s *PermissionSnapshot) CanPerformEntityAction(ctx *RequestContext, entityN
 	if ctx.IsAdmin() {
 		return Allowed()
 	}
-	return contextVerdict(s.contextPoliciesByAction[action.String()], ctx)
+	return contextVerdictGroups(s.contextPoliciesByAction[action.String()], ctx)
 }
 
 // CanTransitionAction is the snapshot counterpart of PermissionService.CanTransitionAction.
@@ -72,7 +72,7 @@ func (s *PermissionSnapshot) CanTransitionAction(ctx *RequestContext, entityName
 	}
 	rows := append(append([]PolicyRow{}, s.contextPoliciesByAction[ActionTransition.String()]...),
 		s.contextPoliciesByAction[TransitionActionPolicy(action)]...)
-	return contextVerdict(rows, ctx)
+	return contextVerdictGroups(rows, ctx)
 }
 
 func (s *PermissionSnapshot) GetRecordPolicies(action EntityAction) []PolicyRow {
@@ -254,4 +254,104 @@ func (s *PermissionSnapshot) CanPerformRecordCondition(ctx *RequestContext, reco
 	default:
 		return Forbidden()
 	}
+}
+
+// entityLevelAllowedFor is the entity-level verdict for ONE role set (no group fan-out): the
+// OAuth2 scope, the admin bypass, then the context policies. workflowAction is set for a
+// transition, where the per-action policies apply too.
+func (s *PermissionSnapshot) entityLevelAllowedFor(ctx *RequestContext, entityName string, action EntityAction, workflowAction string) bool {
+	if !ctx.ScopePermits(entityName, action) {
+		return false
+	}
+	if ctx.IsAdmin() {
+		return true
+	}
+	rows := s.contextPoliciesByAction[action.String()]
+	if action == ActionTransition && workflowAction != "" {
+		rows = append(append([]PolicyRow{}, rows...), s.contextPoliciesByAction[TransitionActionPolicy(workflowAction)]...)
+	}
+	return contextVerdict(rows, ctx).Allowed
+}
+
+// CanAccessRecord is CanPerformRecordCondition for a caller who may hold roles inside scopes: the
+// record is reachable when some role group allows the action on the entity, covers the record,
+// and passes the record-level policies under that group's roles alone. Without scoped roles it
+// IS CanPerformRecordCondition, so nothing changes for a caller who has none.
+//
+// Unlike CanPerformRecordCondition it also re-checks the entity level per group, because the
+// record-level check on its own allows everything when an entity has no record policies — which
+// would hand a scoped caller every record.
+func (s *PermissionSnapshot) CanAccessRecord(ctx *RequestContext, entityName string, bindings []ScopeBinding,
+	recordID string, record JsonObject, action EntityAction, workflowAction string) PermissionDecision {
+	if len(ctx.ScopedRoles) == 0 {
+		return s.CanPerformRecordCondition(ctx, record, action)
+	}
+	for i, g := range ctx.RoleGroups() {
+		gctx := ctx
+		if i > 0 {
+			gctx = ctx.WithRoles(g.Roles)
+		}
+		if !s.entityLevelAllowedFor(gctx, entityName, action, workflowAction) {
+			continue
+		}
+		if !g.Covers(bindings, recordID, record) {
+			continue
+		}
+		if s.CanPerformRecordCondition(gctx, record, action).Allowed {
+			return Allowed()
+		}
+	}
+	return Forbidden()
+}
+
+// CanCreateInScope is the create counterpart: the tenant-wide group may create anywhere; a
+// scoped group only a record whose scope field lies inside its scopes (the record has no id yet,
+// so a binding on field "id" can never cover a new record).
+func (s *PermissionSnapshot) CanCreateInScope(ctx *RequestContext, entityName string, bindings []ScopeBinding, record JsonObject) PermissionDecision {
+	if len(ctx.ScopedRoles) == 0 {
+		return Allowed()
+	}
+	for i, g := range ctx.RoleGroups() {
+		gctx := ctx
+		if i > 0 {
+			gctx = ctx.WithRoles(g.Roles)
+		}
+		if s.entityLevelAllowedFor(gctx, entityName, ActionCreate, "") && g.Covers(bindings, "", record) {
+			return Allowed()
+		}
+	}
+	return Forbidden()
+}
+
+// AccessGroup is a role group whose entity-level permission for an action is open, with its
+// own record-level policies to apply under the group's roles.
+type AccessGroup struct {
+	Group RoleGroup
+	// Ctx evaluates the group's policies (the caller's context holding the group's roles).
+	Ctx *RequestContext
+}
+
+// AccessPlan is how a list or aggregate query must be restricted for a caller with scoped roles:
+// the tenant-wide group (Wide, when its entity level allows the action) and the scoped groups.
+// With neither, nothing is readable.
+type AccessPlan struct {
+	Wide   bool
+	Groups []AccessGroup
+}
+
+// PlanAccess works out the plan for action. ok is false when the caller has no scoped roles and
+// the ordinary path (record policies under ctx) applies unchanged.
+func (s *PermissionSnapshot) PlanAccess(ctx *RequestContext, entityName string, action EntityAction) (plan AccessPlan, ok bool) {
+	if len(ctx.ScopedRoles) == 0 {
+		return AccessPlan{}, false
+	}
+	groups := ctx.RoleGroups()
+	plan.Wide = s.entityLevelAllowedFor(ctx, entityName, action, "")
+	for _, g := range groups[1:] {
+		gctx := ctx.WithRoles(g.Roles)
+		if s.entityLevelAllowedFor(gctx, entityName, action, "") {
+			plan.Groups = append(plan.Groups, AccessGroup{Group: g, Ctx: gctx})
+		}
+	}
+	return plan, true
 }
