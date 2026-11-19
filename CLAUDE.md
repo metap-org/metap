@@ -178,7 +178,7 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   `identity.IsAPIKey(token)` to `control.ResolveAPIKeyContext`, which treats the key as a session issued at its
   creation: disabling the member or "revoke sessions" kills its keys at once, revoke/expiry are checked in SQL. A key
   carries no OAuth scope. Admin API on `UserAdminService`: `CreateServiceAccount`, `ListServiceAccounts`,
-  `CreateApiKey` (token returned once), `ListApiKeys`, `RevokeApiKey`. Not built yet: GraphQL gateway fields,
+  `CreateApiKey` (token returned once), `ListApiKeys`, `RevokeApiKey`; gateway fields `serviceAccounts`, `apiKeys(userId)`, `createServiceAccount`, `createApiKey`, `revokeApiKey`. Not built yet:
   a tenant lifetime cap config key, per-key scopes.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
