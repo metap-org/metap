@@ -38,6 +38,7 @@ const (
 	UserAdminService_CreateApiKey_FullMethodName         = "/metap.identity.v1.UserAdminService/CreateApiKey"
 	UserAdminService_ListApiKeys_FullMethodName          = "/metap.identity.v1.UserAdminService/ListApiKeys"
 	UserAdminService_RevokeApiKey_FullMethodName         = "/metap.identity.v1.UserAdminService/RevokeApiKey"
+	UserAdminService_ResetMfa_FullMethodName             = "/metap.identity.v1.UserAdminService/ResetMfa"
 )
 
 // UserAdminServiceClient is the client API for UserAdminService service.
@@ -75,6 +76,9 @@ type UserAdminServiceClient interface {
 	CreateApiKey(ctx context.Context, in *CreateApiKeyRequest, opts ...grpc.CallOption) (*CreateApiKeyResponse, error)
 	ListApiKeys(ctx context.Context, in *UserIdRequest, opts ...grpc.CallOption) (*ListApiKeysResponse, error)
 	RevokeApiKey(ctx context.Context, in *ApiKeyIdRequest, opts ...grpc.CallOption) (*Empty, error)
+	// Switches a locked-out person's two-factor authentication off so they can set it up again.
+	// Only for a person who belongs to this tenant alone (like ResetPassword).
+	ResetMfa(ctx context.Context, in *UserIdRequest, opts ...grpc.CallOption) (*Empty, error)
 }
 
 type userAdminServiceClient struct {
@@ -275,6 +279,16 @@ func (c *userAdminServiceClient) RevokeApiKey(ctx context.Context, in *ApiKeyIdR
 	return out, nil
 }
 
+func (c *userAdminServiceClient) ResetMfa(ctx context.Context, in *UserIdRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, UserAdminService_ResetMfa_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UserAdminServiceServer is the server API for UserAdminService service.
 // All implementations must embed UnimplementedUserAdminServiceServer
 // for forward compatibility.
@@ -310,6 +324,9 @@ type UserAdminServiceServer interface {
 	CreateApiKey(context.Context, *CreateApiKeyRequest) (*CreateApiKeyResponse, error)
 	ListApiKeys(context.Context, *UserIdRequest) (*ListApiKeysResponse, error)
 	RevokeApiKey(context.Context, *ApiKeyIdRequest) (*Empty, error)
+	// Switches a locked-out person's two-factor authentication off so they can set it up again.
+	// Only for a person who belongs to this tenant alone (like ResetPassword).
+	ResetMfa(context.Context, *UserIdRequest) (*Empty, error)
 	mustEmbedUnimplementedUserAdminServiceServer()
 }
 
@@ -376,6 +393,9 @@ func (UnimplementedUserAdminServiceServer) ListApiKeys(context.Context, *UserIdR
 }
 func (UnimplementedUserAdminServiceServer) RevokeApiKey(context.Context, *ApiKeyIdRequest) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeApiKey not implemented")
+}
+func (UnimplementedUserAdminServiceServer) ResetMfa(context.Context, *UserIdRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResetMfa not implemented")
 }
 func (UnimplementedUserAdminServiceServer) mustEmbedUnimplementedUserAdminServiceServer() {}
 func (UnimplementedUserAdminServiceServer) testEmbeddedByValue()                          {}
@@ -740,6 +760,24 @@ func _UserAdminService_RevokeApiKey_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserAdminService_ResetMfa_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UserIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).ResetMfa(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_ResetMfa_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).ResetMfa(ctx, req.(*UserIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // UserAdminService_ServiceDesc is the grpc.ServiceDesc for UserAdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -822,6 +860,10 @@ var UserAdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RevokeApiKey",
 			Handler:    _UserAdminService_RevokeApiKey_Handler,
+		},
+		{
+			MethodName: "ResetMfa",
+			Handler:    _UserAdminService_ResetMfa_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1215,10 +1257,15 @@ var RoleAdminService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	AccountService_GetMe_FullMethodName           = "/metap.identity.v1.AccountService/GetMe"
-	AccountService_UpdateProfile_FullMethodName   = "/metap.identity.v1.AccountService/UpdateProfile"
-	AccountService_ListMyTenants_FullMethodName   = "/metap.identity.v1.AccountService/ListMyTenants"
-	AccountService_ListTenantUsers_FullMethodName = "/metap.identity.v1.AccountService/ListTenantUsers"
+	AccountService_GetMe_FullMethodName                   = "/metap.identity.v1.AccountService/GetMe"
+	AccountService_UpdateProfile_FullMethodName           = "/metap.identity.v1.AccountService/UpdateProfile"
+	AccountService_ListMyTenants_FullMethodName           = "/metap.identity.v1.AccountService/ListMyTenants"
+	AccountService_ListTenantUsers_FullMethodName         = "/metap.identity.v1.AccountService/ListTenantUsers"
+	AccountService_GetMfaStatus_FullMethodName            = "/metap.identity.v1.AccountService/GetMfaStatus"
+	AccountService_BeginMfaEnrollment_FullMethodName      = "/metap.identity.v1.AccountService/BeginMfaEnrollment"
+	AccountService_ConfirmMfaEnrollment_FullMethodName    = "/metap.identity.v1.AccountService/ConfirmMfaEnrollment"
+	AccountService_DisableMfa_FullMethodName              = "/metap.identity.v1.AccountService/DisableMfa"
+	AccountService_RegenerateRecoveryCodes_FullMethodName = "/metap.identity.v1.AccountService/RegenerateRecoveryCodes"
 )
 
 // AccountServiceClient is the client API for AccountService service.
@@ -1234,6 +1281,16 @@ type AccountServiceClient interface {
 	// The active members of the caller's tenant, for "assign to" pickers: any signed-in member may
 	// call it, unlike UserAdminService.ListUsers.
 	ListTenantUsers(ctx context.Context, in *ListTenantUsersRequest, opts ...grpc.CallOption) (*ListTenantUsersResponse, error)
+	// Two-factor authentication (TOTP) for the caller's own account — one factor per person, across
+	// every tenant they belong to.
+	GetMfaStatus(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*MfaStatus, error)
+	// Starts (or restarts) setup: returns the secret and the otpauth:// URI to scan.
+	BeginMfaEnrollment(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*MfaEnrollment, error)
+	// Checks the first code, turns MFA on and returns the recovery codes (shown once).
+	ConfirmMfaEnrollment(ctx context.Context, in *MfaCodeRequest, opts ...grpc.CallOption) (*MfaRecoveryCodes, error)
+	// Turning it off, or replacing the recovery codes, needs a current code (or a recovery code).
+	DisableMfa(ctx context.Context, in *MfaCodeRequest, opts ...grpc.CallOption) (*Empty, error)
+	RegenerateRecoveryCodes(ctx context.Context, in *MfaCodeRequest, opts ...grpc.CallOption) (*MfaRecoveryCodes, error)
 }
 
 type accountServiceClient struct {
@@ -1284,6 +1341,56 @@ func (c *accountServiceClient) ListTenantUsers(ctx context.Context, in *ListTena
 	return out, nil
 }
 
+func (c *accountServiceClient) GetMfaStatus(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*MfaStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MfaStatus)
+	err := c.cc.Invoke(ctx, AccountService_GetMfaStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *accountServiceClient) BeginMfaEnrollment(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*MfaEnrollment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MfaEnrollment)
+	err := c.cc.Invoke(ctx, AccountService_BeginMfaEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *accountServiceClient) ConfirmMfaEnrollment(ctx context.Context, in *MfaCodeRequest, opts ...grpc.CallOption) (*MfaRecoveryCodes, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MfaRecoveryCodes)
+	err := c.cc.Invoke(ctx, AccountService_ConfirmMfaEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *accountServiceClient) DisableMfa(ctx context.Context, in *MfaCodeRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, AccountService_DisableMfa_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *accountServiceClient) RegenerateRecoveryCodes(ctx context.Context, in *MfaCodeRequest, opts ...grpc.CallOption) (*MfaRecoveryCodes, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MfaRecoveryCodes)
+	err := c.cc.Invoke(ctx, AccountService_RegenerateRecoveryCodes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AccountServiceServer is the server API for AccountService service.
 // All implementations must embed UnimplementedAccountServiceServer
 // for forward compatibility.
@@ -1297,6 +1404,16 @@ type AccountServiceServer interface {
 	// The active members of the caller's tenant, for "assign to" pickers: any signed-in member may
 	// call it, unlike UserAdminService.ListUsers.
 	ListTenantUsers(context.Context, *ListTenantUsersRequest) (*ListTenantUsersResponse, error)
+	// Two-factor authentication (TOTP) for the caller's own account — one factor per person, across
+	// every tenant they belong to.
+	GetMfaStatus(context.Context, *Empty) (*MfaStatus, error)
+	// Starts (or restarts) setup: returns the secret and the otpauth:// URI to scan.
+	BeginMfaEnrollment(context.Context, *Empty) (*MfaEnrollment, error)
+	// Checks the first code, turns MFA on and returns the recovery codes (shown once).
+	ConfirmMfaEnrollment(context.Context, *MfaCodeRequest) (*MfaRecoveryCodes, error)
+	// Turning it off, or replacing the recovery codes, needs a current code (or a recovery code).
+	DisableMfa(context.Context, *MfaCodeRequest) (*Empty, error)
+	RegenerateRecoveryCodes(context.Context, *MfaCodeRequest) (*MfaRecoveryCodes, error)
 	mustEmbedUnimplementedAccountServiceServer()
 }
 
@@ -1318,6 +1435,21 @@ func (UnimplementedAccountServiceServer) ListMyTenants(context.Context, *Empty) 
 }
 func (UnimplementedAccountServiceServer) ListTenantUsers(context.Context, *ListTenantUsersRequest) (*ListTenantUsersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListTenantUsers not implemented")
+}
+func (UnimplementedAccountServiceServer) GetMfaStatus(context.Context, *Empty) (*MfaStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetMfaStatus not implemented")
+}
+func (UnimplementedAccountServiceServer) BeginMfaEnrollment(context.Context, *Empty) (*MfaEnrollment, error) {
+	return nil, status.Error(codes.Unimplemented, "method BeginMfaEnrollment not implemented")
+}
+func (UnimplementedAccountServiceServer) ConfirmMfaEnrollment(context.Context, *MfaCodeRequest) (*MfaRecoveryCodes, error) {
+	return nil, status.Error(codes.Unimplemented, "method ConfirmMfaEnrollment not implemented")
+}
+func (UnimplementedAccountServiceServer) DisableMfa(context.Context, *MfaCodeRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DisableMfa not implemented")
+}
+func (UnimplementedAccountServiceServer) RegenerateRecoveryCodes(context.Context, *MfaCodeRequest) (*MfaRecoveryCodes, error) {
+	return nil, status.Error(codes.Unimplemented, "method RegenerateRecoveryCodes not implemented")
 }
 func (UnimplementedAccountServiceServer) mustEmbedUnimplementedAccountServiceServer() {}
 func (UnimplementedAccountServiceServer) testEmbeddedByValue()                        {}
@@ -1412,6 +1544,96 @@ func _AccountService_ListTenantUsers_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AccountService_GetMfaStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AccountServiceServer).GetMfaStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AccountService_GetMfaStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AccountServiceServer).GetMfaStatus(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AccountService_BeginMfaEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AccountServiceServer).BeginMfaEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AccountService_BeginMfaEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AccountServiceServer).BeginMfaEnrollment(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AccountService_ConfirmMfaEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MfaCodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AccountServiceServer).ConfirmMfaEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AccountService_ConfirmMfaEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AccountServiceServer).ConfirmMfaEnrollment(ctx, req.(*MfaCodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AccountService_DisableMfa_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MfaCodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AccountServiceServer).DisableMfa(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AccountService_DisableMfa_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AccountServiceServer).DisableMfa(ctx, req.(*MfaCodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AccountService_RegenerateRecoveryCodes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MfaCodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AccountServiceServer).RegenerateRecoveryCodes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AccountService_RegenerateRecoveryCodes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AccountServiceServer).RegenerateRecoveryCodes(ctx, req.(*MfaCodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AccountService_ServiceDesc is the grpc.ServiceDesc for AccountService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1434,6 +1656,26 @@ var AccountService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListTenantUsers",
 			Handler:    _AccountService_ListTenantUsers_Handler,
+		},
+		{
+			MethodName: "GetMfaStatus",
+			Handler:    _AccountService_GetMfaStatus_Handler,
+		},
+		{
+			MethodName: "BeginMfaEnrollment",
+			Handler:    _AccountService_BeginMfaEnrollment_Handler,
+		},
+		{
+			MethodName: "ConfirmMfaEnrollment",
+			Handler:    _AccountService_ConfirmMfaEnrollment_Handler,
+		},
+		{
+			MethodName: "DisableMfa",
+			Handler:    _AccountService_DisableMfa_Handler,
+		},
+		{
+			MethodName: "RegenerateRecoveryCodes",
+			Handler:    _AccountService_RegenerateRecoveryCodes_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

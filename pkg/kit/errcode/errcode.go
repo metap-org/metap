@@ -34,6 +34,10 @@ const (
 	UnsupportedPolicyCondition = "unsupported_policy_condition"
 
 	// Sign-in and user administration (roadmap 113).
+	MFAInvalidCode   = "mfa_invalid_code"  // 401: wrong, replayed or used-up second-factor code
+	MFAChallenge     = "mfa_challenge"     // 401: the second-step token expired or ran out of tries
+	MFAAlreadyOn     = "mfa_already_on"    // 409
+	MFANotEnrolled   = "mfa_not_enrolled"  // 409
 	AccountLocked    = "account_locked"    // 429: too many failed sign-ins, retry later
 	AccountDisabled  = "account_disabled"  // 403: the identity or this membership is disabled
 	SessionRevoked   = "session_revoked"   // 401: token issued before the user's sessions were revoked

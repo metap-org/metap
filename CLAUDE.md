@@ -180,6 +180,18 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   carries no OAuth scope. Admin API on `UserAdminService`: `CreateServiceAccount`, `ListServiceAccounts`,
   `CreateApiKey` (token returned once), `ListApiKeys`, `RevokeApiKey`; gateway fields `serviceAccounts`, `apiKeys(userId)`, `createServiceAccount`, `createApiKey`, `revokeApiKey`. Not built yet:
   a tenant lifetime cap config key, per-key scopes.
+- **Two-factor authentication, TOTP (2026-11-19, roadmap 115 M3).** One factor per *identity* (a person in several tenants has one),
+  `metadata.mfa_factors`/`mfa_recovery_codes`/`mfa_challenges` (migration 0047, `pkg/identity/mfa.go`, RFC 6238 over stdlib, ±1 step,
+  a matched step is recorded so a code is single use; 10 recovery codes stored hashed, one use each). `/auth/login` calls `mfaGate`
+  after the password and tenant are settled: an enrolled person gets `{mfaRequired, mfaToken}` and posts the code to `/auth/login/mfa`
+  (5 wrong tries kill the 5-minute challenge); a tenant with `auth.requireMfa` (Tenant-tier bool) and a person without a factor gets
+  `{mfaSetupRequired, mfaToken}` and enrols through `/auth/mfa/setup` + `/auth/mfa/setup/confirm`, which also finishes the sign-in and
+  returns the recovery codes once. **Any password-only path must refuse an enrolled identity** — `peripherals.VerifyCredentials` (HTTP Basic and
+  what is built on it) returns nil for one; a script uses an API key. Account API on `AccountService` (`GetMfaStatus`, `BeginMfaEnrollment`,
+  `ConfirmMfaEnrollment`, `DisableMfa`/`RegenerateRecoveryCodes` need a current or recovery code) and `UserAdminService.ResetMfa` (same
+  shared-identity guard as `ResetPassword`); gateway `mfaStatus`, `beginMfaEnrollment`, `confirmMfaEnrollment`, `disableMfa`,
+  `regenerateRecoveryCodes`, `resetUserMfa`. Not built: WebAuthn, encryption of the TOTP secret at rest (plain column), MFA for the OIDC/OAuth2
+  provider logins (the IdP is the second factor there), a per-tenant enrolment grace period.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

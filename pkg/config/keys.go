@@ -194,6 +194,7 @@ const (
 	AuthSessionTTLSeconds          = "auth.sessionTtlSeconds"
 	AuthSessionAbsoluteMaxSeconds  = "auth.sessionAbsoluteMaxSeconds"
 	AuthPasswordMinLength          = "auth.passwordMinLength"
+	AuthRequireMFA                 = "auth.requireMfa"
 	CronWebhookAuthorization       = "cron.webhookAuthorization"
 	ThemePrimaryColor              = "theme.primaryColor"
 	ThemeLogoURL                   = "theme.logoUrl"
@@ -221,6 +222,16 @@ var Registry = []KeyDef{
 	// tenants must satisfy the strictest of them: their password is one, shared by every tenant.
 	{Key: AuthPasswordMinLength, Level: LevelTenant, Default: func() json.RawMessage { return num(8) },
 		Validate: positiveIntIn(8, 128)},
+	// Every member signing in to this tenant must pass a second factor (roadmap 115 M3); one who has
+	// none is made to set it up first.
+	{Key: AuthRequireMFA, Level: LevelTenant, Default: func() json.RawMessage { return json.RawMessage("false") },
+		Validate: func(v json.RawMessage) error {
+			var b bool
+			if err := json.Unmarshal(v, &b); err != nil {
+				return fmt.Errorf("must be true or false")
+			}
+			return nil
+		}},
 	{Key: AuthSessionAbsoluteMaxSeconds, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(86_400) },
 		Validate: positiveIntIn(3600, 2_592_000)},
 	// --- Tenant + secret ---

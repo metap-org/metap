@@ -204,6 +204,9 @@ service UserAdminService {
   rpc CreateApiKey(CreateApiKeyRequest) returns (CreateApiKeyResponse);
   rpc ListApiKeys(UserIdRequest) returns (ListApiKeysResponse);
   rpc RevokeApiKey(ApiKeyIdRequest) returns (Empty);
+  // Switches a locked-out person's two-factor authentication off so they can set it up again.
+  // Only for a person who belongs to this tenant alone (like ResetPassword).
+  rpc ResetMfa(UserIdRequest) returns (Empty);
 }
 
 message CreateServiceAccountRequest {
@@ -371,6 +374,34 @@ service AccountService {
   // The active members of the caller's tenant, for "assign to" pickers: any signed-in member may
   // call it, unlike UserAdminService.ListUsers.
   rpc ListTenantUsers(ListTenantUsersRequest) returns (ListTenantUsersResponse);
+  // Two-factor authentication (TOTP) for the caller's own account — one factor per person, across
+  // every tenant they belong to.
+  rpc GetMfaStatus(Empty) returns (MfaStatus);
+  // Starts (or restarts) setup: returns the secret and the otpauth:// URI to scan.
+  rpc BeginMfaEnrollment(Empty) returns (MfaEnrollment);
+  // Checks the first code, turns MFA on and returns the recovery codes (shown once).
+  rpc ConfirmMfaEnrollment(MfaCodeRequest) returns (MfaRecoveryCodes);
+  // Turning it off, or replacing the recovery codes, needs a current code (or a recovery code).
+  rpc DisableMfa(MfaCodeRequest) returns (Empty);
+  rpc RegenerateRecoveryCodes(MfaCodeRequest) returns (MfaRecoveryCodes);
+}
+
+message MfaStatus {
+  bool enabled = 1;
+  int32 recovery_codes_left = 2;
+}
+
+message MfaEnrollment {
+  string secret = 1;
+  string otpauth_uri = 2;
+}
+
+message MfaCodeRequest {
+  string code = 1;
+}
+
+message MfaRecoveryCodes {
+  repeated string codes = 1;
 }
 
 // Tenant administration (roadmap 113 P3). Platform admins only: the caller's token must be a

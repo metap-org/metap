@@ -94,6 +94,14 @@ func VerifyCredentials(ctx context.Context, db DBTX, email, password string, ten
 		}
 		return nil, err
 	}
+	// A password alone is not enough for someone with a second factor (roadmap 115 M3): this path
+	// (HTTP Basic, provider logins built on it) has no second step, so it refuses rather than
+	// bypassing MFA. Such a person signs in through /auth/login, and a script uses an API key.
+	if on, err := identity.MFAEnabled(ctx, db, ident.ID); err != nil {
+		return nil, err
+	} else if on {
+		return nil, nil
+	}
 	memberships, err := identity.Memberships(ctx, db, ident.ID)
 	if err != nil {
 		return nil, err
