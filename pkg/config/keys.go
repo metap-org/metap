@@ -63,6 +63,25 @@ func boolValue(v json.RawMessage) error {
 	return nil
 }
 
+// stringList accepts a JSON array of at most maxItems non-empty strings of at most maxLen bytes.
+func stringList(maxItems, maxLen int) func(json.RawMessage) error {
+	return func(v json.RawMessage) error {
+		var list []string
+		if err := json.Unmarshal(v, &list); err != nil {
+			return fmt.Errorf("must be a list of strings")
+		}
+		if len(list) > maxItems {
+			return fmt.Errorf("at most %d entries", maxItems)
+		}
+		for _, s := range list {
+			if strings.TrimSpace(s) == "" || len(s) > maxLen {
+				return fmt.Errorf("every entry must be 1 to %d characters", maxLen)
+			}
+		}
+		return nil
+	}
+}
+
 func num(n float64) json.RawMessage {
 	b, _ := json.Marshal(n)
 	return b
@@ -204,6 +223,7 @@ const (
 	AuthPasswordMinLength          = "auth.passwordMinLength"
 	AuthRequireMFA                 = "auth.requireMfa"
 	SignupEnabled                  = "signup.enabled"
+	SignupBlockedTenantNames       = "signup.blockedTenantNames"
 	CronWebhookAuthorization       = "cron.webhookAuthorization"
 	ThemePrimaryColor              = "theme.primaryColor"
 	ThemeLogoURL                   = "theme.logoUrl"
@@ -239,6 +259,10 @@ var Registry = []KeyDef{
 	// operator decides the deployment is open to the public.
 	{Key: SignupEnabled, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return json.RawMessage("false") },
 		Validate: boolValue},
+	// Tenant names nobody may register through /auth/signup, on top of the reserved list built into
+	// the code (brand names, "admin", "support", ...). Compared ignoring case, spaces and punctuation.
+	{Key: SignupBlockedTenantNames, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return json.RawMessage("[]") },
+		Validate: stringList(200, 100)},
 	{Key: AuthSessionAbsoluteMaxSeconds, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(86_400) },
 		Validate: positiveIntIn(3600, 2_592_000)},
 	// --- Tenant + secret ---

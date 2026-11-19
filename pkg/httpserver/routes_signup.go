@@ -3,10 +3,13 @@ package httpserver
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/pkg/captcha"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -30,10 +33,56 @@ func signupEnabled(state *AppState) bool {
 }
 
 type signupBody struct {
-	Email       string `json:"email"`
-	Password    string `json:"password"`
-	TenantName  string `json:"tenantName"`
-	DisplayName string `json:"displayName"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
+	TenantName   string `json:"tenantName"`
+	DisplayName  string `json:"displayName"`
+	CaptchaToken string `json:"captchaToken"`
+}
+
+// reservedTenantNames can never be registered through signup: names that would let a stranger pass
+// as the platform, its staff or a well-known brand. Compared by normalizeTenantName, so "Admin",
+// "A.D.M.I.N" and "admin " are the same. An operator adds more with signup.blockedTenantNames.
+var reservedTenantNames = []string{
+	"admin", "administrator", "root", "system", "support", "security", "staff", "official", "billing",
+	"help", "helpdesk", "abuse", "postmaster", "webmaster", "noreply", "metap", "platform", "default",
+	"test", "null", "undefined", "api", "www", "mail", "status",
+}
+
+// normalizeTenantName folds a name to lower-case letters and digits, so punctuation, spacing and
+// case cannot be used to slip past the blocklist.
+func normalizeTenantName(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// tenantNameBlocked reports whether name is reserved or in the operator's list.
+func tenantNameBlocked(name string, extra []string) bool {
+	n := normalizeTenantName(name)
+	if n == "" {
+		return true
+	}
+	for _, list := range [][]string{reservedTenantNames, extra} {
+		for _, b := range list {
+			if n == normalizeTenantName(b) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return ""
+	}
+	return host
 }
 
 // signup starts self-service registration (roadmap 115 M2): it validates what the person typed,
@@ -57,6 +106,9 @@ func signup(w http.ResponseWriter, r *http.Request, state *AppState) {
 	if name == "" || len(name) > maxTenantNameLen {
 		fe["tenantName"] = []string{"A name of 1 to 200 characters is required."}
 	}
+	if name != "" && len(name) <= maxTenantNameLen && state.tenantNameBlocked(name) {
+		fe["tenantName"] = []string{"This name is not available."}
+	}
 	if _, err := identity.NormalizeEmail(body.Email); err != nil {
 		fe["email"] = []string{err.Error()}
 	}
@@ -67,8 +119,29 @@ func signup(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "Invalid signup.", fe)
 		return
 	}
+	if state.Captcha != nil {
+		if err := state.Captcha.Verify(r.Context(), body.CaptchaToken, clientIP(r)); err != nil {
+			if errors.Is(err, captcha.ErrFailed) {
+				writeServiceError(w, http.StatusBadRequest, errcode.CaptchaFailed, "Please complete the verification and try again.",
+					map[string][]string{"captchaToken": {"Verification failed."}})
+				return
+			}
+			// The provider is down or unreachable: say so, don't blame the person.
+			slog.Error("signup: captcha provider error", standard.LogError, err)
+			writeServiceError(w, http.StatusServiceUnavailable, errcode.CaptchaFailed, "Verification is unavailable, try again shortly.", nil)
+			return
+		}
+	}
 	go sendSignupVerification(context.WithoutCancel(r.Context()), state, body)
 	writeJSON(w, http.StatusAccepted, map[string]any{"data": map[string]any{"accepted": true}})
+}
+
+func (s *AppState) tenantNameBlocked(name string) bool {
+	var extra []string
+	if s.Config != nil {
+		extra = s.Config.Current().GetStrings(config.SignupBlockedTenantNames)
+	}
+	return tenantNameBlocked(name, extra)
 }
 
 func sendSignupVerification(ctx context.Context, state *AppState, body signupBody) {
@@ -83,9 +156,13 @@ func sendSignupVerification(ctx context.Context, state *AppState, body signupBod
 		slog.Warn("signup: hourly limit reached for an address")
 		return
 	}
+	link := state.Mailer.Link("/signup/verify", token)
+	// Development aid: with LOG_LEVEL=debug the link (and so the token) is in the log, so signup can be
+	// tried without a mail server. Never logged at info level or above.
+	slog.Debug("signup verification link (debug log only)", "email", strings.TrimSpace(body.Email), "link", link, "token", token)
 	if err := state.Mailer.SendSignupVerification(ctx, accountmail.SignupVerification{
 		To: strings.TrimSpace(body.Email), TenantName: strings.TrimSpace(body.TenantName),
-		Link: state.Mailer.Link("/signup/verify", token), ExpiresAt: now.Add(identity.SignupTTL),
+		Link: link, ExpiresAt: now.Add(identity.SignupTTL),
 	}); err != nil && !errors.Is(err, accountmail.ErrNotConfigured) {
 		slog.Error("signup: sending email", standard.LogError, err)
 	}
@@ -127,6 +204,13 @@ func signupVerify(w http.ResponseWriter, r *http.Request, state *AppState) {
 			return
 		}
 		writeInternalError(w, err)
+		return
+	}
+	// The blocklist may have grown since the link was sent: check again before creating anything.
+	// Returning here rolls the transaction back, so the (useless) link is not consumed.
+	if state.tenantNameBlocked(su.TenantName) {
+		writeServiceError(w, http.StatusBadRequest, errcode.SignupInvalid, "This name is not available.",
+			map[string][]string{"tenantName": {"This name is not available."}})
 		return
 	}
 	tenantID := uuid.New()

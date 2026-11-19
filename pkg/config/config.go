@@ -84,6 +84,17 @@ func boolOf(v json.RawMessage, key string) bool {
 	return def
 }
 
+// GetStrings is convenience for the list-of-strings keys; anything else reads as empty.
+func (s *Snapshot) GetStrings(key string) []string { return stringsOf(s.Get(key)) }
+
+func stringsOf(v json.RawMessage) []string {
+	var out []string
+	if err := json.Unmarshal(v, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
 // PlatformWritableView is every key a platform admin may write, with its current fleet-wide
 // value. Operator keys are excluded on purpose.
 func (s *Snapshot) PlatformWritableView() []struct {

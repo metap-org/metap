@@ -34,6 +34,7 @@ const (
 	UnsupportedPolicyCondition = "unsupported_policy_condition"
 
 	// Sign-in and user administration (roadmap 113).
+	CaptchaFailed    = "captcha_failed"    // 400: the proof-of-humanity token was missing or wrong
 	SignupDisabled   = "signup_disabled"   // 403: self-service signup is switched off
 	SignupInvalid    = "signup_invalid"    // 400: unknown, expired or used signup link
 	MFAInvalidCode   = "mfa_invalid_code"  // 401: wrong, replayed or used-up second-factor code

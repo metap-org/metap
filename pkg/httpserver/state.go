@@ -6,6 +6,7 @@ package httpserver
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/pkg/captcha"
 	"sync/atomic"
 	"time"
 
@@ -62,6 +63,8 @@ type AppState struct {
 	Config *config.Store
 	// Mailer sends invitation and password-reset emails (roadmap 113 P2); nil sends none.
 	Mailer *accountmail.Mailer
+	// Captcha, when set, must pass for POST /auth/signup (CAPTCHA_PROVIDER + CAPTCHA_SECRET); nil = off.
+	Captcha captcha.Verifier
 
 	// CookieSecure is the Secure attribute on the session/CSRF cookies — true.
 	CookieSecure bool

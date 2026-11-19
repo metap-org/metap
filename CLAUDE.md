@@ -197,8 +197,14 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   (migration 0048, password kept only as an argon2id hash, 24 h link, 3 per address per hour) and emails a link — it always answers 202 so it never tells
   who has an account. `POST /auth/signup/verify {token}` consumes the row, registers a `trial` tenant (`RegisterShared` → admin member + builtin roles
   → `active`; any failure `Deprovision`s it and leaves the link usable), then signs the person in through `mfaGate`. An address that already has
-  an account keeps its password and just gains a second tenant (the link proves the address, not the right to change a password). Not built: CAPTCHA /
-  per-IP limits beyond the global rate limiter, a tenant-name blocklist, tier/plan choice at signup, resend-link endpoint.
+  an account keeps its password and just gains a second tenant (the link proves the address, not the right to change a password). **CAPTCHA** (`pkg/captcha`, Turnstile/hCaptcha/reCAPTCHA share one siteverify contract):
+  `CAPTCHA_PROVIDER` + `CAPTCHA_SECRET` env turn it on (a provider without a secret refuses to boot); `AppState.Captcha` nil = off. Signup then needs
+  `captchaToken` (checked after field validation, so bad forms cost no provider call; wrong token 400 `captcha_failed`, provider outage 503, the
+  caller's `RemoteAddr` is passed on — never `X-Forwarded-For`). **Tenant-name blocklist**: whole-name match after folding to lower-case letters
+  and digits against `reservedTenantNames` (code) plus the platform-global key `signup.blockedTenantNames`; checked at signup and again at verify
+  (a refused verify leaves the link usable). **Debug aid**: at `LOG_LEVEL=debug` the verification link and token are logged
+  (`signup verification link (debug log only)`), never at info or above — that is how signup is tried without SMTP. Not built: per-IP limits beyond the
+  global rate limiter, tier/plan choice at signup, resend-link endpoint, captcha on other public endpoints (login, forgot-password).
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
