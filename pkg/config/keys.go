@@ -55,6 +55,14 @@ func jsonString(v json.RawMessage) (string, bool) {
 	return s, true
 }
 
+func boolValue(v json.RawMessage) error {
+	var b bool
+	if err := json.Unmarshal(v, &b); err != nil {
+		return fmt.Errorf("must be true or false")
+	}
+	return nil
+}
+
 func num(n float64) json.RawMessage {
 	b, _ := json.Marshal(n)
 	return b
@@ -195,6 +203,7 @@ const (
 	AuthSessionAbsoluteMaxSeconds  = "auth.sessionAbsoluteMaxSeconds"
 	AuthPasswordMinLength          = "auth.passwordMinLength"
 	AuthRequireMFA                 = "auth.requireMfa"
+	SignupEnabled                  = "signup.enabled"
 	CronWebhookAuthorization       = "cron.webhookAuthorization"
 	ThemePrimaryColor              = "theme.primaryColor"
 	ThemeLogoURL                   = "theme.logoUrl"
@@ -225,13 +234,11 @@ var Registry = []KeyDef{
 	// Every member signing in to this tenant must pass a second factor (roadmap 115 M3); one who has
 	// none is made to set it up first.
 	{Key: AuthRequireMFA, Level: LevelTenant, Default: func() json.RawMessage { return json.RawMessage("false") },
-		Validate: func(v json.RawMessage) error {
-			var b bool
-			if err := json.Unmarshal(v, &b); err != nil {
-				return fmt.Errorf("must be true or false")
-			}
-			return nil
-		}},
+		Validate: boolValue},
+	// Anyone may register a tenant of their own through /auth/signup (roadmap 115 M2). Off until an
+	// operator decides the deployment is open to the public.
+	{Key: SignupEnabled, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return json.RawMessage("false") },
+		Validate: boolValue},
 	{Key: AuthSessionAbsoluteMaxSeconds, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(86_400) },
 		Validate: positiveIntIn(3600, 2_592_000)},
 	// --- Tenant + secret ---

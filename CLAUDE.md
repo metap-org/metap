@@ -192,6 +192,13 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   shared-identity guard as `ResetPassword`); gateway `mfaStatus`, `beginMfaEnrollment`, `confirmMfaEnrollment`, `disableMfa`,
   `regenerateRecoveryCodes`, `resetUserMfa`. Not built: WebAuthn, encryption of the TOTP secret at rest (plain column), MFA for the OIDC/OAuth2
   provider logins (the IdP is the second factor there), a per-tenant enrolment grace period.
+- **Self-service signup (2026-11-19, roadmap 115 M2).** `POST /auth/signup {email, password, tenantName, displayName}` (REST, like the rest of `/auth/*`;
+  off until the platform-global key `signup.enabled` is true, else 403 `signup_disabled`) validates, stores a pending row in `metadata.signups`
+  (migration 0048, password kept only as an argon2id hash, 24 h link, 3 per address per hour) and emails a link — it always answers 202 so it never tells
+  who has an account. `POST /auth/signup/verify {token}` consumes the row, registers a `trial` tenant (`RegisterShared` → admin member + builtin roles
+  → `active`; any failure `Deprovision`s it and leaves the link usable), then signs the person in through `mfaGate`. An address that already has
+  an account keeps its password and just gains a second tenant (the link proves the address, not the right to change a password). Not built: CAPTCHA /
+  per-IP limits beyond the global rate limiter, a tenant-name blocklist, tier/plan choice at signup, resend-link endpoint.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

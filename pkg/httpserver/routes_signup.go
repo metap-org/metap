@@ -1,0 +1,178 @@
+package httpserver
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/metap-org/metap/pkg/accountmail"
+	"github.com/metap-org/metap/pkg/config"
+	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/kit/errcode"
+	"github.com/metap-org/metap/pkg/kit/standard"
+	"github.com/metap-org/metap/pkg/peripherals"
+	"github.com/metap-org/metap/pkg/permission"
+)
+
+const (
+	signupTier       = "trial"
+	maxTenantNameLen = 200
+)
+
+func signupEnabled(state *AppState) bool {
+	return state.Config != nil && state.Config.Current().GetBool(config.SignupEnabled)
+}
+
+type signupBody struct {
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	TenantName  string `json:"tenantName"`
+	DisplayName string `json:"displayName"`
+}
+
+// signup starts self-service registration (roadmap 115 M2): it validates what the person typed,
+// emails a link and creates nothing else. It answers 202 whether or not the address is already
+// registered or was rate limited, so it cannot be used to find out who has an account.
+func signup(w http.ResponseWriter, r *http.Request, state *AppState) {
+	if !state.CanIssueTokens() {
+		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
+		return
+	}
+	if !signupEnabled(state) {
+		writeServiceError(w, http.StatusForbidden, errcode.SignupDisabled, "Self-service signup is not open on this deployment.", nil)
+		return
+	}
+	var body signupBody
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	fe := map[string][]string{}
+	name := strings.TrimSpace(body.TenantName)
+	if name == "" || len(name) > maxTenantNameLen {
+		fe["tenantName"] = []string{"A name of 1 to 200 characters is required."}
+	}
+	if _, err := identity.NormalizeEmail(body.Email); err != nil {
+		fe["email"] = []string{err.Error()}
+	}
+	if err := identity.ValidatePasswordLength(body.Password, state.PasswordPolicy()(r.Context(), uuid.Nil)); err != nil {
+		fe["password"] = []string{err.Error()}
+	}
+	if len(fe) > 0 {
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "Invalid signup.", fe)
+		return
+	}
+	go sendSignupVerification(context.WithoutCancel(r.Context()), state, body)
+	writeJSON(w, http.StatusAccepted, map[string]any{"data": map[string]any{"accepted": true}})
+}
+
+func sendSignupVerification(ctx context.Context, state *AppState, body signupBody) {
+	now := time.Now()
+	_ = identity.PurgeSignups(ctx, state.Pool, now)
+	token, err := identity.CreateSignup(ctx, state.Pool, body.Email, body.TenantName, body.DisplayName, body.Password, now)
+	if err != nil {
+		slog.Error("signup: recording request", standard.LogError, err)
+		return
+	}
+	if token == "" {
+		slog.Warn("signup: hourly limit reached for an address")
+		return
+	}
+	if err := state.Mailer.SendSignupVerification(ctx, accountmail.SignupVerification{
+		To: strings.TrimSpace(body.Email), TenantName: strings.TrimSpace(body.TenantName),
+		Link: state.Mailer.Link("/signup/verify", token), ExpiresAt: now.Add(identity.SignupTTL),
+	}); err != nil && !errors.Is(err, accountmail.ErrNotConfigured) {
+		slog.Error("signup: sending email", standard.LogError, err)
+	}
+}
+
+type signupVerifyBody struct {
+	Token string `json:"token"`
+}
+
+// signupVerify turns a confirmed signup into a tenant with the person as its admin, then signs
+// them in. An address that already has an account keeps its password: the link proved they own the
+// address, not that they may replace the password. If that account has a second factor, the usual
+// second step follows.
+func signupVerify(w http.ResponseWriter, r *http.Request, state *AppState) {
+	if !state.CanIssueTokens() {
+		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
+		return
+	}
+	if !signupEnabled(state) {
+		writeServiceError(w, http.StatusForbidden, errcode.SignupDisabled, "Self-service signup is not open on this deployment.", nil)
+		return
+	}
+	var body signupVerifyBody
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	ctx := r.Context()
+	now := time.Now()
+	tx, err := state.Pool.Begin(ctx)
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	su, err := identity.ConsumeSignup(ctx, tx, body.Token, now)
+	if err != nil {
+		if errors.Is(err, identity.ErrSignupInvalid) {
+			writeServiceError(w, http.StatusBadRequest, errcode.SignupInvalid, err.Error(), nil)
+			return
+		}
+		writeInternalError(w, err)
+		return
+	}
+	tenantID := uuid.New()
+	registry := control.NewPostgresTenantRegistry(state.Pool)
+	// The tenant is registered outside the signup transaction (the registry owns its writes), so a
+	// failure after this point must undo it by hand.
+	if err := registry.RegisterShared(ctx, tenantID, su.TenantName, signupTier, "provisioning"); err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	fail := func(cause error) {
+		_, _ = registry.Deprovision(context.WithoutCancel(ctx), tenantID)
+		writeInternalError(w, cause)
+	}
+	m, _, err := identity.AddMember(ctx, state.Pool, identity.NewMember{
+		TenantID: tenantID, Email: su.Email, DisplayName: su.DisplayName, PasswordHash: su.PasswordHash,
+	})
+	if err != nil {
+		fail(err)
+		return
+	}
+	if err := peripherals.EnsureBuiltinRoles(ctx, state.Pool, tenantID); err != nil {
+		fail(err)
+		return
+	}
+	if err := peripherals.AssignRole(ctx, state.Pool, tenantID, m.ID, permission.RoleAdmin, nil); err != nil {
+		fail(err)
+		return
+	}
+	if ok, err := registry.SetStatus(ctx, tenantID, "active"); err != nil || !ok {
+		fail(errors.Join(err, errors.New("could not activate the tenant")))
+		return
+	}
+	// Only now is the link used up: any failure above left it usable for a retry.
+	if err := tx.Commit(ctx); err != nil {
+		fail(err)
+		return
+	}
+	ident, err := identity.FindIdentityByID(ctx, state.Pool, m.IdentityID)
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	ms := identity.Membership{MemberID: m.ID, TenantID: tenantID, TenantName: su.TenantName}
+	if mfaGate(w, r, state, ident, ms, now) {
+		return
+	}
+	startSession(w, r, state, ident.ID, ms, now)
+}

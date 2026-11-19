@@ -237,6 +237,17 @@ func IdentityOf(ctx context.Context, db DBTX, tenantID, memberID uuid.UUID) (uui
 // there is none. An existing identity's password is never touched: adding someone to a second
 // tenant must not let that tenant's admin set their password.
 func EnsureIdentity(ctx context.Context, db DBTX, email, password string) (id uuid.UUID, created bool, err error) {
+	var hash string
+	if password != "" {
+		if hash, err = HashPassword(password); err != nil {
+			return uuid.Nil, false, err
+		}
+	}
+	return ensureIdentityWithHash(ctx, db, email, hash)
+}
+
+// ensureIdentityWithHash is EnsureIdentity for a password that is already hashed ("" = none).
+func ensureIdentityWithHash(ctx context.Context, db DBTX, email, passwordHash string) (id uuid.UUID, created bool, err error) {
 	email, err = normalizeEmail(email)
 	if err != nil {
 		return uuid.Nil, false, err
@@ -249,12 +260,8 @@ func EnsureIdentity(ctx context.Context, db DBTX, email, password string) (id uu
 		return uuid.Nil, false, err
 	}
 	var hash *string
-	if password != "" {
-		h, err := HashPassword(password)
-		if err != nil {
-			return uuid.Nil, false, err
-		}
-		hash = &h
+	if passwordHash != "" {
+		hash = &passwordHash
 	}
 	err = db.QueryRow(ctx, `INSERT INTO metadata.identities (email, password_hash) VALUES ($1, $2)
 		ON CONFLICT (lower(email)) DO NOTHING RETURNING id`, email, hash).Scan(&id)
@@ -267,11 +274,13 @@ func EnsureIdentity(ctx context.Context, db DBTX, email, password string) (id uu
 
 // NewMember is what AddMember needs to add someone to a tenant.
 type NewMember struct {
-	TenantID    uuid.UUID
-	Email       string
-	Password    string // used only when the identity is new
-	DisplayName string
-	InvitedBy   *uuid.UUID
+	TenantID uuid.UUID
+	Email    string
+	Password string // used only when the identity is new
+	// PasswordHash is Password already hashed (signup keeps only the hash); used when Password is empty.
+	PasswordHash string
+	DisplayName  string
+	InvitedBy    *uuid.UUID
 	// AuthProvider/ExternalSubject: set for a member provisioned by an external IdP.
 	AuthProvider    string
 	ExternalSubject string
@@ -282,7 +291,13 @@ type NewMember struct {
 // AddMember adds a person to a tenant, creating their identity if needed. createdIdentity tells
 // the caller whether the password it passed was used.
 func AddMember(ctx context.Context, db DBTX, in NewMember) (m *Member, createdIdentity bool, err error) {
-	identityID, created, err := EnsureIdentity(ctx, db, in.Email, in.Password)
+	var identityID uuid.UUID
+	var created bool
+	if in.Password == "" && in.PasswordHash != "" {
+		identityID, created, err = ensureIdentityWithHash(ctx, db, in.Email, in.PasswordHash)
+	} else {
+		identityID, created, err = EnsureIdentity(ctx, db, in.Email, in.Password)
+	}
 	if err != nil {
 		return nil, false, err
 	}
