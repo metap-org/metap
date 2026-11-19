@@ -377,7 +377,7 @@ func ListMembers(ctx context.Context, db DBTX, tenantID uuid.UUID, q ListQuery) 
 	}
 	// OAuth client service principals are members too (they need roles) but are managed with
 	// their client, not listed as people.
-	where := `u.tenant_id = $1 AND u.deleted_at IS NULL AND u.auth_provider <> '` + ServicePrincipalProvider + `'`
+	where := `u.tenant_id = $1 AND u.deleted_at IS NULL AND u.auth_provider NOT IN ('` + ServicePrincipalProvider + `', '` + ServiceAccountProvider + `')`
 	args := []any{tenantID}
 	if s := strings.TrimSpace(q.Search); s != "" {
 		args = append(args, "%"+escapeLike(s)+"%")

@@ -171,6 +171,15 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   `AssignRole`/`RevokeRole` with `scope_type`+`scope_id`, `ListScopeMembers`; gateway `assignUserRole(..., scopeType, scopeId)`,
   `scopeMembers`. Limitation: deny policies are evaluated per group, so a deny gated to a role the user holds on scope A does
   not apply on scope B.
+- **API keys and service accounts (2026-11-19, roadmap 115 M5).** A service account is a password-less member
+  (`identity.ServiceAccountProvider`, hidden from `ListMembers`, listed by `ListServiceAccounts`); an API key
+  (`metadata.api_keys`, migration 0046, only the SHA-256 hash stored, `mk_` prefix) authenticates AS its member, so it
+  has exactly that member's roles. Both transports (`httpserver.authenticate`, `grpcapi.authenticate`) branch on
+  `identity.IsAPIKey(token)` to `control.ResolveAPIKeyContext`, which treats the key as a session issued at its
+  creation: disabling the member or "revoke sessions" kills its keys at once, revoke/expiry are checked in SQL. A key
+  carries no OAuth scope. Admin API on `UserAdminService`: `CreateServiceAccount`, `ListServiceAccounts`,
+  `CreateApiKey` (token returned once), `ListApiKeys`, `RevokeApiKey`. Not built yet: GraphQL gateway fields,
+  a tenant lifetime cap config key, per-key scopes.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

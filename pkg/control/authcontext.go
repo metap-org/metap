@@ -163,3 +163,17 @@ func ResolveRequestContext(ctx context.Context, router *Router, tenantID, userID
 		ForwardedBearerToken: "",
 	}, nil
 }
+
+// ResolveAPIKeyContext authenticates a presented API key ("mk_...") and resolves the request
+// context of the member it belongs to. The key counts as a session issued when it was created, so
+// "revoke sessions" on the member kills older keys too, and a disabled member's keys stop working.
+func ResolveAPIKeyContext(ctx context.Context, router *Router, token string, now time.Time,
+	authContextEntity string, metadataRegistry *atomic.Pointer[metadata.MetadataRegistry], contextAttributesCache *ContextAttributesCache) (*permission.RequestContext, error) {
+	key, err := identity.ResolveAPIKey(ctx, router.sharedPool, token, now)
+	if err != nil {
+		return nil, err
+	}
+	created := key.CreatedAt
+	return ResolveRequestContext(ctx, router, key.TenantID, key.MemberID, "", &created,
+		authContextEntity, metadataRegistry, contextAttributesCache)
+}

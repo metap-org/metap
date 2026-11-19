@@ -11,6 +11,7 @@ import (
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -76,6 +77,24 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 			}
 		}
 		token = sessionCookie.Value
+	}
+
+	// An API key (roadmap 115 M5) authenticates as its member: no JWT, no OAuth grant.
+	if identity.IsAPIKey(token) {
+		rc, err := control.ResolveAPIKeyContext(ctx, state.Router, token, time.Now(),
+			state.AuthContextEntity, state.Metadata, state.ContextAttributesCache)
+		switch {
+		case errors.Is(err, identity.ErrAPIKeyInvalid):
+			return nil, unauthorized("Invalid or expired API key.")
+		case errors.Is(err, identity.ErrSessionRevoked):
+			return nil, &authError{status: http.StatusUnauthorized, code: errcode.SessionRevoked, message: "This API key was revoked."}
+		case errors.Is(err, identity.ErrDisabled):
+			return nil, &authError{status: http.StatusUnauthorized, code: errcode.AccountDisabled, message: "This account is disabled."}
+		case err != nil:
+			return nil, unauthorized("Failed to resolve roles.")
+		}
+		rc.ForwardedBearerToken = token
+		return rc, nil
 	}
 
 	// 20s leeway (project owner decision) — no revocation list exists, so exp+leeway is the

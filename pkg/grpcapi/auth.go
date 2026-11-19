@@ -11,6 +11,7 @@ import (
 	"errors"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -58,6 +59,25 @@ func authenticate(ctx context.Context, config AuthConfig) (*permission.RequestCo
 	token, err := bearerTokenFromMetadata(md)
 	if err != nil {
 		return nil, err
+	}
+
+	// An API key (roadmap 115 M5) authenticates as its member: no JWT, no OAuth grant.
+	if identity.IsAPIKey(token) {
+		rc, err := control.ResolveAPIKeyContext(ctx, config.Router, token, time.Now(),
+			config.AuthContextEntity, config.Metadata, config.ContextAttributesCache)
+		switch {
+		case errors.Is(err, identity.ErrAPIKeyInvalid):
+			return nil, status.Error(codes.Unauthenticated, "invalid or expired API key")
+		case errors.Is(err, identity.ErrSessionRevoked):
+			return nil, sendServiceError(ctx, crud.NewServiceErrorMsg(401, errcode.SessionRevoked, "This API key was revoked."))
+		case errors.Is(err, identity.ErrDisabled):
+			return nil, sendServiceError(ctx, crud.NewServiceErrorMsg(401, errcode.AccountDisabled, "This account is disabled."))
+		case err != nil:
+			return nil, status.Error(codes.Unauthenticated, "failed to resolve roles")
+		}
+		rc.ForwardedBearerToken = token
+		recordCaller(ctx, rc.TenantID, rc.UserID)
+		return rc, nil
 	}
 
 	claims, err := jwks.DecodeWithVerifier(ctx, token, config.Verifier, nil)

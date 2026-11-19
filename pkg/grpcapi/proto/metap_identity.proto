@@ -196,6 +196,52 @@ service UserAdminService {
   // Who holds which role on one scope ("who can see this zone").
   rpc ListScopeMembers(ScopeRequest) returns (ListScopeMembersResponse);
   rpc ListUserAudit(ListUserAuditRequest) returns (ListUserAuditResponse);
+  // A machine member: no password, signs in only through an API key. Listed by ListServiceAccounts,
+  // never by ListUsers.
+  rpc CreateServiceAccount(CreateServiceAccountRequest) returns (User);
+  rpc ListServiceAccounts(Empty) returns (ListUsersResponse);
+  // The token in the response is shown once; only its hash is stored. The key acts as its member.
+  rpc CreateApiKey(CreateApiKeyRequest) returns (CreateApiKeyResponse);
+  rpc ListApiKeys(UserIdRequest) returns (ListApiKeysResponse);
+  rpc RevokeApiKey(ApiKeyIdRequest) returns (Empty);
+}
+
+message CreateServiceAccountRequest {
+  string name = 1;
+  repeated string roles = 2;
+}
+
+message CreateApiKeyRequest {
+  // The member (service account or person) the key acts as.
+  string user_id = 1;
+  string name = 2;
+  // 0 = does not expire.
+  int32 expires_in_days = 3;
+}
+
+message ApiKey {
+  string id = 1;
+  string user_id = 2;
+  string name = 3;
+  // First characters of the key, to recognise it in a list.
+  string prefix = 4;
+  string expires_at = 5;
+  string revoked_at = 6;
+  string last_used_at = 7;
+  string created_at = 8;
+}
+
+message CreateApiKeyResponse {
+  ApiKey api_key = 1;
+  string token = 2;
+}
+
+message ListApiKeysResponse {
+  repeated ApiKey api_keys = 1;
+}
+
+message ApiKeyIdRequest {
+  string id = 1;
 }
 
 message RoleNameRequest {

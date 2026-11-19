@@ -19,20 +19,25 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	UserAdminService_ListUsers_FullMethodName        = "/metap.identity.v1.UserAdminService/ListUsers"
-	UserAdminService_GetUser_FullMethodName          = "/metap.identity.v1.UserAdminService/GetUser"
-	UserAdminService_CreateUser_FullMethodName       = "/metap.identity.v1.UserAdminService/CreateUser"
-	UserAdminService_InviteUser_FullMethodName       = "/metap.identity.v1.UserAdminService/InviteUser"
-	UserAdminService_ResendInvitation_FullMethodName = "/metap.identity.v1.UserAdminService/ResendInvitation"
-	UserAdminService_UpdateUser_FullMethodName       = "/metap.identity.v1.UserAdminService/UpdateUser"
-	UserAdminService_DisableUser_FullMethodName      = "/metap.identity.v1.UserAdminService/DisableUser"
-	UserAdminService_EnableUser_FullMethodName       = "/metap.identity.v1.UserAdminService/EnableUser"
-	UserAdminService_RemoveUser_FullMethodName       = "/metap.identity.v1.UserAdminService/RemoveUser"
-	UserAdminService_ResetPassword_FullMethodName    = "/metap.identity.v1.UserAdminService/ResetPassword"
-	UserAdminService_AssignRole_FullMethodName       = "/metap.identity.v1.UserAdminService/AssignRole"
-	UserAdminService_RevokeRole_FullMethodName       = "/metap.identity.v1.UserAdminService/RevokeRole"
-	UserAdminService_ListScopeMembers_FullMethodName = "/metap.identity.v1.UserAdminService/ListScopeMembers"
-	UserAdminService_ListUserAudit_FullMethodName    = "/metap.identity.v1.UserAdminService/ListUserAudit"
+	UserAdminService_ListUsers_FullMethodName            = "/metap.identity.v1.UserAdminService/ListUsers"
+	UserAdminService_GetUser_FullMethodName              = "/metap.identity.v1.UserAdminService/GetUser"
+	UserAdminService_CreateUser_FullMethodName           = "/metap.identity.v1.UserAdminService/CreateUser"
+	UserAdminService_InviteUser_FullMethodName           = "/metap.identity.v1.UserAdminService/InviteUser"
+	UserAdminService_ResendInvitation_FullMethodName     = "/metap.identity.v1.UserAdminService/ResendInvitation"
+	UserAdminService_UpdateUser_FullMethodName           = "/metap.identity.v1.UserAdminService/UpdateUser"
+	UserAdminService_DisableUser_FullMethodName          = "/metap.identity.v1.UserAdminService/DisableUser"
+	UserAdminService_EnableUser_FullMethodName           = "/metap.identity.v1.UserAdminService/EnableUser"
+	UserAdminService_RemoveUser_FullMethodName           = "/metap.identity.v1.UserAdminService/RemoveUser"
+	UserAdminService_ResetPassword_FullMethodName        = "/metap.identity.v1.UserAdminService/ResetPassword"
+	UserAdminService_AssignRole_FullMethodName           = "/metap.identity.v1.UserAdminService/AssignRole"
+	UserAdminService_RevokeRole_FullMethodName           = "/metap.identity.v1.UserAdminService/RevokeRole"
+	UserAdminService_ListScopeMembers_FullMethodName     = "/metap.identity.v1.UserAdminService/ListScopeMembers"
+	UserAdminService_ListUserAudit_FullMethodName        = "/metap.identity.v1.UserAdminService/ListUserAudit"
+	UserAdminService_CreateServiceAccount_FullMethodName = "/metap.identity.v1.UserAdminService/CreateServiceAccount"
+	UserAdminService_ListServiceAccounts_FullMethodName  = "/metap.identity.v1.UserAdminService/ListServiceAccounts"
+	UserAdminService_CreateApiKey_FullMethodName         = "/metap.identity.v1.UserAdminService/CreateApiKey"
+	UserAdminService_ListApiKeys_FullMethodName          = "/metap.identity.v1.UserAdminService/ListApiKeys"
+	UserAdminService_RevokeApiKey_FullMethodName         = "/metap.identity.v1.UserAdminService/RevokeApiKey"
 )
 
 // UserAdminServiceClient is the client API for UserAdminService service.
@@ -62,6 +67,14 @@ type UserAdminServiceClient interface {
 	// Who holds which role on one scope ("who can see this zone").
 	ListScopeMembers(ctx context.Context, in *ScopeRequest, opts ...grpc.CallOption) (*ListScopeMembersResponse, error)
 	ListUserAudit(ctx context.Context, in *ListUserAuditRequest, opts ...grpc.CallOption) (*ListUserAuditResponse, error)
+	// A machine member: no password, signs in only through an API key. Listed by ListServiceAccounts,
+	// never by ListUsers.
+	CreateServiceAccount(ctx context.Context, in *CreateServiceAccountRequest, opts ...grpc.CallOption) (*User, error)
+	ListServiceAccounts(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListUsersResponse, error)
+	// The token in the response is shown once; only its hash is stored. The key acts as its member.
+	CreateApiKey(ctx context.Context, in *CreateApiKeyRequest, opts ...grpc.CallOption) (*CreateApiKeyResponse, error)
+	ListApiKeys(ctx context.Context, in *UserIdRequest, opts ...grpc.CallOption) (*ListApiKeysResponse, error)
+	RevokeApiKey(ctx context.Context, in *ApiKeyIdRequest, opts ...grpc.CallOption) (*Empty, error)
 }
 
 type userAdminServiceClient struct {
@@ -212,6 +225,56 @@ func (c *userAdminServiceClient) ListUserAudit(ctx context.Context, in *ListUser
 	return out, nil
 }
 
+func (c *userAdminServiceClient) CreateServiceAccount(ctx context.Context, in *CreateServiceAccountRequest, opts ...grpc.CallOption) (*User, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(User)
+	err := c.cc.Invoke(ctx, UserAdminService_CreateServiceAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userAdminServiceClient) ListServiceAccounts(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListUsersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListUsersResponse)
+	err := c.cc.Invoke(ctx, UserAdminService_ListServiceAccounts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userAdminServiceClient) CreateApiKey(ctx context.Context, in *CreateApiKeyRequest, opts ...grpc.CallOption) (*CreateApiKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateApiKeyResponse)
+	err := c.cc.Invoke(ctx, UserAdminService_CreateApiKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userAdminServiceClient) ListApiKeys(ctx context.Context, in *UserIdRequest, opts ...grpc.CallOption) (*ListApiKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListApiKeysResponse)
+	err := c.cc.Invoke(ctx, UserAdminService_ListApiKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userAdminServiceClient) RevokeApiKey(ctx context.Context, in *ApiKeyIdRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, UserAdminService_RevokeApiKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UserAdminServiceServer is the server API for UserAdminService service.
 // All implementations must embed UnimplementedUserAdminServiceServer
 // for forward compatibility.
@@ -239,6 +302,14 @@ type UserAdminServiceServer interface {
 	// Who holds which role on one scope ("who can see this zone").
 	ListScopeMembers(context.Context, *ScopeRequest) (*ListScopeMembersResponse, error)
 	ListUserAudit(context.Context, *ListUserAuditRequest) (*ListUserAuditResponse, error)
+	// A machine member: no password, signs in only through an API key. Listed by ListServiceAccounts,
+	// never by ListUsers.
+	CreateServiceAccount(context.Context, *CreateServiceAccountRequest) (*User, error)
+	ListServiceAccounts(context.Context, *Empty) (*ListUsersResponse, error)
+	// The token in the response is shown once; only its hash is stored. The key acts as its member.
+	CreateApiKey(context.Context, *CreateApiKeyRequest) (*CreateApiKeyResponse, error)
+	ListApiKeys(context.Context, *UserIdRequest) (*ListApiKeysResponse, error)
+	RevokeApiKey(context.Context, *ApiKeyIdRequest) (*Empty, error)
 	mustEmbedUnimplementedUserAdminServiceServer()
 }
 
@@ -290,6 +361,21 @@ func (UnimplementedUserAdminServiceServer) ListScopeMembers(context.Context, *Sc
 }
 func (UnimplementedUserAdminServiceServer) ListUserAudit(context.Context, *ListUserAuditRequest) (*ListUserAuditResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListUserAudit not implemented")
+}
+func (UnimplementedUserAdminServiceServer) CreateServiceAccount(context.Context, *CreateServiceAccountRequest) (*User, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateServiceAccount not implemented")
+}
+func (UnimplementedUserAdminServiceServer) ListServiceAccounts(context.Context, *Empty) (*ListUsersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListServiceAccounts not implemented")
+}
+func (UnimplementedUserAdminServiceServer) CreateApiKey(context.Context, *CreateApiKeyRequest) (*CreateApiKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateApiKey not implemented")
+}
+func (UnimplementedUserAdminServiceServer) ListApiKeys(context.Context, *UserIdRequest) (*ListApiKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListApiKeys not implemented")
+}
+func (UnimplementedUserAdminServiceServer) RevokeApiKey(context.Context, *ApiKeyIdRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeApiKey not implemented")
 }
 func (UnimplementedUserAdminServiceServer) mustEmbedUnimplementedUserAdminServiceServer() {}
 func (UnimplementedUserAdminServiceServer) testEmbeddedByValue()                          {}
@@ -564,6 +650,96 @@ func _UserAdminService_ListUserAudit_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserAdminService_CreateServiceAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateServiceAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).CreateServiceAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_CreateServiceAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).CreateServiceAccount(ctx, req.(*CreateServiceAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserAdminService_ListServiceAccounts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).ListServiceAccounts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_ListServiceAccounts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).ListServiceAccounts(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserAdminService_CreateApiKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateApiKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).CreateApiKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_CreateApiKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).CreateApiKey(ctx, req.(*CreateApiKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserAdminService_ListApiKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UserIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).ListApiKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_ListApiKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).ListApiKeys(ctx, req.(*UserIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserAdminService_RevokeApiKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApiKeyIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserAdminServiceServer).RevokeApiKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserAdminService_RevokeApiKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserAdminServiceServer).RevokeApiKey(ctx, req.(*ApiKeyIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // UserAdminService_ServiceDesc is the grpc.ServiceDesc for UserAdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -626,6 +802,26 @@ var UserAdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListUserAudit",
 			Handler:    _UserAdminService_ListUserAudit_Handler,
+		},
+		{
+			MethodName: "CreateServiceAccount",
+			Handler:    _UserAdminService_CreateServiceAccount_Handler,
+		},
+		{
+			MethodName: "ListServiceAccounts",
+			Handler:    _UserAdminService_ListServiceAccounts_Handler,
+		},
+		{
+			MethodName: "CreateApiKey",
+			Handler:    _UserAdminService_CreateApiKey_Handler,
+		},
+		{
+			MethodName: "ListApiKeys",
+			Handler:    _UserAdminService_ListApiKeys_Handler,
+		},
+		{
+			MethodName: "RevokeApiKey",
+			Handler:    _UserAdminService_RevokeApiKey_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
