@@ -2665,6 +2665,198 @@ func (x *ListTenantUsersResponse) GetUsers() []*TenantUser {
 	return nil
 }
 
+type MfaStatus struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Enabled           bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	RecoveryCodesLeft int32                  `protobuf:"varint,2,opt,name=recovery_codes_left,json=recoveryCodesLeft,proto3" json:"recovery_codes_left,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *MfaStatus) Reset() {
+	*x = MfaStatus{}
+	mi := &file_metap_identity_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MfaStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MfaStatus) ProtoMessage() {}
+
+func (x *MfaStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_metap_identity_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MfaStatus.ProtoReflect.Descriptor instead.
+func (*MfaStatus) Descriptor() ([]byte, []int) {
+	return file_metap_identity_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *MfaStatus) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *MfaStatus) GetRecoveryCodesLeft() int32 {
+	if x != nil {
+		return x.RecoveryCodesLeft
+	}
+	return 0
+}
+
+type MfaEnrollment struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Secret        string                 `protobuf:"bytes,1,opt,name=secret,proto3" json:"secret,omitempty"`
+	OtpauthUri    string                 `protobuf:"bytes,2,opt,name=otpauth_uri,json=otpauthUri,proto3" json:"otpauth_uri,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MfaEnrollment) Reset() {
+	*x = MfaEnrollment{}
+	mi := &file_metap_identity_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MfaEnrollment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MfaEnrollment) ProtoMessage() {}
+
+func (x *MfaEnrollment) ProtoReflect() protoreflect.Message {
+	mi := &file_metap_identity_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MfaEnrollment.ProtoReflect.Descriptor instead.
+func (*MfaEnrollment) Descriptor() ([]byte, []int) {
+	return file_metap_identity_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *MfaEnrollment) GetSecret() string {
+	if x != nil {
+		return x.Secret
+	}
+	return ""
+}
+
+func (x *MfaEnrollment) GetOtpauthUri() string {
+	if x != nil {
+		return x.OtpauthUri
+	}
+	return ""
+}
+
+type MfaCodeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MfaCodeRequest) Reset() {
+	*x = MfaCodeRequest{}
+	mi := &file_metap_identity_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MfaCodeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MfaCodeRequest) ProtoMessage() {}
+
+func (x *MfaCodeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_metap_identity_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MfaCodeRequest.ProtoReflect.Descriptor instead.
+func (*MfaCodeRequest) Descriptor() ([]byte, []int) {
+	return file_metap_identity_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *MfaCodeRequest) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+type MfaRecoveryCodes struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Codes         []string               `protobuf:"bytes,1,rep,name=codes,proto3" json:"codes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MfaRecoveryCodes) Reset() {
+	*x = MfaRecoveryCodes{}
+	mi := &file_metap_identity_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MfaRecoveryCodes) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MfaRecoveryCodes) ProtoMessage() {}
+
+func (x *MfaRecoveryCodes) ProtoReflect() protoreflect.Message {
+	mi := &file_metap_identity_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MfaRecoveryCodes.ProtoReflect.Descriptor instead.
+func (*MfaRecoveryCodes) Descriptor() ([]byte, []int) {
+	return file_metap_identity_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *MfaRecoveryCodes) GetCodes() []string {
+	if x != nil {
+		return x.Codes
+	}
+	return nil
+}
+
 type Tenant struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -2687,7 +2879,7 @@ type Tenant struct {
 
 func (x *Tenant) Reset() {
 	*x = Tenant{}
-	mi := &file_metap_identity_proto_msgTypes[43]
+	mi := &file_metap_identity_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2699,7 +2891,7 @@ func (x *Tenant) String() string {
 func (*Tenant) ProtoMessage() {}
 
 func (x *Tenant) ProtoReflect() protoreflect.Message {
-	mi := &file_metap_identity_proto_msgTypes[43]
+	mi := &file_metap_identity_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2712,7 +2904,7 @@ func (x *Tenant) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Tenant.ProtoReflect.Descriptor instead.
 func (*Tenant) Descriptor() ([]byte, []int) {
-	return file_metap_identity_proto_rawDescGZIP(), []int{43}
+	return file_metap_identity_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *Tenant) GetId() string {
@@ -2801,7 +2993,7 @@ type TenantIdRequest struct {
 
 func (x *TenantIdRequest) Reset() {
 	*x = TenantIdRequest{}
-	mi := &file_metap_identity_proto_msgTypes[44]
+	mi := &file_metap_identity_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2813,7 +3005,7 @@ func (x *TenantIdRequest) String() string {
 func (*TenantIdRequest) ProtoMessage() {}
 
 func (x *TenantIdRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_metap_identity_proto_msgTypes[44]
+	mi := &file_metap_identity_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2826,7 +3018,7 @@ func (x *TenantIdRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantIdRequest.ProtoReflect.Descriptor instead.
 func (*TenantIdRequest) Descriptor() ([]byte, []int) {
-	return file_metap_identity_proto_rawDescGZIP(), []int{44}
+	return file_metap_identity_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *TenantIdRequest) GetId() string {
@@ -2851,7 +3043,7 @@ type ListTenantsRequest struct {
 
 func (x *ListTenantsRequest) Reset() {
 	*x = ListTenantsRequest{}
-	mi := &file_metap_identity_proto_msgTypes[45]
+	mi := &file_metap_identity_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2863,7 +3055,7 @@ func (x *ListTenantsRequest) String() string {
 func (*ListTenantsRequest) ProtoMessage() {}
 
 func (x *ListTenantsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_metap_identity_proto_msgTypes[45]
+	mi := &file_metap_identity_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2876,7 +3068,7 @@ func (x *ListTenantsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTenantsRequest.ProtoReflect.Descriptor instead.
 func (*ListTenantsRequest) Descriptor() ([]byte, []int) {
-	return file_metap_identity_proto_rawDescGZIP(), []int{45}
+	return file_metap_identity_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *ListTenantsRequest) GetQuery() string {
@@ -2924,7 +3116,7 @@ type ListTenantsResponse struct {
 
 func (x *ListTenantsResponse) Reset() {
 	*x = ListTenantsResponse{}
-	mi := &file_metap_identity_proto_msgTypes[46]
+	mi := &file_metap_identity_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2936,7 +3128,7 @@ func (x *ListTenantsResponse) String() string {
 func (*ListTenantsResponse) ProtoMessage() {}
 
 func (x *ListTenantsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_metap_identity_proto_msgTypes[46]
+	mi := &file_metap_identity_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2949,7 +3141,7 @@ func (x *ListTenantsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTenantsResponse.ProtoReflect.Descriptor instead.
 func (*ListTenantsResponse) Descriptor() ([]byte, []int) {
-	return file_metap_identity_proto_rawDescGZIP(), []int{46}
+	return file_metap_identity_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *ListTenantsResponse) GetTenants() []*Tenant {
@@ -2980,7 +3172,7 @@ type CreateTenantRequest struct {
 
 func (x *CreateTenantRequest) Reset() {
 	*x = CreateTenantRequest{}
-	mi := &file_metap_identity_proto_msgTypes[47]
+	mi := &file_metap_identity_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2992,7 +3184,7 @@ func (x *CreateTenantRequest) String() string {
 func (*CreateTenantRequest) ProtoMessage() {}
 
 func (x *CreateTenantRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_metap_identity_proto_msgTypes[47]
+	mi := &file_metap_identity_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3005,7 +3197,7 @@ func (x *CreateTenantRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTenantRequest.ProtoReflect.Descriptor instead.
 func (*CreateTenantRequest) Descriptor() ([]byte, []int) {
-	return file_metap_identity_proto_rawDescGZIP(), []int{47}
+	return file_metap_identity_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *CreateTenantRequest) GetName() string {
@@ -3057,7 +3249,7 @@ type CreateTenantResponse struct {
 
 func (x *CreateTenantResponse) Reset() {
 	*x = CreateTenantResponse{}
-	mi := &file_metap_identity_proto_msgTypes[48]
+	mi := &file_metap_identity_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3069,7 +3261,7 @@ func (x *CreateTenantResponse) String() string {
 func (*CreateTenantResponse) ProtoMessage() {}
 
 func (x *CreateTenantResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_metap_identity_proto_msgTypes[48]
+	mi := &file_metap_identity_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3082,7 +3274,7 @@ func (x *CreateTenantResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTenantResponse.ProtoReflect.Descriptor instead.
 func (*CreateTenantResponse) Descriptor() ([]byte, []int) {
-	return file_metap_identity_proto_rawDescGZIP(), []int{48}
+	return file_metap_identity_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *CreateTenantResponse) GetTenant() *Tenant {
@@ -3131,7 +3323,7 @@ type UpdateTenantRequest struct {
 
 func (x *UpdateTenantRequest) Reset() {
 	*x = UpdateTenantRequest{}
-	mi := &file_metap_identity_proto_msgTypes[49]
+	mi := &file_metap_identity_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3143,7 +3335,7 @@ func (x *UpdateTenantRequest) String() string {
 func (*UpdateTenantRequest) ProtoMessage() {}
 
 func (x *UpdateTenantRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_metap_identity_proto_msgTypes[49]
+	mi := &file_metap_identity_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3156,7 +3348,7 @@ func (x *UpdateTenantRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTenantRequest.ProtoReflect.Descriptor instead.
 func (*UpdateTenantRequest) Descriptor() ([]byte, []int) {
-	return file_metap_identity_proto_rawDescGZIP(), []int{49}
+	return file_metap_identity_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *UpdateTenantRequest) GetId() string {
@@ -3191,7 +3383,7 @@ type RequestTenantDeletionRequest struct {
 
 func (x *RequestTenantDeletionRequest) Reset() {
 	*x = RequestTenantDeletionRequest{}
-	mi := &file_metap_identity_proto_msgTypes[50]
+	mi := &file_metap_identity_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3203,7 +3395,7 @@ func (x *RequestTenantDeletionRequest) String() string {
 func (*RequestTenantDeletionRequest) ProtoMessage() {}
 
 func (x *RequestTenantDeletionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_metap_identity_proto_msgTypes[50]
+	mi := &file_metap_identity_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3216,7 +3408,7 @@ func (x *RequestTenantDeletionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestTenantDeletionRequest.ProtoReflect.Descriptor instead.
 func (*RequestTenantDeletionRequest) Descriptor() ([]byte, []int) {
-	return file_metap_identity_proto_rawDescGZIP(), []int{50}
+	return file_metap_identity_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *RequestTenantDeletionRequest) GetId() string {
@@ -3434,7 +3626,18 @@ const file_metap_identity_proto_rawDesc = "" +
 	"\x05email\x18\x02 \x01(\tR\x05email\x12!\n" +
 	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\"N\n" +
 	"\x17ListTenantUsersResponse\x123\n" +
-	"\x05users\x18\x01 \x03(\v2\x1d.metap.identity.v1.TenantUserR\x05users\"\xe2\x02\n" +
+	"\x05users\x18\x01 \x03(\v2\x1d.metap.identity.v1.TenantUserR\x05users\"U\n" +
+	"\tMfaStatus\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12.\n" +
+	"\x13recovery_codes_left\x18\x02 \x01(\x05R\x11recoveryCodesLeft\"H\n" +
+	"\rMfaEnrollment\x12\x16\n" +
+	"\x06secret\x18\x01 \x01(\tR\x06secret\x12\x1f\n" +
+	"\votpauth_uri\x18\x02 \x01(\tR\n" +
+	"otpauthUri\"$\n" +
+	"\x0eMfaCodeRequest\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\"(\n" +
+	"\x10MfaRecoveryCodes\x12\x14\n" +
+	"\x05codes\x18\x01 \x03(\tR\x05codes\"\xe2\x02\n" +
 	"\x06Tenant\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
@@ -3484,7 +3687,7 @@ const file_metap_identity_proto_rawDesc = "" +
 	"\x05_tier\"U\n" +
 	"\x1cRequestTenantDeletionRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12%\n" +
-	"\x0eretention_days\x18\x02 \x01(\x05R\rretentionDays2\xd5\f\n" +
+	"\x0eretention_days\x18\x02 \x01(\x05R\rretentionDays2\x9d\r\n" +
 	"\x10UserAdminService\x12V\n" +
 	"\tListUsers\x12#.metap.identity.v1.ListUsersRequest\x1a$.metap.identity.v1.ListUsersResponse\x12D\n" +
 	"\aGetUser\x12 .metap.identity.v1.UserIdRequest\x1a\x17.metap.identity.v1.User\x12Y\n" +
@@ -3511,7 +3714,8 @@ const file_metap_identity_proto_rawDesc = "" +
 	"\x13ListServiceAccounts\x12\x18.metap.identity.v1.Empty\x1a$.metap.identity.v1.ListUsersResponse\x12_\n" +
 	"\fCreateApiKey\x12&.metap.identity.v1.CreateApiKeyRequest\x1a'.metap.identity.v1.CreateApiKeyResponse\x12W\n" +
 	"\vListApiKeys\x12 .metap.identity.v1.UserIdRequest\x1a&.metap.identity.v1.ListApiKeysResponse\x12L\n" +
-	"\fRevokeApiKey\x12\".metap.identity.v1.ApiKeyIdRequest\x1a\x18.metap.identity.v1.Empty2\xc2\x05\n" +
+	"\fRevokeApiKey\x12\".metap.identity.v1.ApiKeyIdRequest\x1a\x18.metap.identity.v1.Empty\x12F\n" +
+	"\bResetMfa\x12 .metap.identity.v1.UserIdRequest\x1a\x18.metap.identity.v1.Empty2\xc2\x05\n" +
 	"\x10RoleAdminService\x12V\n" +
 	"\tListRoles\x12#.metap.identity.v1.ListRolesRequest\x1a$.metap.identity.v1.ListRolesResponse\x12F\n" +
 	"\aGetRole\x12\".metap.identity.v1.RoleNameRequest\x1a\x17.metap.identity.v1.Role\x12K\n" +
@@ -3523,12 +3727,18 @@ const file_metap_identity_proto_rawDesc = "" +
 	"DeleteRole\x12\".metap.identity.v1.RoleNameRequest\x1a\x18.metap.identity.v1.Empty\x12b\n" +
 	"\rListRoleAudit\x12'.metap.identity.v1.ListRoleAuditRequest\x1a(.metap.identity.v1.ListUserAuditResponse\x12\\\n" +
 	"\x12GetRolePermissions\x12\".metap.identity.v1.RoleNameRequest\x1a\".metap.identity.v1.RolePermissions\x12f\n" +
-	"\x12SetRolePermissions\x12,.metap.identity.v1.SetRolePermissionsRequest\x1a\".metap.identity.v1.RolePermissions2\xda\x02\n" +
+	"\x12SetRolePermissions\x12,.metap.identity.v1.SetRolePermissionsRequest\x1a\".metap.identity.v1.RolePermissions2\x82\x06\n" +
 	"\x0eAccountService\x128\n" +
 	"\x05GetMe\x12\x18.metap.identity.v1.Empty\x1a\x15.metap.identity.v1.Me\x12O\n" +
 	"\rUpdateProfile\x12'.metap.identity.v1.UpdateProfileRequest\x1a\x15.metap.identity.v1.Me\x12S\n" +
 	"\rListMyTenants\x12\x18.metap.identity.v1.Empty\x1a(.metap.identity.v1.ListMyTenantsResponse\x12h\n" +
-	"\x0fListTenantUsers\x12).metap.identity.v1.ListTenantUsersRequest\x1a*.metap.identity.v1.ListTenantUsersResponse2\xcd\x05\n" +
+	"\x0fListTenantUsers\x12).metap.identity.v1.ListTenantUsersRequest\x1a*.metap.identity.v1.ListTenantUsersResponse\x12F\n" +
+	"\fGetMfaStatus\x12\x18.metap.identity.v1.Empty\x1a\x1c.metap.identity.v1.MfaStatus\x12P\n" +
+	"\x12BeginMfaEnrollment\x12\x18.metap.identity.v1.Empty\x1a .metap.identity.v1.MfaEnrollment\x12^\n" +
+	"\x14ConfirmMfaEnrollment\x12!.metap.identity.v1.MfaCodeRequest\x1a#.metap.identity.v1.MfaRecoveryCodes\x12I\n" +
+	"\n" +
+	"DisableMfa\x12!.metap.identity.v1.MfaCodeRequest\x1a\x18.metap.identity.v1.Empty\x12a\n" +
+	"\x17RegenerateRecoveryCodes\x12!.metap.identity.v1.MfaCodeRequest\x1a#.metap.identity.v1.MfaRecoveryCodes2\xcd\x05\n" +
 	"\x12TenantAdminService\x12\\\n" +
 	"\vListTenants\x12%.metap.identity.v1.ListTenantsRequest\x1a&.metap.identity.v1.ListTenantsResponse\x12J\n" +
 	"\tGetTenant\x12\".metap.identity.v1.TenantIdRequest\x1a\x19.metap.identity.v1.Tenant\x12_\n" +
@@ -3551,7 +3761,7 @@ func file_metap_identity_proto_rawDescGZIP() []byte {
 	return file_metap_identity_proto_rawDescData
 }
 
-var file_metap_identity_proto_msgTypes = make([]protoimpl.MessageInfo, 51)
+var file_metap_identity_proto_msgTypes = make([]protoimpl.MessageInfo, 55)
 var file_metap_identity_proto_goTypes = []any{
 	(*User)(nil),                         // 0: metap.identity.v1.User
 	(*ScopedRole)(nil),                   // 1: metap.identity.v1.ScopedRole
@@ -3596,14 +3806,18 @@ var file_metap_identity_proto_goTypes = []any{
 	(*ListTenantUsersRequest)(nil),       // 40: metap.identity.v1.ListTenantUsersRequest
 	(*TenantUser)(nil),                   // 41: metap.identity.v1.TenantUser
 	(*ListTenantUsersResponse)(nil),      // 42: metap.identity.v1.ListTenantUsersResponse
-	(*Tenant)(nil),                       // 43: metap.identity.v1.Tenant
-	(*TenantIdRequest)(nil),              // 44: metap.identity.v1.TenantIdRequest
-	(*ListTenantsRequest)(nil),           // 45: metap.identity.v1.ListTenantsRequest
-	(*ListTenantsResponse)(nil),          // 46: metap.identity.v1.ListTenantsResponse
-	(*CreateTenantRequest)(nil),          // 47: metap.identity.v1.CreateTenantRequest
-	(*CreateTenantResponse)(nil),         // 48: metap.identity.v1.CreateTenantResponse
-	(*UpdateTenantRequest)(nil),          // 49: metap.identity.v1.UpdateTenantRequest
-	(*RequestTenantDeletionRequest)(nil), // 50: metap.identity.v1.RequestTenantDeletionRequest
+	(*MfaStatus)(nil),                    // 43: metap.identity.v1.MfaStatus
+	(*MfaEnrollment)(nil),                // 44: metap.identity.v1.MfaEnrollment
+	(*MfaCodeRequest)(nil),               // 45: metap.identity.v1.MfaCodeRequest
+	(*MfaRecoveryCodes)(nil),             // 46: metap.identity.v1.MfaRecoveryCodes
+	(*Tenant)(nil),                       // 47: metap.identity.v1.Tenant
+	(*TenantIdRequest)(nil),              // 48: metap.identity.v1.TenantIdRequest
+	(*ListTenantsRequest)(nil),           // 49: metap.identity.v1.ListTenantsRequest
+	(*ListTenantsResponse)(nil),          // 50: metap.identity.v1.ListTenantsResponse
+	(*CreateTenantRequest)(nil),          // 51: metap.identity.v1.CreateTenantRequest
+	(*CreateTenantResponse)(nil),         // 52: metap.identity.v1.CreateTenantResponse
+	(*UpdateTenantRequest)(nil),          // 53: metap.identity.v1.UpdateTenantRequest
+	(*RequestTenantDeletionRequest)(nil), // 54: metap.identity.v1.RequestTenantDeletionRequest
 }
 var file_metap_identity_proto_depIdxs = []int32{
 	1,  // 0: metap.identity.v1.User.scoped_roles:type_name -> metap.identity.v1.ScopedRole
@@ -3620,8 +3834,8 @@ var file_metap_identity_proto_depIdxs = []int32{
 	32, // 11: metap.identity.v1.SetRolePermissionsRequest.grants:type_name -> metap.identity.v1.RoleGrant
 	38, // 12: metap.identity.v1.ListMyTenantsResponse.tenants:type_name -> metap.identity.v1.MyTenant
 	41, // 13: metap.identity.v1.ListTenantUsersResponse.users:type_name -> metap.identity.v1.TenantUser
-	43, // 14: metap.identity.v1.ListTenantsResponse.tenants:type_name -> metap.identity.v1.Tenant
-	43, // 15: metap.identity.v1.CreateTenantResponse.tenant:type_name -> metap.identity.v1.Tenant
+	47, // 14: metap.identity.v1.ListTenantsResponse.tenants:type_name -> metap.identity.v1.Tenant
+	47, // 15: metap.identity.v1.CreateTenantResponse.tenant:type_name -> metap.identity.v1.Tenant
 	2,  // 16: metap.identity.v1.UserAdminService.ListUsers:input_type -> metap.identity.v1.ListUsersRequest
 	4,  // 17: metap.identity.v1.UserAdminService.GetUser:input_type -> metap.identity.v1.UserIdRequest
 	5,  // 18: metap.identity.v1.UserAdminService.CreateUser:input_type -> metap.identity.v1.CreateUserRequest
@@ -3641,67 +3855,79 @@ var file_metap_identity_proto_depIdxs = []int32{
 	23, // 32: metap.identity.v1.UserAdminService.CreateApiKey:input_type -> metap.identity.v1.CreateApiKeyRequest
 	4,  // 33: metap.identity.v1.UserAdminService.ListApiKeys:input_type -> metap.identity.v1.UserIdRequest
 	27, // 34: metap.identity.v1.UserAdminService.RevokeApiKey:input_type -> metap.identity.v1.ApiKeyIdRequest
-	16, // 35: metap.identity.v1.RoleAdminService.ListRoles:input_type -> metap.identity.v1.ListRolesRequest
-	28, // 36: metap.identity.v1.RoleAdminService.GetRole:input_type -> metap.identity.v1.RoleNameRequest
-	29, // 37: metap.identity.v1.RoleAdminService.CreateRole:input_type -> metap.identity.v1.CreateRoleRequest
-	30, // 38: metap.identity.v1.RoleAdminService.UpdateRole:input_type -> metap.identity.v1.UpdateRoleRequest
-	28, // 39: metap.identity.v1.RoleAdminService.DeleteRole:input_type -> metap.identity.v1.RoleNameRequest
-	31, // 40: metap.identity.v1.RoleAdminService.ListRoleAudit:input_type -> metap.identity.v1.ListRoleAuditRequest
-	28, // 41: metap.identity.v1.RoleAdminService.GetRolePermissions:input_type -> metap.identity.v1.RoleNameRequest
-	35, // 42: metap.identity.v1.RoleAdminService.SetRolePermissions:input_type -> metap.identity.v1.SetRolePermissionsRequest
-	21, // 43: metap.identity.v1.AccountService.GetMe:input_type -> metap.identity.v1.Empty
-	37, // 44: metap.identity.v1.AccountService.UpdateProfile:input_type -> metap.identity.v1.UpdateProfileRequest
-	21, // 45: metap.identity.v1.AccountService.ListMyTenants:input_type -> metap.identity.v1.Empty
-	40, // 46: metap.identity.v1.AccountService.ListTenantUsers:input_type -> metap.identity.v1.ListTenantUsersRequest
-	45, // 47: metap.identity.v1.TenantAdminService.ListTenants:input_type -> metap.identity.v1.ListTenantsRequest
-	44, // 48: metap.identity.v1.TenantAdminService.GetTenant:input_type -> metap.identity.v1.TenantIdRequest
-	47, // 49: metap.identity.v1.TenantAdminService.CreateTenant:input_type -> metap.identity.v1.CreateTenantRequest
-	49, // 50: metap.identity.v1.TenantAdminService.UpdateTenant:input_type -> metap.identity.v1.UpdateTenantRequest
-	44, // 51: metap.identity.v1.TenantAdminService.SuspendTenant:input_type -> metap.identity.v1.TenantIdRequest
-	44, // 52: metap.identity.v1.TenantAdminService.ResumeTenant:input_type -> metap.identity.v1.TenantIdRequest
-	50, // 53: metap.identity.v1.TenantAdminService.RequestTenantDeletion:input_type -> metap.identity.v1.RequestTenantDeletionRequest
-	44, // 54: metap.identity.v1.TenantAdminService.CancelTenantDeletion:input_type -> metap.identity.v1.TenantIdRequest
-	3,  // 55: metap.identity.v1.UserAdminService.ListUsers:output_type -> metap.identity.v1.ListUsersResponse
-	0,  // 56: metap.identity.v1.UserAdminService.GetUser:output_type -> metap.identity.v1.User
-	6,  // 57: metap.identity.v1.UserAdminService.CreateUser:output_type -> metap.identity.v1.CreateUserResponse
-	8,  // 58: metap.identity.v1.UserAdminService.InviteUser:output_type -> metap.identity.v1.InviteUserResponse
-	8,  // 59: metap.identity.v1.UserAdminService.ResendInvitation:output_type -> metap.identity.v1.InviteUserResponse
-	0,  // 60: metap.identity.v1.UserAdminService.UpdateUser:output_type -> metap.identity.v1.User
-	0,  // 61: metap.identity.v1.UserAdminService.DisableUser:output_type -> metap.identity.v1.User
-	0,  // 62: metap.identity.v1.UserAdminService.EnableUser:output_type -> metap.identity.v1.User
-	21, // 63: metap.identity.v1.UserAdminService.RemoveUser:output_type -> metap.identity.v1.Empty
-	21, // 64: metap.identity.v1.UserAdminService.ResetPassword:output_type -> metap.identity.v1.Empty
-	0,  // 65: metap.identity.v1.UserAdminService.AssignRole:output_type -> metap.identity.v1.User
-	0,  // 66: metap.identity.v1.UserAdminService.RevokeRole:output_type -> metap.identity.v1.User
-	14, // 67: metap.identity.v1.UserAdminService.ListScopeMembers:output_type -> metap.identity.v1.ListScopeMembersResponse
-	20, // 68: metap.identity.v1.UserAdminService.ListUserAudit:output_type -> metap.identity.v1.ListUserAuditResponse
-	0,  // 69: metap.identity.v1.UserAdminService.CreateServiceAccount:output_type -> metap.identity.v1.User
-	3,  // 70: metap.identity.v1.UserAdminService.ListServiceAccounts:output_type -> metap.identity.v1.ListUsersResponse
-	25, // 71: metap.identity.v1.UserAdminService.CreateApiKey:output_type -> metap.identity.v1.CreateApiKeyResponse
-	26, // 72: metap.identity.v1.UserAdminService.ListApiKeys:output_type -> metap.identity.v1.ListApiKeysResponse
-	21, // 73: metap.identity.v1.UserAdminService.RevokeApiKey:output_type -> metap.identity.v1.Empty
-	17, // 74: metap.identity.v1.RoleAdminService.ListRoles:output_type -> metap.identity.v1.ListRolesResponse
-	15, // 75: metap.identity.v1.RoleAdminService.GetRole:output_type -> metap.identity.v1.Role
-	15, // 76: metap.identity.v1.RoleAdminService.CreateRole:output_type -> metap.identity.v1.Role
-	15, // 77: metap.identity.v1.RoleAdminService.UpdateRole:output_type -> metap.identity.v1.Role
-	21, // 78: metap.identity.v1.RoleAdminService.DeleteRole:output_type -> metap.identity.v1.Empty
-	20, // 79: metap.identity.v1.RoleAdminService.ListRoleAudit:output_type -> metap.identity.v1.ListUserAuditResponse
-	34, // 80: metap.identity.v1.RoleAdminService.GetRolePermissions:output_type -> metap.identity.v1.RolePermissions
-	34, // 81: metap.identity.v1.RoleAdminService.SetRolePermissions:output_type -> metap.identity.v1.RolePermissions
-	36, // 82: metap.identity.v1.AccountService.GetMe:output_type -> metap.identity.v1.Me
-	36, // 83: metap.identity.v1.AccountService.UpdateProfile:output_type -> metap.identity.v1.Me
-	39, // 84: metap.identity.v1.AccountService.ListMyTenants:output_type -> metap.identity.v1.ListMyTenantsResponse
-	42, // 85: metap.identity.v1.AccountService.ListTenantUsers:output_type -> metap.identity.v1.ListTenantUsersResponse
-	46, // 86: metap.identity.v1.TenantAdminService.ListTenants:output_type -> metap.identity.v1.ListTenantsResponse
-	43, // 87: metap.identity.v1.TenantAdminService.GetTenant:output_type -> metap.identity.v1.Tenant
-	48, // 88: metap.identity.v1.TenantAdminService.CreateTenant:output_type -> metap.identity.v1.CreateTenantResponse
-	43, // 89: metap.identity.v1.TenantAdminService.UpdateTenant:output_type -> metap.identity.v1.Tenant
-	43, // 90: metap.identity.v1.TenantAdminService.SuspendTenant:output_type -> metap.identity.v1.Tenant
-	43, // 91: metap.identity.v1.TenantAdminService.ResumeTenant:output_type -> metap.identity.v1.Tenant
-	43, // 92: metap.identity.v1.TenantAdminService.RequestTenantDeletion:output_type -> metap.identity.v1.Tenant
-	43, // 93: metap.identity.v1.TenantAdminService.CancelTenantDeletion:output_type -> metap.identity.v1.Tenant
-	55, // [55:94] is the sub-list for method output_type
-	16, // [16:55] is the sub-list for method input_type
+	4,  // 35: metap.identity.v1.UserAdminService.ResetMfa:input_type -> metap.identity.v1.UserIdRequest
+	16, // 36: metap.identity.v1.RoleAdminService.ListRoles:input_type -> metap.identity.v1.ListRolesRequest
+	28, // 37: metap.identity.v1.RoleAdminService.GetRole:input_type -> metap.identity.v1.RoleNameRequest
+	29, // 38: metap.identity.v1.RoleAdminService.CreateRole:input_type -> metap.identity.v1.CreateRoleRequest
+	30, // 39: metap.identity.v1.RoleAdminService.UpdateRole:input_type -> metap.identity.v1.UpdateRoleRequest
+	28, // 40: metap.identity.v1.RoleAdminService.DeleteRole:input_type -> metap.identity.v1.RoleNameRequest
+	31, // 41: metap.identity.v1.RoleAdminService.ListRoleAudit:input_type -> metap.identity.v1.ListRoleAuditRequest
+	28, // 42: metap.identity.v1.RoleAdminService.GetRolePermissions:input_type -> metap.identity.v1.RoleNameRequest
+	35, // 43: metap.identity.v1.RoleAdminService.SetRolePermissions:input_type -> metap.identity.v1.SetRolePermissionsRequest
+	21, // 44: metap.identity.v1.AccountService.GetMe:input_type -> metap.identity.v1.Empty
+	37, // 45: metap.identity.v1.AccountService.UpdateProfile:input_type -> metap.identity.v1.UpdateProfileRequest
+	21, // 46: metap.identity.v1.AccountService.ListMyTenants:input_type -> metap.identity.v1.Empty
+	40, // 47: metap.identity.v1.AccountService.ListTenantUsers:input_type -> metap.identity.v1.ListTenantUsersRequest
+	21, // 48: metap.identity.v1.AccountService.GetMfaStatus:input_type -> metap.identity.v1.Empty
+	21, // 49: metap.identity.v1.AccountService.BeginMfaEnrollment:input_type -> metap.identity.v1.Empty
+	45, // 50: metap.identity.v1.AccountService.ConfirmMfaEnrollment:input_type -> metap.identity.v1.MfaCodeRequest
+	45, // 51: metap.identity.v1.AccountService.DisableMfa:input_type -> metap.identity.v1.MfaCodeRequest
+	45, // 52: metap.identity.v1.AccountService.RegenerateRecoveryCodes:input_type -> metap.identity.v1.MfaCodeRequest
+	49, // 53: metap.identity.v1.TenantAdminService.ListTenants:input_type -> metap.identity.v1.ListTenantsRequest
+	48, // 54: metap.identity.v1.TenantAdminService.GetTenant:input_type -> metap.identity.v1.TenantIdRequest
+	51, // 55: metap.identity.v1.TenantAdminService.CreateTenant:input_type -> metap.identity.v1.CreateTenantRequest
+	53, // 56: metap.identity.v1.TenantAdminService.UpdateTenant:input_type -> metap.identity.v1.UpdateTenantRequest
+	48, // 57: metap.identity.v1.TenantAdminService.SuspendTenant:input_type -> metap.identity.v1.TenantIdRequest
+	48, // 58: metap.identity.v1.TenantAdminService.ResumeTenant:input_type -> metap.identity.v1.TenantIdRequest
+	54, // 59: metap.identity.v1.TenantAdminService.RequestTenantDeletion:input_type -> metap.identity.v1.RequestTenantDeletionRequest
+	48, // 60: metap.identity.v1.TenantAdminService.CancelTenantDeletion:input_type -> metap.identity.v1.TenantIdRequest
+	3,  // 61: metap.identity.v1.UserAdminService.ListUsers:output_type -> metap.identity.v1.ListUsersResponse
+	0,  // 62: metap.identity.v1.UserAdminService.GetUser:output_type -> metap.identity.v1.User
+	6,  // 63: metap.identity.v1.UserAdminService.CreateUser:output_type -> metap.identity.v1.CreateUserResponse
+	8,  // 64: metap.identity.v1.UserAdminService.InviteUser:output_type -> metap.identity.v1.InviteUserResponse
+	8,  // 65: metap.identity.v1.UserAdminService.ResendInvitation:output_type -> metap.identity.v1.InviteUserResponse
+	0,  // 66: metap.identity.v1.UserAdminService.UpdateUser:output_type -> metap.identity.v1.User
+	0,  // 67: metap.identity.v1.UserAdminService.DisableUser:output_type -> metap.identity.v1.User
+	0,  // 68: metap.identity.v1.UserAdminService.EnableUser:output_type -> metap.identity.v1.User
+	21, // 69: metap.identity.v1.UserAdminService.RemoveUser:output_type -> metap.identity.v1.Empty
+	21, // 70: metap.identity.v1.UserAdminService.ResetPassword:output_type -> metap.identity.v1.Empty
+	0,  // 71: metap.identity.v1.UserAdminService.AssignRole:output_type -> metap.identity.v1.User
+	0,  // 72: metap.identity.v1.UserAdminService.RevokeRole:output_type -> metap.identity.v1.User
+	14, // 73: metap.identity.v1.UserAdminService.ListScopeMembers:output_type -> metap.identity.v1.ListScopeMembersResponse
+	20, // 74: metap.identity.v1.UserAdminService.ListUserAudit:output_type -> metap.identity.v1.ListUserAuditResponse
+	0,  // 75: metap.identity.v1.UserAdminService.CreateServiceAccount:output_type -> metap.identity.v1.User
+	3,  // 76: metap.identity.v1.UserAdminService.ListServiceAccounts:output_type -> metap.identity.v1.ListUsersResponse
+	25, // 77: metap.identity.v1.UserAdminService.CreateApiKey:output_type -> metap.identity.v1.CreateApiKeyResponse
+	26, // 78: metap.identity.v1.UserAdminService.ListApiKeys:output_type -> metap.identity.v1.ListApiKeysResponse
+	21, // 79: metap.identity.v1.UserAdminService.RevokeApiKey:output_type -> metap.identity.v1.Empty
+	21, // 80: metap.identity.v1.UserAdminService.ResetMfa:output_type -> metap.identity.v1.Empty
+	17, // 81: metap.identity.v1.RoleAdminService.ListRoles:output_type -> metap.identity.v1.ListRolesResponse
+	15, // 82: metap.identity.v1.RoleAdminService.GetRole:output_type -> metap.identity.v1.Role
+	15, // 83: metap.identity.v1.RoleAdminService.CreateRole:output_type -> metap.identity.v1.Role
+	15, // 84: metap.identity.v1.RoleAdminService.UpdateRole:output_type -> metap.identity.v1.Role
+	21, // 85: metap.identity.v1.RoleAdminService.DeleteRole:output_type -> metap.identity.v1.Empty
+	20, // 86: metap.identity.v1.RoleAdminService.ListRoleAudit:output_type -> metap.identity.v1.ListUserAuditResponse
+	34, // 87: metap.identity.v1.RoleAdminService.GetRolePermissions:output_type -> metap.identity.v1.RolePermissions
+	34, // 88: metap.identity.v1.RoleAdminService.SetRolePermissions:output_type -> metap.identity.v1.RolePermissions
+	36, // 89: metap.identity.v1.AccountService.GetMe:output_type -> metap.identity.v1.Me
+	36, // 90: metap.identity.v1.AccountService.UpdateProfile:output_type -> metap.identity.v1.Me
+	39, // 91: metap.identity.v1.AccountService.ListMyTenants:output_type -> metap.identity.v1.ListMyTenantsResponse
+	42, // 92: metap.identity.v1.AccountService.ListTenantUsers:output_type -> metap.identity.v1.ListTenantUsersResponse
+	43, // 93: metap.identity.v1.AccountService.GetMfaStatus:output_type -> metap.identity.v1.MfaStatus
+	44, // 94: metap.identity.v1.AccountService.BeginMfaEnrollment:output_type -> metap.identity.v1.MfaEnrollment
+	46, // 95: metap.identity.v1.AccountService.ConfirmMfaEnrollment:output_type -> metap.identity.v1.MfaRecoveryCodes
+	21, // 96: metap.identity.v1.AccountService.DisableMfa:output_type -> metap.identity.v1.Empty
+	46, // 97: metap.identity.v1.AccountService.RegenerateRecoveryCodes:output_type -> metap.identity.v1.MfaRecoveryCodes
+	50, // 98: metap.identity.v1.TenantAdminService.ListTenants:output_type -> metap.identity.v1.ListTenantsResponse
+	47, // 99: metap.identity.v1.TenantAdminService.GetTenant:output_type -> metap.identity.v1.Tenant
+	52, // 100: metap.identity.v1.TenantAdminService.CreateTenant:output_type -> metap.identity.v1.CreateTenantResponse
+	47, // 101: metap.identity.v1.TenantAdminService.UpdateTenant:output_type -> metap.identity.v1.Tenant
+	47, // 102: metap.identity.v1.TenantAdminService.SuspendTenant:output_type -> metap.identity.v1.Tenant
+	47, // 103: metap.identity.v1.TenantAdminService.ResumeTenant:output_type -> metap.identity.v1.Tenant
+	47, // 104: metap.identity.v1.TenantAdminService.RequestTenantDeletion:output_type -> metap.identity.v1.Tenant
+	47, // 105: metap.identity.v1.TenantAdminService.CancelTenantDeletion:output_type -> metap.identity.v1.Tenant
+	61, // [61:106] is the sub-list for method output_type
+	16, // [16:61] is the sub-list for method input_type
 	16, // [16:16] is the sub-list for extension type_name
 	16, // [16:16] is the sub-list for extension extendee
 	0,  // [0:16] is the sub-list for field type_name
@@ -3712,14 +3938,14 @@ func file_metap_identity_proto_init() {
 	if File_metap_identity_proto != nil {
 		return
 	}
-	file_metap_identity_proto_msgTypes[49].OneofWrappers = []any{}
+	file_metap_identity_proto_msgTypes[53].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_metap_identity_proto_rawDesc), len(file_metap_identity_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   51,
+			NumMessages:   55,
 			NumExtensions: 0,
 			NumServices:   4,
 		},

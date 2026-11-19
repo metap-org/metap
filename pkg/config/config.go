@@ -69,6 +69,32 @@ func (s *Snapshot) GetU64(key string) uint64 {
 	return uint64(defN)
 }
 
+// GetBool is convenience for the boolean keys; anything not a bool reads as the declared default.
+func (s *Snapshot) GetBool(key string) bool { return boolOf(s.Get(key), key) }
+
+func boolOf(v json.RawMessage, key string) bool {
+	var b bool
+	if err := json.Unmarshal(v, &b); err == nil {
+		return b
+	}
+	var def bool
+	if d := Lookup(key); d != nil {
+		_ = json.Unmarshal(d.Default(), &def)
+	}
+	return def
+}
+
+// GetStrings is convenience for the list-of-strings keys; anything else reads as empty.
+func (s *Snapshot) GetStrings(key string) []string { return stringsOf(s.Get(key)) }
+
+func stringsOf(v json.RawMessage) []string {
+	var out []string
+	if err := json.Unmarshal(v, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
 // PlatformWritableView is every key a platform admin may write, with its current fleet-wide
 // value. Operator keys are excluded on purpose.
 func (s *Snapshot) PlatformWritableView() []struct {
@@ -129,6 +155,8 @@ func (e *EffectiveConfig) GetU64(key string) uint64 {
 	_ = json.Unmarshal(def.Default(), &defN)
 	return uint64(defN)
 }
+
+func (e *EffectiveConfig) GetBool(key string) bool { return boolOf(e.Get(key), key) }
 
 // TenantView is every Tenant key with its effective value, plus whether this tenant set it.
 func (e *EffectiveConfig) TenantView() []struct {

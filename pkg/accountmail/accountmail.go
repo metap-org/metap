@@ -132,6 +132,27 @@ Nếu không phải bạn yêu cầu, cứ bỏ qua thư này: mật khẩu khô
 	return m.deliver(ctx, r.To, "Đặt lại mật khẩu / Reset your password", body)
 }
 
+// SignupVerification is what the signup confirmation email says.
+type SignupVerification struct {
+	To         string
+	TenantName string
+	Link       string
+	ExpiresAt  time.Time
+}
+
+func (m *Mailer) SendSignupVerification(ctx context.Context, v SignupVerification) error {
+	body := fmt.Sprintf(`Bạn (hoặc ai đó) đã đăng ký không gian làm việc "%s" bằng địa chỉ email này.
+Someone registered the workspace "%s" with this email address.
+
+Xác nhận và tạo không gian / Confirm and create it:
+%s
+
+Link dùng được một lần, hết hạn lúc / Single use, expires at %s.
+Nếu không phải bạn, cứ bỏ qua thư này: sẽ không có gì được tạo. / If it wasn't you, ignore this email: nothing is created.
+`, v.TenantName, v.TenantName, v.Link, v.ExpiresAt.UTC().Format("2006-01-02 15:04 UTC"))
+	return m.deliver(ctx, v.To, "Xác nhận đăng ký / Confirm your signup", body)
+}
+
 func (m *Mailer) deliver(ctx context.Context, to, subject, body string) error {
 	if !m.Configured() {
 		return ErrNotConfigured

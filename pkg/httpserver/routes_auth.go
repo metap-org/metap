@@ -75,6 +75,9 @@ func login(w http.ResponseWriter, r *http.Request, state *AppState) {
 		}})
 		return
 	}
+	if mfaGate(w, r, state, ident, m, now) {
+		return
+	}
 	startSession(w, r, state, ident.ID, m, now)
 }
 
@@ -89,6 +92,12 @@ func membershipsJSON(ms []identity.Membership) []map[string]any {
 // startSession mints the session for membership m and sets the cookies — a fresh login session
 // (its absolute-lifetime clock starts now), used by login and by switching tenant.
 func startSession(w http.ResponseWriter, r *http.Request, state *AppState, identityID uuid.UUID, m identity.Membership, now time.Time) {
+	startSessionWith(w, r, state, identityID, m, now, nil)
+}
+
+// startSessionWith is startSession plus extra fields in the response (the recovery codes shown
+// once when a required-MFA setup finishes the sign-in).
+func startSessionWith(w http.ResponseWriter, r *http.Request, state *AppState, identityID uuid.UUID, m identity.Membership, now time.Time, extra map[string]any) {
 	ttl := sessionTTLSeconds(r, state, m.TenantID)
 	token, err := state.MintToken(m.TenantID, m.MemberID, ttl)
 	if err != nil {
@@ -110,7 +119,11 @@ func startSession(w http.ResponseWriter, r *http.Request, state *AppState, ident
 	http.SetCookie(w, sessionCookie)
 	http.SetCookie(w, csrfCookie)
 	http.SetCookie(w, startedAtCookie)
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"token": token, "tenantId": m.TenantID}})
+	data := map[string]any{"token": token, "tenantId": m.TenantID}
+	for k, v := range extra {
+		data[k] = v
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
 // writeIdentityError maps pkg/identity's sign-in and password errors onto the error envelope.
@@ -379,6 +392,11 @@ func mountAuth(r chi.Router, state *AppState) {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
 	r.Post("/auth/login", wrap(login))
+	r.Post("/auth/signup", wrap(signup))
+	r.Post("/auth/signup/verify", wrap(signupVerify))
+	r.Post("/auth/login/mfa", wrap(loginMFA))
+	r.Post("/auth/mfa/setup", wrap(mfaSetup))
+	r.Post("/auth/mfa/setup/confirm", wrap(mfaSetupConfirm))
 	r.Post("/auth/logout", wrap(logout))
 	r.Post("/auth/switch-tenant", wrap(switchTenant))
 	r.Post("/auth/password", wrap(changePassword))

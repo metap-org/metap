@@ -34,6 +34,13 @@ const (
 	UnsupportedPolicyCondition = "unsupported_policy_condition"
 
 	// Sign-in and user administration (roadmap 113).
+	CaptchaFailed    = "captcha_failed"    // 400: the proof-of-humanity token was missing or wrong
+	SignupDisabled   = "signup_disabled"   // 403: self-service signup is switched off
+	SignupInvalid    = "signup_invalid"    // 400: unknown, expired or used signup link
+	MFAInvalidCode   = "mfa_invalid_code"  // 401: wrong, replayed or used-up second-factor code
+	MFAChallenge     = "mfa_challenge"     // 401: the second-step token expired or ran out of tries
+	MFAAlreadyOn     = "mfa_already_on"    // 409
+	MFANotEnrolled   = "mfa_not_enrolled"  // 409
 	AccountLocked    = "account_locked"    // 429: too many failed sign-ins, retry later
 	AccountDisabled  = "account_disabled"  // 403: the identity or this membership is disabled
 	SessionRevoked   = "session_revoked"   // 401: token issued before the user's sessions were revoked

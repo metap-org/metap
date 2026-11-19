@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"github.com/metap-org/metap/pkg/captcha"
 	"log/slog"
 	"net/http"
 	"os"
@@ -184,6 +185,9 @@ func Run(ctx context.Context, opts Options) error {
 		Host: config.SMTPHost, Port: config.SMTPPort, User: config.SMTPUser, Password: config.SMTPPassword,
 		From: config.SMTPFrom, PublicURL: config.PublicAppURL,
 	})
+	if state.Captcha, err = captcha.Build(env.String("CAPTCHA_PROVIDER", ""), env.String("CAPTCHA_SECRET", "")); err != nil {
+		return err
+	}
 	if state.CanIssueTokens() && !state.Mailer.Configured() {
 		slog.Warn("SMTP_HOST/SMTP_FROM not set: invitation and password-reset emails are not sent " +
 			"(an invitation's link is returned to the inviting admin instead)")

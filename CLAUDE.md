@@ -180,6 +180,31 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   carries no OAuth scope. Admin API on `UserAdminService`: `CreateServiceAccount`, `ListServiceAccounts`,
   `CreateApiKey` (token returned once), `ListApiKeys`, `RevokeApiKey`; gateway fields `serviceAccounts`, `apiKeys(userId)`, `createServiceAccount`, `createApiKey`, `revokeApiKey`. Not built yet:
   a tenant lifetime cap config key, per-key scopes.
+- **Two-factor authentication, TOTP (2026-11-19, roadmap 115 M3).** One factor per *identity* (a person in several tenants has one),
+  `metadata.mfa_factors`/`mfa_recovery_codes`/`mfa_challenges` (migration 0047, `pkg/identity/mfa.go`, RFC 6238 over stdlib, ±1 step,
+  a matched step is recorded so a code is single use; 10 recovery codes stored hashed, one use each). `/auth/login` calls `mfaGate`
+  after the password and tenant are settled: an enrolled person gets `{mfaRequired, mfaToken}` and posts the code to `/auth/login/mfa`
+  (5 wrong tries kill the 5-minute challenge); a tenant with `auth.requireMfa` (Tenant-tier bool) and a person without a factor gets
+  `{mfaSetupRequired, mfaToken}` and enrols through `/auth/mfa/setup` + `/auth/mfa/setup/confirm`, which also finishes the sign-in and
+  returns the recovery codes once. **Any password-only path must refuse an enrolled identity** — `peripherals.VerifyCredentials` (HTTP Basic and
+  what is built on it) returns nil for one; a script uses an API key. Account API on `AccountService` (`GetMfaStatus`, `BeginMfaEnrollment`,
+  `ConfirmMfaEnrollment`, `DisableMfa`/`RegenerateRecoveryCodes` need a current or recovery code) and `UserAdminService.ResetMfa` (same
+  shared-identity guard as `ResetPassword`); gateway `mfaStatus`, `beginMfaEnrollment`, `confirmMfaEnrollment`, `disableMfa`,
+  `regenerateRecoveryCodes`, `resetUserMfa`. Not built: WebAuthn, encryption of the TOTP secret at rest (plain column), MFA for the OIDC/OAuth2
+  provider logins (the IdP is the second factor there), a per-tenant enrolment grace period.
+- **Self-service signup (2026-11-19, roadmap 115 M2).** `POST /auth/signup {email, password, tenantName, displayName}` (REST, like the rest of `/auth/*`;
+  off until the platform-global key `signup.enabled` is true, else 403 `signup_disabled`) validates, stores a pending row in `metadata.signups`
+  (migration 0048, password kept only as an argon2id hash, 24 h link, 3 per address per hour) and emails a link — it always answers 202 so it never tells
+  who has an account. `POST /auth/signup/verify {token}` consumes the row, registers a `trial` tenant (`RegisterShared` → admin member + builtin roles
+  → `active`; any failure `Deprovision`s it and leaves the link usable), then signs the person in through `mfaGate`. An address that already has
+  an account keeps its password and just gains a second tenant (the link proves the address, not the right to change a password). **CAPTCHA** (`pkg/captcha`, Turnstile/hCaptcha/reCAPTCHA share one siteverify contract):
+  `CAPTCHA_PROVIDER` + `CAPTCHA_SECRET` env turn it on (a provider without a secret refuses to boot); `AppState.Captcha` nil = off. Signup then needs
+  `captchaToken` (checked after field validation, so bad forms cost no provider call; wrong token 400 `captcha_failed`, provider outage 503, the
+  caller's `RemoteAddr` is passed on — never `X-Forwarded-For`). **Tenant-name blocklist**: whole-name match after folding to lower-case letters
+  and digits against `reservedTenantNames` (code) plus the platform-global key `signup.blockedTenantNames`; checked at signup and again at verify
+  (a refused verify leaves the link usable). **Debug aid**: at `LOG_LEVEL=debug` the verification link and token are logged
+  (`signup verification link (debug log only)`), never at info or above — that is how signup is tried without SMTP. Not built: per-IP limits beyond the
+  global rate limiter, tier/plan choice at signup, resend-link endpoint, captcha on other public endpoints (login, forgot-password).
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

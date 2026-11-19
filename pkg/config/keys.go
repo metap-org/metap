@@ -55,6 +55,33 @@ func jsonString(v json.RawMessage) (string, bool) {
 	return s, true
 }
 
+func boolValue(v json.RawMessage) error {
+	var b bool
+	if err := json.Unmarshal(v, &b); err != nil {
+		return fmt.Errorf("must be true or false")
+	}
+	return nil
+}
+
+// stringList accepts a JSON array of at most maxItems non-empty strings of at most maxLen bytes.
+func stringList(maxItems, maxLen int) func(json.RawMessage) error {
+	return func(v json.RawMessage) error {
+		var list []string
+		if err := json.Unmarshal(v, &list); err != nil {
+			return fmt.Errorf("must be a list of strings")
+		}
+		if len(list) > maxItems {
+			return fmt.Errorf("at most %d entries", maxItems)
+		}
+		for _, s := range list {
+			if strings.TrimSpace(s) == "" || len(s) > maxLen {
+				return fmt.Errorf("every entry must be 1 to %d characters", maxLen)
+			}
+		}
+		return nil
+	}
+}
+
 func num(n float64) json.RawMessage {
 	b, _ := json.Marshal(n)
 	return b
@@ -194,6 +221,9 @@ const (
 	AuthSessionTTLSeconds          = "auth.sessionTtlSeconds"
 	AuthSessionAbsoluteMaxSeconds  = "auth.sessionAbsoluteMaxSeconds"
 	AuthPasswordMinLength          = "auth.passwordMinLength"
+	AuthRequireMFA                 = "auth.requireMfa"
+	SignupEnabled                  = "signup.enabled"
+	SignupBlockedTenantNames       = "signup.blockedTenantNames"
 	CronWebhookAuthorization       = "cron.webhookAuthorization"
 	ThemePrimaryColor              = "theme.primaryColor"
 	ThemeLogoURL                   = "theme.logoUrl"
@@ -221,6 +251,18 @@ var Registry = []KeyDef{
 	// tenants must satisfy the strictest of them: their password is one, shared by every tenant.
 	{Key: AuthPasswordMinLength, Level: LevelTenant, Default: func() json.RawMessage { return num(8) },
 		Validate: positiveIntIn(8, 128)},
+	// Every member signing in to this tenant must pass a second factor (roadmap 115 M3); one who has
+	// none is made to set it up first.
+	{Key: AuthRequireMFA, Level: LevelTenant, Default: func() json.RawMessage { return json.RawMessage("false") },
+		Validate: boolValue},
+	// Anyone may register a tenant of their own through /auth/signup (roadmap 115 M2). Off until an
+	// operator decides the deployment is open to the public.
+	{Key: SignupEnabled, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return json.RawMessage("false") },
+		Validate: boolValue},
+	// Tenant names nobody may register through /auth/signup, on top of the reserved list built into
+	// the code (brand names, "admin", "support", ...). Compared ignoring case, spaces and punctuation.
+	{Key: SignupBlockedTenantNames, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return json.RawMessage("[]") },
+		Validate: stringList(200, 100)},
 	{Key: AuthSessionAbsoluteMaxSeconds, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(86_400) },
 		Validate: positiveIntIn(3600, 2_592_000)},
 	// --- Tenant + secret ---

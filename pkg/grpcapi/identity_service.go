@@ -132,6 +132,12 @@ func identityErr(ctx context.Context, err error) error {
 	case errors.Is(err, identity.ErrWeakPassword):
 		return sendServiceError(ctx, &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.WeakPassword,
 			Message: err.Error(), FieldErrors: map[string][]string{"password": {err.Error()}}})
+	case errors.Is(err, identity.ErrMFAInvalidCode):
+		return svcErr(ctx, http.StatusUnauthorized, errcode.MFAInvalidCode, err.Error())
+	case errors.Is(err, identity.ErrMFAAlreadyOn):
+		return svcErr(ctx, http.StatusConflict, errcode.MFAAlreadyOn, err.Error())
+	case errors.Is(err, identity.ErrMFANotEnrolled), errors.Is(err, identity.ErrMFAEnrollNotRun):
+		return svcErr(ctx, http.StatusConflict, errcode.MFANotEnrolled, err.Error())
 	case errors.Is(err, identity.ErrInvalidEmail):
 		return sendServiceError(ctx, &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed,
 			Message: err.Error(), FieldErrors: map[string][]string{"email": {err.Error()}}})
