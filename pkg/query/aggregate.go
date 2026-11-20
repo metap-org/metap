@@ -157,14 +157,14 @@ const maxMetrics = 10
 // string here, not yet parsed. One shape for every transport (REST JSON body, gRPC Struct,
 // GraphQL Json scalar) — IntoInput is the single parse step every one of them calls.
 type AggregateSpec struct {
-	Metrics   []string
-	GroupBy   *string
-	Bucket    *string
-	TimeField *string
-	Filters   map[string]string
-	Since     *string
-	Until     *string
-	Limit     *int64
+	Metrics   []string          `json:"metrics,omitempty"`
+	GroupBy   *string           `json:"groupBy,omitempty"`
+	Bucket    *string           `json:"bucket,omitempty"`
+	TimeField *string           `json:"timeField,omitempty"`
+	Filters   map[string]string `json:"filters,omitempty"`
+	Since     *string           `json:"since,omitempty"`
+	Until     *string           `json:"until,omitempty"`
+	Limit     *int64            `json:"limit,omitempty"`
 }
 
 // IntoInput parses metric/bucket strings, same defaults as before this type existed (no metric

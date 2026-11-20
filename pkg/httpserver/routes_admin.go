@@ -1,6 +1,6 @@
 // Admin-gated policy management over HTTP — PermissionService.ListPolicies/CreatePolicy/
-// DeletePolicy/Explain, plus the context-cache invalidation. Users and roles moved to gRPC
-// (grpcapi.UserAdminService, roadmap 113). Every
+// DeletePolicy/Explain, plus the context-cache invalidation. Users and roles are typed operations
+// (adminapi.UserAdminService served by ops_admin.go, roadmaps 113 and 116). Every
 // handler here uses requireAdmin, not requireAuth — the admin role check happens once, so it can't
 // be forgotten on a future route added to this file.
 package httpserver

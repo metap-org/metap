@@ -8,7 +8,6 @@
 //		app.Main(app.Options{
 //			Name:     "scanning-service",
 //			// entities come from the blank-imported entities package's init() (metadata.SubmitEntity)
-//			GRPCPort: 3011,
 //			Routes:   scanningservice.MountRoutes,
 //		})
 //	}
@@ -23,24 +22,21 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"slices"
 	"sync/atomic"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/metap-org/metap/pkg/accountmail"
+	"github.com/metap-org/metap/pkg/adminapi"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
-	"github.com/metap-org/metap/pkg/grpcapi"
 	"github.com/metap-org/metap/pkg/httpserver"
 	"github.com/metap-org/metap/pkg/httpserver/attachmentroutes"
 	"github.com/metap-org/metap/pkg/httpserver/cronroutes"
 	"github.com/metap-org/metap/pkg/httpserver/dashboardroutes"
 	"github.com/metap-org/metap/pkg/httpserver/oauth2routes"
 	"github.com/metap-org/metap/pkg/infra"
-	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/shutdown"
@@ -64,16 +60,17 @@ type Options struct {
 	// Schema-strategy tables are backfilled across every tenant (reconciler.ScopeAllTenants).
 	Entities []metadata.EntityDefinition
 
-	// GRPCPort, when non-zero, serves the generic CRUD gRPC API on config.Host:GRPCPort (if the
-	// service's config enables gRPC — see grpcapi.OptionalServe).
-	GRPCPort int
-
-	// WrapBackend, if set, decorates the CRUD backend the gRPC API serves — e.g. to add
-	// service-specific create/update/delete guards. Defaults to state.Crud as-is.
+	// WrapBackend, if set, decorates the CRUD backend the REST API serves (/api/{entity}) — e.g.
+	// to add service-specific create/update/delete guards. Defaults to state.Crud as-is.
 	WrapBackend func(state *httpserver.AppState) (crud.RecordBackend, error)
 
+	// ExternalEntities are entities this service serves whose records live outside its database
+	// (a read model over another system): registered and served like the rest (metadata, REST),
+	// never reconciled, every call going to the entity's own Backend.
+	ExternalEntities []ExternalEntity
+
 	// Actions, if set, registers the handlers for the actions this service's entities declare
-	// (EntityDefinition.Actions); they are served over gRPC (ActionService) next to the CRUD API.
+	// (EntityDefinition.Actions); they are served over REST (POST /api/{entity}[/{id}]/actions/{action}).
 	// Handlers read and write through state.Crud (or the wrapped backend) with the caller's own
 	// RequestContext, so permissions bound them exactly like plain CRUD.
 	Actions func(state *httpserver.AppState, registry *crud.ActionRegistry) error
@@ -103,6 +100,12 @@ func Main(opts Options) {
 		slog.Error(opts.Name+" exited with an error", standard.LogError, err)
 		os.Exit(1)
 	}
+}
+
+// ExternalEntity is one Options.ExternalEntities entry.
+type ExternalEntity struct {
+	Definition metadata.EntityDefinition
+	Backend    func(state *httpserver.AppState) (crud.RecordBackend, error)
 }
 
 // Run boots the service and serves until ctx is cancelled, SIGINT/SIGTERM, or a listener failure.
@@ -154,6 +157,11 @@ func Run(ctx context.Context, opts Options) error {
 	// Indexes for dedicated tables are built by the reconcile above; peripherals' old
 	// records-table index reconciler was removed (that table was dropped in migration 0033).
 	peripherals.Check(ctx, pool, registry.ListEntities())
+	for _, ext := range opts.ExternalEntities {
+		if err := registry.Register(ext.Definition); err != nil {
+			return fmt.Errorf("registering external entity %s: %w", ext.Definition.Name, err)
+		}
+	}
 
 	// Opt-in first-run bootstrap for a single-service product. A product with several services
 	// should run its one-shot bootstrap process (BootstrapMain) instead: each service only knows
@@ -203,49 +211,42 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	if opts.GRPCPort != 0 {
-		var backend crud.RecordBackend = state.Crud
-		if opts.WrapBackend != nil {
-			if backend, err = opts.WrapBackend(state); err != nil {
-				return fmt.Errorf("building gRPC backend: %w", err)
+	// The record backend and the actions REST serves: the service's decorated backend when it
+	// has one, so its guards hold on every route.
+	if opts.WrapBackend != nil {
+		if state.Records, err = opts.WrapBackend(state); err != nil {
+			return fmt.Errorf("building record backend: %w", err)
+		}
+	}
+	if len(opts.ExternalEntities) > 0 {
+		external := make(map[string]crud.RecordBackend, len(opts.ExternalEntities))
+		for _, ext := range opts.ExternalEntities {
+			if external[ext.Definition.Name], err = ext.Backend(state); err != nil {
+				return fmt.Errorf("building backend for %s: %w", ext.Definition.Name, err)
 			}
 		}
-		var invoker crud.ActionInvoker
-		if opts.Actions != nil {
-			reg := crud.NewActionRegistry()
-			if err := opts.Actions(state, reg); err != nil {
-				return fmt.Errorf("registering actions: %w", err)
-			}
-			for _, def := range registry.Definitions() {
-				for _, a := range def.Actions {
-					if !reg.Has(def.Name, a.Name) {
-						return fmt.Errorf("entity %s declares action %s but no handler is registered", def.Name, a.Name)
-					}
+		state.Records = crud.RouteBackends(state.RecordBackend(), external)
+	}
+	if opts.Actions != nil {
+		reg := crud.NewActionRegistry()
+		if err := opts.Actions(state, reg); err != nil {
+			return fmt.Errorf("registering actions: %w", err)
+		}
+		for _, def := range registry.Definitions() {
+			for _, a := range def.Actions {
+				if !reg.Has(def.Name, a.Name) {
+					return fmt.Errorf("entity %s declares action %s but no handler is registered", def.Name, a.Name)
 				}
 			}
-			invoker = reg
 		}
-		// gRPC verifies exactly like HTTP: the JWKS verifier when configured, else the static key.
-		grpcServer, err := grpcapi.OptionalServe(config.Host, opts.GRPCPort, grpcapi.OptionalServeConfig{
-			Backend: backend, Router: state.Router, JWTPublicKey: tokens.PublicKey, TokenVerifierOverride: tokens.Verifier,
-			AuthContextEntity: state.AuthContextEntity, Metadata: state.Metadata, ContextAttributesCache: state.ContextAttributesCache,
-			Actions: invoker, Identity: identityConfig(state, auditStore),
-		})
-		if err != nil {
-			return fmt.Errorf("starting gRPC server: %w", err)
-		}
-		if grpcServer != nil {
-			defer grpcServer.GracefulStop()
-		}
+		state.Actions = reg
 	}
 
 	modules := opts.Modules
 	if modules == nil {
 		modules = DefaultModules()
 	}
-	if idc := identityConfig(state, auditStore); idc != nil {
-		modules = append(slices.Clone(modules), scimMount(state, tokens, *idc))
-	}
+	state.Identity = identityConfig(state, auditStore)
 	handler := httpserver.BuildRouter(state, config.CORSOrigins, append(modules, opts.Routes)...)
 	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
 	slog.Info(opts.Name+" listening", "addr", addr)
@@ -254,27 +255,13 @@ func Run(ctx context.Context, opts Options) error {
 	return httpx.ServeContext(serveCtx, &http.Server{Addr: addr, Handler: handler}, httpx.DefaultShutdownTimeout)
 }
 
-// scimMount serves SCIM user provisioning at /scim/v2 (roadmap 115 M12) on the token issuer. It
-// authenticates like gRPC does, with the caller's own bearer token (an API key of an admin
-// service account), since it runs UserAdminService in-process.
-func scimMount(state *httpserver.AppState, tokens *TokenAuth, idc grpcapi.IdentityConfig) httpserver.Mount {
-	verifier := tokens.Verifier
-	if verifier == nil {
-		verifier = &jwks.TokenVerifier{Kind: jwks.VerifierStatic, PublicKey: tokens.PublicKey, Leeway: jwks.DefaultLeeway}
-	}
-	auth := grpcapi.AuthConfig{Verifier: verifier, Router: state.Router, AuthContextEntity: state.AuthContextEntity,
-		Metadata: state.Metadata, ContextAttributesCache: state.ContextAttributesCache}
-	handler := http.StripPrefix("/scim/v2", grpcapi.SCIMHandler(grpcapi.NewUserAdminService(auth, idc)))
-	return func(r chi.Router, _ *httpserver.AppState) { r.Mount("/scim/v2", handler) }
-}
-
 // identityConfig serves user administration on the token issuer only (it owns identities); a
 // verify-only service returns nil.
-func identityConfig(state *httpserver.AppState, auditStore audit.Store) *grpcapi.IdentityConfig {
+func identityConfig(state *httpserver.AppState, auditStore audit.Store) *adminapi.IdentityConfig {
 	if !state.CanIssueTokens() {
 		return nil
 	}
-	return &grpcapi.IdentityConfig{Shared: state.Pool, Router: state.Router, Audit: auditStore,
+	return &adminapi.IdentityConfig{Shared: state.Pool, Router: state.Router, Audit: auditStore,
 		Mailer: state.Mailer, PasswordPolicy: state.PasswordPolicy(), APIKeyMaxDays: state.APIKeyMaxDays, PublicURL: state.PublicAppURL}
 }
 

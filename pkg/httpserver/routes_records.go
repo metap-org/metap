@@ -10,15 +10,23 @@ import (
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
 )
 
-var reservedQueryKeys = map[string]bool{"limit": true, "sort": true, "cursor": true, "listView": true, "jql": true, "offset": true, "search": true, "withTotal": true}
+// reservedQueryKeys are list parameters, never field filters. "ids", "expand" and "fields" are
+// roadmap 116's: ids is served here, expand by the API gateway (pkg/apigateway), fields is reserved.
+var reservedQueryKeys = map[string]bool{"limit": true, "sort": true, "cursor": true, "listView": true, "jql": true, "offset": true, "search": true, "withTotal": true,
+	"ids": true, "expand": true, "fields": true}
+
+// maxIDsPerRequest bounds GET /api/{entity}?ids=.
+const maxIDsPerRequest = 200
 
 func parseListInput(w http.ResponseWriter, values map[string][]string) (query.ListInput, bool) {
 	limit := int64(30)
@@ -67,6 +75,38 @@ func parseListInput(w http.ResponseWriter, values map[string][]string) (query.Li
 	return input, true
 }
 
+// listRecordsByID is GET /api/{entity}?ids=a,b,c: the records with those ids that exist and the
+// caller may read, in one call (what an `expand` across services batches into). Unknown, deleted
+// or denied ids are simply absent.
+func listRecordsByID(w http.ResponseWriter, r *http.Request, state *AppState, rc *permission.RequestContext, entity, raw string) {
+	parts := strings.Split(raw, ",")
+	if len(parts) > maxIDsPerRequest {
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed,
+			"`ids` may list at most "+strconv.Itoa(maxIDsPerRequest)+" ids.", nil)
+		return
+	}
+	ids := make([]uuid.UUID, 0, len(parts))
+	for _, p := range parts {
+		id, err := uuid.Parse(strings.TrimSpace(p))
+		if err != nil {
+			writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`ids` must be comma-separated record ids.",
+				map[string][]string{"ids": {"not a record id: " + p}})
+			return
+		}
+		ids = append(ids, id)
+	}
+	results, err := state.RecordBackend().GetMany(r.Context(), entity, ids, rc)
+	if err != nil {
+		writeCrudError(w, err)
+		return
+	}
+	records := make([]crud.RecordDto, 0, len(results))
+	for _, res := range results {
+		records = append(records, res.Record)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": records, "page": map[string]any{"limit": len(ids)}})
+}
+
 func firstValue(values map[string][]string, key string) string {
 	if vs, ok := values[key]; ok && len(vs) > 0 {
 		return vs[0]
@@ -80,12 +120,16 @@ func listRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	entity := chi.URLParam(r, "entity")
+	if raw := r.URL.Query().Get("ids"); raw != "" {
+		listRecordsByID(w, r, state, rc, entity, raw)
+		return
+	}
 	input, ok := parseListInput(w, r.URL.Query())
 	if !ok {
 		return
 	}
 
-	result, err := state.Crud.List(r.Context(), entity, input, rc)
+	result, err := state.RecordBackend().List(r.Context(), entity, input, rc)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -109,7 +153,7 @@ func getRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Get(r.Context(), entity, id, rc)
+	result, err := state.RecordBackend().Get(r.Context(), entity, id, rc)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -147,7 +191,7 @@ func createRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Create(r.Context(), entity, body.Data, rc, body.Reason)
+	result, err := state.RecordBackend().Create(r.Context(), entity, body.Data, rc, body.Reason)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -177,7 +221,7 @@ func updateRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Update(r.Context(), entity, id, body.Version, body.Data, rc, body.Reason)
+	result, err := state.RecordBackend().Update(r.Context(), entity, id, body.Version, body.Data, rc, body.Reason)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -206,7 +250,7 @@ func deleteRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Delete(r.Context(), entity, id, body.Version, rc, body.Reason)
+	result, err := state.RecordBackend().Delete(r.Context(), entity, id, body.Version, rc, body.Reason)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -237,7 +281,7 @@ func transitionRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Transition(r.Context(), entity, id, action, body.Version, body.Data, rc, body.Reason)
+	result, err := state.RecordBackend().Transition(r.Context(), entity, id, action, body.Version, body.Data, rc, body.Reason)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -264,7 +308,7 @@ func aggregateRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Aggregate(r.Context(), entity, spec, rc)
+	result, err := state.RecordBackend().Aggregate(r.Context(), entity, spec, rc)
 	if err != nil {
 		writeCrudError(w, err)
 		return

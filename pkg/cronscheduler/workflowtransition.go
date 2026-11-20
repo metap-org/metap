@@ -1,5 +1,5 @@
 // "workflow_transition"/"bulk_query_action" targets — both call back into the owning app's entity
-// CRUD via the configured crud.RecordBackend (normally a grpcapi.GrpcBackend), reusing its
+// CRUD via the configured crud.RecordBackend (normally a recordclient.Client on the owning app), reusing its
 // permission/validation/audit rather than this binary linking metap-crud/metap-metadata directly,
 // which would give an ops binary business-entity knowledge.
 package cronscheduler
@@ -26,7 +26,7 @@ func serviceContext() *permission.RequestContext {
 
 func targetGRPCBackend(backend crud.RecordBackend) (crud.RecordBackend, error) {
 	if backend == nil {
-		return nil, fmt.Errorf("CRON_TARGET_GRPC_ADDR is unset or the initial connection to it failed — workflow_transition/bulk_query_action jobs cannot run")
+		return nil, fmt.Errorf("CRON_TARGET_URL is unset — workflow_transition/bulk_query_action jobs cannot run")
 	}
 	return backend, nil
 }

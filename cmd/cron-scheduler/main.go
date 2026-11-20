@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/shutdown"
+	"github.com/metap-org/metap/pkg/recordclient"
 	"log/slog"
 	"os"
 	"strings"
@@ -18,7 +19,6 @@ import (
 
 	"github.com/metap-org/metap/pkg/cronscheduler"
 	"github.com/metap-org/metap/pkg/crud"
-	"github.com/metap-org/metap/pkg/grpcapi"
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
 	"github.com/metap-org/metap/pkg/kit/env"
@@ -72,22 +72,13 @@ func main() {
 		serviceToken = httpx.NewStaticServiceTokenSource("")
 	}
 
-	// workflow_transition/bulk_query_action jobs' entity CRUD backend, over gRPC now that
-	// metap-http no longer serves a REST /api/:entity* surface for these to call. Same
-	// degrade-gracefully shape as service_token above — a missing/unreachable gRPC endpoint only
-	// fails these two job types, everything else is unaffected.
-	grpcAddr, hasGRPC := env.Lookup("CRON_TARGET_GRPC_ADDR")
-	var targetGRPCBackend crud.RecordBackend
-	if hasGRPC {
-		backend, err := grpcapi.ConnectGrpcBackend(grpcAddr, serviceToken)
-		if err != nil {
-			slog.Warn("failed to connect to CRON_TARGET_GRPC_ADDR — workflow_transition/bulk_query_action jobs will fail until this is fixed; webhook/email jobs are unaffected",
-				standard.LogError, err, "addr", grpcAddr)
-		} else {
-			targetGRPCBackend = backend
-		}
+	// workflow_transition/bulk_query_action jobs' entity CRUD backend: the owning app's REST API
+	// (roadmap 116). A missing CRON_TARGET_URL only fails these two job types; everything else runs.
+	var targetBackend crud.RecordBackend
+	if targetURL, ok := env.Lookup("CRON_TARGET_URL"); ok && targetURL != "" {
+		targetBackend = recordclient.New(targetURL, serviceToken)
 	} else {
-		slog.Warn("CRON_TARGET_GRPC_ADDR is unset — workflow_transition/bulk_query_action jobs will fail; webhook/email jobs are unaffected. Point it at the owning app's gRPC port (GRPC_PORT).")
+		slog.Warn("CRON_TARGET_URL is unset — workflow_transition/bulk_query_action jobs will fail; webhook/email jobs are unaffected. Point it at the owning app's HTTP base URL.")
 	}
 
 	slog.Info("connecting to postgres...")
@@ -109,9 +100,9 @@ func main() {
 	}
 
 	executorConfig := &cronscheduler.ExecutorConfig{
-		TargetBaseURL:     targetBaseURL,
-		TargetGRPCBackend: targetGRPCBackend,
-		ServiceToken:      serviceToken,
+		TargetBaseURL: targetBaseURL,
+		TargetBackend: targetBackend,
+		ServiceToken:  serviceToken,
 		SMTP: cronscheduler.SmtpConfig{
 			Host: config.SMTPHost, Port: config.SMTPPort, User: config.SMTPUser,
 			Password: config.SMTPPassword, From: config.SMTPFrom,

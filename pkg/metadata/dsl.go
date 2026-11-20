@@ -35,6 +35,15 @@ func RefField(name, label, refEntity, displayField string) EntityField {
 	return f
 }
 
+// RefersTo marks a string field as holding the id of a record of refEntity that another service
+// owns (roadmap 116): a cross-service link. Nothing here checks it — no foreign key, no lookup in
+// this registry, no related display — since the target lives elsewhere; it tells the API gateway
+// (pkg/apigateway) what `?expand=` on the field resolves to. A same-service link is a RefField.
+func (f EntityField) RefersTo(refEntity string) EntityField {
+	f.RefEntity = Ptr(refEntity)
+	return f
+}
+
 // Require marks the field required.
 func (f EntityField) Require() EntityField { f.Required = Ptr(true); return f }
 

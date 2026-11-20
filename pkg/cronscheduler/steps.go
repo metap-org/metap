@@ -155,9 +155,9 @@ func runOneStep(ctx context.Context, config *ExecutorConfig, chain *cron.CronJob
 	}
 	switch targetType {
 	case cron.TargetWorkflowTransition:
-		return RunWorkflowTransition(ctx, config.TargetGRPCBackend, step.TargetConfig)
+		return RunWorkflowTransition(ctx, config.TargetBackend, step.TargetConfig)
 	case cron.TargetBulkQueryAction:
-		return RunBulkQueryAction(ctx, config.TargetGRPCBackend, step.TargetConfig)
+		return RunBulkQueryAction(ctx, config.TargetBackend, step.TargetConfig)
 	case cron.TargetWebhook:
 		// The chain's own tenant, exactly as a standalone webhook job would use its row's — a
 		// step inside a chain gets no different credential reach than one outside it.
