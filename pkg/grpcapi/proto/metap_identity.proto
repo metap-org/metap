@@ -324,6 +324,26 @@ service RoleAdminService {
   // Replaces the role's basic permissions in one transaction; advanced policies and other roles'
   // permissions are untouched. Not for the built-in admin role, which bypasses every policy.
   rpc SetRolePermissions(SetRolePermissionsRequest) returns (RolePermissions);
+  // The virtual resources the product declared (permissions that belong to no entity). A grant on
+  // one uses entity = PermissionResource.key and one of its actions.
+  rpc ListPermissionResources(Empty) returns (ListPermissionResourcesResponse);
+}
+
+message PermissionResourceAction {
+  string name = 1;
+  string description = 2;
+}
+
+message PermissionResource {
+  string name = 1;
+  string description = 2;
+  // The "entity" value to use in a RoleGrant for this resource.
+  string key = 3;
+  repeated PermissionResourceAction actions = 4;
+}
+
+message ListPermissionResourcesResponse {
+  repeated PermissionResource resources = 1;
 }
 
 message Me {

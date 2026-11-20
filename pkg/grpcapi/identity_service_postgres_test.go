@@ -558,3 +558,58 @@ func TestInviteWithoutEmailReturnsTheLinkAndPolicyAppliesToAdminPasswords(t *tes
 	_, err = h.client.Admin.CreateUser(ctx, &pb.CreateUserRequest{Email: uuid.NewString() + "@example.com", Password: "twelve-chars"})
 	require.NoError(t, err)
 }
+
+// Roadmap 115 M6: a permission that belongs to no entity is declared once, granted to a role like
+// any other, and enforced by CheckResource.
+func TestVirtualResourceGrantsAreValidatedAndEnforced(t *testing.T) {
+	permission.DeclareResource(permission.Resource{Name: "test.requestdata", Description: "request data", Actions: []permission.ResourceAction{
+		{Name: "view", Description: "see request data"}, {Name: "approve", Description: "approve a change request"}}})
+	h := newIdentityHarness(t)
+	tenant := uuid.New()
+	admin := h.member(tenant, "admin@acme.io", "admin")
+	bob := h.member(tenant, "bob@acme.io", "reviewer")
+	h.policyRole(tenant, "reviewer")
+	ctx := h.as(tenant, admin.ID)
+	key := permission.ResourceKey("test.requestdata")
+
+	list, err := h.client.Roles.ListPermissionResources(ctx, &pb.Empty{})
+	require.NoError(t, err)
+	var found *pb.PermissionResource
+	for _, r := range list.GetResources() {
+		if r.GetName() == "test.requestdata" {
+			found = r
+		}
+	}
+	require.NotNil(t, found)
+	assert.Equal(t, key, found.GetKey())
+	assert.Len(t, found.GetActions(), 2)
+	_, err = h.client.Roles.ListPermissionResources(h.as(tenant, bob.ID), &pb.Empty{})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "admins only")
+
+	// Only declared actions of declared resources are grantable.
+	for _, bad := range []*pb.RoleGrant{
+		{Entity: key, Action: "read"}, // an entity action is not one of this resource's
+		{Entity: key, Action: "nope"},
+		{Entity: permission.ResourceKey("test.ghost"), Action: "view"},
+	} {
+		bad := bad
+		assert.Equal(t, "validation_failed", errCode(t, func(o grpc.CallOption) error {
+			_, err := h.client.Roles.SetRolePermissions(ctx, &pb.SetRolePermissionsRequest{Role: "reviewer", Grants: []*pb.RoleGrant{bad}}, o)
+			return err
+		}), "%+v", bad)
+	}
+	set, err := h.client.Roles.SetRolePermissions(ctx, &pb.SetRolePermissionsRequest{Role: "reviewer", Grants: []*pb.RoleGrant{
+		{Entity: key, Action: "view"}, {Entity: "waf.zones", Action: "read"}}})
+	require.NoError(t, err)
+	assert.Len(t, set.GetGrants(), 2)
+
+	// The service honours it, for exactly the granted action.
+	perms := permission.NewPermissionService(control.NewPostgresPolicyStore(grpcTestRouterFor(h.pool)))
+	rc := &permission.RequestContext{TenantID: tenant.String(), UserID: bob.ID.String(), Roles: []string{"reviewer"}, HasRoles: true}
+	d, err := perms.CheckResource(context.Background(), rc, "test.requestdata", "view")
+	require.NoError(t, err)
+	assert.True(t, d.Allowed)
+	d, err = perms.CheckResource(context.Background(), rc, "test.requestdata", "approve")
+	require.NoError(t, err)
+	assert.False(t, d.Allowed)
+}

@@ -871,14 +871,15 @@ var UserAdminService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	RoleAdminService_ListRoles_FullMethodName          = "/metap.identity.v1.RoleAdminService/ListRoles"
-	RoleAdminService_GetRole_FullMethodName            = "/metap.identity.v1.RoleAdminService/GetRole"
-	RoleAdminService_CreateRole_FullMethodName         = "/metap.identity.v1.RoleAdminService/CreateRole"
-	RoleAdminService_UpdateRole_FullMethodName         = "/metap.identity.v1.RoleAdminService/UpdateRole"
-	RoleAdminService_DeleteRole_FullMethodName         = "/metap.identity.v1.RoleAdminService/DeleteRole"
-	RoleAdminService_ListRoleAudit_FullMethodName      = "/metap.identity.v1.RoleAdminService/ListRoleAudit"
-	RoleAdminService_GetRolePermissions_FullMethodName = "/metap.identity.v1.RoleAdminService/GetRolePermissions"
-	RoleAdminService_SetRolePermissions_FullMethodName = "/metap.identity.v1.RoleAdminService/SetRolePermissions"
+	RoleAdminService_ListRoles_FullMethodName               = "/metap.identity.v1.RoleAdminService/ListRoles"
+	RoleAdminService_GetRole_FullMethodName                 = "/metap.identity.v1.RoleAdminService/GetRole"
+	RoleAdminService_CreateRole_FullMethodName              = "/metap.identity.v1.RoleAdminService/CreateRole"
+	RoleAdminService_UpdateRole_FullMethodName              = "/metap.identity.v1.RoleAdminService/UpdateRole"
+	RoleAdminService_DeleteRole_FullMethodName              = "/metap.identity.v1.RoleAdminService/DeleteRole"
+	RoleAdminService_ListRoleAudit_FullMethodName           = "/metap.identity.v1.RoleAdminService/ListRoleAudit"
+	RoleAdminService_GetRolePermissions_FullMethodName      = "/metap.identity.v1.RoleAdminService/GetRolePermissions"
+	RoleAdminService_SetRolePermissions_FullMethodName      = "/metap.identity.v1.RoleAdminService/SetRolePermissions"
+	RoleAdminService_ListPermissionResources_FullMethodName = "/metap.identity.v1.RoleAdminService/ListPermissionResources"
 )
 
 // RoleAdminServiceClient is the client API for RoleAdminService service.
@@ -902,6 +903,9 @@ type RoleAdminServiceClient interface {
 	// Replaces the role's basic permissions in one transaction; advanced policies and other roles'
 	// permissions are untouched. Not for the built-in admin role, which bypasses every policy.
 	SetRolePermissions(ctx context.Context, in *SetRolePermissionsRequest, opts ...grpc.CallOption) (*RolePermissions, error)
+	// The virtual resources the product declared (permissions that belong to no entity). A grant on
+	// one uses entity = PermissionResource.key and one of its actions.
+	ListPermissionResources(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListPermissionResourcesResponse, error)
 }
 
 type roleAdminServiceClient struct {
@@ -992,6 +996,16 @@ func (c *roleAdminServiceClient) SetRolePermissions(ctx context.Context, in *Set
 	return out, nil
 }
 
+func (c *roleAdminServiceClient) ListPermissionResources(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListPermissionResourcesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPermissionResourcesResponse)
+	err := c.cc.Invoke(ctx, RoleAdminService_ListPermissionResources_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RoleAdminServiceServer is the server API for RoleAdminService service.
 // All implementations must embed UnimplementedRoleAdminServiceServer
 // for forward compatibility.
@@ -1013,6 +1027,9 @@ type RoleAdminServiceServer interface {
 	// Replaces the role's basic permissions in one transaction; advanced policies and other roles'
 	// permissions are untouched. Not for the built-in admin role, which bypasses every policy.
 	SetRolePermissions(context.Context, *SetRolePermissionsRequest) (*RolePermissions, error)
+	// The virtual resources the product declared (permissions that belong to no entity). A grant on
+	// one uses entity = PermissionResource.key and one of its actions.
+	ListPermissionResources(context.Context, *Empty) (*ListPermissionResourcesResponse, error)
 	mustEmbedUnimplementedRoleAdminServiceServer()
 }
 
@@ -1046,6 +1063,9 @@ func (UnimplementedRoleAdminServiceServer) GetRolePermissions(context.Context, *
 }
 func (UnimplementedRoleAdminServiceServer) SetRolePermissions(context.Context, *SetRolePermissionsRequest) (*RolePermissions, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetRolePermissions not implemented")
+}
+func (UnimplementedRoleAdminServiceServer) ListPermissionResources(context.Context, *Empty) (*ListPermissionResourcesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPermissionResources not implemented")
 }
 func (UnimplementedRoleAdminServiceServer) mustEmbedUnimplementedRoleAdminServiceServer() {}
 func (UnimplementedRoleAdminServiceServer) testEmbeddedByValue()                          {}
@@ -1212,6 +1232,24 @@ func _RoleAdminService_SetRolePermissions_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RoleAdminService_ListPermissionResources_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RoleAdminServiceServer).ListPermissionResources(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RoleAdminService_ListPermissionResources_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RoleAdminServiceServer).ListPermissionResources(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RoleAdminService_ServiceDesc is the grpc.ServiceDesc for RoleAdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1250,6 +1288,10 @@ var RoleAdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetRolePermissions",
 			Handler:    _RoleAdminService_SetRolePermissions_Handler,
+		},
+		{
+			MethodName: "ListPermissionResources",
+			Handler:    _RoleAdminService_ListPermissionResources_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

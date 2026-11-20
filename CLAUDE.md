@@ -216,6 +216,15 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   `RevokeOtherSessions`; gateway `mySessions`, `revokeSession`, `revokeOtherSessions`. The older "revoke all" (`sessions_revoked_at`, used on
   password change/disable) still applies on top. Not built: an admin view of a member's sessions, a cap on concurrent sessions, geo-IP/device
   names, notifying the person of a new sign-in.
+- **Permissions that belong to no entity (2026-11-20, roadmap 115 M6).** A product declares a virtual resource from an `init()`
+  (`permission.DeclareResource(Resource{Name: "waf.requestdata", Actions: [...]})`; panics on a bad or duplicate name) with its
+  own free-form action names. Policies for it live in the same table under the entity key `resource:<name>` (`ResourceKey`), so
+  they never collide with an entity; `SetRolePermissions` accepts such a grant only when `ValidResourceGrant(key, action)` (declared
+  resource, declared action), and `ListPermissionResources` (gateway `permissionResources`) tells an admin UI what can be granted.
+  Enforce with `PermissionService.CheckResource(ctx, rc, name, action)` (`CheckResourceIn` adds a `ScopeRef` for roles scoped to a
+  resource set). Same order as entity checks: OAuth scope first (`resource:*`, `resource:<name>:*`, `resource:<name>:<action>`
+  tokens — an empty scope grants nothing), then the admin bypass, then policies; deny by default; an undeclared resource/action is
+  an error, not a quiet deny. Not built: record-level conditions on a resource.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
