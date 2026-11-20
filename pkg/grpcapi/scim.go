@@ -225,23 +225,23 @@ func (h *scim) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	req := &pb.ListUsersRequest{Limit: 50}
 	if raw := q.Get("count"); raw != "" {
-		n, err := strconv.Atoi(raw)
+		n, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil || n < 0 {
 			scimFail(w, http.StatusBadRequest, "invalidValue", "`count` must be a non-negative integer.")
 			return
 		}
 		req.Limit = int32(min(n, scimMaxCount))
 	}
-	start := 1
+	start := int32(1)
 	if raw := q.Get("startIndex"); raw != "" {
-		n, err := strconv.Atoi(raw)
+		n, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil {
 			scimFail(w, http.StatusBadRequest, "invalidValue", "`startIndex` must be an integer.")
 			return
 		}
-		start = max(n, 1)
+		start = max(int32(n), 1)
 	}
-	req.Offset = int32(start - 1)
+	req.Offset = start - 1
 	exact := ""
 	if f := q.Get("filter"); f != "" {
 		m := scimFilter.FindStringSubmatch(f)
