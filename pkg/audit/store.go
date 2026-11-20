@@ -27,6 +27,12 @@ type Store interface {
 	// Query is the read side: one record's entries (and, with ChildEntities, its children's),
 	// newest first, one page at a time.
 	Query(ctx context.Context, tenantID uuid.UUID, q Query) ([]Row, error)
+
+	// Search is the tenant-wide read side: by person, object and time (roadmap 115 M9).
+	Search(ctx context.Context, tenantID uuid.UUID, q SearchQuery) ([]Row, error)
+
+	// VerifyChain recomputes the tenant's hash chain and reports the first broken link.
+	VerifyChain(ctx context.Context, tenantID uuid.UUID) (ChainReport, error)
 }
 
 // Query selects one page of a record's audit history.

@@ -535,3 +535,55 @@ message RequestTenantDeletionRequest {
   // 0 = 30 days.
   int32 retention_days = 2;
 }
+
+// The tenant's audit trail as a whole (roadmap 115 M9): search it by person, object and time, and
+// check that no entry was edited, removed or inserted after the fact. Tenant admins only; the
+// tenant is always the caller's.
+service AuditAdminService {
+  rpc SearchAudit(SearchAuditRequest) returns (SearchAuditResponse);
+  // Recomputes the tenant's hash chain from the first entry; reads every chained entry.
+  rpc VerifyAuditChain(Empty) returns (AuditChainReport);
+}
+
+message SearchAuditRequest {
+  string actor_user_id = 1;   // who
+  string entity = 2;          // which kind of object, e.g. "waf.zones"
+  string record_id = 3;       // which object
+  repeated string actions = 4; // create, update, delete, transition
+  string from = 5;            // RFC 3339, inclusive
+  string to = 6;              // RFC 3339, exclusive
+  string cursor = 7;
+  int32 limit = 8;
+}
+
+message AuditEntry {
+  string id = 1;
+  string entity = 2;
+  string record_id = 3;
+  string action = 4;
+  string transition_action = 5;
+  string actor_user_id = 6;
+  string reason = 7;
+  string occurred_at = 8;
+  string diff_json = 9;
+  // Position in the tenant's chain and its hash (hex); 0/"" for history from before the chain.
+  int64 seq = 10;
+  string hash = 11;
+}
+
+message SearchAuditResponse {
+  repeated AuditEntry entries = 1;
+  string next_cursor = 2;
+}
+
+message AuditChainReport {
+  bool ok = 1;
+  int64 checked = 2;
+  // The first position that does not verify, and why: "gap", "prev_hash", "hash" or "head".
+  int64 broken_seq = 3;
+  string reason = 4;
+  // The chain's recorded end; keep head_hash somewhere the database owner cannot rewrite to
+  // check the chain against an outside witness.
+  int64 head_seq = 5;
+  string head_hash = 6;
+}

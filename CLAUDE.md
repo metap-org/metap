@@ -178,8 +178,8 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   `identity.IsAPIKey(token)` to `control.ResolveAPIKeyContext`, which treats the key as a session issued at its
   creation: disabling the member or "revoke sessions" kills its keys at once, revoke/expiry are checked in SQL. A key
   carries no OAuth scope. Admin API on `UserAdminService`: `CreateServiceAccount`, `ListServiceAccounts`,
-  `CreateApiKey` (token returned once), `ListApiKeys`, `RevokeApiKey`; gateway fields `serviceAccounts`, `apiKeys(userId)`, `createServiceAccount`, `createApiKey`, `revokeApiKey`. Not built yet:
-  a tenant lifetime cap config key, per-key scopes.
+  `CreateApiKey` (token returned once), `ListApiKeys`, `RevokeApiKey`; gateway fields `serviceAccounts`, `apiKeys(userId)`, `createServiceAccount`, `createApiKey`, `revokeApiKey`. A tenant caps key lifetime with `auth.apiKeyMaxLifetimeDays` (Tenant tier, 0 = no cap; with a cap a key must expire within it, checked in `CreateApiKey`). Not built yet:
+  per-key scopes.
 - **Two-factor authentication, TOTP (2026-11-19, roadmap 115 M3).** One factor per *identity* (a person in several tenants has one),
   `metadata.mfa_factors`/`mfa_recovery_codes`/`mfa_challenges` (migration 0047, `pkg/identity/mfa.go`, RFC 6238 over stdlib, ±1 step,
   a matched step is recorded so a code is single use; 10 recovery codes stored hashed, one use each). `/auth/login` calls `mfaGate`
@@ -225,6 +225,21 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   resource set). Same order as entity checks: OAuth scope first (`resource:*`, `resource:<name>:*`, `resource:<name>:<action>`
   tokens — an empty scope grants nothing), then the admin bypass, then policies; deny by default; an undeclared resource/action is
   an error, not a quiet deny. Not built: record-level conditions on a resource.
+- **Tamper-evident audit, search and export (2026-11-20, roadmap 115 M9).** Every entry of `metadata.audit_trail_entries` carries `seq`
+  (per tenant, from 1), `prev_hash` and `hash`; `audit.PostgresStore.Record` writes in its own transaction under a `FOR UPDATE` lock on the
+  tenant's row in `metadata.audit_chain_heads`, so one tenant's chain is strictly sequential and tenants never wait for each other.
+  `metadata.audit_entry_hash(...)` (migration 0050) is the single definition of the hash — writer and `VerifyChain` both call it, never
+  recompute it in Go (jsonb text, UTC microseconds). Rows from before the chain have `seq` NULL and are outside it. `VerifyChain` reports
+  the first bad position (`gap`, `prev_hash`, `hash`, `head`); it is tamper-*evident* only — whoever owns the database can rewrite chain and
+  head, so keep `headHash` somewhere they cannot. Read side: `Store.Search` (tenant-wide, by actor/entity/record/actions/time),
+  `AuditAdminService.SearchAudit`/`VerifyAuditChain` (admin), gateway `auditEntries`/`verifyAuditChain`, REST `GET /admin/audit/export`
+  (csv|json, same filters, streams every page). Never add pruning to this table.
+- **SCIM 2.0 user provisioning (2026-11-20, roadmap 115 M12).** `/scim/v2` (`grpcapi.SCIMHandler`, mounted by `pkg/app` on the token issuer) is a
+  REST skin over `UserAdminService`, called in-process with the caller's own bearer token as incoming gRPC metadata — so authentication (an API
+  key of an admin service account), the admin check, last-admin guards, invitations and audit are the admin API's own; never reimplement a
+  rule in the SCIM layer. Users only: list (`filter=userName eq "..."`), get, create (= invite by email), PUT/PATCH (`active` bool or "True"/"False",
+  `displayName`, `name.formatted`; `userName` immutable), delete; plus ServiceProviderConfig/ResourceTypes/Schemas. Not built: Groups, roles, bulk,
+  other filters.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

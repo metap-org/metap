@@ -100,3 +100,35 @@ func TestServiceAccountAndAPIKeyLifecycle(t *testing.T) {
 	_, err = h.client.Account.GetMe(CallContext(context.Background(), tok), &pb.Empty{})
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 }
+
+// Roadmap 115 M11: a tenant can cap API-key lifetime; with a cap, a key must expire within it.
+func TestAPIKeyLifetimeIsCappedByTheTenant(t *testing.T) {
+	h := newIdentityHarness(t)
+	tenant := uuid.New()
+	admin := h.member(tenant, "admin@acme.io", "admin")
+	asAdmin := h.as(tenant, admin.ID)
+	sa, err := h.client.Admin.CreateServiceAccount(asAdmin, &pb.CreateServiceAccountRequest{Name: "ci"})
+	require.NoError(t, err)
+
+	// No cap: a key that never expires is fine.
+	_, err = h.client.Admin.CreateApiKey(asAdmin, &pb.CreateApiKeyRequest{UserId: sa.GetId(), Name: "forever"})
+	require.NoError(t, err)
+
+	_, err = h.pool.Exec(context.Background(),
+		`INSERT INTO metadata.tenant_configs (tenant_id, key, value) VALUES ($1, 'auth.apiKeyMaxLifetimeDays', '90')`, tenant)
+	require.NoError(t, err)
+	for _, days := range []int32{0, 91, 3650} {
+		_, err = h.client.Admin.CreateApiKey(asAdmin, &pb.CreateApiKeyRequest{UserId: sa.GetId(), Name: "too long", ExpiresInDays: days})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err), "expiresInDays=%d", days)
+	}
+	_, err = h.client.Admin.CreateApiKey(asAdmin, &pb.CreateApiKeyRequest{UserId: sa.GetId(), Name: "ok", ExpiresInDays: 90})
+	require.NoError(t, err)
+
+	// Another tenant is unaffected.
+	otherTenant := uuid.New()
+	otherAdmin := h.member(otherTenant, "admin@beta.io", "admin")
+	otherSA, err := h.client.Admin.CreateServiceAccount(h.as(otherTenant, otherAdmin.ID), &pb.CreateServiceAccountRequest{Name: "ci"})
+	require.NoError(t, err)
+	_, err = h.client.Admin.CreateApiKey(h.as(otherTenant, otherAdmin.ID), &pb.CreateApiKeyRequest{UserId: otherSA.GetId(), Name: "forever"})
+	require.NoError(t, err)
+}

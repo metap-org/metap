@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metap-org/metap/pkg/accountmail"
+	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
@@ -39,6 +40,8 @@ type AppState struct {
 	Metadata    *atomic.Pointer[metadata.MetadataRegistry]
 	Permissions *permission.PermissionService
 	Crud        *crud.CrudService
+	// Audit is the tenant's audit trail, for the admin export; nil when none is configured.
+	Audit audit.Store
 
 	// JWTPrivateKeyPEM/JWTPublicKey: the legacy static-RSA keypair. Used only when
 	// TokenSigner/TokenVerifier below are nil. JWTPrivateKeyPEM "" means this service never mints
@@ -167,6 +170,14 @@ func (s *AppState) PasswordPolicy() identity.PasswordPolicy {
 		}
 		return int(s.EffectiveConfig(ctx, tenantID).GetU64(config.AuthPasswordMinLength))
 	}
+}
+
+// APIKeyMaxDays is each tenant's cap on an API key's lifetime (auth.apiKeyMaxLifetimeDays), 0 = none.
+func (s *AppState) APIKeyMaxDays(ctx context.Context, tenantID uuid.UUID) int {
+	if s.Config == nil {
+		return 0
+	}
+	return int(s.EffectiveConfig(ctx, tenantID).GetU64(config.AuthAPIKeyMaxLifetimeDays))
 }
 
 // EffectiveConfig is one tenant's effective configuration — cache-first; a lookup failure

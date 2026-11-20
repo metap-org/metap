@@ -74,6 +74,10 @@ type Row struct {
 	OccurredAt       time.Time       `json:"occurredAt"`
 	ParentEntity     *string         `json:"parentEntity,omitempty"`
 	ParentID         *uuid.UUID      `json:"parentId,omitempty"`
+	// Seq/Hash place the entry in its tenant's tamper-evident chain (hex hash). Zero/empty for
+	// history written before the chain existed. Only filled by Search.
+	Seq  *int64 `json:"seq,omitempty"`
+	Hash string `json:"hash,omitempty"`
 }
 
 // RedactedMarker is the key of the marker that stands in for a redacted field's

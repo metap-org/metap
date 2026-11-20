@@ -38,6 +38,8 @@ type identityHarness struct {
 	privPEM string
 	client  *IdentityClient
 	mail    *capturedMail
+	auth    AuthConfig
+	cfg     IdentityConfig
 }
 
 // capturedMail records what the mailer sent (to + raw message).
@@ -90,6 +92,14 @@ func newIdentityHarness(t *testing.T, withMailer ...bool) *identityHarness {
 				return identity.MinPasswordLength
 			}
 			return n
+		},
+		APIKeyMaxDays: func(ctx context.Context, tenant uuid.UUID) int {
+			var n int
+			if err := pool.QueryRow(ctx, `SELECT value::int FROM metadata.tenant_configs
+				WHERE tenant_id = $1 AND key = 'auth.apiKeyMaxLifetimeDays'`, tenant).Scan(&n); err != nil {
+				return 0
+			}
+			return n
 		}}
 	if len(withMailer) == 0 || withMailer[0] {
 		cfg.Mailer = accountmail.New(accountmail.Config{Host: "mail", Port: 1025, From: "no-reply@example.com",
@@ -102,7 +112,7 @@ func newIdentityHarness(t *testing.T, withMailer ...bool) *identityHarness {
 	client, err := ConnectIdentity(lis.Addr().String())
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
-	return &identityHarness{t: t, pool: pool, privPEM: privPEM, client: client, mail: mail}
+	return &identityHarness{t: t, pool: pool, privPEM: privPEM, client: client, mail: mail, auth: auth, cfg: cfg}
 }
 
 func (h *identityHarness) as(tenant, user uuid.UUID) context.Context {
@@ -612,4 +622,59 @@ func TestVirtualResourceGrantsAreValidatedAndEnforced(t *testing.T) {
 	d, err = perms.CheckResource(context.Background(), rc, "test.requestdata", "approve")
 	require.NoError(t, err)
 	assert.False(t, d.Allowed)
+}
+
+// Roadmap 115 M9: the tenant's audit trail is searchable by person/object/time, admin changes made
+// through these services land in a verifiable chain, and a forged row is reported.
+func TestAuditAdminSearchAndVerify(t *testing.T) {
+	h := newIdentityHarness(t)
+	tenant := uuid.New()
+	admin := h.member(tenant, "admin@acme.io", "admin")
+	bob := h.member(tenant, "bob@acme.io", "reviewer")
+	ctx := h.as(tenant, admin.ID)
+
+	// Two audited admin changes by the admin.
+	_, err := h.client.Admin.DisableUser(ctx, &pb.UserIdRequest{Id: bob.ID.String()})
+	require.NoError(t, err)
+	_, err = h.client.Admin.EnableUser(ctx, &pb.UserIdRequest{Id: bob.ID.String()})
+	require.NoError(t, err)
+
+	res, err := h.client.Audit.SearchAudit(ctx, &pb.SearchAuditRequest{ActorUserId: admin.ID.String()})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(res.GetEntries()), 2)
+	for _, e := range res.GetEntries() {
+		assert.Equal(t, admin.ID.String(), e.GetActorUserId())
+		assert.NotZero(t, e.GetSeq())
+		assert.NotEmpty(t, e.GetHash())
+	}
+	byObject, err := h.client.Audit.SearchAudit(ctx, &pb.SearchAuditRequest{Entity: AuditEntityUsers, RecordId: bob.ID.String()})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(byObject.GetEntries()), 2)
+	none, err := h.client.Audit.SearchAudit(ctx, &pb.SearchAuditRequest{ActorUserId: uuid.NewString()})
+	require.NoError(t, err)
+	assert.Empty(t, none.GetEntries())
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	late, err := h.client.Audit.SearchAudit(ctx, &pb.SearchAuditRequest{From: future})
+	require.NoError(t, err)
+	assert.Empty(t, late.GetEntries())
+	_, err = h.client.Audit.SearchAudit(ctx, &pb.SearchAuditRequest{From: "yesterday"})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	_, err = h.client.Audit.SearchAudit(h.as(tenant, bob.ID), &pb.SearchAuditRequest{})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "admins only")
+	_, err = h.client.Audit.VerifyAuditChain(h.as(tenant, bob.ID), &pb.Empty{})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	rep, err := h.client.Audit.VerifyAuditChain(ctx, &pb.Empty{})
+	require.NoError(t, err)
+	assert.True(t, rep.GetOk(), "%+v", rep)
+	assert.GreaterOrEqual(t, rep.GetChecked(), int64(2))
+
+	_, err = h.pool.Exec(context.Background(),
+		`UPDATE metadata.audit_trail_entries SET diff = '{"x":1}' WHERE tenant_id = $1 AND seq = 1`, tenant)
+	require.NoError(t, err)
+	rep, err = h.client.Audit.VerifyAuditChain(ctx, &pb.Empty{})
+	require.NoError(t, err)
+	assert.False(t, rep.GetOk())
+	assert.EqualValues(t, 1, rep.GetBrokenSeq())
 }
