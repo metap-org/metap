@@ -2373,3 +2373,235 @@ var AuditAdminService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "metap_identity.proto",
 }
+
+const (
+	SupportAccessService_GrantSupportAccess_FullMethodName  = "/metap.identity.v1.SupportAccessService/GrantSupportAccess"
+	SupportAccessService_ListSupportGrants_FullMethodName   = "/metap.identity.v1.SupportAccessService/ListSupportGrants"
+	SupportAccessService_RevokeSupportGrant_FullMethodName  = "/metap.identity.v1.SupportAccessService/RevokeSupportGrant"
+	SupportAccessService_StartSupportSession_FullMethodName = "/metap.identity.v1.SupportAccessService/StartSupportSession"
+)
+
+// SupportAccessServiceClient is the client API for SupportAccessService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Support access (roadmap 115 M10). A tenant admin lets the vendor's support staff act inside the
+// tenant for a limited time and for a stated reason; a platform admin then starts a session under
+// the grant and receives an API key of a "Support: <email>" service account holding exactly the
+// granted role. The key expires with the grant (and within 8 hours of being issued); revoking the
+// grant ends every session at once. Everything support does is attributed to that account.
+type SupportAccessServiceClient interface {
+	// Tenant admin.
+	GrantSupportAccess(ctx context.Context, in *GrantSupportAccessRequest, opts ...grpc.CallOption) (*SupportGrant, error)
+	ListSupportGrants(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListSupportGrantsResponse, error)
+	RevokeSupportGrant(ctx context.Context, in *SupportGrantIdRequest, opts ...grpc.CallOption) (*SupportGrant, error)
+	// Platform admin: needs an active grant on the tenant.
+	StartSupportSession(ctx context.Context, in *StartSupportSessionRequest, opts ...grpc.CallOption) (*SupportSessionToken, error)
+}
+
+type supportAccessServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewSupportAccessServiceClient(cc grpc.ClientConnInterface) SupportAccessServiceClient {
+	return &supportAccessServiceClient{cc}
+}
+
+func (c *supportAccessServiceClient) GrantSupportAccess(ctx context.Context, in *GrantSupportAccessRequest, opts ...grpc.CallOption) (*SupportGrant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SupportGrant)
+	err := c.cc.Invoke(ctx, SupportAccessService_GrantSupportAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *supportAccessServiceClient) ListSupportGrants(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListSupportGrantsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSupportGrantsResponse)
+	err := c.cc.Invoke(ctx, SupportAccessService_ListSupportGrants_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *supportAccessServiceClient) RevokeSupportGrant(ctx context.Context, in *SupportGrantIdRequest, opts ...grpc.CallOption) (*SupportGrant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SupportGrant)
+	err := c.cc.Invoke(ctx, SupportAccessService_RevokeSupportGrant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *supportAccessServiceClient) StartSupportSession(ctx context.Context, in *StartSupportSessionRequest, opts ...grpc.CallOption) (*SupportSessionToken, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SupportSessionToken)
+	err := c.cc.Invoke(ctx, SupportAccessService_StartSupportSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SupportAccessServiceServer is the server API for SupportAccessService service.
+// All implementations must embed UnimplementedSupportAccessServiceServer
+// for forward compatibility.
+//
+// Support access (roadmap 115 M10). A tenant admin lets the vendor's support staff act inside the
+// tenant for a limited time and for a stated reason; a platform admin then starts a session under
+// the grant and receives an API key of a "Support: <email>" service account holding exactly the
+// granted role. The key expires with the grant (and within 8 hours of being issued); revoking the
+// grant ends every session at once. Everything support does is attributed to that account.
+type SupportAccessServiceServer interface {
+	// Tenant admin.
+	GrantSupportAccess(context.Context, *GrantSupportAccessRequest) (*SupportGrant, error)
+	ListSupportGrants(context.Context, *Empty) (*ListSupportGrantsResponse, error)
+	RevokeSupportGrant(context.Context, *SupportGrantIdRequest) (*SupportGrant, error)
+	// Platform admin: needs an active grant on the tenant.
+	StartSupportSession(context.Context, *StartSupportSessionRequest) (*SupportSessionToken, error)
+	mustEmbedUnimplementedSupportAccessServiceServer()
+}
+
+// UnimplementedSupportAccessServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedSupportAccessServiceServer struct{}
+
+func (UnimplementedSupportAccessServiceServer) GrantSupportAccess(context.Context, *GrantSupportAccessRequest) (*SupportGrant, error) {
+	return nil, status.Error(codes.Unimplemented, "method GrantSupportAccess not implemented")
+}
+func (UnimplementedSupportAccessServiceServer) ListSupportGrants(context.Context, *Empty) (*ListSupportGrantsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSupportGrants not implemented")
+}
+func (UnimplementedSupportAccessServiceServer) RevokeSupportGrant(context.Context, *SupportGrantIdRequest) (*SupportGrant, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeSupportGrant not implemented")
+}
+func (UnimplementedSupportAccessServiceServer) StartSupportSession(context.Context, *StartSupportSessionRequest) (*SupportSessionToken, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartSupportSession not implemented")
+}
+func (UnimplementedSupportAccessServiceServer) mustEmbedUnimplementedSupportAccessServiceServer() {}
+func (UnimplementedSupportAccessServiceServer) testEmbeddedByValue()                              {}
+
+// UnsafeSupportAccessServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to SupportAccessServiceServer will
+// result in compilation errors.
+type UnsafeSupportAccessServiceServer interface {
+	mustEmbedUnimplementedSupportAccessServiceServer()
+}
+
+func RegisterSupportAccessServiceServer(s grpc.ServiceRegistrar, srv SupportAccessServiceServer) {
+	// If the following call panics, it indicates UnimplementedSupportAccessServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&SupportAccessService_ServiceDesc, srv)
+}
+
+func _SupportAccessService_GrantSupportAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GrantSupportAccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SupportAccessServiceServer).GrantSupportAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SupportAccessService_GrantSupportAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SupportAccessServiceServer).GrantSupportAccess(ctx, req.(*GrantSupportAccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SupportAccessService_ListSupportGrants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SupportAccessServiceServer).ListSupportGrants(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SupportAccessService_ListSupportGrants_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SupportAccessServiceServer).ListSupportGrants(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SupportAccessService_RevokeSupportGrant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SupportGrantIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SupportAccessServiceServer).RevokeSupportGrant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SupportAccessService_RevokeSupportGrant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SupportAccessServiceServer).RevokeSupportGrant(ctx, req.(*SupportGrantIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SupportAccessService_StartSupportSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartSupportSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SupportAccessServiceServer).StartSupportSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SupportAccessService_StartSupportSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SupportAccessServiceServer).StartSupportSession(ctx, req.(*StartSupportSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// SupportAccessService_ServiceDesc is the grpc.ServiceDesc for SupportAccessService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var SupportAccessService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "metap.identity.v1.SupportAccessService",
+	HandlerType: (*SupportAccessServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GrantSupportAccess",
+			Handler:    _SupportAccessService_GrantSupportAccess_Handler,
+		},
+		{
+			MethodName: "ListSupportGrants",
+			Handler:    _SupportAccessService_ListSupportGrants_Handler,
+		},
+		{
+			MethodName: "RevokeSupportGrant",
+			Handler:    _SupportAccessService_RevokeSupportGrant_Handler,
+		},
+		{
+			MethodName: "StartSupportSession",
+			Handler:    _SupportAccessService_StartSupportSession_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "metap_identity.proto",
+}

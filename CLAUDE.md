@@ -240,6 +240,14 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   rule in the SCIM layer. Users only: list (`filter=userName eq "..."`), get, create (= invite by email), PUT/PATCH (`active` bool or "True"/"False",
   `displayName`, `name.formatted`; `userName` immutable), delete; plus ServiceProviderConfig/ResourceTypes/Schemas. Not built: Groups, roles, bulk,
   other filters.
+- **Support access (2026-11-20, roadmap 115 M10).** A tenant admin grants the vendor time-boxed access (`GrantSupportAccess{reason, role, hours}`;
+  reason required, role must exist in the tenant, 1-168 h, default 24; `metadata.support_grants`, migration 0051). A platform admin then calls
+  `StartSupportSession{tenantId}` under the tenant's newest active grant: it creates a service account `Support: <email>` in the tenant holding exactly the
+  granted role plus an API key that expires with the grant and at most 8 h after issue (`identity.SupportSessionMaxHours`) — no new auth path, so
+  everything support does is attributed to that member in the audit trail and the tenant sees it in its service-account list. `RevokeSupportGrant` revokes
+  every key and removes every session member at once; `ListSupportGrants` also sweeps members of lapsed grants. Grant, revoke and session start are audited
+  under `metadata.support_grants` (the start under the support person's id). API: `SupportAccessService`; gateway `supportGrants`, `grantSupportAccess`,
+  `revokeSupportGrant`, `startSupportSession`. Not built: tenant-side approval before each session, notifying the tenant by email, per-session reason.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

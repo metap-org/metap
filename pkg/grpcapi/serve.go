@@ -84,6 +84,7 @@ func RegisterIdentity(srv *grpc.Server, auth AuthConfig, cfg IdentityConfig) {
 	pb.RegisterAccountServiceServer(srv, NewAccountService(auth, cfg))
 	pb.RegisterTenantAdminServiceServer(srv, NewTenantAdminService(auth, cfg))
 	pb.RegisterAuditAdminServiceServer(srv, NewAuditAdminService(auth, cfg))
+	pb.RegisterSupportAccessServiceServer(srv, NewSupportAccessService(auth, cfg))
 }
 
 // OptionalServe reads GRPC_ENABLED/GRPC_PORT (falling back to defaultPort) to decide whether to

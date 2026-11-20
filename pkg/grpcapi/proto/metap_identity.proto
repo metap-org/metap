@@ -587,3 +587,62 @@ message AuditChainReport {
   int64 head_seq = 5;
   string head_hash = 6;
 }
+
+// Support access (roadmap 115 M10). A tenant admin lets the vendor's support staff act inside the
+// tenant for a limited time and for a stated reason; a platform admin then starts a session under
+// the grant and receives an API key of a "Support: <email>" service account holding exactly the
+// granted role. The key expires with the grant (and within 8 hours of being issued); revoking the
+// grant ends every session at once. Everything support does is attributed to that account.
+service SupportAccessService {
+  // Tenant admin.
+  rpc GrantSupportAccess(GrantSupportAccessRequest) returns (SupportGrant);
+  rpc ListSupportGrants(Empty) returns (ListSupportGrantsResponse);
+  rpc RevokeSupportGrant(SupportGrantIdRequest) returns (SupportGrant);
+  // Platform admin: needs an active grant on the tenant.
+  rpc StartSupportSession(StartSupportSessionRequest) returns (SupportSessionToken);
+}
+
+message GrantSupportAccessRequest {
+  string reason = 1;
+  // 1..168, default 24.
+  int32 hours = 2;
+  // The role support will hold in the tenant; it must exist there.
+  string role = 3;
+}
+
+message SupportGrantIdRequest { string id = 1; }
+
+message SupportSessionInfo {
+  string member_id = 1;
+  string started_by_email = 2;
+  string started_at = 3;
+}
+
+message SupportGrant {
+  string id = 1;
+  string reason = 2;
+  string role = 3;
+  string granted_by = 4;
+  string expires_at = 5;
+  string revoked_at = 6;
+  string created_at = 7;
+  bool active = 8;
+  repeated SupportSessionInfo sessions = 9;
+}
+
+message ListSupportGrantsResponse { repeated SupportGrant grants = 1; }
+
+message StartSupportSessionRequest {
+  string tenant_id = 1;
+  // Optional: the grant to use; default is the tenant's newest active one.
+  string grant_id = 2;
+}
+
+message SupportSessionToken {
+  // An API key (mk_...), shown once.
+  string token = 1;
+  string expires_at = 2;
+  string tenant_id = 3;
+  string role = 4;
+  string grant_id = 5;
+}
