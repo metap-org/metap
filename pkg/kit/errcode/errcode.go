@@ -50,6 +50,8 @@ const (
 	LastAdmin        = "last_admin"        // 409: the change would leave the tenant without an admin
 	SelfModification = "self_modification" // 409: an admin cannot disable, remove or demote themselves
 	OwnerProtected   = "owner_protected"   // 403: only the tenant owner may change the owner
+	SSORequired      = "sso_required"      // 403: this tenant signs in through its identity provider, not a password
+	SSOFailed        = "sso_failed"        // 400/403: the single sign-in could not be completed
 	WrongPassword    = "wrong_password"    // 400: the current password given to a change is wrong
 
 	// Invitations and password reset (roadmap 113 P2).

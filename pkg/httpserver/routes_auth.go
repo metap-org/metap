@@ -75,6 +75,9 @@ func login(w http.ResponseWriter, r *http.Request, state *AppState) {
 		}})
 		return
 	}
+	if ssoRequired(w, r, state, m) {
+		return
+	}
 	if mfaGate(w, r, state, ident, m, now) {
 		return
 	}
@@ -98,26 +101,41 @@ func startSession(w http.ResponseWriter, r *http.Request, state *AppState, ident
 // startSessionWith is startSession plus extra fields in the response (the recovery codes shown
 // once when a required-MFA setup finishes the sign-in).
 func startSessionWith(w http.ResponseWriter, r *http.Request, state *AppState, identityID uuid.UUID, m identity.Membership, now time.Time, extra map[string]any) {
+	token, ok := issueSession(w, r, state, identityID, m, now)
+	if !ok {
+		return
+	}
+	data := map[string]any{"token": token, "tenantId": m.TenantID}
+	for k, v := range extra {
+		data[k] = v
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
+// issueSession creates the session row, mints its token and sets the session cookies, writing the
+// error response itself (and returning false) when that fails. The caller writes the body: JSON for
+// a password sign-in, a redirect for SSO.
+func issueSession(w http.ResponseWriter, r *http.Request, state *AppState, identityID uuid.UUID, m identity.Membership, now time.Time) (string, bool) {
 	_ = identity.PurgeSessions(r.Context(), state.Pool, now)
 	ttl := sessionTTLSeconds(r, state, m.TenantID)
 	sessionID, err := identity.CreateSession(r.Context(), state.Pool, identityID, m.MemberID, m.TenantID,
 		time.Duration(ttl)*time.Second, clientIP(r), r.UserAgent(), now)
 	if err != nil {
 		writeInternalError(w, err)
-		return
+		return "", false
 	}
 	token, err := state.MintSessionToken(m.TenantID, m.MemberID, ttl, sessionID.String())
 	if err != nil {
 		if errors.Is(err, ErrNotTokenIssuer) {
 			writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, err.Error(), nil)
-			return
+			return "", false
 		}
 		writeInternalError(w, err)
-		return
+		return "", false
 	}
 	if err := identity.RecordSignIn(r.Context(), state.Pool, identityID, m.MemberID, m.TenantID, now); err != nil {
 		writeInternalError(w, err)
-		return
+		return "", false
 	}
 	csrfValue := uuid.New().String()
 	sessionCookie, csrfCookie := sessionCookies(token, csrfValue, int(ttl), state.CookieSecure)
@@ -126,11 +144,7 @@ func startSessionWith(w http.ResponseWriter, r *http.Request, state *AppState, i
 	http.SetCookie(w, sessionCookie)
 	http.SetCookie(w, csrfCookie)
 	http.SetCookie(w, startedAtCookie)
-	data := map[string]any{"token": token, "tenantId": m.TenantID}
-	for k, v := range extra {
-		data[k] = v
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+	return token, true
 }
 
 // writeIdentityError maps pkg/identity's sign-in and password errors onto the error envelope.
@@ -181,6 +195,9 @@ func switchTenant(w http.ResponseWriter, r *http.Request, state *AppState) {
 	m, found := identity.PickMembership(memberships, &body.TenantID, nil)
 	if !found {
 		writeServiceError(w, http.StatusForbidden, errcode.NoTenantAccess, "You are not a member of that tenant.", nil)
+		return
+	}
+	if ssoRequired(w, r, state, m) {
 		return
 	}
 	startSession(w, r, state, identityID, m, time.Now())

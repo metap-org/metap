@@ -41,6 +41,8 @@ type IdentityConfig struct {
 	Router *control.Router
 	// Audit records every administrative change; nil records nothing.
 	Audit audit.Store
+	// PublicURL is the origin people reach the service at; the SSO redirect URI is built from it.
+	PublicURL string
 	// Mailer sends invitation emails; nil sends none (the admin gets the link back instead).
 	Mailer *accountmail.Mailer
 	// PasswordPolicy is each tenant's minimum password length; nil means the platform minimum.

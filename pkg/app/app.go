@@ -183,6 +183,7 @@ func Run(ctx context.Context, opts Options) error {
 	state.TokenSigner, state.TokenVerifier, state.JwksKeys = tokens.Signer, tokens.Verifier, tokens.Keys
 	auditStore := audit.NewPostgresStore(state.Pool)
 	state.Audit = auditStore
+	state.PublicAppURL = config.PublicAppURL
 	state.Crud = crud.WithAudit(state.Router, state.Metadata, state.Permissions, auditStore)
 	state.CookieSecure = false
 	state.Mailer = accountmail.New(accountmail.Config{
@@ -274,7 +275,7 @@ func identityConfig(state *httpserver.AppState, auditStore audit.Store) *grpcapi
 		return nil
 	}
 	return &grpcapi.IdentityConfig{Shared: state.Pool, Router: state.Router, Audit: auditStore,
-		Mailer: state.Mailer, PasswordPolicy: state.PasswordPolicy(), APIKeyMaxDays: state.APIKeyMaxDays}
+		Mailer: state.Mailer, PasswordPolicy: state.PasswordPolicy(), APIKeyMaxDays: state.APIKeyMaxDays, PublicURL: state.PublicAppURL}
 }
 
 // ReadPublicKey loads a PEM public key: PKIX ("PUBLIC KEY", any algorithm) first, falling back to

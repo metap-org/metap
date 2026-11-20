@@ -112,3 +112,21 @@ func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
+
+// MemberByEmail finds the tenant's (not removed) member with this address.
+func MemberByEmail(ctx context.Context, db DBTX, tenantID uuid.UUID, email string) (*Member, error) {
+	m, err := scanMember(db.QueryRow(ctx, `SELECT `+memberColumns+`
+		FROM metadata.users u JOIN metadata.identities i ON i.id = u.identity_id
+		WHERE u.tenant_id = $1 AND lower(i.email) = lower($2) AND u.deleted_at IS NULL`, tenantID, email))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return m, err
+}
+
+// LinkExternalSubject ties an existing member to an external IdP subject, so later sign-ins
+// through that IdP find them by subject. Only a member with no subject yet can be linked.
+func LinkExternalSubject(ctx context.Context, db DBTX, tenantID, memberID uuid.UUID, provider, subject string) error {
+	return expectOne(db.Exec(ctx, `UPDATE metadata.users SET auth_provider = $3, external_subject = $4, updated_at = now()
+		WHERE id = $2 AND tenant_id = $1 AND external_subject IS NULL AND deleted_at IS NULL`, tenantID, memberID, provider, subject))
+}

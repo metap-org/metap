@@ -84,7 +84,7 @@ func newIdentityHarness(t *testing.T, withMailer ...bool) *identityHarness {
 	}
 	srv := NewServer(NewRecordService(nil, auth))
 	mail := &capturedMail{}
-	cfg := IdentityConfig{Shared: pool, Router: router, Audit: audit.NewPostgresStore(pool),
+	cfg := IdentityConfig{Shared: pool, Router: router, Audit: audit.NewPostgresStore(pool), PublicURL: "http://portal.test",
 		PasswordPolicy: func(ctx context.Context, tenant uuid.UUID) int {
 			var n int
 			if err := pool.QueryRow(ctx, `SELECT value::int FROM metadata.tenant_configs

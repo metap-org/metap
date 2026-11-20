@@ -40,6 +40,8 @@ type AppState struct {
 	Metadata    *atomic.Pointer[metadata.MetadataRegistry]
 	Permissions *permission.PermissionService
 	Crud        *crud.CrudService
+	// PublicAppURL is the origin people reach this service at (the SSO callback is PublicAppURL + /auth/sso/callback); "" turns SSO off.
+	PublicAppURL string
 	// Audit is the tenant's audit trail, for the admin export; nil when none is configured.
 	Audit audit.Store
 

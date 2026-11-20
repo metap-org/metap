@@ -2877,3 +2877,191 @@ var OwnerService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "metap_identity.proto",
 }
+
+const (
+	SsoAdminService_GetSsoConfig_FullMethodName    = "/metap.identity.v1.SsoAdminService/GetSsoConfig"
+	SsoAdminService_SetSsoConfig_FullMethodName    = "/metap.identity.v1.SsoAdminService/SetSsoConfig"
+	SsoAdminService_DeleteSsoConfig_FullMethodName = "/metap.identity.v1.SsoAdminService/DeleteSsoConfig"
+)
+
+// SsoAdminServiceClient is the client API for SsoAdminService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Single sign-on (roadmap 115 M7). A tenant admin connects the workspace to its OIDC identity
+// provider; people then sign in through /auth/sso/start. The client secret is write-only (stored
+// in the SecretStore, never returned). Turning `enforced` on makes the workspace refuse password
+// sign-in for everyone except its owner, so only the owner may do it.
+type SsoAdminServiceClient interface {
+	GetSsoConfig(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*SsoConfig, error)
+	SetSsoConfig(ctx context.Context, in *SetSsoConfigRequest, opts ...grpc.CallOption) (*SsoConfig, error)
+	DeleteSsoConfig(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Empty, error)
+}
+
+type ssoAdminServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewSsoAdminServiceClient(cc grpc.ClientConnInterface) SsoAdminServiceClient {
+	return &ssoAdminServiceClient{cc}
+}
+
+func (c *ssoAdminServiceClient) GetSsoConfig(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*SsoConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SsoConfig)
+	err := c.cc.Invoke(ctx, SsoAdminService_GetSsoConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ssoAdminServiceClient) SetSsoConfig(ctx context.Context, in *SetSsoConfigRequest, opts ...grpc.CallOption) (*SsoConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SsoConfig)
+	err := c.cc.Invoke(ctx, SsoAdminService_SetSsoConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ssoAdminServiceClient) DeleteSsoConfig(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, SsoAdminService_DeleteSsoConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SsoAdminServiceServer is the server API for SsoAdminService service.
+// All implementations must embed UnimplementedSsoAdminServiceServer
+// for forward compatibility.
+//
+// Single sign-on (roadmap 115 M7). A tenant admin connects the workspace to its OIDC identity
+// provider; people then sign in through /auth/sso/start. The client secret is write-only (stored
+// in the SecretStore, never returned). Turning `enforced` on makes the workspace refuse password
+// sign-in for everyone except its owner, so only the owner may do it.
+type SsoAdminServiceServer interface {
+	GetSsoConfig(context.Context, *Empty) (*SsoConfig, error)
+	SetSsoConfig(context.Context, *SetSsoConfigRequest) (*SsoConfig, error)
+	DeleteSsoConfig(context.Context, *Empty) (*Empty, error)
+	mustEmbedUnimplementedSsoAdminServiceServer()
+}
+
+// UnimplementedSsoAdminServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedSsoAdminServiceServer struct{}
+
+func (UnimplementedSsoAdminServiceServer) GetSsoConfig(context.Context, *Empty) (*SsoConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSsoConfig not implemented")
+}
+func (UnimplementedSsoAdminServiceServer) SetSsoConfig(context.Context, *SetSsoConfigRequest) (*SsoConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetSsoConfig not implemented")
+}
+func (UnimplementedSsoAdminServiceServer) DeleteSsoConfig(context.Context, *Empty) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteSsoConfig not implemented")
+}
+func (UnimplementedSsoAdminServiceServer) mustEmbedUnimplementedSsoAdminServiceServer() {}
+func (UnimplementedSsoAdminServiceServer) testEmbeddedByValue()                         {}
+
+// UnsafeSsoAdminServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to SsoAdminServiceServer will
+// result in compilation errors.
+type UnsafeSsoAdminServiceServer interface {
+	mustEmbedUnimplementedSsoAdminServiceServer()
+}
+
+func RegisterSsoAdminServiceServer(s grpc.ServiceRegistrar, srv SsoAdminServiceServer) {
+	// If the following call panics, it indicates UnimplementedSsoAdminServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&SsoAdminService_ServiceDesc, srv)
+}
+
+func _SsoAdminService_GetSsoConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SsoAdminServiceServer).GetSsoConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SsoAdminService_GetSsoConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SsoAdminServiceServer).GetSsoConfig(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SsoAdminService_SetSsoConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetSsoConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SsoAdminServiceServer).SetSsoConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SsoAdminService_SetSsoConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SsoAdminServiceServer).SetSsoConfig(ctx, req.(*SetSsoConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SsoAdminService_DeleteSsoConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SsoAdminServiceServer).DeleteSsoConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SsoAdminService_DeleteSsoConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SsoAdminServiceServer).DeleteSsoConfig(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// SsoAdminService_ServiceDesc is the grpc.ServiceDesc for SsoAdminService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var SsoAdminService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "metap.identity.v1.SsoAdminService",
+	HandlerType: (*SsoAdminServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetSsoConfig",
+			Handler:    _SsoAdminService_GetSsoConfig_Handler,
+		},
+		{
+			MethodName: "SetSsoConfig",
+			Handler:    _SsoAdminService_SetSsoConfig_Handler,
+		},
+		{
+			MethodName: "DeleteSsoConfig",
+			Handler:    _SsoAdminService_DeleteSsoConfig_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "metap_identity.proto",
+}

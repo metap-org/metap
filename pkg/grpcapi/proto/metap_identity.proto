@@ -692,3 +692,45 @@ message OwnerStatus {
   // Set while a recovery is pending.
   OwnerRecovery pending_recovery = 3;
 }
+
+// Single sign-on (roadmap 115 M7). A tenant admin connects the workspace to its OIDC identity
+// provider; people then sign in through /auth/sso/start. The client secret is write-only (stored
+// in the SecretStore, never returned). Turning `enforced` on makes the workspace refuse password
+// sign-in for everyone except its owner, so only the owner may do it.
+service SsoAdminService {
+  rpc GetSsoConfig(Empty) returns (SsoConfig);
+  rpc SetSsoConfig(SetSsoConfigRequest) returns (SsoConfig);
+  rpc DeleteSsoConfig(Empty) returns (Empty);
+}
+
+message SetSsoConfigRequest {
+  string issuer_url = 1;
+  string client_id = 2;
+  // Empty keeps the stored secret (required on first setup).
+  string client_secret = 3;
+  // Default: openid, email, profile.
+  repeated string scopes = 4;
+  // Only these email domains may sign in; empty = any.
+  repeated string email_domains = 5;
+  // Role a person provisioned on first sign-in starts with; never admin.
+  string default_role = 6;
+  bool enabled = 7;
+  bool enforced = 8;
+  // Where the browser lands after sign-in (absolute URL); default: the portal root.
+  string post_login_redirect = 9;
+}
+
+message SsoConfig {
+  bool configured = 1;
+  bool enabled = 2;
+  string issuer_url = 3;
+  string client_id = 4;
+  bool has_client_secret = 5;
+  repeated string scopes = 6;
+  repeated string email_domains = 7;
+  string default_role = 8;
+  bool enforced = 9;
+  string post_login_redirect = 10;
+  // Register this redirect URI at the identity provider.
+  string redirect_uri = 11;
+}

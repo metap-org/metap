@@ -212,6 +212,7 @@ func addIdentityFields(query, mutation graphql.Fields, c *grpcapi.IdentityClient
 	addAuditFields(query, c)
 	addSupportFields(query, mutation, c)
 	addOwnerFields(query, mutation, c)
+	addSSOFields(query, mutation, c)
 	asUser := func(call func(ctx context.Context, opts ...grpc.CallOption) (*pb.User, error), ctx context.Context) (interface{}, error) {
 		u, err := identityCall(ctx, call)
 		if err != nil {

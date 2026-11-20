@@ -4953,6 +4953,244 @@ func (x *OwnerStatus) GetPendingRecovery() *OwnerRecovery {
 	return nil
 }
 
+type SetSsoConfigRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	IssuerUrl string                 `protobuf:"bytes,1,opt,name=issuer_url,json=issuerUrl,proto3" json:"issuer_url,omitempty"`
+	ClientId  string                 `protobuf:"bytes,2,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	// Empty keeps the stored secret (required on first setup).
+	ClientSecret string `protobuf:"bytes,3,opt,name=client_secret,json=clientSecret,proto3" json:"client_secret,omitempty"`
+	// Default: openid, email, profile.
+	Scopes []string `protobuf:"bytes,4,rep,name=scopes,proto3" json:"scopes,omitempty"`
+	// Only these email domains may sign in; empty = any.
+	EmailDomains []string `protobuf:"bytes,5,rep,name=email_domains,json=emailDomains,proto3" json:"email_domains,omitempty"`
+	// Role a person provisioned on first sign-in starts with; never admin.
+	DefaultRole string `protobuf:"bytes,6,opt,name=default_role,json=defaultRole,proto3" json:"default_role,omitempty"`
+	Enabled     bool   `protobuf:"varint,7,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Enforced    bool   `protobuf:"varint,8,opt,name=enforced,proto3" json:"enforced,omitempty"`
+	// Where the browser lands after sign-in (absolute URL); default: the portal root.
+	PostLoginRedirect string `protobuf:"bytes,9,opt,name=post_login_redirect,json=postLoginRedirect,proto3" json:"post_login_redirect,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *SetSsoConfigRequest) Reset() {
+	*x = SetSsoConfigRequest{}
+	mi := &file_metap_identity_proto_msgTypes[78]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetSsoConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetSsoConfigRequest) ProtoMessage() {}
+
+func (x *SetSsoConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_metap_identity_proto_msgTypes[78]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetSsoConfigRequest.ProtoReflect.Descriptor instead.
+func (*SetSsoConfigRequest) Descriptor() ([]byte, []int) {
+	return file_metap_identity_proto_rawDescGZIP(), []int{78}
+}
+
+func (x *SetSsoConfigRequest) GetIssuerUrl() string {
+	if x != nil {
+		return x.IssuerUrl
+	}
+	return ""
+}
+
+func (x *SetSsoConfigRequest) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *SetSsoConfigRequest) GetClientSecret() string {
+	if x != nil {
+		return x.ClientSecret
+	}
+	return ""
+}
+
+func (x *SetSsoConfigRequest) GetScopes() []string {
+	if x != nil {
+		return x.Scopes
+	}
+	return nil
+}
+
+func (x *SetSsoConfigRequest) GetEmailDomains() []string {
+	if x != nil {
+		return x.EmailDomains
+	}
+	return nil
+}
+
+func (x *SetSsoConfigRequest) GetDefaultRole() string {
+	if x != nil {
+		return x.DefaultRole
+	}
+	return ""
+}
+
+func (x *SetSsoConfigRequest) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *SetSsoConfigRequest) GetEnforced() bool {
+	if x != nil {
+		return x.Enforced
+	}
+	return false
+}
+
+func (x *SetSsoConfigRequest) GetPostLoginRedirect() string {
+	if x != nil {
+		return x.PostLoginRedirect
+	}
+	return ""
+}
+
+type SsoConfig struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Configured        bool                   `protobuf:"varint,1,opt,name=configured,proto3" json:"configured,omitempty"`
+	Enabled           bool                   `protobuf:"varint,2,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	IssuerUrl         string                 `protobuf:"bytes,3,opt,name=issuer_url,json=issuerUrl,proto3" json:"issuer_url,omitempty"`
+	ClientId          string                 `protobuf:"bytes,4,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	HasClientSecret   bool                   `protobuf:"varint,5,opt,name=has_client_secret,json=hasClientSecret,proto3" json:"has_client_secret,omitempty"`
+	Scopes            []string               `protobuf:"bytes,6,rep,name=scopes,proto3" json:"scopes,omitempty"`
+	EmailDomains      []string               `protobuf:"bytes,7,rep,name=email_domains,json=emailDomains,proto3" json:"email_domains,omitempty"`
+	DefaultRole       string                 `protobuf:"bytes,8,opt,name=default_role,json=defaultRole,proto3" json:"default_role,omitempty"`
+	Enforced          bool                   `protobuf:"varint,9,opt,name=enforced,proto3" json:"enforced,omitempty"`
+	PostLoginRedirect string                 `protobuf:"bytes,10,opt,name=post_login_redirect,json=postLoginRedirect,proto3" json:"post_login_redirect,omitempty"`
+	// Register this redirect URI at the identity provider.
+	RedirectUri   string `protobuf:"bytes,11,opt,name=redirect_uri,json=redirectUri,proto3" json:"redirect_uri,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SsoConfig) Reset() {
+	*x = SsoConfig{}
+	mi := &file_metap_identity_proto_msgTypes[79]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SsoConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SsoConfig) ProtoMessage() {}
+
+func (x *SsoConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_metap_identity_proto_msgTypes[79]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SsoConfig.ProtoReflect.Descriptor instead.
+func (*SsoConfig) Descriptor() ([]byte, []int) {
+	return file_metap_identity_proto_rawDescGZIP(), []int{79}
+}
+
+func (x *SsoConfig) GetConfigured() bool {
+	if x != nil {
+		return x.Configured
+	}
+	return false
+}
+
+func (x *SsoConfig) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *SsoConfig) GetIssuerUrl() string {
+	if x != nil {
+		return x.IssuerUrl
+	}
+	return ""
+}
+
+func (x *SsoConfig) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *SsoConfig) GetHasClientSecret() bool {
+	if x != nil {
+		return x.HasClientSecret
+	}
+	return false
+}
+
+func (x *SsoConfig) GetScopes() []string {
+	if x != nil {
+		return x.Scopes
+	}
+	return nil
+}
+
+func (x *SsoConfig) GetEmailDomains() []string {
+	if x != nil {
+		return x.EmailDomains
+	}
+	return nil
+}
+
+func (x *SsoConfig) GetDefaultRole() string {
+	if x != nil {
+		return x.DefaultRole
+	}
+	return ""
+}
+
+func (x *SsoConfig) GetEnforced() bool {
+	if x != nil {
+		return x.Enforced
+	}
+	return false
+}
+
+func (x *SsoConfig) GetPostLoginRedirect() string {
+	if x != nil {
+		return x.PostLoginRedirect
+	}
+	return ""
+}
+
+func (x *SsoConfig) GetRedirectUri() string {
+	if x != nil {
+		return x.RedirectUri
+	}
+	return ""
+}
+
 var File_metap_identity_proto protoreflect.FileDescriptor
 
 const file_metap_identity_proto_rawDesc = "" +
@@ -5342,7 +5580,34 @@ const file_metap_identity_proto_rawDesc = "" +
 	"\x0fowner_member_id\x18\x01 \x01(\tR\rownerMemberId\x12\x1f\n" +
 	"\vowner_email\x18\x02 \x01(\tR\n" +
 	"ownerEmail\x12K\n" +
-	"\x10pending_recovery\x18\x03 \x01(\v2 .metap.identity.v1.OwnerRecoveryR\x0fpendingRecovery2\x9d\r\n" +
+	"\x10pending_recovery\x18\x03 \x01(\v2 .metap.identity.v1.OwnerRecoveryR\x0fpendingRecovery\"\xbc\x02\n" +
+	"\x13SetSsoConfigRequest\x12\x1d\n" +
+	"\n" +
+	"issuer_url\x18\x01 \x01(\tR\tissuerUrl\x12\x1b\n" +
+	"\tclient_id\x18\x02 \x01(\tR\bclientId\x12#\n" +
+	"\rclient_secret\x18\x03 \x01(\tR\fclientSecret\x12\x16\n" +
+	"\x06scopes\x18\x04 \x03(\tR\x06scopes\x12#\n" +
+	"\remail_domains\x18\x05 \x03(\tR\femailDomains\x12!\n" +
+	"\fdefault_role\x18\x06 \x01(\tR\vdefaultRole\x12\x18\n" +
+	"\aenabled\x18\a \x01(\bR\aenabled\x12\x1a\n" +
+	"\benforced\x18\b \x01(\bR\benforced\x12.\n" +
+	"\x13post_login_redirect\x18\t \x01(\tR\x11postLoginRedirect\"\xfc\x02\n" +
+	"\tSsoConfig\x12\x1e\n" +
+	"\n" +
+	"configured\x18\x01 \x01(\bR\n" +
+	"configured\x12\x18\n" +
+	"\aenabled\x18\x02 \x01(\bR\aenabled\x12\x1d\n" +
+	"\n" +
+	"issuer_url\x18\x03 \x01(\tR\tissuerUrl\x12\x1b\n" +
+	"\tclient_id\x18\x04 \x01(\tR\bclientId\x12*\n" +
+	"\x11has_client_secret\x18\x05 \x01(\bR\x0fhasClientSecret\x12\x16\n" +
+	"\x06scopes\x18\x06 \x03(\tR\x06scopes\x12#\n" +
+	"\remail_domains\x18\a \x03(\tR\femailDomains\x12!\n" +
+	"\fdefault_role\x18\b \x01(\tR\vdefaultRole\x12\x1a\n" +
+	"\benforced\x18\t \x01(\bR\benforced\x12.\n" +
+	"\x13post_login_redirect\x18\n" +
+	" \x01(\tR\x11postLoginRedirect\x12!\n" +
+	"\fredirect_uri\x18\v \x01(\tR\vredirectUri2\x9d\r\n" +
 	"\x10UserAdminService\x12V\n" +
 	"\tListUsers\x12#.metap.identity.v1.ListUsersRequest\x1a$.metap.identity.v1.ListUsersResponse\x12D\n" +
 	"\aGetUser\x12 .metap.identity.v1.UserIdRequest\x1a\x17.metap.identity.v1.User\x12Y\n" +
@@ -5420,7 +5685,11 @@ const file_metap_identity_proto_rawDesc = "" +
 	"\x11TransferOwnership\x12+.metap.identity.v1.TransferOwnershipRequest\x1a\x1e.metap.identity.v1.OwnerStatus\x12O\n" +
 	"\x13CancelOwnerRecovery\x12\x18.metap.identity.v1.Empty\x1a\x1e.metap.identity.v1.OwnerStatus\x12h\n" +
 	"\x14RequestOwnerRecovery\x12..metap.identity.v1.RequestOwnerRecoveryRequest\x1a .metap.identity.v1.OwnerRecovery\x12a\n" +
-	"\x15CompleteOwnerRecovery\x12&.metap.identity.v1.TenantIdOnlyRequest\x1a .metap.identity.v1.OwnerRecoveryB+Z)github.com/metap-org/metap/pkg/grpcapi/pbb\x06proto3"
+	"\x15CompleteOwnerRecovery\x12&.metap.identity.v1.TenantIdOnlyRequest\x1a .metap.identity.v1.OwnerRecovery2\xf6\x01\n" +
+	"\x0fSsoAdminService\x12F\n" +
+	"\fGetSsoConfig\x12\x18.metap.identity.v1.Empty\x1a\x1c.metap.identity.v1.SsoConfig\x12T\n" +
+	"\fSetSsoConfig\x12&.metap.identity.v1.SetSsoConfigRequest\x1a\x1c.metap.identity.v1.SsoConfig\x12E\n" +
+	"\x0fDeleteSsoConfig\x12\x18.metap.identity.v1.Empty\x1a\x18.metap.identity.v1.EmptyB+Z)github.com/metap-org/metap/pkg/grpcapi/pbb\x06proto3"
 
 var (
 	file_metap_identity_proto_rawDescOnce sync.Once
@@ -5434,7 +5703,7 @@ func file_metap_identity_proto_rawDescGZIP() []byte {
 	return file_metap_identity_proto_rawDescData
 }
 
-var file_metap_identity_proto_msgTypes = make([]protoimpl.MessageInfo, 78)
+var file_metap_identity_proto_msgTypes = make([]protoimpl.MessageInfo, 80)
 var file_metap_identity_proto_goTypes = []any{
 	(*User)(nil),                            // 0: metap.identity.v1.User
 	(*ScopedRole)(nil),                      // 1: metap.identity.v1.ScopedRole
@@ -5514,6 +5783,8 @@ var file_metap_identity_proto_goTypes = []any{
 	(*TenantIdOnlyRequest)(nil),             // 75: metap.identity.v1.TenantIdOnlyRequest
 	(*OwnerRecovery)(nil),                   // 76: metap.identity.v1.OwnerRecovery
 	(*OwnerStatus)(nil),                     // 77: metap.identity.v1.OwnerStatus
+	(*SetSsoConfigRequest)(nil),             // 78: metap.identity.v1.SetSsoConfigRequest
+	(*SsoConfig)(nil),                       // 79: metap.identity.v1.SsoConfig
 }
 var file_metap_identity_proto_depIdxs = []int32{
 	1,  // 0: metap.identity.v1.User.scoped_roles:type_name -> metap.identity.v1.ScopedRole
@@ -5599,68 +5870,74 @@ var file_metap_identity_proto_depIdxs = []int32{
 	21, // 80: metap.identity.v1.OwnerService.CancelOwnerRecovery:input_type -> metap.identity.v1.Empty
 	74, // 81: metap.identity.v1.OwnerService.RequestOwnerRecovery:input_type -> metap.identity.v1.RequestOwnerRecoveryRequest
 	75, // 82: metap.identity.v1.OwnerService.CompleteOwnerRecovery:input_type -> metap.identity.v1.TenantIdOnlyRequest
-	3,  // 83: metap.identity.v1.UserAdminService.ListUsers:output_type -> metap.identity.v1.ListUsersResponse
-	0,  // 84: metap.identity.v1.UserAdminService.GetUser:output_type -> metap.identity.v1.User
-	6,  // 85: metap.identity.v1.UserAdminService.CreateUser:output_type -> metap.identity.v1.CreateUserResponse
-	8,  // 86: metap.identity.v1.UserAdminService.InviteUser:output_type -> metap.identity.v1.InviteUserResponse
-	8,  // 87: metap.identity.v1.UserAdminService.ResendInvitation:output_type -> metap.identity.v1.InviteUserResponse
-	0,  // 88: metap.identity.v1.UserAdminService.UpdateUser:output_type -> metap.identity.v1.User
-	0,  // 89: metap.identity.v1.UserAdminService.DisableUser:output_type -> metap.identity.v1.User
-	0,  // 90: metap.identity.v1.UserAdminService.EnableUser:output_type -> metap.identity.v1.User
-	21, // 91: metap.identity.v1.UserAdminService.RemoveUser:output_type -> metap.identity.v1.Empty
-	21, // 92: metap.identity.v1.UserAdminService.ResetPassword:output_type -> metap.identity.v1.Empty
-	0,  // 93: metap.identity.v1.UserAdminService.AssignRole:output_type -> metap.identity.v1.User
-	0,  // 94: metap.identity.v1.UserAdminService.RevokeRole:output_type -> metap.identity.v1.User
-	14, // 95: metap.identity.v1.UserAdminService.ListScopeMembers:output_type -> metap.identity.v1.ListScopeMembersResponse
-	20, // 96: metap.identity.v1.UserAdminService.ListUserAudit:output_type -> metap.identity.v1.ListUserAuditResponse
-	0,  // 97: metap.identity.v1.UserAdminService.CreateServiceAccount:output_type -> metap.identity.v1.User
-	3,  // 98: metap.identity.v1.UserAdminService.ListServiceAccounts:output_type -> metap.identity.v1.ListUsersResponse
-	25, // 99: metap.identity.v1.UserAdminService.CreateApiKey:output_type -> metap.identity.v1.CreateApiKeyResponse
-	26, // 100: metap.identity.v1.UserAdminService.ListApiKeys:output_type -> metap.identity.v1.ListApiKeysResponse
-	21, // 101: metap.identity.v1.UserAdminService.RevokeApiKey:output_type -> metap.identity.v1.Empty
-	21, // 102: metap.identity.v1.UserAdminService.ResetMfa:output_type -> metap.identity.v1.Empty
-	17, // 103: metap.identity.v1.RoleAdminService.ListRoles:output_type -> metap.identity.v1.ListRolesResponse
-	15, // 104: metap.identity.v1.RoleAdminService.GetRole:output_type -> metap.identity.v1.Role
-	15, // 105: metap.identity.v1.RoleAdminService.CreateRole:output_type -> metap.identity.v1.Role
-	15, // 106: metap.identity.v1.RoleAdminService.UpdateRole:output_type -> metap.identity.v1.Role
-	21, // 107: metap.identity.v1.RoleAdminService.DeleteRole:output_type -> metap.identity.v1.Empty
-	20, // 108: metap.identity.v1.RoleAdminService.ListRoleAudit:output_type -> metap.identity.v1.ListUserAuditResponse
-	34, // 109: metap.identity.v1.RoleAdminService.GetRolePermissions:output_type -> metap.identity.v1.RolePermissions
-	34, // 110: metap.identity.v1.RoleAdminService.SetRolePermissions:output_type -> metap.identity.v1.RolePermissions
-	38, // 111: metap.identity.v1.RoleAdminService.ListPermissionResources:output_type -> metap.identity.v1.ListPermissionResourcesResponse
-	39, // 112: metap.identity.v1.AccountService.GetMe:output_type -> metap.identity.v1.Me
-	39, // 113: metap.identity.v1.AccountService.UpdateProfile:output_type -> metap.identity.v1.Me
-	42, // 114: metap.identity.v1.AccountService.ListMyTenants:output_type -> metap.identity.v1.ListMyTenantsResponse
-	45, // 115: metap.identity.v1.AccountService.ListTenantUsers:output_type -> metap.identity.v1.ListTenantUsersResponse
-	50, // 116: metap.identity.v1.AccountService.GetMfaStatus:output_type -> metap.identity.v1.MfaStatus
-	51, // 117: metap.identity.v1.AccountService.BeginMfaEnrollment:output_type -> metap.identity.v1.MfaEnrollment
-	53, // 118: metap.identity.v1.AccountService.ConfirmMfaEnrollment:output_type -> metap.identity.v1.MfaRecoveryCodes
-	21, // 119: metap.identity.v1.AccountService.DisableMfa:output_type -> metap.identity.v1.Empty
-	53, // 120: metap.identity.v1.AccountService.RegenerateRecoveryCodes:output_type -> metap.identity.v1.MfaRecoveryCodes
-	47, // 121: metap.identity.v1.AccountService.ListMySessions:output_type -> metap.identity.v1.ListSessionsResponse
-	21, // 122: metap.identity.v1.AccountService.RevokeMySession:output_type -> metap.identity.v1.Empty
-	49, // 123: metap.identity.v1.AccountService.RevokeOtherSessions:output_type -> metap.identity.v1.RevokedSessions
-	57, // 124: metap.identity.v1.TenantAdminService.ListTenants:output_type -> metap.identity.v1.ListTenantsResponse
-	54, // 125: metap.identity.v1.TenantAdminService.GetTenant:output_type -> metap.identity.v1.Tenant
-	59, // 126: metap.identity.v1.TenantAdminService.CreateTenant:output_type -> metap.identity.v1.CreateTenantResponse
-	54, // 127: metap.identity.v1.TenantAdminService.UpdateTenant:output_type -> metap.identity.v1.Tenant
-	54, // 128: metap.identity.v1.TenantAdminService.SuspendTenant:output_type -> metap.identity.v1.Tenant
-	54, // 129: metap.identity.v1.TenantAdminService.ResumeTenant:output_type -> metap.identity.v1.Tenant
-	54, // 130: metap.identity.v1.TenantAdminService.RequestTenantDeletion:output_type -> metap.identity.v1.Tenant
-	54, // 131: metap.identity.v1.TenantAdminService.CancelTenantDeletion:output_type -> metap.identity.v1.Tenant
-	64, // 132: metap.identity.v1.AuditAdminService.SearchAudit:output_type -> metap.identity.v1.SearchAuditResponse
-	65, // 133: metap.identity.v1.AuditAdminService.VerifyAuditChain:output_type -> metap.identity.v1.AuditChainReport
-	69, // 134: metap.identity.v1.SupportAccessService.GrantSupportAccess:output_type -> metap.identity.v1.SupportGrant
-	70, // 135: metap.identity.v1.SupportAccessService.ListSupportGrants:output_type -> metap.identity.v1.ListSupportGrantsResponse
-	69, // 136: metap.identity.v1.SupportAccessService.RevokeSupportGrant:output_type -> metap.identity.v1.SupportGrant
-	72, // 137: metap.identity.v1.SupportAccessService.StartSupportSession:output_type -> metap.identity.v1.SupportSessionToken
-	77, // 138: metap.identity.v1.OwnerService.GetOwnerStatus:output_type -> metap.identity.v1.OwnerStatus
-	77, // 139: metap.identity.v1.OwnerService.TransferOwnership:output_type -> metap.identity.v1.OwnerStatus
-	77, // 140: metap.identity.v1.OwnerService.CancelOwnerRecovery:output_type -> metap.identity.v1.OwnerStatus
-	76, // 141: metap.identity.v1.OwnerService.RequestOwnerRecovery:output_type -> metap.identity.v1.OwnerRecovery
-	76, // 142: metap.identity.v1.OwnerService.CompleteOwnerRecovery:output_type -> metap.identity.v1.OwnerRecovery
-	83, // [83:143] is the sub-list for method output_type
-	23, // [23:83] is the sub-list for method input_type
+	21, // 83: metap.identity.v1.SsoAdminService.GetSsoConfig:input_type -> metap.identity.v1.Empty
+	78, // 84: metap.identity.v1.SsoAdminService.SetSsoConfig:input_type -> metap.identity.v1.SetSsoConfigRequest
+	21, // 85: metap.identity.v1.SsoAdminService.DeleteSsoConfig:input_type -> metap.identity.v1.Empty
+	3,  // 86: metap.identity.v1.UserAdminService.ListUsers:output_type -> metap.identity.v1.ListUsersResponse
+	0,  // 87: metap.identity.v1.UserAdminService.GetUser:output_type -> metap.identity.v1.User
+	6,  // 88: metap.identity.v1.UserAdminService.CreateUser:output_type -> metap.identity.v1.CreateUserResponse
+	8,  // 89: metap.identity.v1.UserAdminService.InviteUser:output_type -> metap.identity.v1.InviteUserResponse
+	8,  // 90: metap.identity.v1.UserAdminService.ResendInvitation:output_type -> metap.identity.v1.InviteUserResponse
+	0,  // 91: metap.identity.v1.UserAdminService.UpdateUser:output_type -> metap.identity.v1.User
+	0,  // 92: metap.identity.v1.UserAdminService.DisableUser:output_type -> metap.identity.v1.User
+	0,  // 93: metap.identity.v1.UserAdminService.EnableUser:output_type -> metap.identity.v1.User
+	21, // 94: metap.identity.v1.UserAdminService.RemoveUser:output_type -> metap.identity.v1.Empty
+	21, // 95: metap.identity.v1.UserAdminService.ResetPassword:output_type -> metap.identity.v1.Empty
+	0,  // 96: metap.identity.v1.UserAdminService.AssignRole:output_type -> metap.identity.v1.User
+	0,  // 97: metap.identity.v1.UserAdminService.RevokeRole:output_type -> metap.identity.v1.User
+	14, // 98: metap.identity.v1.UserAdminService.ListScopeMembers:output_type -> metap.identity.v1.ListScopeMembersResponse
+	20, // 99: metap.identity.v1.UserAdminService.ListUserAudit:output_type -> metap.identity.v1.ListUserAuditResponse
+	0,  // 100: metap.identity.v1.UserAdminService.CreateServiceAccount:output_type -> metap.identity.v1.User
+	3,  // 101: metap.identity.v1.UserAdminService.ListServiceAccounts:output_type -> metap.identity.v1.ListUsersResponse
+	25, // 102: metap.identity.v1.UserAdminService.CreateApiKey:output_type -> metap.identity.v1.CreateApiKeyResponse
+	26, // 103: metap.identity.v1.UserAdminService.ListApiKeys:output_type -> metap.identity.v1.ListApiKeysResponse
+	21, // 104: metap.identity.v1.UserAdminService.RevokeApiKey:output_type -> metap.identity.v1.Empty
+	21, // 105: metap.identity.v1.UserAdminService.ResetMfa:output_type -> metap.identity.v1.Empty
+	17, // 106: metap.identity.v1.RoleAdminService.ListRoles:output_type -> metap.identity.v1.ListRolesResponse
+	15, // 107: metap.identity.v1.RoleAdminService.GetRole:output_type -> metap.identity.v1.Role
+	15, // 108: metap.identity.v1.RoleAdminService.CreateRole:output_type -> metap.identity.v1.Role
+	15, // 109: metap.identity.v1.RoleAdminService.UpdateRole:output_type -> metap.identity.v1.Role
+	21, // 110: metap.identity.v1.RoleAdminService.DeleteRole:output_type -> metap.identity.v1.Empty
+	20, // 111: metap.identity.v1.RoleAdminService.ListRoleAudit:output_type -> metap.identity.v1.ListUserAuditResponse
+	34, // 112: metap.identity.v1.RoleAdminService.GetRolePermissions:output_type -> metap.identity.v1.RolePermissions
+	34, // 113: metap.identity.v1.RoleAdminService.SetRolePermissions:output_type -> metap.identity.v1.RolePermissions
+	38, // 114: metap.identity.v1.RoleAdminService.ListPermissionResources:output_type -> metap.identity.v1.ListPermissionResourcesResponse
+	39, // 115: metap.identity.v1.AccountService.GetMe:output_type -> metap.identity.v1.Me
+	39, // 116: metap.identity.v1.AccountService.UpdateProfile:output_type -> metap.identity.v1.Me
+	42, // 117: metap.identity.v1.AccountService.ListMyTenants:output_type -> metap.identity.v1.ListMyTenantsResponse
+	45, // 118: metap.identity.v1.AccountService.ListTenantUsers:output_type -> metap.identity.v1.ListTenantUsersResponse
+	50, // 119: metap.identity.v1.AccountService.GetMfaStatus:output_type -> metap.identity.v1.MfaStatus
+	51, // 120: metap.identity.v1.AccountService.BeginMfaEnrollment:output_type -> metap.identity.v1.MfaEnrollment
+	53, // 121: metap.identity.v1.AccountService.ConfirmMfaEnrollment:output_type -> metap.identity.v1.MfaRecoveryCodes
+	21, // 122: metap.identity.v1.AccountService.DisableMfa:output_type -> metap.identity.v1.Empty
+	53, // 123: metap.identity.v1.AccountService.RegenerateRecoveryCodes:output_type -> metap.identity.v1.MfaRecoveryCodes
+	47, // 124: metap.identity.v1.AccountService.ListMySessions:output_type -> metap.identity.v1.ListSessionsResponse
+	21, // 125: metap.identity.v1.AccountService.RevokeMySession:output_type -> metap.identity.v1.Empty
+	49, // 126: metap.identity.v1.AccountService.RevokeOtherSessions:output_type -> metap.identity.v1.RevokedSessions
+	57, // 127: metap.identity.v1.TenantAdminService.ListTenants:output_type -> metap.identity.v1.ListTenantsResponse
+	54, // 128: metap.identity.v1.TenantAdminService.GetTenant:output_type -> metap.identity.v1.Tenant
+	59, // 129: metap.identity.v1.TenantAdminService.CreateTenant:output_type -> metap.identity.v1.CreateTenantResponse
+	54, // 130: metap.identity.v1.TenantAdminService.UpdateTenant:output_type -> metap.identity.v1.Tenant
+	54, // 131: metap.identity.v1.TenantAdminService.SuspendTenant:output_type -> metap.identity.v1.Tenant
+	54, // 132: metap.identity.v1.TenantAdminService.ResumeTenant:output_type -> metap.identity.v1.Tenant
+	54, // 133: metap.identity.v1.TenantAdminService.RequestTenantDeletion:output_type -> metap.identity.v1.Tenant
+	54, // 134: metap.identity.v1.TenantAdminService.CancelTenantDeletion:output_type -> metap.identity.v1.Tenant
+	64, // 135: metap.identity.v1.AuditAdminService.SearchAudit:output_type -> metap.identity.v1.SearchAuditResponse
+	65, // 136: metap.identity.v1.AuditAdminService.VerifyAuditChain:output_type -> metap.identity.v1.AuditChainReport
+	69, // 137: metap.identity.v1.SupportAccessService.GrantSupportAccess:output_type -> metap.identity.v1.SupportGrant
+	70, // 138: metap.identity.v1.SupportAccessService.ListSupportGrants:output_type -> metap.identity.v1.ListSupportGrantsResponse
+	69, // 139: metap.identity.v1.SupportAccessService.RevokeSupportGrant:output_type -> metap.identity.v1.SupportGrant
+	72, // 140: metap.identity.v1.SupportAccessService.StartSupportSession:output_type -> metap.identity.v1.SupportSessionToken
+	77, // 141: metap.identity.v1.OwnerService.GetOwnerStatus:output_type -> metap.identity.v1.OwnerStatus
+	77, // 142: metap.identity.v1.OwnerService.TransferOwnership:output_type -> metap.identity.v1.OwnerStatus
+	77, // 143: metap.identity.v1.OwnerService.CancelOwnerRecovery:output_type -> metap.identity.v1.OwnerStatus
+	76, // 144: metap.identity.v1.OwnerService.RequestOwnerRecovery:output_type -> metap.identity.v1.OwnerRecovery
+	76, // 145: metap.identity.v1.OwnerService.CompleteOwnerRecovery:output_type -> metap.identity.v1.OwnerRecovery
+	79, // 146: metap.identity.v1.SsoAdminService.GetSsoConfig:output_type -> metap.identity.v1.SsoConfig
+	79, // 147: metap.identity.v1.SsoAdminService.SetSsoConfig:output_type -> metap.identity.v1.SsoConfig
+	21, // 148: metap.identity.v1.SsoAdminService.DeleteSsoConfig:output_type -> metap.identity.v1.Empty
+	86, // [86:149] is the sub-list for method output_type
+	23, // [23:86] is the sub-list for method input_type
 	23, // [23:23] is the sub-list for extension type_name
 	23, // [23:23] is the sub-list for extension extendee
 	0,  // [0:23] is the sub-list for field type_name
@@ -5678,9 +5955,9 @@ func file_metap_identity_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_metap_identity_proto_rawDesc), len(file_metap_identity_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   78,
+			NumMessages:   80,
 			NumExtensions: 0,
-			NumServices:   7,
+			NumServices:   8,
 		},
 		GoTypes:           file_metap_identity_proto_goTypes,
 		DependencyIndexes: file_metap_identity_proto_depIdxs,

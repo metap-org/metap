@@ -256,6 +256,19 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   making the new owner an admin; one pending recovery per tenant. Owner changes are audited under `metadata.tenant_owner`. Gateway `ownerStatus`,
   `transferOwnership`, `cancelOwnerRecovery`, `requestOwnerRecovery`, `completeOwnerRecovery`, `User.isOwner`. The owner is also what M7's "SSO enforced" keeps a
   password-login escape hatch for.
+- **Single sign-on over OIDC (2026-11-20, roadmap 115 M7).** The Go port had the OIDC library (`pkg/tenantauth`) but no login routes; now: `GET /auth/sso/discover?email=`
+  (routes an address to a tenant only when exactly one tenant claims its domain — domains are not verified, so the callback's `EmailAllowed` check is the real safeguard),
+  `GET /auth/sso/start?tenant=` (PKCE + nonce, state in `metadata.sso_states`, migration 0053, single use, 10 min) and `GET /auth/sso/callback` (verifies the id_token,
+  finds the member by IdP subject, else ties an existing member with that address to the subject, else provisions one with the config's `DefaultRole`, then
+  `issueSession` + redirect to `PostLoginRedirect`). No MFA step after SSO: the IdP is the second factor. Needs `PublicAppURL` (the callback is
+  `PublicAppURL + /auth/sso/callback`); `startSessionWith` was split into `issueSession` (cookies) so the redirect flow reuses it. A tenant's settings are the `oidc` row of
+  `tenant_auth_configs` (`OidcConfig` gained `EmailDomains`, `DefaultRole`, `Enforced`); the client secret lives in the SecretStore under
+  `control.TenantSecretRef(tenant, "sso.clientSecret")` and is never returned (`has_client_secret` only). `SsoAdminService` (tenant admin): `GetSsoConfig`, `SetSsoConfig`
+  (https issuer, reachable OIDC discovery checked at save time, default role never admin), `DeleteSsoConfig`; gateway `ssoConfig`, `setSsoConfig`, `deleteSsoConfig`.
+  **Enforced SSO** (`Enforced` — only the tenant owner may switch it on) makes `/auth/login` and `/auth/switch-tenant` answer 403 `sso_required` for every member but the
+  owner, who keeps password sign-in as the way back (M8); deleting the config restores passwords. Not built: SAML, signing the IdP's `email_verified` claim into the
+  check, group/role mapping from IdP claims, enforcing SSO on invitation acceptance and password reset, domain verification. `control.MemorySecretStore` is the in-process
+  SecretStore for tests and single-process development.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
