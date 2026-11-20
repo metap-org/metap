@@ -41,6 +41,9 @@ type ServiceError struct {
 	Code        string
 	Message     string
 	FieldErrors map[string][]string
+	// Details is structured data about the failure for a client that renders it itself (a failed
+	// guard's field, operator, expected and actual values); carried as extensions.details.
+	Details map[string]any
 }
 
 func (e *ServiceError) Error() string {

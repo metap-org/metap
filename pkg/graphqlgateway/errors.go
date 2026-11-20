@@ -1,8 +1,6 @@
 package graphqlgateway
 
 import (
-	"fmt"
-
 	"github.com/metap-org/metap/pkg/crud"
 )
 
@@ -15,6 +13,7 @@ type serviceError struct {
 	code        string
 	message     string
 	fieldErrors map[string][]string
+	details     map[string]any
 }
 
 func newServiceError(status uint16, code string, message *string, fieldErrors map[string][]string) *serviceError {
@@ -25,8 +24,11 @@ func newServiceError(status uint16, code string, message *string, fieldErrors ma
 	return &serviceError{status: status, code: code, message: msg, fieldErrors: fieldErrors}
 }
 
+// Error is the GraphQL error's message: the human text only. The code is already in
+// extensions.code, and prefixing it ("guard_failed: …") put an identifier in front of every
+// message a frontend shows.
 func (e *serviceError) Error() string {
-	return fmt.Sprintf("%s: %s", e.code, e.message)
+	return e.message
 }
 
 // Extensions is picked up by graphql-go's gqlerrors formatting when an error returned from a
@@ -35,6 +37,9 @@ func (e *serviceError) Extensions() map[string]interface{} {
 	ext := map[string]interface{}{"code": e.code, "status": e.status}
 	if e.fieldErrors != nil {
 		ext["fieldErrors"] = e.fieldErrors
+	}
+	if e.details != nil {
+		ext["details"] = e.details
 	}
 	return ext
 }
@@ -48,7 +53,9 @@ func gqlError(err error) error {
 		if se.Message != "" {
 			msg = &se.Message
 		}
-		return newServiceError(se.Status, se.Code, msg, se.FieldErrors)
+		e := newServiceError(se.Status, se.Code, msg, se.FieldErrors)
+		e.details = se.Details
+		return e
 	}
 	return err
 }

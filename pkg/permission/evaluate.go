@@ -163,12 +163,48 @@ func EvaluatePolicies(policies []PolicyRow, ctx *RequestContext, recordSubject j
 
 // ConditionResult is the outcome of evaluating one PolicyCondition.
 type ConditionResult struct {
-	passed bool
-	reason string
+	passed  bool
+	reason  string
+	failure *ConditionFailure
+}
+
+// ConditionFailure is the leaf check that made a condition fail, for a caller that explains the
+// failure to a person (field label, readable operator) instead of showing Reason as is.
+type ConditionFailure struct {
+	Attribute string
+	Op        ConditionOp
+	Expected  json.RawMessage
+	Actual    json.RawMessage
+	// Message is the declared text for this failure (the leaf's own, or an enclosing group's);
+	// empty when the condition declares none.
+	Message string
 }
 
 func passed() ConditionResult              { return ConditionResult{passed: true} }
 func failed(reason string) ConditionResult { return ConditionResult{passed: false, reason: reason} }
+
+// withMessage: a group's own message replaces whatever its failing member reported.
+func (r ConditionResult) withMessage(message string) ConditionResult {
+	if r.passed || message == "" {
+		return r
+	}
+	r.reason = message
+	if r.failure != nil {
+		f := *r.failure
+		f.Message = message
+		r.failure = &f
+	}
+	return r
+}
+
+// Failure is the leaf check behind a failed result; false when the result passed, or when the
+// failure was not one leaf's (an empty `any`).
+func (r ConditionResult) Failure() (ConditionFailure, bool) {
+	if r.passed || r.failure == nil {
+		return ConditionFailure{}, false
+	}
+	return *r.failure, true
+}
 
 func (r ConditionResult) IsPassed() bool { return r.passed }
 func (r ConditionResult) Reason() (string, bool) {
@@ -186,30 +222,34 @@ func EvaluateCondition(condition PolicyCondition, subject json.RawMessage, ctx *
 		for _, inner := range condition.All {
 			result := EvaluateCondition(inner, subject, ctx)
 			if !result.IsPassed() {
-				return result
+				return result.withMessage(condition.Message)
 			}
 		}
 		return passed()
 	case condition.Any != nil:
-		lastFailure := "no condition in 'any' matched"
+		last := failed("no condition in 'any' matched")
 		for _, inner := range condition.Any {
 			result := EvaluateCondition(inner, subject, ctx)
 			if result.IsPassed() {
 				return passed()
 			}
-			if reason, ok := result.Reason(); ok {
-				lastFailure = reason
-			}
+			last = result
 		}
-		return failed(lastFailure)
+		return last.withMessage(condition.Message)
 	default:
 		actual := resolveAttribute(subject, condition.Attribute, ctx)
 		expected := ResolveValue(condition.Value, ctx)
 		if matchOperator(condition.Op, actual, expected) {
 			return passed()
 		}
-		return failed(
-			"condition failed: " + condition.Attribute + " " + opString(condition.Op) + " " +
-				string(expected) + " (got " + string(actual) + ")")
+		reason := condition.Message
+		if reason == "" {
+			reason = "condition failed: " + condition.Attribute + " " + opString(condition.Op) + " " +
+				string(expected) + " (got " + string(actual) + ")"
+		}
+		return ConditionResult{passed: false, reason: reason, failure: &ConditionFailure{
+			Attribute: condition.Attribute, Op: condition.Op, Expected: expected, Actual: actual,
+			Message: condition.Message,
+		}}
 	}
 }

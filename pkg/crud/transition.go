@@ -103,7 +103,8 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 	}
 
 	if guardErr := workflow.RunGuard(transition, workflow.WithWorkflowContext(existing.Data, actors), rc); guardErr != nil {
-		return RecordDto{}, NewServiceErrorMsg(http.StatusUnprocessableEntity, "guard_failed", guardErr.Error())
+		message, details := workflow.Explain(guardErr, &entity)
+		return RecordDto{}, &ServiceError{Status: http.StatusUnprocessableEntity, Code: "guard_failed", Message: message, Details: details}
 	}
 	toState := transition.To
 
@@ -139,7 +140,8 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 	}
 
 	if validatorErr := workflow.RunValidator(transition, workflow.WithWorkflowContext(nextData, actors), rc); validatorErr != nil {
-		return RecordDto{}, NewServiceErrorMsg(http.StatusUnprocessableEntity, "validator_failed", validatorErr.Error())
+		message, details := workflow.Explain(validatorErr, &entity)
+		return RecordDto{}, &ServiceError{Status: http.StatusUnprocessableEntity, Code: "validator_failed", Message: message, Details: details}
 	}
 
 	workflow.ApplySetFields(transition, nextData, rc)

@@ -55,7 +55,7 @@ func sendServiceError(ctx context.Context, se *crud.ServiceError) error {
 	if se.Message != "" {
 		message = &se.Message
 	}
-	err, md := errorToStatus(se.Status, se.Code, message, se.FieldErrors)
+	err, md := errorToStatus(se.Status, se.Code, message, se.FieldErrors, se.Details)
 	if md != nil {
 		_ = grpc.SetTrailer(ctx, md)
 	}

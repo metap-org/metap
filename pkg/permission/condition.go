@@ -69,6 +69,17 @@ type PolicyCondition struct {
 
 	All []PolicyCondition
 	Any []PolicyCondition
+
+	// Message is what a person is told when this condition is the reason a guard or validator
+	// failed ("the domain is not verified yet"), instead of the evaluator's technical reason. On a
+	// leaf it describes that one check; on an all/any group it describes the group as a whole.
+	Message string
+}
+
+// WithMessage returns the condition with the text shown when it is the reason a check failed.
+func (c PolicyCondition) WithMessage(message string) PolicyCondition {
+	c.Message = message
+	return c
 }
 
 func AttributeCondition(attribute string, op ConditionOp, value PolicyValue) PolicyCondition {
@@ -88,15 +99,18 @@ func (c PolicyCondition) MarshalJSON() ([]byte, error) {
 			Attribute string      `json:"attribute"`
 			Op        ConditionOp `json:"op"`
 			Value     PolicyValue `json:"value"`
-		}{c.Attribute, c.Op, c.Value})
+			Message   string      `json:"message,omitempty"`
+		}{c.Attribute, c.Op, c.Value, c.Message})
 	case c.All != nil:
 		return json.Marshal(struct {
-			All []PolicyCondition `json:"all"`
-		}{c.All})
+			All     []PolicyCondition `json:"all"`
+			Message string            `json:"message,omitempty"`
+		}{c.All, c.Message})
 	case c.Any != nil:
 		return json.Marshal(struct {
-			Any []PolicyCondition `json:"any"`
-		}{c.Any})
+			Any     []PolicyCondition `json:"any"`
+			Message string            `json:"message,omitempty"`
+		}{c.Any, c.Message})
 	default:
 		return nil, fmt.Errorf("permission: PolicyCondition has no variant set")
 	}
@@ -109,17 +123,18 @@ func (c *PolicyCondition) UnmarshalJSON(data []byte) error {
 		Value     *PolicyValue      `json:"value"`
 		All       []PolicyCondition `json:"all"`
 		Any       []PolicyCondition `json:"any"`
+		Message   string            `json:"message"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
 		return err
 	}
 	switch {
 	case probe.Attribute != nil:
-		*c = PolicyCondition{Attribute: *probe.Attribute, Op: probe.Op, Value: *probe.Value, isLeaf: true}
+		*c = PolicyCondition{Attribute: *probe.Attribute, Op: probe.Op, Value: *probe.Value, isLeaf: true, Message: probe.Message}
 	case probe.All != nil:
-		*c = PolicyCondition{All: probe.All}
+		*c = PolicyCondition{All: probe.All, Message: probe.Message}
 	case probe.Any != nil:
-		*c = PolicyCondition{Any: probe.Any}
+		*c = PolicyCondition{Any: probe.Any, Message: probe.Message}
 	default:
 		return fmt.Errorf("permission: PolicyCondition JSON matches no known variant")
 	}

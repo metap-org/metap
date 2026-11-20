@@ -6,7 +6,6 @@ package workflow
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -66,18 +65,8 @@ func RunGuard(transition *metadata.WorkflowTransition, data JSONObject, context 
 	if transition.Guard == nil {
 		return nil
 	}
-	result := permission.EvaluateCondition(*transition.Guard, jsonObjectToRaw(data), context)
-	if result.IsPassed() {
-		return nil
-	}
-	if transition.GuardMessage != "" {
-		return fmt.Errorf("%s", transition.GuardMessage)
-	}
-	reason, ok := result.Reason()
-	if !ok {
-		reason = "guard failed"
-	}
-	return fmt.Errorf("%s", reason)
+	return conditionError(permission.EvaluateCondition(*transition.Guard, jsonObjectToRaw(data), context),
+		transition.GuardMessage, "guard failed")
 }
 
 // RunValidator is the other half of the "condition vs. validator" split — same PolicyCondition
@@ -94,18 +83,44 @@ func RunValidator(
 	if transition.Validator == nil {
 		return nil
 	}
-	result := permission.EvaluateCondition(*transition.Validator, jsonObjectToRaw(nextData), context)
+	return conditionError(permission.EvaluateCondition(*transition.Validator, jsonObjectToRaw(nextData), context),
+		transition.ValidatorMessage, "validator failed")
+}
+
+// ConditionError is a failed guard or validator. Error() is the text to show: the transition's
+// GuardMessage/ValidatorMessage, else the failing condition's own Message, else the evaluator's
+// technical reason (Explain turns that last case into a sentence with the field's label).
+type ConditionError struct {
+	Message string
+	// Declared: Message came from the definition, not the evaluator.
+	Declared bool
+	// Failure is the leaf check that failed, when there is one.
+	Failure *permission.ConditionFailure
+}
+
+func (e *ConditionError) Error() string { return e.Message }
+
+func conditionError(result permission.ConditionResult, transitionMessage, fallback string) error {
 	if result.IsPassed() {
 		return nil
 	}
-	if transition.ValidatorMessage != "" {
-		return fmt.Errorf("%s", transition.ValidatorMessage)
+	e := &ConditionError{}
+	if f, ok := result.Failure(); ok {
+		e.Failure = &f
 	}
-	reason, ok := result.Reason()
-	if !ok {
-		reason = "validator failed"
+	switch {
+	case transitionMessage != "":
+		e.Message, e.Declared = transitionMessage, true
+	case e.Failure != nil && e.Failure.Message != "":
+		e.Message, e.Declared = e.Failure.Message, true
+	default:
+		reason, ok := result.Reason()
+		if !ok || reason == "" {
+			reason = fallback
+		}
+		e.Message = reason
 	}
-	return fmt.Errorf("%s", reason)
+	return e
 }
 
 // workflowContextKey is the reserved subject key guards and validators read
