@@ -21,16 +21,14 @@ import (
 type ExecutorConfig struct {
 	// TargetBaseURL is the base URL of the owning app instance's POST /auth/login ("REST" stays
 	// for /auth/* even though the entity-CRUD surface it used to also cover is gone — see
-	// TargetGRPCBackend's doc comment).
+	// TargetBackend's doc comment).
 	TargetBaseURL string
 
-	// TargetGRPCBackend is the workflow_transition/bulk_query_action jobs' entity CRUD backend —
-	// metap-http no longer serves a REST /api/:entity* surface for these to call, so this is a
-	// grpcapi.GrpcBackend connected to the owning app's RecordService gRPC port instead. nil when
-	// CRON_TARGET_GRPC_ADDR is unset or the initial connection failed — same "most job types
-	// don't need this, only these two fail" degrade-gracefully shape as ServiceToken/Secrets
+	// TargetBackend is the workflow_transition/bulk_query_action jobs' entity CRUD backend: a
+	// recordclient.Client on the owning app's REST API. nil when CRON_TARGET_URL is unset — only
+	// these two job types then fail, the same degrade-gracefully shape as ServiceToken/Secrets
 	// below, not a boot failure.
-	TargetGRPCBackend crud.RecordBackend
+	TargetBackend crud.RecordBackend
 
 	// ServiceToken is a service-account token this process logged into the owning app's own
 	// POST /auth/login with, kept fresh in the background. Its tenantId claim fixes which

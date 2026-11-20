@@ -95,7 +95,7 @@ func listRecordsByID(w http.ResponseWriter, r *http.Request, state *AppState, rc
 		}
 		ids = append(ids, id)
 	}
-	results, err := state.Crud.GetMany(r.Context(), entity, ids, rc)
+	results, err := state.RecordBackend().GetMany(r.Context(), entity, ids, rc)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -129,7 +129,7 @@ func listRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.List(r.Context(), entity, input, rc)
+	result, err := state.RecordBackend().List(r.Context(), entity, input, rc)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -153,7 +153,7 @@ func getRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Get(r.Context(), entity, id, rc)
+	result, err := state.RecordBackend().Get(r.Context(), entity, id, rc)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -191,7 +191,7 @@ func createRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Create(r.Context(), entity, body.Data, rc, body.Reason)
+	result, err := state.RecordBackend().Create(r.Context(), entity, body.Data, rc, body.Reason)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -221,7 +221,7 @@ func updateRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Update(r.Context(), entity, id, body.Version, body.Data, rc, body.Reason)
+	result, err := state.RecordBackend().Update(r.Context(), entity, id, body.Version, body.Data, rc, body.Reason)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -250,7 +250,7 @@ func deleteRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Delete(r.Context(), entity, id, body.Version, rc, body.Reason)
+	result, err := state.RecordBackend().Delete(r.Context(), entity, id, body.Version, rc, body.Reason)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -281,7 +281,7 @@ func transitionRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Transition(r.Context(), entity, id, action, body.Version, body.Data, rc, body.Reason)
+	result, err := state.RecordBackend().Transition(r.Context(), entity, id, action, body.Version, body.Data, rc, body.Reason)
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -308,7 +308,7 @@ func aggregateRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
-	result, err := state.Crud.Aggregate(r.Context(), entity, spec, rc)
+	result, err := state.RecordBackend().Aggregate(r.Context(), entity, spec, rc)
 	if err != nil {
 		writeCrudError(w, err)
 		return

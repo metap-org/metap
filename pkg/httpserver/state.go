@@ -40,6 +40,13 @@ type AppState struct {
 	Metadata    *atomic.Pointer[metadata.MetadataRegistry]
 	Permissions *permission.PermissionService
 	Crud        *crud.CrudService
+	// Records is the record backend the REST entity routes serve (roadmap 116): state.Crud, or a
+	// service's decorated one (app.Options.WrapBackend, e.g. create/update/delete guards). nil
+	// means Crud.
+	Records crud.RecordBackend
+	// Actions runs the actions the service's entities declare (EntityDefinition.Actions), served at
+	// POST /api/{entity}[/{id}]/actions/{action}; nil when the service declares none.
+	Actions crud.ActionInvoker
 	// PublicAppURL is the origin people reach this service at (the SSO callback is PublicAppURL + /auth/sso/callback); "" turns SSO off.
 	PublicAppURL string
 	// Audit is the tenant's audit trail, for the admin export; nil when none is configured.
@@ -204,3 +211,11 @@ func (s *AppState) EffectiveConfig(ctx context.Context, tenantID uuid.UUID) *con
 // contextAttributesCacheTTL is how long a user's resolved context attributes are reused before the
 // next request re-reads them (an explicit invalidation also clears the entry).
 const contextAttributesCacheTTL = 30 * time.Second
+
+// RecordBackend is the backend entity routes read and write through: Records when set, else Crud.
+func (s *AppState) RecordBackend() crud.RecordBackend {
+	if s.Records != nil {
+		return s.Records
+	}
+	return s.Crud
+}

@@ -203,28 +203,33 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	if opts.GRPCPort != 0 {
-		var backend crud.RecordBackend = state.Crud
-		if opts.WrapBackend != nil {
-			if backend, err = opts.WrapBackend(state); err != nil {
-				return fmt.Errorf("building gRPC backend: %w", err)
-			}
+	// The record backend and the actions REST serves (and gRPC, while it is still there): the
+	// service's decorated backend when it has one, so its guards hold on every transport.
+	var backend crud.RecordBackend = state.Crud
+	if opts.WrapBackend != nil {
+		if backend, err = opts.WrapBackend(state); err != nil {
+			return fmt.Errorf("building record backend: %w", err)
 		}
-		var invoker crud.ActionInvoker
-		if opts.Actions != nil {
-			reg := crud.NewActionRegistry()
-			if err := opts.Actions(state, reg); err != nil {
-				return fmt.Errorf("registering actions: %w", err)
-			}
-			for _, def := range registry.Definitions() {
-				for _, a := range def.Actions {
-					if !reg.Has(def.Name, a.Name) {
-						return fmt.Errorf("entity %s declares action %s but no handler is registered", def.Name, a.Name)
-					}
+		state.Records = backend
+	}
+	var invoker crud.ActionInvoker
+	if opts.Actions != nil {
+		reg := crud.NewActionRegistry()
+		if err := opts.Actions(state, reg); err != nil {
+			return fmt.Errorf("registering actions: %w", err)
+		}
+		for _, def := range registry.Definitions() {
+			for _, a := range def.Actions {
+				if !reg.Has(def.Name, a.Name) {
+					return fmt.Errorf("entity %s declares action %s but no handler is registered", def.Name, a.Name)
 				}
 			}
-			invoker = reg
 		}
+		invoker = reg
+		state.Actions = reg
+	}
+
+	if opts.GRPCPort != 0 {
 		// gRPC verifies exactly like HTTP: the JWKS verifier when configured, else the static key.
 		grpcServer, err := grpcapi.OptionalServe(config.Host, opts.GRPCPort, grpcapi.OptionalServeConfig{
 			Backend: backend, Router: state.Router, JWTPublicKey: tokens.PublicKey, TokenVerifierOverride: tokens.Verifier,

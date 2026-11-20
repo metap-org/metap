@@ -106,10 +106,10 @@ func dispatch(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, p
 	}
 	switch targetType {
 	case cron.TargetWorkflowTransition:
-		summary, err := RunWorkflowTransition(ctx, config.TargetGRPCBackend, payload.TargetConfig)
+		summary, err := RunWorkflowTransition(ctx, config.TargetBackend, payload.TargetConfig)
 		return summary, false, err
 	case cron.TargetBulkQueryAction:
-		summary, err := RunBulkQueryAction(ctx, config.TargetGRPCBackend, payload.TargetConfig)
+		summary, err := RunBulkQueryAction(ctx, config.TargetBackend, payload.TargetConfig)
 		return summary, false, err
 	case cron.TargetWebhook:
 		summary, err := RunWebhook(ctx, config.Webhook, config.Secrets, payload.TenantID, payload.JobID, payload.RunID,
