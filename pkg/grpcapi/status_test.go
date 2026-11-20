@@ -66,3 +66,13 @@ func TestAStatusWithNoDetailsIsReportedAsAbsentNotAsAnError(t *testing.T) {
 	_, ok := errorDetailsFromTrailer(nil)
 	require.False(t, ok, "expected no details on a nil trailer")
 }
+
+func TestErrorDetailsCarryStructuredDetails(t *testing.T) {
+	details := map[string]any{"field": "verificationStatus", "op": "eq"}
+	err, md := errorToStatus(422, "guard_failed", strPtr("Not verified"), nil, details)
+	require.Error(t, err)
+	back := statusToServiceErr(err, md)
+	require.Equal(t, "guard_failed", back.Code)
+	require.Equal(t, "Not verified", back.Message)
+	require.Equal(t, "verificationStatus", back.Details["field"])
+}

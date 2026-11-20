@@ -438,7 +438,7 @@ func computeCapabilities(entity metadata.EntityDefinition, rc *permission.Reques
 			guardErr := workflow.RunGuard(&transition, guardSubject, rc)
 			var reason *string
 			if guardErr != nil {
-				r := guardErr.Error()
+				r, _ := workflow.Explain(guardErr, &entity)
 				reason = &r
 			}
 			transitions = append(transitions, TransitionAvailability{Action: transition.Action, Available: guardErr == nil, Reason: reason})

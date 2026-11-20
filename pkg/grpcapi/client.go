@@ -108,6 +108,7 @@ func statusToServiceErr(err error, trailer grpcmd.MD) *crud.ServiceError {
 			se.Message = details.Error
 		}
 		se.FieldErrors = details.FieldErrors
+		se.Details = details.Details
 		return se
 	}
 	httpStatus := uint16(502)

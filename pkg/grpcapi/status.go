@@ -31,6 +31,7 @@ type ErrorDetails struct {
 	Error       string              `json:"error"`
 	Message     *string             `json:"message,omitempty"`
 	FieldErrors map[string][]string `json:"fieldErrors,omitempty"`
+	Details     map[string]any      `json:"details,omitempty"`
 }
 
 // codeForStatus maps a numeric HTTP status to the semantically closest gRPC code. Lossy by
@@ -67,14 +68,17 @@ func errorDetailsTrailerBytes(details ErrorDetails) (metadata.MD, bool) {
 // errorToStatus builds the (grpc error, trailer metadata) pair for a crud.ServiceError.
 // The caller must call grpc.SetTrailer(ctx, md) (server side) before returning err, or pass
 // grpc.Trailer(&md) as a CallOption and read it back (client side) — see service.go/client.go.
-func errorToStatus(httpStatus uint16, errorCode string, message *string, fieldErrors map[string][]string) (error, metadata.MD) {
+func errorToStatus(httpStatus uint16, errorCode string, message *string, fieldErrors map[string][]string, details ...map[string]any) (error, metadata.MD) {
 	code := codeForStatus(httpStatus)
 	text := errorCode
 	if message != nil {
 		text = *message
 	}
-	details := ErrorDetails{Status: httpStatus, Error: errorCode, Message: message, FieldErrors: fieldErrors}
-	md, ok := errorDetailsTrailerBytes(details)
+	envelope := ErrorDetails{Status: httpStatus, Error: errorCode, Message: message, FieldErrors: fieldErrors}
+	if len(details) > 0 {
+		envelope.Details = details[0]
+	}
+	md, ok := errorDetailsTrailerBytes(envelope)
 	if !ok {
 		return status.Error(code, text), nil
 	}
