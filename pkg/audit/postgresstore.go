@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,15 +35,49 @@ func (s *PostgresStore) Record(ctx context.Context, tenantID uuid.UUID, entry En
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx,
+	// Postgres stores microseconds; hash what is stored, not the nanoseconds Go carries.
+	occurred := entry.OccurredAt.UTC().Truncate(time.Microsecond)
+	id := uuid.New()
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Make sure the tenant's head exists, then lock it: the chain is written one entry at a time
+	// per tenant (see migration 0050).
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO metadata.audit_chain_heads (tenant_id, seq, hash) VALUES ($1, 0, '\x00')
+		 ON CONFLICT (tenant_id) DO NOTHING`, tenantID); err != nil {
+		return err
+	}
+	var prevSeq int64
+	var prevHash []byte
+	if err := tx.QueryRow(ctx,
+		`SELECT seq, hash FROM metadata.audit_chain_heads WHERE tenant_id = $1 FOR UPDATE`, tenantID).
+		Scan(&prevSeq, &prevHash); err != nil {
+		return err
+	}
+	seq := prevSeq + 1
+	var hash []byte
+	if err := tx.QueryRow(ctx,
 		`INSERT INTO metadata.audit_trail_entries
-		 (tenant_id, entity, record_id, action, transition_action, actor_user_id, reason, diff, version_after, occurred_at,
-		  parent_entity, parent_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		entry.TenantID, entry.Entity, entry.RecordID, entry.Action.String(), entry.TransitionAction,
-		entry.ActorUserID, entry.Reason, diffJSON, entry.VersionAfter, entry.OccurredAt,
-		entry.ParentEntity, entry.ParentID)
-	return err
+		 (id, tenant_id, entity, record_id, action, transition_action, actor_user_id, reason, diff, version_after, occurred_at,
+		  parent_entity, parent_id, seq, prev_hash, hash)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+		  metadata.audit_entry_hash($15, $14, $2, $1, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13))
+		 RETURNING hash`,
+		id, entry.TenantID, entry.Entity, entry.RecordID, entry.Action.String(), entry.TransitionAction,
+		entry.ActorUserID, entry.Reason, diffJSON, entry.VersionAfter, occurred,
+		entry.ParentEntity, entry.ParentID, seq, prevHash).Scan(&hash); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE metadata.audit_chain_heads SET seq = $2, hash = $3 WHERE tenant_id = $1`, tenantID, seq, hash); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PostgresStore) Query(ctx context.Context, tenantID uuid.UUID, q Query) ([]Row, error) {

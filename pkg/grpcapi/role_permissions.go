@@ -105,7 +105,13 @@ func (s *RoleAdminService) SetRolePermissions(ctx context.Context, req *pb.SetRo
 	grants := make([]peripherals.RoleGrant, 0, len(req.GetGrants()))
 	for _, g := range req.GetGrants() {
 		entity, action := strings.TrimSpace(g.GetEntity()), strings.TrimSpace(g.GetAction())
-		if entity == "" || len(entity) > 120 || !validGrantAction(action) {
+		// A virtual resource (roadmap 115 M6) takes only the actions it declares; anything else only the
+		// entity actions.
+		valid := validGrantAction(action)
+		if strings.HasPrefix(entity, permission.ResourcePrefix) {
+			valid = permission.ValidResourceGrant(entity, action)
+		}
+		if entity == "" || len(entity) > 120 || !valid {
 			return nil, sendServiceError(ctx, &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed,
 				Message:     "Invalid permission " + entity + " " + action + ".",
 				FieldErrors: map[string][]string{"grants": {entity + " " + action}}})
@@ -171,4 +177,19 @@ func grantDiff(before []peripherals.RoleGrant, after []*pb.RoleGrant) (added, re
 	slices.Sort(added)
 	slices.Sort(removed)
 	return added, removed
+}
+
+func (s *RoleAdminService) ListPermissionResources(ctx context.Context, _ *pb.Empty) (*pb.ListPermissionResourcesResponse, error) {
+	if _, err := s.d.admin(ctx); err != nil {
+		return nil, err
+	}
+	out := &pb.ListPermissionResourcesResponse{Resources: []*pb.PermissionResource{}}
+	for _, r := range permission.Resources() {
+		pr := &pb.PermissionResource{Name: r.Name, Description: r.Description, Key: permission.ResourceKey(r.Name)}
+		for _, a := range r.Actions {
+			pr.Actions = append(pr.Actions, &pb.PermissionResourceAction{Name: a.Name, Description: a.Description})
+		}
+		out.Resources = append(out.Resources, pr)
+	}
+	return out, nil
 }

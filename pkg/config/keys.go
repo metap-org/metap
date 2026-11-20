@@ -222,6 +222,7 @@ const (
 	AuthSessionAbsoluteMaxSeconds  = "auth.sessionAbsoluteMaxSeconds"
 	AuthPasswordMinLength          = "auth.passwordMinLength"
 	AuthRequireMFA                 = "auth.requireMfa"
+	AuthAPIKeyMaxLifetimeDays      = "auth.apiKeyMaxLifetimeDays"
 	SignupEnabled                  = "signup.enabled"
 	SignupBlockedTenantNames       = "signup.blockedTenantNames"
 	CronWebhookAuthorization       = "cron.webhookAuthorization"
@@ -255,6 +256,11 @@ var Registry = []KeyDef{
 	// none is made to set it up first.
 	{Key: AuthRequireMFA, Level: LevelTenant, Default: func() json.RawMessage { return json.RawMessage("false") },
 		Validate: boolValue},
+	// The longest an API key of this tenant may live (roadmap 115 M11). 0 = no tenant cap (the
+	// platform's own 3650-day limit still applies); with a cap set, a key must carry an expiry and
+	// it may not exceed the cap.
+	{Key: AuthAPIKeyMaxLifetimeDays, Level: LevelTenant, Default: func() json.RawMessage { return num(0) },
+		Validate: positiveIntIn(0, 3650)},
 	// Anyone may register a tenant of their own through /auth/signup (roadmap 115 M2). Off until an
 	// operator decides the deployment is open to the public.
 	{Key: SignupEnabled, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return json.RawMessage("false") },

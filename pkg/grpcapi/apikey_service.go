@@ -2,6 +2,7 @@ package grpcapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -91,6 +92,13 @@ func (s *UserAdminService) CreateApiKey(ctx context.Context, req *pb.CreateApiKe
 	days := int(req.GetExpiresInDays())
 	if days < 0 || days > MaxAPIKeyLifetimeDays {
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "expiresInDays must be between 0 and 3650")
+	}
+	// The tenant's own cap (roadmap 115 M11): a key must expire, and no later than the cap.
+	if s.d.cfg.APIKeyMaxDays != nil {
+		if max := s.d.cfg.APIKeyMaxDays(ctx, c.tenant); max > 0 && (days == 0 || days > max) {
+			return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed,
+				fmt.Sprintf("This tenant limits API keys to %d days; set expiresInDays between 1 and %d.", max, max))
+		}
 	}
 	now := s.d.now()
 	var expires *time.Time

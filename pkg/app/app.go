@@ -23,8 +23,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"sync/atomic"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/metap-org/metap/pkg/accountmail"
@@ -38,6 +40,7 @@ import (
 	"github.com/metap-org/metap/pkg/httpserver/dashboardroutes"
 	"github.com/metap-org/metap/pkg/httpserver/oauth2routes"
 	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/shutdown"
@@ -179,6 +182,7 @@ func Run(ctx context.Context, opts Options) error {
 	state := httpserver.NewAppState(pool, registry, &mdPtr, permissions, tokens.PrivateKeyPEM, publicKey, router)
 	state.TokenSigner, state.TokenVerifier, state.JwksKeys = tokens.Signer, tokens.Verifier, tokens.Keys
 	auditStore := audit.NewPostgresStore(state.Pool)
+	state.Audit = auditStore
 	state.Crud = crud.WithAudit(state.Router, state.Metadata, state.Permissions, auditStore)
 	state.CookieSecure = false
 	state.Mailer = accountmail.New(accountmail.Config{
@@ -238,12 +242,29 @@ func Run(ctx context.Context, opts Options) error {
 	if modules == nil {
 		modules = DefaultModules()
 	}
+	if idc := identityConfig(state, auditStore); idc != nil {
+		modules = append(slices.Clone(modules), scimMount(state, tokens, *idc))
+	}
 	handler := httpserver.BuildRouter(state, config.CORSOrigins, append(modules, opts.Routes)...)
 	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
 	slog.Info(opts.Name+" listening", "addr", addr)
 	serveCtx, stop := shutdown.Context(ctx)
 	defer stop()
 	return httpx.ServeContext(serveCtx, &http.Server{Addr: addr, Handler: handler}, httpx.DefaultShutdownTimeout)
+}
+
+// scimMount serves SCIM user provisioning at /scim/v2 (roadmap 115 M12) on the token issuer. It
+// authenticates like gRPC does, with the caller's own bearer token (an API key of an admin
+// service account), since it runs UserAdminService in-process.
+func scimMount(state *httpserver.AppState, tokens *TokenAuth, idc grpcapi.IdentityConfig) httpserver.Mount {
+	verifier := tokens.Verifier
+	if verifier == nil {
+		verifier = &jwks.TokenVerifier{Kind: jwks.VerifierStatic, PublicKey: tokens.PublicKey, Leeway: jwks.DefaultLeeway}
+	}
+	auth := grpcapi.AuthConfig{Verifier: verifier, Router: state.Router, AuthContextEntity: state.AuthContextEntity,
+		Metadata: state.Metadata, ContextAttributesCache: state.ContextAttributesCache}
+	handler := http.StripPrefix("/scim/v2", grpcapi.SCIMHandler(grpcapi.NewUserAdminService(auth, idc)))
+	return func(r chi.Router, _ *httpserver.AppState) { r.Mount("/scim/v2", handler) }
 }
 
 // identityConfig serves user administration on the token issuer only (it owns identities); a
@@ -253,7 +274,7 @@ func identityConfig(state *httpserver.AppState, auditStore audit.Store) *grpcapi
 		return nil
 	}
 	return &grpcapi.IdentityConfig{Shared: state.Pool, Router: state.Router, Audit: auditStore,
-		Mailer: state.Mailer, PasswordPolicy: state.PasswordPolicy()}
+		Mailer: state.Mailer, PasswordPolicy: state.PasswordPolicy(), APIKeyMaxDays: state.APIKeyMaxDays}
 }
 
 // ReadPublicKey loads a PEM public key: PKIX ("PUBLIC KEY", any algorithm) first, falling back to

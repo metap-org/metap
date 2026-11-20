@@ -45,6 +45,9 @@ type IdentityConfig struct {
 	Mailer *accountmail.Mailer
 	// PasswordPolicy is each tenant's minimum password length; nil means the platform minimum.
 	PasswordPolicy identity.PasswordPolicy
+	// APIKeyMaxDays is the tenant's cap on an API key's lifetime in days (auth.apiKeyMaxLifetimeDays);
+	// nil or 0 means no tenant cap.
+	APIKeyMaxDays func(ctx context.Context, tenant uuid.UUID) int
 }
 
 type identityDeps struct {

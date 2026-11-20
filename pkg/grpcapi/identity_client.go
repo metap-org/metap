@@ -19,6 +19,7 @@ type IdentityClient struct {
 	Roles   pb.RoleAdminServiceClient
 	Account pb.AccountServiceClient
 	Tenants pb.TenantAdminServiceClient
+	Audit   pb.AuditAdminServiceClient
 	conn    *grpc.ClientConn
 }
 
@@ -31,7 +32,7 @@ func ConnectIdentity(addr string, dialOpts ...grpc.DialOption) (*IdentityClient,
 		return nil, fmt.Errorf("connecting to identity service at %s: %w", addr, err)
 	}
 	return &IdentityClient{Admin: pb.NewUserAdminServiceClient(conn), Roles: pb.NewRoleAdminServiceClient(conn),
-		Account: pb.NewAccountServiceClient(conn), Tenants: pb.NewTenantAdminServiceClient(conn), conn: conn}, nil
+		Account: pb.NewAccountServiceClient(conn), Tenants: pb.NewTenantAdminServiceClient(conn), Audit: pb.NewAuditAdminServiceClient(conn), conn: conn}, nil
 }
 
 func (c *IdentityClient) Close() error { return c.conn.Close() }

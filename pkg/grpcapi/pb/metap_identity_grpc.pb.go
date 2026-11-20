@@ -871,14 +871,15 @@ var UserAdminService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	RoleAdminService_ListRoles_FullMethodName          = "/metap.identity.v1.RoleAdminService/ListRoles"
-	RoleAdminService_GetRole_FullMethodName            = "/metap.identity.v1.RoleAdminService/GetRole"
-	RoleAdminService_CreateRole_FullMethodName         = "/metap.identity.v1.RoleAdminService/CreateRole"
-	RoleAdminService_UpdateRole_FullMethodName         = "/metap.identity.v1.RoleAdminService/UpdateRole"
-	RoleAdminService_DeleteRole_FullMethodName         = "/metap.identity.v1.RoleAdminService/DeleteRole"
-	RoleAdminService_ListRoleAudit_FullMethodName      = "/metap.identity.v1.RoleAdminService/ListRoleAudit"
-	RoleAdminService_GetRolePermissions_FullMethodName = "/metap.identity.v1.RoleAdminService/GetRolePermissions"
-	RoleAdminService_SetRolePermissions_FullMethodName = "/metap.identity.v1.RoleAdminService/SetRolePermissions"
+	RoleAdminService_ListRoles_FullMethodName               = "/metap.identity.v1.RoleAdminService/ListRoles"
+	RoleAdminService_GetRole_FullMethodName                 = "/metap.identity.v1.RoleAdminService/GetRole"
+	RoleAdminService_CreateRole_FullMethodName              = "/metap.identity.v1.RoleAdminService/CreateRole"
+	RoleAdminService_UpdateRole_FullMethodName              = "/metap.identity.v1.RoleAdminService/UpdateRole"
+	RoleAdminService_DeleteRole_FullMethodName              = "/metap.identity.v1.RoleAdminService/DeleteRole"
+	RoleAdminService_ListRoleAudit_FullMethodName           = "/metap.identity.v1.RoleAdminService/ListRoleAudit"
+	RoleAdminService_GetRolePermissions_FullMethodName      = "/metap.identity.v1.RoleAdminService/GetRolePermissions"
+	RoleAdminService_SetRolePermissions_FullMethodName      = "/metap.identity.v1.RoleAdminService/SetRolePermissions"
+	RoleAdminService_ListPermissionResources_FullMethodName = "/metap.identity.v1.RoleAdminService/ListPermissionResources"
 )
 
 // RoleAdminServiceClient is the client API for RoleAdminService service.
@@ -902,6 +903,9 @@ type RoleAdminServiceClient interface {
 	// Replaces the role's basic permissions in one transaction; advanced policies and other roles'
 	// permissions are untouched. Not for the built-in admin role, which bypasses every policy.
 	SetRolePermissions(ctx context.Context, in *SetRolePermissionsRequest, opts ...grpc.CallOption) (*RolePermissions, error)
+	// The virtual resources the product declared (permissions that belong to no entity). A grant on
+	// one uses entity = PermissionResource.key and one of its actions.
+	ListPermissionResources(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListPermissionResourcesResponse, error)
 }
 
 type roleAdminServiceClient struct {
@@ -992,6 +996,16 @@ func (c *roleAdminServiceClient) SetRolePermissions(ctx context.Context, in *Set
 	return out, nil
 }
 
+func (c *roleAdminServiceClient) ListPermissionResources(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListPermissionResourcesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPermissionResourcesResponse)
+	err := c.cc.Invoke(ctx, RoleAdminService_ListPermissionResources_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RoleAdminServiceServer is the server API for RoleAdminService service.
 // All implementations must embed UnimplementedRoleAdminServiceServer
 // for forward compatibility.
@@ -1013,6 +1027,9 @@ type RoleAdminServiceServer interface {
 	// Replaces the role's basic permissions in one transaction; advanced policies and other roles'
 	// permissions are untouched. Not for the built-in admin role, which bypasses every policy.
 	SetRolePermissions(context.Context, *SetRolePermissionsRequest) (*RolePermissions, error)
+	// The virtual resources the product declared (permissions that belong to no entity). A grant on
+	// one uses entity = PermissionResource.key and one of its actions.
+	ListPermissionResources(context.Context, *Empty) (*ListPermissionResourcesResponse, error)
 	mustEmbedUnimplementedRoleAdminServiceServer()
 }
 
@@ -1046,6 +1063,9 @@ func (UnimplementedRoleAdminServiceServer) GetRolePermissions(context.Context, *
 }
 func (UnimplementedRoleAdminServiceServer) SetRolePermissions(context.Context, *SetRolePermissionsRequest) (*RolePermissions, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetRolePermissions not implemented")
+}
+func (UnimplementedRoleAdminServiceServer) ListPermissionResources(context.Context, *Empty) (*ListPermissionResourcesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPermissionResources not implemented")
 }
 func (UnimplementedRoleAdminServiceServer) mustEmbedUnimplementedRoleAdminServiceServer() {}
 func (UnimplementedRoleAdminServiceServer) testEmbeddedByValue()                          {}
@@ -1212,6 +1232,24 @@ func _RoleAdminService_SetRolePermissions_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RoleAdminService_ListPermissionResources_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RoleAdminServiceServer).ListPermissionResources(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RoleAdminService_ListPermissionResources_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RoleAdminServiceServer).ListPermissionResources(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RoleAdminService_ServiceDesc is the grpc.ServiceDesc for RoleAdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1250,6 +1288,10 @@ var RoleAdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetRolePermissions",
 			Handler:    _RoleAdminService_SetRolePermissions_Handler,
+		},
+		{
+			MethodName: "ListPermissionResources",
+			Handler:    _RoleAdminService_ListPermissionResources_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -2176,6 +2218,156 @@ var TenantAdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelTenantDeletion",
 			Handler:    _TenantAdminService_CancelTenantDeletion_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "metap_identity.proto",
+}
+
+const (
+	AuditAdminService_SearchAudit_FullMethodName      = "/metap.identity.v1.AuditAdminService/SearchAudit"
+	AuditAdminService_VerifyAuditChain_FullMethodName = "/metap.identity.v1.AuditAdminService/VerifyAuditChain"
+)
+
+// AuditAdminServiceClient is the client API for AuditAdminService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// The tenant's audit trail as a whole (roadmap 115 M9): search it by person, object and time, and
+// check that no entry was edited, removed or inserted after the fact. Tenant admins only; the
+// tenant is always the caller's.
+type AuditAdminServiceClient interface {
+	SearchAudit(ctx context.Context, in *SearchAuditRequest, opts ...grpc.CallOption) (*SearchAuditResponse, error)
+	// Recomputes the tenant's hash chain from the first entry; reads every chained entry.
+	VerifyAuditChain(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*AuditChainReport, error)
+}
+
+type auditAdminServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewAuditAdminServiceClient(cc grpc.ClientConnInterface) AuditAdminServiceClient {
+	return &auditAdminServiceClient{cc}
+}
+
+func (c *auditAdminServiceClient) SearchAudit(ctx context.Context, in *SearchAuditRequest, opts ...grpc.CallOption) (*SearchAuditResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SearchAuditResponse)
+	err := c.cc.Invoke(ctx, AuditAdminService_SearchAudit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *auditAdminServiceClient) VerifyAuditChain(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*AuditChainReport, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuditChainReport)
+	err := c.cc.Invoke(ctx, AuditAdminService_VerifyAuditChain_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// AuditAdminServiceServer is the server API for AuditAdminService service.
+// All implementations must embed UnimplementedAuditAdminServiceServer
+// for forward compatibility.
+//
+// The tenant's audit trail as a whole (roadmap 115 M9): search it by person, object and time, and
+// check that no entry was edited, removed or inserted after the fact. Tenant admins only; the
+// tenant is always the caller's.
+type AuditAdminServiceServer interface {
+	SearchAudit(context.Context, *SearchAuditRequest) (*SearchAuditResponse, error)
+	// Recomputes the tenant's hash chain from the first entry; reads every chained entry.
+	VerifyAuditChain(context.Context, *Empty) (*AuditChainReport, error)
+	mustEmbedUnimplementedAuditAdminServiceServer()
+}
+
+// UnimplementedAuditAdminServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedAuditAdminServiceServer struct{}
+
+func (UnimplementedAuditAdminServiceServer) SearchAudit(context.Context, *SearchAuditRequest) (*SearchAuditResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SearchAudit not implemented")
+}
+func (UnimplementedAuditAdminServiceServer) VerifyAuditChain(context.Context, *Empty) (*AuditChainReport, error) {
+	return nil, status.Error(codes.Unimplemented, "method VerifyAuditChain not implemented")
+}
+func (UnimplementedAuditAdminServiceServer) mustEmbedUnimplementedAuditAdminServiceServer() {}
+func (UnimplementedAuditAdminServiceServer) testEmbeddedByValue()                           {}
+
+// UnsafeAuditAdminServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to AuditAdminServiceServer will
+// result in compilation errors.
+type UnsafeAuditAdminServiceServer interface {
+	mustEmbedUnimplementedAuditAdminServiceServer()
+}
+
+func RegisterAuditAdminServiceServer(s grpc.ServiceRegistrar, srv AuditAdminServiceServer) {
+	// If the following call panics, it indicates UnimplementedAuditAdminServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&AuditAdminService_ServiceDesc, srv)
+}
+
+func _AuditAdminService_SearchAudit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SearchAuditRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuditAdminServiceServer).SearchAudit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuditAdminService_SearchAudit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuditAdminServiceServer).SearchAudit(ctx, req.(*SearchAuditRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AuditAdminService_VerifyAuditChain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuditAdminServiceServer).VerifyAuditChain(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuditAdminService_VerifyAuditChain_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuditAdminServiceServer).VerifyAuditChain(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// AuditAdminService_ServiceDesc is the grpc.ServiceDesc for AuditAdminService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var AuditAdminService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "metap.identity.v1.AuditAdminService",
+	HandlerType: (*AuditAdminServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "SearchAudit",
+			Handler:    _AuditAdminService_SearchAudit_Handler,
+		},
+		{
+			MethodName: "VerifyAuditChain",
+			Handler:    _AuditAdminService_VerifyAuditChain_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
