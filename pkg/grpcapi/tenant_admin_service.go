@@ -46,7 +46,11 @@ func NewTenantAdminService(auth AuthConfig, cfg IdentityConfig) *TenantAdminServ
 // platformAdmin authenticates a caller that must be a platform_admin of the platform tenant (and
 // hold the admin OAuth2 scope when the token is scoped).
 func (s *TenantAdminService) platformAdmin(ctx context.Context) (caller, error) {
-	c, err := s.d.caller(ctx)
+	return s.d.platformAdmin(ctx)
+}
+
+func (d identityDeps) platformAdmin(ctx context.Context) (caller, error) {
+	c, err := d.caller(ctx)
 	if err != nil {
 		return caller{}, err
 	}

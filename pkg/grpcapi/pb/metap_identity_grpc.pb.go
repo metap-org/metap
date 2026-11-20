@@ -2373,3 +2373,695 @@ var AuditAdminService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "metap_identity.proto",
 }
+
+const (
+	SupportAccessService_GrantSupportAccess_FullMethodName  = "/metap.identity.v1.SupportAccessService/GrantSupportAccess"
+	SupportAccessService_ListSupportGrants_FullMethodName   = "/metap.identity.v1.SupportAccessService/ListSupportGrants"
+	SupportAccessService_RevokeSupportGrant_FullMethodName  = "/metap.identity.v1.SupportAccessService/RevokeSupportGrant"
+	SupportAccessService_StartSupportSession_FullMethodName = "/metap.identity.v1.SupportAccessService/StartSupportSession"
+)
+
+// SupportAccessServiceClient is the client API for SupportAccessService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Support access (roadmap 115 M10). A tenant admin lets the vendor's support staff act inside the
+// tenant for a limited time and for a stated reason; a platform admin then starts a session under
+// the grant and receives an API key of a "Support: <email>" service account holding exactly the
+// granted role. The key expires with the grant (and within 8 hours of being issued); revoking the
+// grant ends every session at once. Everything support does is attributed to that account.
+type SupportAccessServiceClient interface {
+	// Tenant admin.
+	GrantSupportAccess(ctx context.Context, in *GrantSupportAccessRequest, opts ...grpc.CallOption) (*SupportGrant, error)
+	ListSupportGrants(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListSupportGrantsResponse, error)
+	RevokeSupportGrant(ctx context.Context, in *SupportGrantIdRequest, opts ...grpc.CallOption) (*SupportGrant, error)
+	// Platform admin: needs an active grant on the tenant.
+	StartSupportSession(ctx context.Context, in *StartSupportSessionRequest, opts ...grpc.CallOption) (*SupportSessionToken, error)
+}
+
+type supportAccessServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewSupportAccessServiceClient(cc grpc.ClientConnInterface) SupportAccessServiceClient {
+	return &supportAccessServiceClient{cc}
+}
+
+func (c *supportAccessServiceClient) GrantSupportAccess(ctx context.Context, in *GrantSupportAccessRequest, opts ...grpc.CallOption) (*SupportGrant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SupportGrant)
+	err := c.cc.Invoke(ctx, SupportAccessService_GrantSupportAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *supportAccessServiceClient) ListSupportGrants(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListSupportGrantsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSupportGrantsResponse)
+	err := c.cc.Invoke(ctx, SupportAccessService_ListSupportGrants_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *supportAccessServiceClient) RevokeSupportGrant(ctx context.Context, in *SupportGrantIdRequest, opts ...grpc.CallOption) (*SupportGrant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SupportGrant)
+	err := c.cc.Invoke(ctx, SupportAccessService_RevokeSupportGrant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *supportAccessServiceClient) StartSupportSession(ctx context.Context, in *StartSupportSessionRequest, opts ...grpc.CallOption) (*SupportSessionToken, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SupportSessionToken)
+	err := c.cc.Invoke(ctx, SupportAccessService_StartSupportSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SupportAccessServiceServer is the server API for SupportAccessService service.
+// All implementations must embed UnimplementedSupportAccessServiceServer
+// for forward compatibility.
+//
+// Support access (roadmap 115 M10). A tenant admin lets the vendor's support staff act inside the
+// tenant for a limited time and for a stated reason; a platform admin then starts a session under
+// the grant and receives an API key of a "Support: <email>" service account holding exactly the
+// granted role. The key expires with the grant (and within 8 hours of being issued); revoking the
+// grant ends every session at once. Everything support does is attributed to that account.
+type SupportAccessServiceServer interface {
+	// Tenant admin.
+	GrantSupportAccess(context.Context, *GrantSupportAccessRequest) (*SupportGrant, error)
+	ListSupportGrants(context.Context, *Empty) (*ListSupportGrantsResponse, error)
+	RevokeSupportGrant(context.Context, *SupportGrantIdRequest) (*SupportGrant, error)
+	// Platform admin: needs an active grant on the tenant.
+	StartSupportSession(context.Context, *StartSupportSessionRequest) (*SupportSessionToken, error)
+	mustEmbedUnimplementedSupportAccessServiceServer()
+}
+
+// UnimplementedSupportAccessServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedSupportAccessServiceServer struct{}
+
+func (UnimplementedSupportAccessServiceServer) GrantSupportAccess(context.Context, *GrantSupportAccessRequest) (*SupportGrant, error) {
+	return nil, status.Error(codes.Unimplemented, "method GrantSupportAccess not implemented")
+}
+func (UnimplementedSupportAccessServiceServer) ListSupportGrants(context.Context, *Empty) (*ListSupportGrantsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSupportGrants not implemented")
+}
+func (UnimplementedSupportAccessServiceServer) RevokeSupportGrant(context.Context, *SupportGrantIdRequest) (*SupportGrant, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeSupportGrant not implemented")
+}
+func (UnimplementedSupportAccessServiceServer) StartSupportSession(context.Context, *StartSupportSessionRequest) (*SupportSessionToken, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartSupportSession not implemented")
+}
+func (UnimplementedSupportAccessServiceServer) mustEmbedUnimplementedSupportAccessServiceServer() {}
+func (UnimplementedSupportAccessServiceServer) testEmbeddedByValue()                              {}
+
+// UnsafeSupportAccessServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to SupportAccessServiceServer will
+// result in compilation errors.
+type UnsafeSupportAccessServiceServer interface {
+	mustEmbedUnimplementedSupportAccessServiceServer()
+}
+
+func RegisterSupportAccessServiceServer(s grpc.ServiceRegistrar, srv SupportAccessServiceServer) {
+	// If the following call panics, it indicates UnimplementedSupportAccessServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&SupportAccessService_ServiceDesc, srv)
+}
+
+func _SupportAccessService_GrantSupportAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GrantSupportAccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SupportAccessServiceServer).GrantSupportAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SupportAccessService_GrantSupportAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SupportAccessServiceServer).GrantSupportAccess(ctx, req.(*GrantSupportAccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SupportAccessService_ListSupportGrants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SupportAccessServiceServer).ListSupportGrants(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SupportAccessService_ListSupportGrants_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SupportAccessServiceServer).ListSupportGrants(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SupportAccessService_RevokeSupportGrant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SupportGrantIdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SupportAccessServiceServer).RevokeSupportGrant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SupportAccessService_RevokeSupportGrant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SupportAccessServiceServer).RevokeSupportGrant(ctx, req.(*SupportGrantIdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SupportAccessService_StartSupportSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartSupportSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SupportAccessServiceServer).StartSupportSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SupportAccessService_StartSupportSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SupportAccessServiceServer).StartSupportSession(ctx, req.(*StartSupportSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// SupportAccessService_ServiceDesc is the grpc.ServiceDesc for SupportAccessService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var SupportAccessService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "metap.identity.v1.SupportAccessService",
+	HandlerType: (*SupportAccessServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GrantSupportAccess",
+			Handler:    _SupportAccessService_GrantSupportAccess_Handler,
+		},
+		{
+			MethodName: "ListSupportGrants",
+			Handler:    _SupportAccessService_ListSupportGrants_Handler,
+		},
+		{
+			MethodName: "RevokeSupportGrant",
+			Handler:    _SupportAccessService_RevokeSupportGrant_Handler,
+		},
+		{
+			MethodName: "StartSupportSession",
+			Handler:    _SupportAccessService_StartSupportSession_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "metap_identity.proto",
+}
+
+const (
+	OwnerService_GetOwnerStatus_FullMethodName        = "/metap.identity.v1.OwnerService/GetOwnerStatus"
+	OwnerService_TransferOwnership_FullMethodName     = "/metap.identity.v1.OwnerService/TransferOwnership"
+	OwnerService_CancelOwnerRecovery_FullMethodName   = "/metap.identity.v1.OwnerService/CancelOwnerRecovery"
+	OwnerService_RequestOwnerRecovery_FullMethodName  = "/metap.identity.v1.OwnerService/RequestOwnerRecovery"
+	OwnerService_CompleteOwnerRecovery_FullMethodName = "/metap.identity.v1.OwnerService/CompleteOwnerRecovery"
+)
+
+// OwnerServiceClient is the client API for OwnerService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Tenant owner (roadmap 115 M8). One member per tenant is the owner: other admins cannot disable,
+// remove, demote, reset the password or MFA of the owner. Ownership moves by the owner's own
+// transfer, or by a platform-admin recovery: it is announced to every tenant admin by email, waits
+// 72 hours during which any admin can cancel it, and only then can be completed.
+type OwnerServiceClient interface {
+	// Tenant admin.
+	GetOwnerStatus(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*OwnerStatus, error)
+	// Owner only: hands ownership to another active admin at once.
+	TransferOwnership(ctx context.Context, in *TransferOwnershipRequest, opts ...grpc.CallOption) (*OwnerStatus, error)
+	// Any tenant admin: stops a pending recovery.
+	CancelOwnerRecovery(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*OwnerStatus, error)
+	// Platform admin.
+	RequestOwnerRecovery(ctx context.Context, in *RequestOwnerRecoveryRequest, opts ...grpc.CallOption) (*OwnerRecovery, error)
+	CompleteOwnerRecovery(ctx context.Context, in *TenantIdOnlyRequest, opts ...grpc.CallOption) (*OwnerRecovery, error)
+}
+
+type ownerServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewOwnerServiceClient(cc grpc.ClientConnInterface) OwnerServiceClient {
+	return &ownerServiceClient{cc}
+}
+
+func (c *ownerServiceClient) GetOwnerStatus(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*OwnerStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OwnerStatus)
+	err := c.cc.Invoke(ctx, OwnerService_GetOwnerStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ownerServiceClient) TransferOwnership(ctx context.Context, in *TransferOwnershipRequest, opts ...grpc.CallOption) (*OwnerStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OwnerStatus)
+	err := c.cc.Invoke(ctx, OwnerService_TransferOwnership_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ownerServiceClient) CancelOwnerRecovery(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*OwnerStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OwnerStatus)
+	err := c.cc.Invoke(ctx, OwnerService_CancelOwnerRecovery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ownerServiceClient) RequestOwnerRecovery(ctx context.Context, in *RequestOwnerRecoveryRequest, opts ...grpc.CallOption) (*OwnerRecovery, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OwnerRecovery)
+	err := c.cc.Invoke(ctx, OwnerService_RequestOwnerRecovery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ownerServiceClient) CompleteOwnerRecovery(ctx context.Context, in *TenantIdOnlyRequest, opts ...grpc.CallOption) (*OwnerRecovery, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OwnerRecovery)
+	err := c.cc.Invoke(ctx, OwnerService_CompleteOwnerRecovery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// OwnerServiceServer is the server API for OwnerService service.
+// All implementations must embed UnimplementedOwnerServiceServer
+// for forward compatibility.
+//
+// Tenant owner (roadmap 115 M8). One member per tenant is the owner: other admins cannot disable,
+// remove, demote, reset the password or MFA of the owner. Ownership moves by the owner's own
+// transfer, or by a platform-admin recovery: it is announced to every tenant admin by email, waits
+// 72 hours during which any admin can cancel it, and only then can be completed.
+type OwnerServiceServer interface {
+	// Tenant admin.
+	GetOwnerStatus(context.Context, *Empty) (*OwnerStatus, error)
+	// Owner only: hands ownership to another active admin at once.
+	TransferOwnership(context.Context, *TransferOwnershipRequest) (*OwnerStatus, error)
+	// Any tenant admin: stops a pending recovery.
+	CancelOwnerRecovery(context.Context, *Empty) (*OwnerStatus, error)
+	// Platform admin.
+	RequestOwnerRecovery(context.Context, *RequestOwnerRecoveryRequest) (*OwnerRecovery, error)
+	CompleteOwnerRecovery(context.Context, *TenantIdOnlyRequest) (*OwnerRecovery, error)
+	mustEmbedUnimplementedOwnerServiceServer()
+}
+
+// UnimplementedOwnerServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedOwnerServiceServer struct{}
+
+func (UnimplementedOwnerServiceServer) GetOwnerStatus(context.Context, *Empty) (*OwnerStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetOwnerStatus not implemented")
+}
+func (UnimplementedOwnerServiceServer) TransferOwnership(context.Context, *TransferOwnershipRequest) (*OwnerStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method TransferOwnership not implemented")
+}
+func (UnimplementedOwnerServiceServer) CancelOwnerRecovery(context.Context, *Empty) (*OwnerStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelOwnerRecovery not implemented")
+}
+func (UnimplementedOwnerServiceServer) RequestOwnerRecovery(context.Context, *RequestOwnerRecoveryRequest) (*OwnerRecovery, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestOwnerRecovery not implemented")
+}
+func (UnimplementedOwnerServiceServer) CompleteOwnerRecovery(context.Context, *TenantIdOnlyRequest) (*OwnerRecovery, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompleteOwnerRecovery not implemented")
+}
+func (UnimplementedOwnerServiceServer) mustEmbedUnimplementedOwnerServiceServer() {}
+func (UnimplementedOwnerServiceServer) testEmbeddedByValue()                      {}
+
+// UnsafeOwnerServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to OwnerServiceServer will
+// result in compilation errors.
+type UnsafeOwnerServiceServer interface {
+	mustEmbedUnimplementedOwnerServiceServer()
+}
+
+func RegisterOwnerServiceServer(s grpc.ServiceRegistrar, srv OwnerServiceServer) {
+	// If the following call panics, it indicates UnimplementedOwnerServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&OwnerService_ServiceDesc, srv)
+}
+
+func _OwnerService_GetOwnerStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OwnerServiceServer).GetOwnerStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OwnerService_GetOwnerStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OwnerServiceServer).GetOwnerStatus(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OwnerService_TransferOwnership_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TransferOwnershipRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OwnerServiceServer).TransferOwnership(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OwnerService_TransferOwnership_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OwnerServiceServer).TransferOwnership(ctx, req.(*TransferOwnershipRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OwnerService_CancelOwnerRecovery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OwnerServiceServer).CancelOwnerRecovery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OwnerService_CancelOwnerRecovery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OwnerServiceServer).CancelOwnerRecovery(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OwnerService_RequestOwnerRecovery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestOwnerRecoveryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OwnerServiceServer).RequestOwnerRecovery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OwnerService_RequestOwnerRecovery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OwnerServiceServer).RequestOwnerRecovery(ctx, req.(*RequestOwnerRecoveryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OwnerService_CompleteOwnerRecovery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantIdOnlyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OwnerServiceServer).CompleteOwnerRecovery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OwnerService_CompleteOwnerRecovery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OwnerServiceServer).CompleteOwnerRecovery(ctx, req.(*TenantIdOnlyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// OwnerService_ServiceDesc is the grpc.ServiceDesc for OwnerService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var OwnerService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "metap.identity.v1.OwnerService",
+	HandlerType: (*OwnerServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetOwnerStatus",
+			Handler:    _OwnerService_GetOwnerStatus_Handler,
+		},
+		{
+			MethodName: "TransferOwnership",
+			Handler:    _OwnerService_TransferOwnership_Handler,
+		},
+		{
+			MethodName: "CancelOwnerRecovery",
+			Handler:    _OwnerService_CancelOwnerRecovery_Handler,
+		},
+		{
+			MethodName: "RequestOwnerRecovery",
+			Handler:    _OwnerService_RequestOwnerRecovery_Handler,
+		},
+		{
+			MethodName: "CompleteOwnerRecovery",
+			Handler:    _OwnerService_CompleteOwnerRecovery_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "metap_identity.proto",
+}
+
+const (
+	SsoAdminService_GetSsoConfig_FullMethodName    = "/metap.identity.v1.SsoAdminService/GetSsoConfig"
+	SsoAdminService_SetSsoConfig_FullMethodName    = "/metap.identity.v1.SsoAdminService/SetSsoConfig"
+	SsoAdminService_DeleteSsoConfig_FullMethodName = "/metap.identity.v1.SsoAdminService/DeleteSsoConfig"
+)
+
+// SsoAdminServiceClient is the client API for SsoAdminService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Single sign-on (roadmap 115 M7). A tenant admin connects the workspace to its OIDC identity
+// provider; people then sign in through /auth/sso/start. The client secret is write-only (stored
+// in the SecretStore, never returned). Turning `enforced` on makes the workspace refuse password
+// sign-in for everyone except its owner, so only the owner may do it.
+type SsoAdminServiceClient interface {
+	GetSsoConfig(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*SsoConfig, error)
+	SetSsoConfig(ctx context.Context, in *SetSsoConfigRequest, opts ...grpc.CallOption) (*SsoConfig, error)
+	DeleteSsoConfig(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Empty, error)
+}
+
+type ssoAdminServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewSsoAdminServiceClient(cc grpc.ClientConnInterface) SsoAdminServiceClient {
+	return &ssoAdminServiceClient{cc}
+}
+
+func (c *ssoAdminServiceClient) GetSsoConfig(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*SsoConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SsoConfig)
+	err := c.cc.Invoke(ctx, SsoAdminService_GetSsoConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ssoAdminServiceClient) SetSsoConfig(ctx context.Context, in *SetSsoConfigRequest, opts ...grpc.CallOption) (*SsoConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SsoConfig)
+	err := c.cc.Invoke(ctx, SsoAdminService_SetSsoConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ssoAdminServiceClient) DeleteSsoConfig(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, SsoAdminService_DeleteSsoConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SsoAdminServiceServer is the server API for SsoAdminService service.
+// All implementations must embed UnimplementedSsoAdminServiceServer
+// for forward compatibility.
+//
+// Single sign-on (roadmap 115 M7). A tenant admin connects the workspace to its OIDC identity
+// provider; people then sign in through /auth/sso/start. The client secret is write-only (stored
+// in the SecretStore, never returned). Turning `enforced` on makes the workspace refuse password
+// sign-in for everyone except its owner, so only the owner may do it.
+type SsoAdminServiceServer interface {
+	GetSsoConfig(context.Context, *Empty) (*SsoConfig, error)
+	SetSsoConfig(context.Context, *SetSsoConfigRequest) (*SsoConfig, error)
+	DeleteSsoConfig(context.Context, *Empty) (*Empty, error)
+	mustEmbedUnimplementedSsoAdminServiceServer()
+}
+
+// UnimplementedSsoAdminServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedSsoAdminServiceServer struct{}
+
+func (UnimplementedSsoAdminServiceServer) GetSsoConfig(context.Context, *Empty) (*SsoConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSsoConfig not implemented")
+}
+func (UnimplementedSsoAdminServiceServer) SetSsoConfig(context.Context, *SetSsoConfigRequest) (*SsoConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetSsoConfig not implemented")
+}
+func (UnimplementedSsoAdminServiceServer) DeleteSsoConfig(context.Context, *Empty) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteSsoConfig not implemented")
+}
+func (UnimplementedSsoAdminServiceServer) mustEmbedUnimplementedSsoAdminServiceServer() {}
+func (UnimplementedSsoAdminServiceServer) testEmbeddedByValue()                         {}
+
+// UnsafeSsoAdminServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to SsoAdminServiceServer will
+// result in compilation errors.
+type UnsafeSsoAdminServiceServer interface {
+	mustEmbedUnimplementedSsoAdminServiceServer()
+}
+
+func RegisterSsoAdminServiceServer(s grpc.ServiceRegistrar, srv SsoAdminServiceServer) {
+	// If the following call panics, it indicates UnimplementedSsoAdminServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&SsoAdminService_ServiceDesc, srv)
+}
+
+func _SsoAdminService_GetSsoConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SsoAdminServiceServer).GetSsoConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SsoAdminService_GetSsoConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SsoAdminServiceServer).GetSsoConfig(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SsoAdminService_SetSsoConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetSsoConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SsoAdminServiceServer).SetSsoConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SsoAdminService_SetSsoConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SsoAdminServiceServer).SetSsoConfig(ctx, req.(*SetSsoConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SsoAdminService_DeleteSsoConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SsoAdminServiceServer).DeleteSsoConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SsoAdminService_DeleteSsoConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SsoAdminServiceServer).DeleteSsoConfig(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// SsoAdminService_ServiceDesc is the grpc.ServiceDesc for SsoAdminService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var SsoAdminService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "metap.identity.v1.SsoAdminService",
+	HandlerType: (*SsoAdminServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetSsoConfig",
+			Handler:    _SsoAdminService_GetSsoConfig_Handler,
+		},
+		{
+			MethodName: "SetSsoConfig",
+			Handler:    _SsoAdminService_SetSsoConfig_Handler,
+		},
+		{
+			MethodName: "DeleteSsoConfig",
+			Handler:    _SsoAdminService_DeleteSsoConfig_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "metap_identity.proto",
+}

@@ -51,6 +51,7 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 	mountMetrics(r, state)
 	mountMetadata(r, state)
 	mountAuth(r, state)
+	mountSSO(r, state)
 	mountRecords(r, state)
 	mountAdmin(r, state)
 	mountPreferences(r, state)

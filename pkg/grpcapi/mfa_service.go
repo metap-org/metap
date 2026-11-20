@@ -150,6 +150,9 @@ func (s *UserAdminService) ResetMfa(ctx context.Context, req *pb.UserIdRequest) 
 	if err != nil {
 		return nil, err
 	}
+	if err := s.d.guardOwner(ctx, c, id, "reset the MFA of"); err != nil {
+		return nil, err
+	}
 	m, err := identity.GetMember(ctx, s.d.cfg.Shared, c.tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)

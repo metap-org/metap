@@ -240,6 +240,35 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   rule in the SCIM layer. Users only: list (`filter=userName eq "..."`), get, create (= invite by email), PUT/PATCH (`active` bool or "True"/"False",
   `displayName`, `name.formatted`; `userName` immutable), delete; plus ServiceProviderConfig/ResourceTypes/Schemas. Not built: Groups, roles, bulk,
   other filters.
+- **Support access (2026-11-20, roadmap 115 M10).** A tenant admin grants the vendor time-boxed access (`GrantSupportAccess{reason, role, hours}`;
+  reason required, role must exist in the tenant, 1-168 h, default 24; `metadata.support_grants`, migration 0051). A platform admin then calls
+  `StartSupportSession{tenantId}` under the tenant's newest active grant: it creates a service account `Support: <email>` in the tenant holding exactly the
+  granted role plus an API key that expires with the grant and at most 8 h after issue (`identity.SupportSessionMaxHours`) — no new auth path, so
+  everything support does is attributed to that member in the audit trail and the tenant sees it in its service-account list. `RevokeSupportGrant` revokes
+  every key and removes every session member at once; `ListSupportGrants` also sweeps members of lapsed grants. Grant, revoke and session start are audited
+  under `metadata.support_grants` (the start under the support person's id). API: `SupportAccessService`; gateway `supportGrants`, `grantSupportAccess`,
+  `revokeSupportGrant`, `startSupportSession`. Not built: tenant-side approval before each session, notifying the tenant by email, per-session reason.
+- **Tenant owner and recovery (2026-11-20, roadmap 115 M8).** `metadata.users.is_owner` (migration 0052, one per tenant by partial unique index) marks the
+  owner, assigned lazily to the oldest active admin the first time anything asks (`identityDeps.ensureOwner`; no backfill). Other admins cannot disable, remove,
+  demote, reset the password or MFA of the owner (`guardOwner`, 403 `owner_protected`; the last-admin check still comes first). `OwnerService`: `GetOwnerStatus`,
+  `TransferOwnership` (owner only, to an active admin), `CancelOwnerRecovery` (any admin), and for platform admins `RequestOwnerRecovery{tenantId,
+  newOwnerMemberId, reason}` / `CompleteOwnerRecovery`: a recovery emails every tenant admin, waits `identity.OwnerRecoveryWait` (72 h) and only then can complete,
+  making the new owner an admin; one pending recovery per tenant. Owner changes are audited under `metadata.tenant_owner`. Gateway `ownerStatus`,
+  `transferOwnership`, `cancelOwnerRecovery`, `requestOwnerRecovery`, `completeOwnerRecovery`, `User.isOwner`. The owner is also what M7's "SSO enforced" keeps a
+  password-login escape hatch for.
+- **Single sign-on over OIDC (2026-11-20, roadmap 115 M7).** The Go port had the OIDC library (`pkg/tenantauth`) but no login routes; now: `GET /auth/sso/discover?email=`
+  (routes an address to a tenant only when exactly one tenant claims its domain — domains are not verified, so the callback's `EmailAllowed` check is the real safeguard),
+  `GET /auth/sso/start?tenant=` (PKCE + nonce, state in `metadata.sso_states`, migration 0053, single use, 10 min) and `GET /auth/sso/callback` (verifies the id_token,
+  finds the member by IdP subject, else ties an existing member with that address to the subject, else provisions one with the config's `DefaultRole`, then
+  `issueSession` + redirect to `PostLoginRedirect`, which must be on the service's own origin — enforced at save time and again at the callback via `SameOrigin`; redirects go through `redirectTo`, not `http.Redirect`, because every target is server-validated and Semgrep's open-redirect rule fires on any request-passing redirect). No MFA step after SSO: the IdP is the second factor. Needs `PublicAppURL` (the callback is
+  `PublicAppURL + /auth/sso/callback`); `startSessionWith` was split into `issueSession` (cookies) so the redirect flow reuses it. A tenant's settings are the `oidc` row of
+  `tenant_auth_configs` (`OidcConfig` gained `EmailDomains`, `DefaultRole`, `Enforced`); the client secret lives in the SecretStore under
+  `control.TenantSecretRef(tenant, "sso.clientSecret")` and is never returned (`has_client_secret` only). `SsoAdminService` (tenant admin): `GetSsoConfig`, `SetSsoConfig`
+  (https issuer, reachable OIDC discovery checked at save time, default role never admin), `DeleteSsoConfig`; gateway `ssoConfig`, `setSsoConfig`, `deleteSsoConfig`.
+  **Enforced SSO** (`Enforced` — only the tenant owner may switch it on) makes `/auth/login` and `/auth/switch-tenant` answer 403 `sso_required` for every member but the
+  owner, who keeps password sign-in as the way back (M8); deleting the config restores passwords. Not built: SAML, signing the IdP's `email_verified` claim into the
+  check, group/role mapping from IdP claims, enforcing SSO on invitation acceptance and password reset, domain verification. `control.MemorySecretStore` is the in-process
+  SecretStore for tests and single-process development.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

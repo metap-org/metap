@@ -55,7 +55,7 @@ func grpcGenRSAKeyPair(t *testing.T) (privatePEM string, publicKey *rsa.PublicKe
 
 func grpcTestRouterFor(pool *pgxpool.Pool) *control.Router {
 	registry := control.NewPostgresTenantRegistry(pool)
-	return control.NewRouter(pool, control.NewRegistryCache(registry), control.EnvStore{})
+	return control.NewRouter(pool, control.NewRegistryCache(registry), control.NewMemorySecretStore())
 }
 
 const grpcTestOrdersTable = "entities.test_grpc_orders"

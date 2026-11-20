@@ -60,7 +60,7 @@ func genRSAKeyPair(t *testing.T) (privatePEM, publicPEM string, publicKey *rsa.P
 
 func testRouterFor(pool *pgxpool.Pool) *control.Router {
 	registry := control.NewPostgresTenantRegistry(pool)
-	return control.NewRouter(pool, control.NewRegistryCache(registry), control.EnvStore{})
+	return control.NewRouter(pool, control.NewRegistryCache(registry), control.NewMemorySecretStore())
 }
 
 const testOrdersTable = "entities.test_orders"

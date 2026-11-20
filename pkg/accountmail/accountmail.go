@@ -153,6 +153,46 @@ Nếu không phải bạn, cứ bỏ qua thư này: sẽ không có gì được
 	return m.deliver(ctx, v.To, "Xác nhận đăng ký / Confirm your signup", body)
 }
 
+// OwnerRecoveryNotice tells a tenant's admins that the vendor asked to hand the tenant's
+// ownership to someone else, and that they can cancel it until EffectiveAt.
+type OwnerRecoveryNotice struct {
+	To          string
+	TenantName  string
+	NewOwner    string
+	RequestedBy string
+	Reason      string
+	EffectiveAt time.Time
+	// Completed: the handover has happened (instead of being announced).
+	Completed bool
+}
+
+func (m *Mailer) SendOwnerRecoveryNotice(ctx context.Context, n OwnerRecoveryNotice) error {
+	tenant := n.TenantName
+	if tenant == "" {
+		tenant = "the workspace"
+	}
+	var subject, body string
+	if n.Completed {
+		subject = "Quyền owner đã chuyển / Ownership transferred: " + tenant
+		body = fmt.Sprintf(`Quyền owner của %[1]s đã chuyển cho %[2]s (khôi phục do %[3]s yêu cầu).
+Ownership of %[1]s was transferred to %[2]s (recovery requested by %[3]s).
+
+Lý do / Reason: %[4]s
+`, tenant, n.NewOwner, n.RequestedBy, n.Reason)
+	} else {
+		subject = "Yêu cầu khôi phục owner / Owner recovery requested: " + tenant
+		body = fmt.Sprintf(`%[3]s yêu cầu chuyển quyền owner của %[1]s cho %[2]s.
+%[3]s asked to hand ownership of %[1]s to %[2]s.
+
+Lý do / Reason: %[4]s
+
+Việc này chỉ hoàn tất sau %[5]s. Nếu bạn không đồng ý, hủy yêu cầu trong phần quản trị trước thời điểm đó.
+It completes only after %[5]s. If you do not agree, cancel it in the admin area before then.
+`, tenant, n.NewOwner, n.RequestedBy, n.Reason, n.EffectiveAt.UTC().Format("2006-01-02 15:04 UTC"))
+	}
+	return m.deliver(ctx, n.To, subject, body)
+}
+
 func (m *Mailer) deliver(ctx context.Context, to, subject, body string) error {
 	if !m.Configured() {
 		return ErrNotConfigured

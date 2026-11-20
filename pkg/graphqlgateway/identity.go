@@ -34,7 +34,7 @@ var (
 		"status": nn(graphql.String), "roles": nnList(graphql.String), "authProvider": nn(graphql.String),
 		"hasPassword": nn(graphql.Boolean), "lastLoginAt": graphql.String, "createdAt": nn(graphql.String),
 		"invitedBy": graphql.ID, "sharedIdentity": nn(graphql.Boolean), "invitationExpiresAt": graphql.String,
-		"scopedRoles": nnList(scopedRoleType),
+		"scopedRoles": nnList(scopedRoleType), "isOwner": nn(graphql.Boolean),
 	})
 	userPageType = jsonObject("UserPage", map[string]graphql.Output{
 		"users": nnList(userType), "total": nn(graphql.Int),
@@ -122,8 +122,8 @@ func userMap(u *pb.User) map[string]interface{} {
 		scoped[i] = map[string]interface{}{"role": r.GetRole(), "scopeType": r.GetScopeType(), "scopeId": r.GetScopeId()}
 	}
 	return map[string]interface{}{
-		"scopedRoles": scoped,
-		"id":          u.GetId(), "email": u.GetEmail(), "displayName": u.GetDisplayName(), "status": u.GetStatus(),
+		"scopedRoles": scoped, "isOwner": u.GetIsOwner(),
+		"id": u.GetId(), "email": u.GetEmail(), "displayName": u.GetDisplayName(), "status": u.GetStatus(),
 		"roles": roles, "authProvider": u.GetAuthProvider(), "hasPassword": u.GetHasPassword(),
 		"lastLoginAt": nullIfEmpty(u.GetLastLoginAt()), "createdAt": u.GetCreatedAt(),
 		"invitedBy": nullIfEmpty(u.GetInvitedBy()), "sharedIdentity": u.GetSharedIdentity(),
@@ -210,6 +210,9 @@ func addIdentityFields(query, mutation graphql.Fields, c *grpcapi.IdentityClient
 	addSessionFields(query, mutation, c)
 	addResourceFields(query, c)
 	addAuditFields(query, c)
+	addSupportFields(query, mutation, c)
+	addOwnerFields(query, mutation, c)
+	addSSOFields(query, mutation, c)
 	asUser := func(call func(ctx context.Context, opts ...grpc.CallOption) (*pb.User, error), ctx context.Context) (interface{}, error) {
 		u, err := identityCall(ctx, call)
 		if err != nil {

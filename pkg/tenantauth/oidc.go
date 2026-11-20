@@ -33,6 +33,15 @@ type OidcConfig struct {
 	// PostLoginRedirect: where the browser is sent after a successful callback — the frontend
 	// origin, not this API's own origin.
 	PostLoginRedirect string `json:"postLoginRedirect"`
+	// EmailDomains (roadmap 115 M7): when set, only addresses in these domains may sign in or be
+	// provisioned through this IdP, and the domain routes a person to it at sign-in
+	// (GET /auth/sso/discover). Domain ownership is not verified, so discovery is a convenience and
+	// the callback's check is the safeguard.
+	EmailDomains []string `json:"emailDomains,omitempty"`
+	// DefaultRole is the role a person provisioned on first SSO sign-in starts with ("" = none).
+	DefaultRole string `json:"defaultRole,omitempty"`
+	// Enforced turns password sign-in off for this tenant's members, the owner excepted (M8).
+	Enforced bool `json:"enforced,omitempty"`
 }
 
 type VerifiedIdentity struct {
