@@ -2605,3 +2605,275 @@ var SupportAccessService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "metap_identity.proto",
 }
+
+const (
+	OwnerService_GetOwnerStatus_FullMethodName        = "/metap.identity.v1.OwnerService/GetOwnerStatus"
+	OwnerService_TransferOwnership_FullMethodName     = "/metap.identity.v1.OwnerService/TransferOwnership"
+	OwnerService_CancelOwnerRecovery_FullMethodName   = "/metap.identity.v1.OwnerService/CancelOwnerRecovery"
+	OwnerService_RequestOwnerRecovery_FullMethodName  = "/metap.identity.v1.OwnerService/RequestOwnerRecovery"
+	OwnerService_CompleteOwnerRecovery_FullMethodName = "/metap.identity.v1.OwnerService/CompleteOwnerRecovery"
+)
+
+// OwnerServiceClient is the client API for OwnerService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Tenant owner (roadmap 115 M8). One member per tenant is the owner: other admins cannot disable,
+// remove, demote, reset the password or MFA of the owner. Ownership moves by the owner's own
+// transfer, or by a platform-admin recovery: it is announced to every tenant admin by email, waits
+// 72 hours during which any admin can cancel it, and only then can be completed.
+type OwnerServiceClient interface {
+	// Tenant admin.
+	GetOwnerStatus(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*OwnerStatus, error)
+	// Owner only: hands ownership to another active admin at once.
+	TransferOwnership(ctx context.Context, in *TransferOwnershipRequest, opts ...grpc.CallOption) (*OwnerStatus, error)
+	// Any tenant admin: stops a pending recovery.
+	CancelOwnerRecovery(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*OwnerStatus, error)
+	// Platform admin.
+	RequestOwnerRecovery(ctx context.Context, in *RequestOwnerRecoveryRequest, opts ...grpc.CallOption) (*OwnerRecovery, error)
+	CompleteOwnerRecovery(ctx context.Context, in *TenantIdOnlyRequest, opts ...grpc.CallOption) (*OwnerRecovery, error)
+}
+
+type ownerServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewOwnerServiceClient(cc grpc.ClientConnInterface) OwnerServiceClient {
+	return &ownerServiceClient{cc}
+}
+
+func (c *ownerServiceClient) GetOwnerStatus(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*OwnerStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OwnerStatus)
+	err := c.cc.Invoke(ctx, OwnerService_GetOwnerStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ownerServiceClient) TransferOwnership(ctx context.Context, in *TransferOwnershipRequest, opts ...grpc.CallOption) (*OwnerStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OwnerStatus)
+	err := c.cc.Invoke(ctx, OwnerService_TransferOwnership_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ownerServiceClient) CancelOwnerRecovery(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*OwnerStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OwnerStatus)
+	err := c.cc.Invoke(ctx, OwnerService_CancelOwnerRecovery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ownerServiceClient) RequestOwnerRecovery(ctx context.Context, in *RequestOwnerRecoveryRequest, opts ...grpc.CallOption) (*OwnerRecovery, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OwnerRecovery)
+	err := c.cc.Invoke(ctx, OwnerService_RequestOwnerRecovery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ownerServiceClient) CompleteOwnerRecovery(ctx context.Context, in *TenantIdOnlyRequest, opts ...grpc.CallOption) (*OwnerRecovery, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OwnerRecovery)
+	err := c.cc.Invoke(ctx, OwnerService_CompleteOwnerRecovery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// OwnerServiceServer is the server API for OwnerService service.
+// All implementations must embed UnimplementedOwnerServiceServer
+// for forward compatibility.
+//
+// Tenant owner (roadmap 115 M8). One member per tenant is the owner: other admins cannot disable,
+// remove, demote, reset the password or MFA of the owner. Ownership moves by the owner's own
+// transfer, or by a platform-admin recovery: it is announced to every tenant admin by email, waits
+// 72 hours during which any admin can cancel it, and only then can be completed.
+type OwnerServiceServer interface {
+	// Tenant admin.
+	GetOwnerStatus(context.Context, *Empty) (*OwnerStatus, error)
+	// Owner only: hands ownership to another active admin at once.
+	TransferOwnership(context.Context, *TransferOwnershipRequest) (*OwnerStatus, error)
+	// Any tenant admin: stops a pending recovery.
+	CancelOwnerRecovery(context.Context, *Empty) (*OwnerStatus, error)
+	// Platform admin.
+	RequestOwnerRecovery(context.Context, *RequestOwnerRecoveryRequest) (*OwnerRecovery, error)
+	CompleteOwnerRecovery(context.Context, *TenantIdOnlyRequest) (*OwnerRecovery, error)
+	mustEmbedUnimplementedOwnerServiceServer()
+}
+
+// UnimplementedOwnerServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedOwnerServiceServer struct{}
+
+func (UnimplementedOwnerServiceServer) GetOwnerStatus(context.Context, *Empty) (*OwnerStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetOwnerStatus not implemented")
+}
+func (UnimplementedOwnerServiceServer) TransferOwnership(context.Context, *TransferOwnershipRequest) (*OwnerStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method TransferOwnership not implemented")
+}
+func (UnimplementedOwnerServiceServer) CancelOwnerRecovery(context.Context, *Empty) (*OwnerStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelOwnerRecovery not implemented")
+}
+func (UnimplementedOwnerServiceServer) RequestOwnerRecovery(context.Context, *RequestOwnerRecoveryRequest) (*OwnerRecovery, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestOwnerRecovery not implemented")
+}
+func (UnimplementedOwnerServiceServer) CompleteOwnerRecovery(context.Context, *TenantIdOnlyRequest) (*OwnerRecovery, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompleteOwnerRecovery not implemented")
+}
+func (UnimplementedOwnerServiceServer) mustEmbedUnimplementedOwnerServiceServer() {}
+func (UnimplementedOwnerServiceServer) testEmbeddedByValue()                      {}
+
+// UnsafeOwnerServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to OwnerServiceServer will
+// result in compilation errors.
+type UnsafeOwnerServiceServer interface {
+	mustEmbedUnimplementedOwnerServiceServer()
+}
+
+func RegisterOwnerServiceServer(s grpc.ServiceRegistrar, srv OwnerServiceServer) {
+	// If the following call panics, it indicates UnimplementedOwnerServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&OwnerService_ServiceDesc, srv)
+}
+
+func _OwnerService_GetOwnerStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OwnerServiceServer).GetOwnerStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OwnerService_GetOwnerStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OwnerServiceServer).GetOwnerStatus(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OwnerService_TransferOwnership_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TransferOwnershipRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OwnerServiceServer).TransferOwnership(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OwnerService_TransferOwnership_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OwnerServiceServer).TransferOwnership(ctx, req.(*TransferOwnershipRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OwnerService_CancelOwnerRecovery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OwnerServiceServer).CancelOwnerRecovery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OwnerService_CancelOwnerRecovery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OwnerServiceServer).CancelOwnerRecovery(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OwnerService_RequestOwnerRecovery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestOwnerRecoveryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OwnerServiceServer).RequestOwnerRecovery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OwnerService_RequestOwnerRecovery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OwnerServiceServer).RequestOwnerRecovery(ctx, req.(*RequestOwnerRecoveryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OwnerService_CompleteOwnerRecovery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantIdOnlyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OwnerServiceServer).CompleteOwnerRecovery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OwnerService_CompleteOwnerRecovery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OwnerServiceServer).CompleteOwnerRecovery(ctx, req.(*TenantIdOnlyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// OwnerService_ServiceDesc is the grpc.ServiceDesc for OwnerService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var OwnerService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "metap.identity.v1.OwnerService",
+	HandlerType: (*OwnerServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetOwnerStatus",
+			Handler:    _OwnerService_GetOwnerStatus_Handler,
+		},
+		{
+			MethodName: "TransferOwnership",
+			Handler:    _OwnerService_TransferOwnership_Handler,
+		},
+		{
+			MethodName: "CancelOwnerRecovery",
+			Handler:    _OwnerService_CancelOwnerRecovery_Handler,
+		},
+		{
+			MethodName: "RequestOwnerRecovery",
+			Handler:    _OwnerService_RequestOwnerRecovery_Handler,
+		},
+		{
+			MethodName: "CompleteOwnerRecovery",
+			Handler:    _OwnerService_CompleteOwnerRecovery_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "metap_identity.proto",
+}

@@ -191,9 +191,13 @@ func (d identityDeps) toUsers(ctx context.Context, tenant uuid.UUID, ms []identi
 	if err != nil {
 		return nil, err
 	}
+	owner, err := d.ensureOwner(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]*pb.User, len(ms))
 	for i, m := range ms {
-		u := &pb.User{
+		u := &pb.User{IsOwner: m.ID == owner,
 			Id: m.ID.String(), Email: m.Email, DisplayName: m.DisplayName, Status: m.Status,
 			Roles: roles[m.ID], AuthProvider: m.AuthProvider, HasPassword: m.HasPassword,
 			LastLoginAt: formatTime(m.LastLoginAt), CreatedAt: formatTime(&m.CreatedAt),
@@ -450,7 +454,7 @@ func (s *UserAdminService) guardTakingAway(ctx context.Context, c caller, id uui
 	if orphan {
 		return svcErr(ctx, http.StatusConflict, errcode.LastAdmin, "The tenant must keep at least one active admin.")
 	}
-	return nil
+	return s.d.guardOwner(ctx, c, id, what)
 }
 
 func (s *UserAdminService) setStatus(ctx context.Context, req *pb.UserIdRequest, next string) (*pb.User, error) {
@@ -529,6 +533,9 @@ func (s *UserAdminService) ResetPassword(ctx context.Context, req *pb.ResetPassw
 	}
 	id, err := parseID(req.GetId())
 	if err != nil {
+		return nil, err
+	}
+	if err := s.d.guardOwner(ctx, c, id, "reset the password of"); err != nil {
 		return nil, err
 	}
 	m, err := identity.GetMember(ctx, s.d.cfg.Shared, c.tenant, id)

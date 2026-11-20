@@ -248,6 +248,14 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   every key and removes every session member at once; `ListSupportGrants` also sweeps members of lapsed grants. Grant, revoke and session start are audited
   under `metadata.support_grants` (the start under the support person's id). API: `SupportAccessService`; gateway `supportGrants`, `grantSupportAccess`,
   `revokeSupportGrant`, `startSupportSession`. Not built: tenant-side approval before each session, notifying the tenant by email, per-session reason.
+- **Tenant owner and recovery (2026-11-20, roadmap 115 M8).** `metadata.users.is_owner` (migration 0052, one per tenant by partial unique index) marks the
+  owner, assigned lazily to the oldest active admin the first time anything asks (`identityDeps.ensureOwner`; no backfill). Other admins cannot disable, remove,
+  demote, reset the password or MFA of the owner (`guardOwner`, 403 `owner_protected`; the last-admin check still comes first). `OwnerService`: `GetOwnerStatus`,
+  `TransferOwnership` (owner only, to an active admin), `CancelOwnerRecovery` (any admin), and for platform admins `RequestOwnerRecovery{tenantId,
+  newOwnerMemberId, reason}` / `CompleteOwnerRecovery`: a recovery emails every tenant admin, waits `identity.OwnerRecoveryWait` (72 h) and only then can complete,
+  making the new owner an admin; one pending recovery per tenant. Owner changes are audited under `metadata.tenant_owner`. Gateway `ownerStatus`,
+  `transferOwnership`, `cancelOwnerRecovery`, `requestOwnerRecovery`, `completeOwnerRecovery`, `User.isOwner`. The owner is also what M7's "SSO enforced" keeps a
+  password-login escape hatch for.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

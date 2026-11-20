@@ -30,6 +30,8 @@ message User {
   string invitation_expires_at = 12;
   // Roles held only inside a scope (roles above are tenant-wide).
   repeated ScopedRole scoped_roles = 13;
+  // The tenant's owner (roadmap 115 M8): protected from other admins.
+  bool is_owner = 14;
 }
 
 // A role held only on the records of one scope (roadmap 115 M1): "analyst on zone Z".
@@ -645,4 +647,48 @@ message SupportSessionToken {
   string tenant_id = 3;
   string role = 4;
   string grant_id = 5;
+}
+
+// Tenant owner (roadmap 115 M8). One member per tenant is the owner: other admins cannot disable,
+// remove, demote, reset the password or MFA of the owner. Ownership moves by the owner's own
+// transfer, or by a platform-admin recovery: it is announced to every tenant admin by email, waits
+// 72 hours during which any admin can cancel it, and only then can be completed.
+service OwnerService {
+  // Tenant admin.
+  rpc GetOwnerStatus(Empty) returns (OwnerStatus);
+  // Owner only: hands ownership to another active admin at once.
+  rpc TransferOwnership(TransferOwnershipRequest) returns (OwnerStatus);
+  // Any tenant admin: stops a pending recovery.
+  rpc CancelOwnerRecovery(Empty) returns (OwnerStatus);
+  // Platform admin.
+  rpc RequestOwnerRecovery(RequestOwnerRecoveryRequest) returns (OwnerRecovery);
+  rpc CompleteOwnerRecovery(TenantIdOnlyRequest) returns (OwnerRecovery);
+}
+
+message TransferOwnershipRequest { string member_id = 1; }
+
+message RequestOwnerRecoveryRequest {
+  string tenant_id = 1;
+  // Becomes admin (if not already) and owner when the recovery completes.
+  string new_owner_member_id = 2;
+  string reason = 3;
+}
+
+message TenantIdOnlyRequest { string tenant_id = 1; }
+
+message OwnerRecovery {
+  string id = 1;
+  string new_owner_member_id = 2;
+  string requested_by_email = 3;
+  string reason = 4;
+  string effective_at = 5;
+  string created_at = 6;
+  string completed_at = 7;
+}
+
+message OwnerStatus {
+  string owner_member_id = 1;
+  string owner_email = 2;
+  // Set while a recovery is pending.
+  OwnerRecovery pending_recovery = 3;
 }

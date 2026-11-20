@@ -49,6 +49,7 @@ const (
 	WeakPassword     = "weak_password"     // 400: password fails the policy
 	LastAdmin        = "last_admin"        // 409: the change would leave the tenant without an admin
 	SelfModification = "self_modification" // 409: an admin cannot disable, remove or demote themselves
+	OwnerProtected   = "owner_protected"   // 403: only the tenant owner may change the owner
 	WrongPassword    = "wrong_password"    // 400: the current password given to a change is wrong
 
 	// Invitations and password reset (roadmap 113 P2).
