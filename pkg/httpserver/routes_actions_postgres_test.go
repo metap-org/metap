@@ -26,7 +26,9 @@ func TestDeclaredActionsOverREST(t *testing.T) {
 	tenantID, userID := uuid.New(), uuid.New()
 	_, err := pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')", tenantID, userID)
 	require.NoError(t, err)
-	t.Cleanup(func() { pool.Exec(context.Background(), "DELETE FROM metadata.user_roles WHERE tenant_id = $1", tenantID) })
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), "DELETE FROM metadata.user_roles WHERE tenant_id = $1", tenantID)
+	})
 
 	entity := httpTestEntity()
 	entity.Actions = []metadata.EntityAction{

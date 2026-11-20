@@ -161,3 +161,22 @@ func TestNewRejectsAMalformedUpstream(t *testing.T) {
 	_, err := New(Config{Upstreams: []Upstream{{Name: "x", BaseURL: "not a url"}}})
 	assert.Error(t, err)
 }
+
+func TestMetadataIsMergedAcrossServices(t *testing.T) {
+	scanning, zones, _ := fakeServices(t)
+	gw := gatewayFor(t, scanning, zones)
+
+	status, body := get(t, gw.URL+"/metadata/entities")
+	require.Equal(t, http.StatusOK, status)
+	names := []string{}
+	for _, e := range body["data"].([]any) {
+		names = append(names, e.(map[string]any)["name"].(string))
+	}
+	assert.ElementsMatch(t, []string{"waf.zones", "waf.scan_jobs"}, names)
+
+	// Without credentials every service refuses: the refusal comes back as-is.
+	res, err := http.Get(gw.URL + "/metadata/entities")
+	require.NoError(t, err)
+	res.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, res.StatusCode)
+}

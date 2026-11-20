@@ -2,8 +2,8 @@
 // hand-rolling the same branch) so four independent copies can't drift.
 // Package secrets builds the control.SecretStore a deployment is configured for — GCP Secret
 // Manager, AWS Secrets Manager, Vault, or (default) control.EnvStore. The cloud SDKs live here,
-// not in package control, so importing control (and everything built on it: crud, httpserver,
-// grpcapi) no longer links three cloud SDKs into every binary; only a binary that calls Build
+// not in package control, so importing control (and everything built on it: crud, httpserver)
+// no longer links three cloud SDKs into every binary; only a binary that calls Build
 // does.
 package secrets
 

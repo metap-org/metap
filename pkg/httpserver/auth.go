@@ -145,7 +145,7 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 		}
 		rc.ApplyOAuthGrant(*claims.Scope, clientID, hasClientID)
 	}
-	// Calls this request makes to sibling services (grpcapi.GrpcBackend) carry the caller's own
+	// Calls this request makes to sibling services (recordclient) carry the caller's own
 	// token, so they run as the caller — no service ever mints a token on someone's behalf.
 	rc.ForwardedBearerToken = token
 

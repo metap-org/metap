@@ -40,7 +40,7 @@ func TestAdminUsersRolesAndPoliciesLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
-	// Users and roles are gRPC now (grpcapi.UserAdminService); this route stays REST.
+	// Users and roles are typed operations (ops_admin.go, adminapi); this route is a plain handler.
 	newUser, err := peripherals.CreateUser(ctx, pool, tenantID, "new-user@example.com", "hunter2")
 	require.NoError(t, err)
 	newUserID := newUser.ID.String()

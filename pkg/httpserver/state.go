@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metap-org/metap/pkg/accountmail"
+	"github.com/metap-org/metap/pkg/adminapi"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/control"
@@ -47,6 +48,9 @@ type AppState struct {
 	// Actions runs the actions the service's entities declare (EntityDefinition.Actions), served at
 	// POST /api/{entity}[/{id}]/actions/{action}; nil when the service declares none.
 	Actions crud.ActionInvoker
+	// Identity serves user, role, tenant and account administration (pkg/adminapi); set on the
+	// token issuer only, nil on a verify-only service.
+	Identity *adminapi.IdentityConfig
 	// PublicAppURL is the origin people reach this service at (the SSO callback is PublicAppURL + /auth/sso/callback); "" turns SSO off.
 	PublicAppURL string
 	// Audit is the tenant's audit trail, for the admin export; nil when none is configured.

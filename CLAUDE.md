@@ -8,6 +8,30 @@ Metap is a metadata-driven platform. The core idea: entity behavior (fields, lis
 
 When working **locally**, do not commit after completing a feature — keep the diff intact so I can review it first. In a **cloud/remote session, commit and push as normal**: the pull request is the review gate there, so holding the diff back only strands it in a container that gets reclaimed (clarified 2026-09-03 — this line used to read as an unconditional "never commit", which contradicts the repo's own cloud-session workflow and the stop hook that enforces it). **Telling the two apart** (clarified 2026-09-05, root `../CLAUDE.md` audit): a cloud/remote session is one running inside a container Claude Code itself provisioned for this task (ephemeral, reclaimed on exit) with a stop hook enforcing push-before-exit configured for it — not merely "the model is doing the work." A normal interactive CLI session against this checkout on the user's own machine is **local**, even for a long-running or autonomous task, and defaults to the root `../CLAUDE.md`-wide rule (never commit without being explicitly asked) unless that cloud-session signal is actually present. Making roadmap stay updated. Respond in Vietnamese.
 
+**metap speaks HTTP/JSON only — GraphQL and gRPC removed (2026-11-21, roadmap 116 in `../metap-docs`).**
+`pkg/grpcapi` (gRPC CRUD/actions/identity services, `proto/`, `pb/`) and `pkg/graphqlgateway` were deleted; every
+gRPC/GraphQL mention below is history. Today:
+- Entity CRUD is REST `/api/{entity}` (list, `?ids=` batch read, get, create, PATCH, DELETE, transitions, `POST
+  /api/{entity}/aggregate`); `ids`, `expand`, `fields` are reserved query keys. Declared actions are `POST
+  /api/{entity}[/{id}]/actions/{action}` (`{"input":{}}` in, `{"data":...}` out). Routes serve `AppState.RecordBackend()` —
+  the service's `app.Options.WrapBackend` decorator when it has one, so a product's guards hold on REST.
+- Typed (non-CRUD) operations are huma v2 operations (`pkg/httpserver/typedapi.go`, OpenAPI at `/metadata/api.json`): the
+  caller's account (`/me`, `/me/tenants`, `/me/mfa*`, `/me/sessions*`, `/tenant-users`) and administration (`/admin/users*`,
+  `/admin/invitations`, `/admin/roles*`, `/admin/permission-resources`, `/admin/service-accounts`, `/admin/api-keys/{id}`,
+  `/admin/scope-members`, `/admin/audit*`, `/admin/support-grants*`, `/admin/owner*`, `/admin/sso`, `/platform/tenants*`,
+  `/platform/support-sessions`, `/platform/owner-recovery*`) in `ops_admin.go`, on the token issuer only
+  (`AppState.Identity`). The services themselves are plain Go in `pkg/adminapi` (request/response structs in `types.go`,
+  failures are `*crud.ServiceError`, the caller comes from `adminapi.WithCaller`/`WithAuthenticator`); SCIM (`/scim/v2`)
+  runs `adminapi.UserAdminService` in-process.
+- A service calling a sibling uses `pkg/recordclient` (a `crud.RecordBackend` + `crud.ActionInvoker` over REST, forwarding
+  the caller's token); `cmd/cron-scheduler` reaches its target the same way (`CRON_TARGET_URL`).
+- A multi-service product puts `pkg/apigateway` in front (`cmd/api-gateway`, or `apigateway.Main()` from the product's own
+  binary): entity routes go to whichever service lists the entity in its `/metadata/entities`, `?expand=` resolves reference
+  fields across services (`EntityField.RefersTo` marks a cross-service link: a plain column, no FK), `/metadata/entities` and
+  `/metadata/entity-access` are merged, other routes go by prefix (`UPSTREAMS`). It authenticates nobody.
+- An entity whose records live elsewhere (a read model) is `app.Options.ExternalEntities`: registered and served like the
+  rest, never reconciled, every call going to its own backend (`crud.RouteBackends`).
+
 **`docs/` moved to a separate repo, `../metap-docs` (2026-08-31, `docs/roadmap/54-docs-repo-split.md`
 in that repo).** Every `docs/...` path mentioned anywhere below in this file, in `README.md`, or in
 any `crates/*.rs` doc comment (150+ occurrences, none rewritten — see that phase entry for why) now
@@ -65,11 +89,7 @@ package (`migrations.FS`, `//go:embed *.sql`) — `cmd/db-migrate` applies the e
 default, `MIGRATIONS_DIR` still overrides with an on-disk dir; `cmd/dev-tools`'s default is
 `migrations` relative to the repo root. Every `go/...` path and "run from `go/`" instruction in
 this file above or below is pre-2026-11-07 history: read `go/<pkg>` as `pkg/<pkg>`, `go/cmd` as
-`cmd`, and run every Go command from the repo root. `pkg/grpcapi/pb/metap_crud.pb.go`'s raw
-descriptor was hand-patched for the new `go_package` (2 length bytes, `B*Z(` → `B+Z)`) since no
-`protoc` was installed — regenerate it from `pkg/grpcapi/proto/metap_crud.proto` next time the
-proto changes; a naive find/replace of the import path inside a `.pb.go` corrupts the
-descriptor (panics at `init`) unless those length prefixes are fixed too.
+`cmd`, and run every Go command from the repo root.
 
 **Go conventions added the same pass (2026-11-07) — follow these for new code:**
 - **Tests: unit vs. integration.** Anything needing real Postgres/Redis carries
@@ -95,7 +115,7 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   `query.TenantScoper`) and accept them in constructors — concrete types still satisfy them.
   Never mock pgx/SQL; database behavior is an integration test.
 - **`pkg/kit/httpx` is the one HTTP baseline (2026-11-14, audit P0):** `NewServer`/`ServeContext` apply read-header/read/idle timeouts (slowloris), `DecodeJSON`/`DecodeJSONOrFail` bound a JSON body (1 MiB default, 413 `payload_too_large`), `WriteJSON`/`WriteError` are the one `{"error":{code,message}}` shape, `Recover` and `MaxBody` are middleware, `SecretEqual` compares shared secrets in constant time and `BearerToken` parses the header. Any listener — including ones not built on `pkg/httpserver` — uses these rather than a local copy; `httpserver.DecodeJSONBody` is the handler-side form and every route that takes a JSON body goes through it (never `json.NewDecoder(r.Body)` directly). `Recover` sits just inside `runtime.RequestContext` in `BuildRouter`, so a recovered panic still carries `x-request-id`/`requestId`. Attachment uploads are capped by `ATTACHMENT_MAX_BYTES` (default 25 MiB, 413 beyond), webhook responses are read at most 1 MiB, and `S3ObjectStore.Get` refuses an object over `MaxGetBytes` (256 MiB) — never `io.ReadAll` an untrusted or unbounded body without a limit.
-- **Errors: `*crud.ServiceError`, not a result struct (2026-11-14, audit P1).** `CrudService`/`RecordBackend` return `(T, error)`; a business failure (404, 403, 409, 400 with field errors, ...) is a `*crud.ServiceError{Status, Code, Message, FieldErrors}` that implements `error`, and a plain error is an internal one. `crud.ServiceResult`/`IsOk` no longer exist. Handlers map the error once: `httpserver.WriteCrudError(w, err)` (REST), `grpcapi`'s `rpcError` (gRPC, carries the ServiceError in a trailer and `GrpcBackend` restores it), and `crud.AsServiceError(err)` for anything else; never hand-roll a status/code switch or a `Message *string` unwrap. `List` returns `crud.ListResult{Data, Page}`; `CheckRecordPermission` returns only `error`.
+- **Errors: `*crud.ServiceError`, not a result struct (2026-11-14, audit P1).** `CrudService`/`RecordBackend` return `(T, error)`; a business failure (404, 403, 409, 400 with field errors, ...) is a `*crud.ServiceError{Status, Code, Message, FieldErrors}` that implements `error`, and a plain error is an internal one. `crud.ServiceResult`/`IsOk` no longer exist. Handlers map the error once: `httpserver.WriteCrudError(w, err)` (plain handlers), `apiErr(err)` (typed huma operations), `recordclient` turns a sibling's error envelope back into the same `*crud.ServiceError` (`FieldErrors`/`Details` kept), and `crud.AsServiceError(err)` for anything else; never hand-roll a status/code switch or a `Message *string` unwrap. `List` returns `crud.ListResult{Data, Page}`; `CheckRecordPermission` returns only `error`.
 - **Entity declaration: one DSL, one registration path (2026-11-14, audit P1).** Declare fields with
   `pkg/metadata/dsl.go` — `metadata.NewField/EnumField/RefField(...)` plus chainable `.Require().Index().Sort().Search().Uniq()`
   (each returns a copy), `metadata.Transition(...)` for an unguarded workflow transition, `metadata.Ptr(v)` for optional
@@ -113,14 +133,8 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   Topic, AggregateType, AggregateID, Payload})` in the business transaction (topic validated: namespaced, no wildcards, not a
   platform lifecycle topic) — never `infra.OutboxEvent` by hand, never RabbitMQ directly. In a consumer use
   `event.AckLogged()` / `NackLogged(requeue)`, never `_ = event.Ack()`: a failed ack means redelivery, so handlers stay idempotent.
-- **`pkg/graphqlgateway` — the generic GraphQL BFF (2026-11-14, audit P1.4; moved from `../waap`).** Builds the schema at
-  runtime from a `MetadataRegistry` over any `map[entity]crud.RecordBackend` (normally one `grpcapi.GrpcBackend` per upstream):
-  typed CRUD fields, the `Json` scalar, `aggregate`, depth/complexity limits, decode-only auth that forwards the caller's token,
-  `ReadOnly() bool` backends get no mutations. `BuildSchema(registry, backends, opts...)`: `WithPlatformBase(url)` adds the
-  platform admin/settings fields (forwarded to that metap service's REST routes), `WithExtensions(fn)` is where a product adds its
-  own non-CRUD fields using `ForwardPost`/`IDArg`/`JSONScalar`/`RequestContextFrom`. A product keeps only its extensions and its
-  `main` (`../waap`: `management-plane/wafgateway` + `cmd/waf-graphql-gateway`) — never copy the engine again. Its tests use a
-  self-declared `shop.*` registry, not a product's entities.
+- **`pkg/graphqlgateway` — removed (2026-11-21, roadmap 116).** It was the generic GraphQL BFF over gRPC upstreams; its
+  job is now `pkg/apigateway` (see the REST-only note at the top of this file).
 - **`pkg/bootstrap` — first-run roles, grants and initial accounts (2026-11-14, `docs/roadmap/108-bootstrap-roles-accounts-permissions.md`
   in `../metap-docs`).** Declare `bootstrap.Bootstrap{Roles, Grants, Users}` in Go next to the entities
   (`bootstrap.Submit` from an `init()`, gathered by `Collect`), apply with `bootstrap.Apply(ctx, Deps, tenantID, b, Options{Production})`.
@@ -135,18 +149,14 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   services two could race and create the same policy); `dev-tools apply-bootstrap <tenant> <file> [entity.json...]` applies a JSON
   declaration; `provision-tenant` prints the follow-up. `bootstrap.ScopedIdentity` resolves a dedicated_db tenant's own database.
   Policies carry no `source` marker, so an admin-deleted bootstrap policy comes back on re-run.
-- **Entity actions — gRPC is the standard transport for anything beyond CRUD (2026-11-14, `docs/roadmap/109-grpc-first-actions.md`
-  in `../metap-docs`).** A named operation that is neither CRUD nor a workflow transition (verify DNS, run a scan, correlate)
-  is declared once on its entity (`EntityDefinition.Actions`: `Name` camelCase, `Scope` record|entity), registered with
-  `crud.ActionRegistry` through `app.Options.Actions` (boot refuses a declared action with no handler), and served by
-  `ActionService.Invoke` on the same gRPC listener as `RecordService`. The call is checked against the declared actions and scope
-  before the handler runs. A handler must read/write through a `RecordBackend` with `call.RC` — it adds no permission of its own,
-  so an action can never do more than the caller could with plain CRUD. `grpcapi.GrpcBackend` implements `crud.ActionInvoker`;
-  `pkg/graphqlgateway` turns every declared action into a mutation `<action><TypeName>` (`verifyDnsWafZones(id, input)`;
-  `InvokeAction` for a product that keeps an older mutation name). A REST route for the same action stays available — write the
-  logic once as a core `func(ctx, rc, id) (map[string]any, error)` and let `httpserver.RecordActionRoute` and the action handler
-  both call it. Permanent REST: `/auth/*`, OAuth2/JWKS, health/metrics, attachments, webhook receivers, and non-metap services
-  (`e-edge`, `a-api`, which may not import gRPC).
+- **Entity actions — declared, served over REST (2026-11-14 `docs/roadmap/109-grpc-first-actions.md`, transport changed to REST
+  2026-11-21 by roadmap 116).** A named operation that is neither CRUD nor a workflow transition (verify DNS, run a scan,
+  correlate) is declared once on its entity (`EntityDefinition.Actions`: `Name` camelCase, `Scope` record|entity), registered with
+  `crud.ActionRegistry` through `app.Options.Actions` (boot refuses a declared action with no handler), and served at `POST
+  /api/{entity}/{id}/actions/{action}` (record scope) or `POST /api/{entity}/actions/{action}` (entity scope); an undeclared
+  action or the wrong scope is 404 `action_not_found`. A handler must read/write through a `RecordBackend` with `call.RC` — it
+  adds no permission of its own, so an action can never do more than the caller could with plain CRUD. `recordclient.Client`
+  implements `crud.ActionInvoker` for calling a sibling's actions.
 - **Names are declared once (2026-11-14, `docs/roadmap/110-magic-literals-audit.md` in `../metap-docs`).** Error codes come from
   `pkg/kit/errcode` (`errcode.ValidationFailed`, `RecordNotFound`, ...), never a quoted string; `ServiceError` constructors take
   `http.Status*`, not a number; the admin role and policy action names are `permission.RoleAdmin` / `permission.PolicyAction*`;
@@ -174,7 +184,7 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
 - **API keys and service accounts (2026-11-19, roadmap 115 M5).** A service account is a password-less member
   (`identity.ServiceAccountProvider`, hidden from `ListMembers`, listed by `ListServiceAccounts`); an API key
   (`metadata.api_keys`, migration 0046, only the SHA-256 hash stored, `mk_` prefix) authenticates AS its member, so it
-  has exactly that member's roles. Both transports (`httpserver.authenticate`, `grpcapi.authenticate`) branch on
+  has exactly that member's roles. `httpserver.authenticate` branches on
   `identity.IsAPIKey(token)` to `control.ResolveAPIKeyContext`, which treats the key as a session issued at its
   creation: disabling the member or "revoke sessions" kills its keys at once, revoke/expiry are checked in SQL. A key
   carries no OAuth scope. Admin API on `UserAdminService`: `CreateServiceAccount`, `ListServiceAccounts`,
@@ -208,7 +218,7 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
 - **Login sessions (2026-11-19, roadmap 115 M4).** Every sign-in (`startSessionWith`: login, MFA step, signup, invitation, password change, switch-tenant)
   inserts a row in `metadata.sessions` (migration 0049: identity, member, tenant, created/last-seen/expires, `RemoteAddr` ip, user agent) and mints a
   token carrying its id as the `sid` claim (`MintSessionJWT`, `jwks.MintSessionWithSigner`, `AppState.MintSessionToken`; `AccessClaims.SessionID`).
-  `control.ApplySessionClaim` runs in both `httpserver.authenticate` and `grpcapi.authenticate`: a revoked **or missing** session row is
+  `control.ApplySessionClaim` runs in `httpserver.authenticate`: a revoked **or missing** session row is
   `ErrSessionRevoked` (401 `session_revoked`) whatever the token's `exp`, and `RequestContext.SessionID` is set; last-seen is written at most once a
   minute. A token with no `sid` (API key, OAuth2, service token, `dev-tools mint-token`) is not a session and is untouched. `/auth/me` renewal and
   `/auth/token` re-mint with the same sid (renewal also moves `expires_at`); `/auth/logout` now revokes the session server-side, so a copied token
@@ -234,8 +244,8 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   head, so keep `headHash` somewhere they cannot. Read side: `Store.Search` (tenant-wide, by actor/entity/record/actions/time),
   `AuditAdminService.SearchAudit`/`VerifyAuditChain` (admin), gateway `auditEntries`/`verifyAuditChain`, REST `GET /admin/audit/export`
   (csv|json, same filters, streams every page). Never add pruning to this table.
-- **SCIM 2.0 user provisioning (2026-11-20, roadmap 115 M12).** `/scim/v2` (`grpcapi.SCIMHandler`, mounted by `pkg/app` on the token issuer) is a
-  REST skin over `UserAdminService`, called in-process with the caller's own bearer token as incoming gRPC metadata — so authentication (an API
+- **SCIM 2.0 user provisioning (2026-11-20, roadmap 115 M12).** `/scim/v2` (`adminapi.SCIMHandler`, mounted by `pkg/httpserver` on the token issuer) is a
+  REST skin over `UserAdminService`, called in-process with the caller authenticated by the same `httpserver.authenticate` every route uses — so authentication (an API
   key of an admin service account), the admin check, last-admin guards, invitations and audit are the admin API's own; never reimplement a
   rule in the SCIM layer. Users only: list (`filter=userName eq "..."`), get, create (= invite by email), PUT/PATCH (`active` bool or "True"/"False",
   `displayName`, `name.formatted`; `userName` immutable), delete; plus ServiceProviderConfig/ResourceTypes/Schemas. Not built: Groups, roles, bulk,
@@ -323,17 +333,17 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   `AUTH_JWT_PUBLIC_KEY_PATH` alongside either JWKS mode keeps kid-less RS256 tokens verifying —
   `jwks.VerifierAuto` routes by the token's `kid` header — for a zero-downtime cutover. HTTP and
   gRPC use the same verifier. Both auth paths now set `RequestContext.ForwardedBearerToken`, so a
-  service calling a sibling (`grpcapi.GrpcBackend`) acts as the caller — never mint a token on a
+  service calling a sibling (`recordclient`) acts as the caller — never mint a token on a
   caller's behalf. Rotation needs no restart: `jwks.WatchKeyDir` re-reads the key dir,
   `jwks.SignerStore` always signs with the current signing key, `JwksClient` refetches on an
   unknown kid (at most every 5s — it used to refetch on every unknown kid, an amplification
   vector) and replaces its whole key snapshot on refresh (a retired key used to stay trusted until
   its cache entry expired). Key dir tooling: `dev-tools gen-jwks-key <dir> [kid]`;
   `JWKS_KEYS_DIR=<dir> dev-tools mint-token` mints an EdDSA token.
-- **`pkg/app` — the service bootstrap** (`app.Main(app.Options{Name, Entities, GRPCPort,
-  WrapBackend, Routes, Configure})`): config → pool → router → permissions → JWT keys → metadata
-  → reconcile `Entities` in order (`ScopeAllTenants`) → peripherals → CRUD+audit → optional gRPC →
-  HTTP. This *is* the `metap-app` equivalent the paragraph above says was skipped — `../waap`'s
+- **`pkg/app` — the service bootstrap** (`app.Main(app.Options{Name, Entities, WrapBackend,
+  ExternalEntities, Actions, Routes, Configure})`): config → pool → router → permissions → JWT keys → metadata
+  → reconcile `Entities` in order (`ScopeAllTenants`) → peripherals → CRUD+audit → wrapped backend +
+  actions → HTTP (REST only since roadmap 116). This *is* the `metap-app` equivalent the paragraph above says was skipped — `../waap`'s
   three management-plane services needed it (each `main.go` was ~150 copied lines, now ~20).
 
 **Entity fields are native typed columns, no `data jsonb` (2026-11-14, `docs/roadmap/106-native-entity-columns-no-data-jsonb.md`

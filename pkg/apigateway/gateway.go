@@ -4,6 +4,8 @@
 //   - Entity CRUD (/api/{entity}...) goes to the service that serves that entity. The gateway learns
 //     which one from each upstream's own /metadata/entities, asked with the caller's credentials the
 //     first time an entity is seen (and again when an unknown one shows up).
+//   - The product-wide metadata (/metadata/entities, /metadata/entity-access) is every service's,
+//     merged (metadata.go).
 //   - Any other route goes to the upstream whose configured prefix matches it ("/auth/", "/me/",
 //     "/admin/", ...), longest prefix first.
 //   - GET /api/{entity}[/{id}]?expand=a,b resolves reference fields across services: the gateway
@@ -110,6 +112,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		up.proxy.ServeHTTP(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/metadata/") && g.serveMetadata(w, r) {
 		return
 	}
 	if up := g.prefixOwner(r.URL.Path); up != nil {

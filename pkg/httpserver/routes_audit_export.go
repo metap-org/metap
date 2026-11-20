@@ -14,9 +14,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/metap-org/metap/pkg/adminapi"
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/grpcapi"
-	"github.com/metap-org/metap/pkg/grpcapi/pb"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 
@@ -39,14 +38,14 @@ func exportAudit(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	values := r.URL.Query()
-	req := &pb.SearchAuditRequest{ActorUserId: values.Get("actor"), Entity: values.Get("entity"), RecordId: values.Get("record"),
+	req := &adminapi.SearchAuditRequest{ActorUserId: values.Get("actor"), Entity: values.Get("entity"), RecordId: values.Get("record"),
 		From: values.Get("from"), To: values.Get("to")}
 	for _, a := range strings.Split(values.Get("actions"), ",") {
 		if a = strings.TrimSpace(a); a != "" {
 			req.Actions = append(req.Actions, a)
 		}
 	}
-	q, bad := grpcapi.AuditSearchFromRequest(req)
+	q, bad := adminapi.AuditSearchFromRequest(req)
 	if bad != "" {
 		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, bad, nil)
 		return
@@ -69,7 +68,7 @@ func exportAudit(w http.ResponseWriter, r *http.Request, state *AppState) {
 		cw := csv.NewWriter(w)
 		_ = cw.Write(auditExportCSVHeader)
 		emit = func(row audit.Row) {
-			e := grpcapi.ToPBAuditEntry(row)
+			e := adminapi.ToPBAuditEntry(row)
 			seq := ""
 			if row.Seq != nil {
 				seq = strconv.FormatInt(*row.Seq, 10)

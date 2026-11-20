@@ -1,5 +1,5 @@
 // Package recordclient is a crud.RecordBackend and crud.ActionInvoker over another service's REST
-// API (roadmap 116; replaces grpcapi.GrpcBackend): /api/{entity}*, the batch read ?ids= and the
+// API (roadmap 116; replaced the gRPC backend client): /api/{entity}*, the batch read ?ids= and the
 // declared-action routes. Each call authenticates as the caller (rc.ForwardedBearerToken) when
 // there is one, else as the service account; a failure comes back as the *crud.ServiceError the
 // other service answered with (status, code, message, field errors, details).

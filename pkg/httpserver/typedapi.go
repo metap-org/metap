@@ -19,6 +19,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/metap-org/metap/pkg/adminapi"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
@@ -151,4 +152,8 @@ func newAPI(r chi.Router) huma.API {
 func mountTypedAPI(r chi.Router, state *AppState) {
 	api := newAPI(r)
 	registerSessionOperations(api, state)
+	registerAdminOperations(api, state)
+	if state.Identity != nil {
+		r.Mount("/scim/v2", http.StripPrefix("/scim/v2", adminapi.SCIMHandler(adminapi.NewUserAdminService(*state.Identity), scimAuthenticate(state))))
+	}
 }
