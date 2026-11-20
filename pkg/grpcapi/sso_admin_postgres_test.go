@@ -52,7 +52,7 @@ func TestSsoAdminConfig(t *testing.T) {
 
 	valid := func() *pb.SetSsoConfigRequest {
 		return &pb.SetSsoConfigRequest{IssuerUrl: issuer, ClientId: "c1", ClientSecret: "s3cret", EmailDomains: []string{"Acme.io"},
-			DefaultRole: "viewer", Enabled: true}
+			DefaultRole: "viewer", Enabled: true, PostLoginRedirect: "http://portal.test/home"}
 	}
 	code := func(mut func(*pb.SetSsoConfigRequest)) codes.Code {
 		r := valid()
@@ -63,6 +63,7 @@ func TestSsoAdminConfig(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, code(func(r *pb.SetSsoConfigRequest) { r.IssuerUrl = "http://idp.example.com" }), "https only")
 	assert.Equal(t, codes.InvalidArgument, code(func(r *pb.SetSsoConfigRequest) { r.IssuerUrl = "https://idp.invalid" }), "must be a reachable OIDC issuer")
 	assert.Equal(t, codes.InvalidArgument, code(func(r *pb.SetSsoConfigRequest) { r.ClientId = "" }))
+	assert.Equal(t, codes.InvalidArgument, code(func(r *pb.SetSsoConfigRequest) { r.PostLoginRedirect = "https://evil.example.com/" }), "landing page must be on the service's own origin")
 	assert.Equal(t, codes.InvalidArgument, code(func(r *pb.SetSsoConfigRequest) { r.DefaultRole = "admin" }), "SSO never mints admins")
 	assert.Equal(t, codes.InvalidArgument, code(func(r *pb.SetSsoConfigRequest) { r.DefaultRole = "no-such-role" }))
 	assert.Equal(t, codes.InvalidArgument, code(func(r *pb.SetSsoConfigRequest) { r.EmailDomains = []string{"not a domain"} }))

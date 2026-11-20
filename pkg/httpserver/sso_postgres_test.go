@@ -134,7 +134,8 @@ func TestSSOSignInProvisioningAndEnforcement(t *testing.T) {
 	ref := control.TenantSecretRef(tenant, "sso.clientSecret")
 	require.NoError(t, store.PutSecret(ctx, ref, "shh"))
 	cfg := &tenantauth.OidcConfig{IssuerURL: idp.srv.URL, ClientID: "client-1", ClientSecretRef: ref, Scopes: []string{"openid", "email"},
-		EmailDomains: []string{"acme.io"}, DefaultRole: "viewer", PostLoginRedirect: "https://portal.example.test/home"}
+		EmailDomains: []string{"acme.io"}, DefaultRole: "viewer", PostLoginRedirect: "PORTAL/home"}
+	cfg.PostLoginRedirect = base + "/home"
 	require.NoError(t, tenantauth.SaveOidcConfig(ctx, pool, tenant, cfg, true))
 
 	// A password member (the owner) and discovery by email domain.
@@ -156,7 +157,7 @@ func TestSSOSignInProvisioningAndEnforcement(t *testing.T) {
 		t.Fatalf("callback: %d %s", cb.StatusCode, b)
 	}
 	cb.Body.Close()
-	assert.Equal(t, "https://portal.example.test/home", cb.Header.Get("Location"))
+	assert.Equal(t, base+"/home", cb.Header.Get("Location"))
 	var session *http.Cookie
 	for _, c := range cb.Cookies() {
 		if strings.Contains(c.Name, "session") && !strings.Contains(c.Name, "started") {

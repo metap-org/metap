@@ -260,7 +260,7 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   (routes an address to a tenant only when exactly one tenant claims its domain — domains are not verified, so the callback's `EmailAllowed` check is the real safeguard),
   `GET /auth/sso/start?tenant=` (PKCE + nonce, state in `metadata.sso_states`, migration 0053, single use, 10 min) and `GET /auth/sso/callback` (verifies the id_token,
   finds the member by IdP subject, else ties an existing member with that address to the subject, else provisions one with the config's `DefaultRole`, then
-  `issueSession` + redirect to `PostLoginRedirect`). No MFA step after SSO: the IdP is the second factor. Needs `PublicAppURL` (the callback is
+  `issueSession` + redirect to `PostLoginRedirect`, which must be on the service's own origin — enforced at save time and again at the callback via `SameOrigin`; redirects go through `redirectTo`, not `http.Redirect`, because every target is server-validated and Semgrep's open-redirect rule fires on any request-passing redirect). No MFA step after SSO: the IdP is the second factor. Needs `PublicAppURL` (the callback is
   `PublicAppURL + /auth/sso/callback`); `startSessionWith` was split into `issueSession` (cookies) so the redirect flow reuses it. A tenant's settings are the `oidc` row of
   `tenant_auth_configs` (`OidcConfig` gained `EmailDomains`, `DefaultRole`, `Enforced`); the client secret lives in the SecretStore under
   `control.TenantSecretRef(tenant, "sso.clientSecret")` and is never returned (`has_client_secret` only). `SsoAdminService` (tenant admin): `GetSsoConfig`, `SetSsoConfig`

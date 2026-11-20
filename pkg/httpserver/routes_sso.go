@@ -57,6 +57,25 @@ func ssoRequired(w http.ResponseWriter, r *http.Request, state *AppState, m iden
 	return true
 }
 
+// redirectTo sends the browser to target. Neither caller passes anything taken from the request:
+// the sign-in URL comes from the tenant's configured identity provider and the landing page is
+// checked to be on this service's own origin (SameOrigin) — which is why this sets the header
+// itself rather than going through http.Redirect with the request.
+func redirectTo(w http.ResponseWriter, target string) {
+	w.Header().Set("Location", target)
+	w.WriteHeader(http.StatusFound)
+}
+
+// SameOrigin reports whether raw is an absolute http(s) URL on the same scheme, host and port as base.
+func SameOrigin(raw, base string) bool {
+	u, err := url.Parse(raw)
+	b, err2 := url.Parse(base)
+	if err != nil || err2 != nil || u.Host == "" || b.Host == "" {
+		return false
+	}
+	return (u.Scheme == "https" || u.Scheme == "http") && u.Scheme == b.Scheme && strings.EqualFold(u.Host, b.Host)
+}
+
 func ssoRedirectURI(state *AppState) string {
 	return strings.TrimRight(state.PublicAppURL, "/") + "/auth/sso/callback"
 }
@@ -121,7 +140,7 @@ func ssoStart(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeInternalError(w, err)
 		return
 	}
-	http.Redirect(w, r, authURL, http.StatusFound)
+	redirectTo(w, authURL)
 }
 
 func ssoCallback(w http.ResponseWriter, r *http.Request, state *AppState) {
@@ -180,11 +199,11 @@ func ssoCallback(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	_ = token
-	dest := cfg.PostLoginRedirect
-	if u, err := url.Parse(dest); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		dest = strings.TrimRight(state.PublicAppURL, "/") + "/"
+	dest := strings.TrimRight(state.PublicAppURL, "/") + "/"
+	if SameOrigin(cfg.PostLoginRedirect, state.PublicAppURL) {
+		dest = cfg.PostLoginRedirect
 	}
-	http.Redirect(w, r, dest, http.StatusFound)
+	redirectTo(w, dest)
 }
 
 // ssoMember finds the member an IdP identity signs in as: the one already tied to this subject, an

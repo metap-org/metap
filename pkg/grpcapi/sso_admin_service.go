@@ -67,12 +67,13 @@ func (s *SsoAdminService) GetSsoConfig(ctx context.Context, _ *pb.Empty) (*pb.Ss
 	return s.view(ctx, c.tenant)
 }
 
-func validURL(raw string, allowHTTP bool) bool {
+func sameOrigin(raw, base string) bool {
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
+	b, err2 := url.Parse(base)
+	if err != nil || err2 != nil || u.Host == "" || b.Host == "" {
 		return false
 	}
-	return u.Scheme == "https" || (allowHTTP && u.Scheme == "http")
+	return (u.Scheme == "https" || u.Scheme == "http") && u.Scheme == b.Scheme && strings.EqualFold(u.Host, b.Host)
 }
 
 func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *pb.SetSsoConfigRequest) (*pb.SsoConfig, error) {
@@ -106,8 +107,10 @@ func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *pb.SetSsoConfig
 	if len(domains) > 20 {
 		return bad("At most 20 email domains.")
 	}
-	if redirect := strings.TrimSpace(req.GetPostLoginRedirect()); redirect != "" && !validURL(redirect, true) {
-		return bad("`postLoginRedirect` must be an absolute URL.")
+	// The landing page must be on the service's own origin: the callback redirects there with a
+	// fresh session cookie, so it cannot point anywhere else.
+	if redirect := strings.TrimSpace(req.GetPostLoginRedirect()); redirect != "" && !sameOrigin(redirect, s.d.cfg.PublicURL) {
+		return bad("`postLoginRedirect` must be a URL on " + s.d.cfg.PublicURL + ".")
 	}
 	role := strings.TrimSpace(req.GetDefaultRole())
 	if role == permission.RoleAdmin {
