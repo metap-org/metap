@@ -136,6 +136,19 @@ func TestReferenceFieldGetsFkRegardlessOfIndexedFlag(t *testing.T) {
 	}
 }
 
+// RefersTo (a cross-service link, roadmap 116) is a plain string column: no FK to a table that
+// lives in another service, and the same physical schema as before it was declared.
+func TestRefersToFieldGetsNoForeignKey(t *testing.T) {
+	plain := plainField("zoneId", metadata.KindString)
+	linked := plainField("zoneId", metadata.KindString).RefersTo("waf.zones")
+	before, err := Compile(testEntity("waf.scan_jobs", []metadata.EntityField{plain}))
+	require.NoError(t, err)
+	after, err := Compile(testEntity("waf.scan_jobs", []metadata.EntityField{linked}))
+	require.NoError(t, err)
+	require.Empty(t, after.ForeignKeys)
+	require.Equal(t, before, after, "declaring the link changes nothing physical")
+}
+
 func TestSearchableFtsFieldGetsGinTsvectorExpressionIndex(t *testing.T) {
 	f := plainField("description", metadata.KindString)
 	f.Searchable = boolp(true)

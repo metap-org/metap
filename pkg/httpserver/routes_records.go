@@ -10,15 +10,23 @@ import (
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
 )
 
-var reservedQueryKeys = map[string]bool{"limit": true, "sort": true, "cursor": true, "listView": true, "jql": true, "offset": true, "search": true, "withTotal": true}
+// reservedQueryKeys are list parameters, never field filters. "ids", "expand" and "fields" are
+// roadmap 116's: ids is served here, expand by the API gateway (pkg/apigateway), fields is reserved.
+var reservedQueryKeys = map[string]bool{"limit": true, "sort": true, "cursor": true, "listView": true, "jql": true, "offset": true, "search": true, "withTotal": true,
+	"ids": true, "expand": true, "fields": true}
+
+// maxIDsPerRequest bounds GET /api/{entity}?ids=.
+const maxIDsPerRequest = 200
 
 func parseListInput(w http.ResponseWriter, values map[string][]string) (query.ListInput, bool) {
 	limit := int64(30)
@@ -67,6 +75,38 @@ func parseListInput(w http.ResponseWriter, values map[string][]string) (query.Li
 	return input, true
 }
 
+// listRecordsByID is GET /api/{entity}?ids=a,b,c: the records with those ids that exist and the
+// caller may read, in one call (what an `expand` across services batches into). Unknown, deleted
+// or denied ids are simply absent.
+func listRecordsByID(w http.ResponseWriter, r *http.Request, state *AppState, rc *permission.RequestContext, entity, raw string) {
+	parts := strings.Split(raw, ",")
+	if len(parts) > maxIDsPerRequest {
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed,
+			"`ids` may list at most "+strconv.Itoa(maxIDsPerRequest)+" ids.", nil)
+		return
+	}
+	ids := make([]uuid.UUID, 0, len(parts))
+	for _, p := range parts {
+		id, err := uuid.Parse(strings.TrimSpace(p))
+		if err != nil {
+			writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`ids` must be comma-separated record ids.",
+				map[string][]string{"ids": {"not a record id: " + p}})
+			return
+		}
+		ids = append(ids, id)
+	}
+	results, err := state.Crud.GetMany(r.Context(), entity, ids, rc)
+	if err != nil {
+		writeCrudError(w, err)
+		return
+	}
+	records := make([]crud.RecordDto, 0, len(results))
+	for _, res := range results {
+		records = append(records, res.Record)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": records, "page": map[string]any{"limit": len(ids)}})
+}
+
 func firstValue(values map[string][]string, key string) string {
 	if vs, ok := values[key]; ok && len(vs) > 0 {
 		return vs[0]
@@ -80,6 +120,10 @@ func listRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	entity := chi.URLParam(r, "entity")
+	if raw := r.URL.Query().Get("ids"); raw != "" {
+		listRecordsByID(w, r, state, rc, entity, raw)
+		return
+	}
 	input, ok := parseListInput(w, r.URL.Query())
 	if !ok {
 		return

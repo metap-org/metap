@@ -12,6 +12,11 @@ import (
 // The {"error":{"code":...,"message":...}} response shape every metap-go service returns on
 // failure.
 
+// internalErrorBody is the 500 body when nothing better can be written. Built from the constant,
+// not spelled inside a string literal (it once read `"code":errcode.InternalError` verbatim —
+// invalid JSON whose code was the Go identifier).
+var internalErrorBody = []byte(`{"error":{"code":"` + errcode.InternalError + `","message":"Internal server error."}}`)
+
 func defaultMessage(errorCode string) string {
 	switch errorCode {
 	case "entity_not_found":
@@ -47,8 +52,11 @@ type ErrorBody struct {
 	Code        string              `json:"code"`
 	Message     string              `json:"message"`
 	FieldErrors map[string][]string `json:"fieldErrors,omitempty"`
-	RequestID   string              `json:"requestId,omitempty"`
-	TraceID     string              `json:"traceId,omitempty"`
+	// Details is structured data about the failure for a client that renders it itself (a failed
+	// guard's field/op/expected/actual).
+	Details   map[string]any `json:"details,omitempty"`
+	RequestID string         `json:"requestId,omitempty"`
+	TraceID   string         `json:"traceId,omitempty"`
 }
 
 func (b ErrorBody) MarshalEnvelope() []byte {
@@ -56,7 +64,7 @@ func (b ErrorBody) MarshalEnvelope() []byte {
 	if err != nil {
 		// b is always a plain, already-valid-UTF8 struct of strings/maps — this cannot fail in
 		// practice; fall back to an empty object rather than panicking a request handler.
-		return []byte(`{"error":{"code":errcode.InternalError,"message":"Internal server error."}}`)
+		return internalErrorBody
 	}
 	return out
 }
@@ -72,9 +80,13 @@ func BuildServiceError(status int, errorCode string, message string, fieldErrors
 
 // ServiceErrorResponse writes a known, expected failure directly to w.
 func ServiceErrorResponse(w http.ResponseWriter, status int, errorCode string, message string, fieldErrors map[string][]string) {
-	body := BuildServiceError(status, errorCode, message, fieldErrors)
+	WriteErrorBody(w, BuildServiceError(status, errorCode, message, fieldErrors))
+}
+
+// WriteErrorBody writes a built ErrorBody (e.g. one with Details set) as the standard envelope.
+func WriteErrorBody(w http.ResponseWriter, body ErrorBody) {
 	w.Header().Set(standard.HeaderContentType, standard.MediaTypeJSON)
-	w.WriteHeader(status)
+	w.WriteHeader(body.Status)
 	_, _ = w.Write(body.MarshalEnvelope())
 }
 
@@ -84,5 +96,5 @@ func InternalErrorResponse(w http.ResponseWriter, err error) {
 	slog.Error("internal error", standard.LogError, err)
 	w.Header().Set(standard.HeaderContentType, standard.MediaTypeJSON)
 	w.WriteHeader(http.StatusInternalServerError)
-	_, _ = w.Write([]byte(`{"error":{"code":errcode.InternalError,"message":"Internal server error."}}`))
+	_, _ = w.Write(internalErrorBody)
 }

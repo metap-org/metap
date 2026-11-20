@@ -46,7 +46,9 @@ func writeRouterUnavailable(w http.ResponseWriter, err error) {
 // answered as an internal error (RouterError first — an expected tenant-lifecycle state).
 func writeCrudError(w http.ResponseWriter, err error) {
 	if se, ok := crud.AsServiceError(err); ok {
-		writeServiceError(w, int(se.Status), se.Code, se.Message, se.FieldErrors)
+		body := httpx.BuildServiceError(int(se.Status), se.Code, se.Message, se.FieldErrors)
+		body.Details = se.Details
+		httpx.WriteErrorBody(w, body)
 		return
 	}
 	writeInternalError(w, err)
