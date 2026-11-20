@@ -5,6 +5,7 @@
 package graphqlgateway
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/graphql-go/graphql"
@@ -33,9 +34,11 @@ func parseLiteral(valueAST ast.Value) interface{} {
 	case *ast.StringValue:
 		return v.Value
 	case *ast.IntValue:
-		return v.Value
+		// The AST keeps a number's source text; json.Number forwards it as a JSON number (a
+		// string here reached the upstream as "30", which a number-typed config key rejects).
+		return json.Number(v.Value)
 	case *ast.FloatValue:
-		return v.Value
+		return json.Number(v.Value)
 	case *ast.BooleanValue:
 		return v.Value
 	case *ast.EnumValue:

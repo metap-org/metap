@@ -8,6 +8,7 @@ import (
 	"errors"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
+	"github.com/metap-org/metap/pkg/kit/standard"
 	"net/http"
 	"strconv"
 	"time"
@@ -317,7 +318,15 @@ func nullableString(s string) any {
 // nothing on any of the several reasons not to refresh (no session cookie, no
 // session_started_at, already past the absolute cap, parse failure) — me must keep answering
 // identity/roles regardless.
+//
+// Only a request the cookie itself authenticated is refreshed. An Authorization header wins over
+// the cookie in authenticate, so with both present rc is the header's caller — an API key's
+// service account, or another member's token — and re-minting the cookie from it would quietly
+// turn the browser's session into that caller's.
 func tryRefreshSession(w http.ResponseWriter, r *http.Request, state *AppState, rc *permission.RequestContext) {
+	if r.Header.Get(standard.HeaderAuthorization) != "" {
+		return
+	}
 	sessionCookie, err := r.Cookie(httpx.SessionCookieName)
 	if err != nil || sessionCookie.Value == "" {
 		return
