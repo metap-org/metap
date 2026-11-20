@@ -384,6 +384,37 @@ service AccountService {
   // Turning it off, or replacing the recovery codes, needs a current code (or a recovery code).
   rpc DisableMfa(MfaCodeRequest) returns (Empty);
   rpc RegenerateRecoveryCodes(MfaCodeRequest) returns (MfaRecoveryCodes);
+  // Where the caller is signed in (every tenant), newest activity first; the one making this call is
+  // marked current. Only login sessions are listed — API keys and OAuth2 tokens are not sessions.
+  rpc ListMySessions(Empty) returns (ListSessionsResponse);
+  // Ends one of the caller's own sessions at once (it may be the current one).
+  rpc RevokeMySession(SessionIdRequest) returns (Empty);
+  // Ends every other session of the caller, keeping this one.
+  rpc RevokeOtherSessions(Empty) returns (RevokedSessions);
+}
+
+message Session {
+  string id = 1;
+  bool current = 2;
+  string tenant_id = 3;
+  string tenant_name = 4;
+  string created_at = 5;
+  string last_seen_at = 6;
+  string expires_at = 7;
+  string ip = 8;
+  string user_agent = 9;
+}
+
+message ListSessionsResponse {
+  repeated Session sessions = 1;
+}
+
+message SessionIdRequest {
+  string id = 1;
+}
+
+message RevokedSessions {
+  int32 count = 1;
 }
 
 message MfaStatus {

@@ -207,6 +207,7 @@ func addIdentityFields(query, mutation graphql.Fields, c *grpcapi.IdentityClient
 	addTenantFields(query, mutation, c)
 	addAPIKeyFields(query, mutation, c)
 	addMFAFields(query, mutation, c)
+	addSessionFields(query, mutation, c)
 	asUser := func(call func(ctx context.Context, opts ...grpc.CallOption) (*pb.User, error), ctx context.Context) (interface{}, error) {
 		u, err := identityCall(ctx, call)
 		if err != nil {

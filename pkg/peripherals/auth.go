@@ -118,6 +118,9 @@ type claims struct {
 	TenantID string `json:"tenantId"`
 	Scope    string `json:"scope,omitempty"`
 	ClientID string `json:"clientId,omitempty"`
+	// SessionID ("sid") ties a login session's token to its row in metadata.sessions, so one
+	// session can be listed and revoked on its own (roadmap 115 M4).
+	SessionID string `json:"sid,omitempty"`
 }
 
 // MintJWT mints an RS256 JWT with the claim shape a decode-side AuthContext extractor expects
@@ -126,7 +129,12 @@ type claims struct {
 // infrequently — an interactive CLI command and a login request) don't need to hold a parsed key
 // in state just for this.
 func MintJWT(privateKeyPEM string, tenantID, userID uuid.UUID, ttlSeconds uint64) (string, error) {
-	return mintClaims(privateKeyPEM, tenantID, userID, ttlSeconds, "", "")
+	return mintClaims(privateKeyPEM, tenantID, userID, ttlSeconds, "", "", "")
+}
+
+// MintSessionJWT is MintJWT for a login session: the token carries the session id as "sid".
+func MintSessionJWT(privateKeyPEM string, tenantID, userID uuid.UUID, ttlSeconds uint64, sessionID string) (string, error) {
+	return mintClaims(privateKeyPEM, tenantID, userID, ttlSeconds, "", "", sessionID)
 }
 
 // MintOAuthAccessToken is the OAuth2-authorization-server counterpart to MintJWT — same trust
@@ -135,10 +143,10 @@ func MintJWT(privateKeyPEM string, tenantID, userID uuid.UUID, ttlSeconds uint64
 // would be a breaking change to all of them for a capability only the OAuth2 token endpoint
 // needs.
 func MintOAuthAccessToken(privateKeyPEM string, tenantID, userID uuid.UUID, ttlSeconds uint64, scope, clientID string) (string, error) {
-	return mintClaims(privateKeyPEM, tenantID, userID, ttlSeconds, scope, clientID)
+	return mintClaims(privateKeyPEM, tenantID, userID, ttlSeconds, scope, clientID, "")
 }
 
-func mintClaims(privateKeyPEM string, tenantID, userID uuid.UUID, ttlSeconds uint64, scope, clientID string) (string, error) {
+func mintClaims(privateKeyPEM string, tenantID, userID uuid.UUID, ttlSeconds uint64, scope, clientID, sessionID string) (string, error) {
 	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyPEM))
 	if err != nil {
 		return "", err
@@ -153,9 +161,10 @@ func mintClaims(privateKeyPEM string, tenantID, userID uuid.UUID, ttlSeconds uin
 			Audience:  jwt.ClaimStrings{JWTAudience},
 			ID:        uuid.NewString(),
 		},
-		TenantID: tenantID.String(),
-		Scope:    scope,
-		ClientID: clientID,
+		TenantID:  tenantID.String(),
+		Scope:     scope,
+		ClientID:  clientID,
+		SessionID: sessionID,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, c)
 	return token.SignedString(key)
@@ -171,6 +180,8 @@ type AccessClaims struct {
 	JTI        *string
 	Scope      *string
 	ClientID   *string
+	// SessionID is the "sid" claim of a login-session token; nil for every other kind of token.
+	SessionID *string
 	// IssuedAt lets the session check reject a token issued before its user's sessions were
 	// revoked (password change, disable). nil for a token minted before iat was added.
 	IssuedAt *time.Time
@@ -182,6 +193,7 @@ type accessClaimsWire struct {
 	FunctionID *string `json:"functionId,omitempty"`
 	Scope      *string `json:"scope,omitempty"`
 	ClientID   *string `json:"clientId,omitempty"`
+	SessionID  *string `json:"sid,omitempty"`
 }
 
 // DecodeAccessToken verifies a Bearer access token minted by MintJWT: RS256, audience/issuer
@@ -215,6 +227,7 @@ func DecodeAccessToken(tokenString string, publicKey any, leeway time.Duration) 
 		JTI:        jti,
 		Scope:      wire.Scope,
 		ClientID:   wire.ClientID,
+		SessionID:  wire.SessionID,
 		IssuedAt:   IssuedAt(wire.IssuedAt),
 	}, nil
 }

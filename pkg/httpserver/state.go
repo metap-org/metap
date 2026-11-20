@@ -123,6 +123,22 @@ func (s *AppState) MintToken(tenantID, userID uuid.UUID, ttlSeconds uint64) (str
 	}
 }
 
+// MintSessionToken mints a login-session token carrying the session id ("sid"); a "" id mints a
+// plain session token like MintToken.
+func (s *AppState) MintSessionToken(tenantID, userID uuid.UUID, ttlSeconds uint64, sessionID string) (string, error) {
+	if sessionID == "" {
+		return s.MintToken(tenantID, userID, ttlSeconds)
+	}
+	switch {
+	case s.TokenSigner != nil:
+		return jwks.MintSessionWithSigner(s.TokenSigner, tenantID, userID, ttlSeconds, sessionID)
+	case s.JWTPrivateKeyPEM != "":
+		return peripherals.MintSessionJWT(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds, sessionID)
+	default:
+		return "", ErrNotTokenIssuer
+	}
+}
+
 // MintOAuthToken mints an access token carrying the OAuth2 grant's scope/clientId claims.
 func (s *AppState) MintOAuthToken(tenantID, userID uuid.UUID, ttlSeconds uint64, scope, clientID string) (string, error) {
 	switch {

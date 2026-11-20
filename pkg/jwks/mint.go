@@ -19,6 +19,7 @@ type jwksClaims struct {
 	FunctionID *string `json:"functionId,omitempty"`
 	Scope      *string `json:"scope,omitempty"`
 	ClientID   *string `json:"clientId,omitempty"`
+	SessionID  *string `json:"sid,omitempty"`
 }
 
 // MintServiceOrUserJWT: a caller-on-behalf-of-user token (portal login, or forwarded end-user
@@ -26,16 +27,21 @@ type jwksClaims struct {
 // service-to-service calls — this function doesn't distinguish the two, since the claim shape is
 // identical either way.
 func MintServiceOrUserJWT(key *JwksKeyPair, tenantID, userID uuid.UUID, functionID *string, ttlSeconds uint64) (string, error) {
-	return mintJwksClaims(key, tenantID, userID, functionID, ttlSeconds, nil, nil)
+	return mintJwksClaims(key, tenantID, userID, functionID, ttlSeconds, nil, nil, nil)
+}
+
+// MintSessionJWT is MintServiceOrUserJWT for a login session: the token carries "sid".
+func MintSessionJWT(key *JwksKeyPair, tenantID, userID uuid.UUID, ttlSeconds uint64, sessionID string) (string, error) {
+	return mintJwksClaims(key, tenantID, userID, nil, ttlSeconds, nil, nil, &sessionID)
 }
 
 // MintScopedServiceOrUserJWT is the JWKS-trust-root counterpart to
 // peripherals.MintOAuthAccessToken.
 func MintScopedServiceOrUserJWT(key *JwksKeyPair, tenantID, userID uuid.UUID, ttlSeconds uint64, scope, clientID string) (string, error) {
-	return mintJwksClaims(key, tenantID, userID, nil, ttlSeconds, &scope, &clientID)
+	return mintJwksClaims(key, tenantID, userID, nil, ttlSeconds, &scope, &clientID, nil)
 }
 
-func mintJwksClaims(key *JwksKeyPair, tenantID, userID uuid.UUID, functionID *string, ttlSeconds uint64, scope, clientID *string) (string, error) {
+func mintJwksClaims(key *JwksKeyPair, tenantID, userID uuid.UUID, functionID *string, ttlSeconds uint64, scope, clientID, sessionID *string) (string, error) {
 	now := time.Now().UTC()
 	claims := jwksClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -49,6 +55,7 @@ func mintJwksClaims(key *JwksKeyPair, tenantID, userID uuid.UUID, functionID *st
 		FunctionID: functionID,
 		Scope:      scope,
 		ClientID:   clientID,
+		SessionID:  sessionID,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
 	token.Header["kid"] = key.Kid

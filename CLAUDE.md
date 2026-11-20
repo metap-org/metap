@@ -205,6 +205,17 @@ descriptor (panics at `init`) unless those length prefixes are fixed too.
   (a refused verify leaves the link usable). **Debug aid**: at `LOG_LEVEL=debug` the verification link and token are logged
   (`signup verification link (debug log only)`), never at info or above — that is how signup is tried without SMTP. Not built: per-IP limits beyond the
   global rate limiter, tier/plan choice at signup, resend-link endpoint, captcha on other public endpoints (login, forgot-password).
+- **Login sessions (2026-11-19, roadmap 115 M4).** Every sign-in (`startSessionWith`: login, MFA step, signup, invitation, password change, switch-tenant)
+  inserts a row in `metadata.sessions` (migration 0049: identity, member, tenant, created/last-seen/expires, `RemoteAddr` ip, user agent) and mints a
+  token carrying its id as the `sid` claim (`MintSessionJWT`, `jwks.MintSessionWithSigner`, `AppState.MintSessionToken`; `AccessClaims.SessionID`).
+  `control.ApplySessionClaim` runs in both `httpserver.authenticate` and `grpcapi.authenticate`: a revoked **or missing** session row is
+  `ErrSessionRevoked` (401 `session_revoked`) whatever the token's `exp`, and `RequestContext.SessionID` is set; last-seen is written at most once a
+  minute. A token with no `sid` (API key, OAuth2, service token, `dev-tools mint-token`) is not a session and is untouched. `/auth/me` renewal and
+  `/auth/token` re-mint with the same sid (renewal also moves `expires_at`); `/auth/logout` now revokes the session server-side, so a copied token
+  dies. API on `AccountService`: `ListMySessions` (all tenants, current one flagged), `RevokeMySession` (own only; another person's id is a 404),
+  `RevokeOtherSessions`; gateway `mySessions`, `revokeSession`, `revokeOtherSessions`. The older "revoke all" (`sessions_revoked_at`, used on
+  password change/disable) still applies on top. Not built: an admin view of a member's sessions, a cap on concurrent sessions, geo-IP/device
+  names, notifying the person of a new sign-in.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any
