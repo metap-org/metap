@@ -5,7 +5,6 @@ import (
 	"errors"
 	"github.com/metap-org/metap/pkg/captcha"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
@@ -77,12 +77,10 @@ func tenantNameBlocked(name string, extra []string) bool {
 	return false
 }
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return ""
-	}
-	return host
+// clientIP is who is calling: the TCP peer, or behind the configured trusted proxies the address
+// they report (never a header from a peer that is not trusted).
+func clientIP(r *http.Request, state *AppState) string {
+	return httpx.ClientIP(r, state.TrustedProxies)
 }
 
 // signup starts self-service registration (roadmap 115 M2): it validates what the person typed,
@@ -120,7 +118,7 @@ func signup(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	if state.Captcha != nil {
-		if err := state.Captcha.Verify(r.Context(), body.CaptchaToken, clientIP(r)); err != nil {
+		if err := state.Captcha.Verify(r.Context(), body.CaptchaToken, clientIP(r, state)); err != nil {
 			if errors.Is(err, captcha.ErrFailed) {
 				writeServiceError(w, http.StatusBadRequest, errcode.CaptchaFailed, "Please complete the verification and try again.",
 					map[string][]string{"captchaToken": {"Verification failed."}})

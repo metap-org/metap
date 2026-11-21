@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"github.com/metap-org/metap/pkg/captcha"
+	"net/netip"
 	"sync/atomic"
 	"time"
 
@@ -81,6 +82,9 @@ type AppState struct {
 	Mailer *accountmail.Mailer
 	// Captcha, when set, must pass for POST /auth/signup (CAPTCHA_PROVIDER + CAPTCHA_SECRET); nil = off.
 	Captcha captcha.Verifier
+	// TrustedProxies are the proxies whose X-Forwarded-For is believed when working out the caller's
+	// address (httpx.ClientIP): the rate limit and the signup captcha use it. Empty: the TCP peer.
+	TrustedProxies []netip.Prefix
 
 	// CookieSecure is the Secure attribute on the session/CSRF cookies — true.
 	CookieSecure bool

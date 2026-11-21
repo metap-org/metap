@@ -24,6 +24,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strings"
@@ -50,6 +51,10 @@ type Config struct {
 	Client *http.Client
 	// RediscoverAfter is the least time between two discoveries triggered by an unknown entity.
 	RediscoverAfter time.Duration
+	// TrustedProxies are the proxies in front of the gateway (nginx, a load balancer) whose
+	// X-Forwarded-For is believed; the gateway's own calls pass the caller's address on to the
+	// services so they can tell callers apart. Empty: the TCP peer is the caller.
+	TrustedProxies []netip.Prefix
 }
 
 // maxIDsPerCall matches the services' bound on GET /api/{entity}?ids=.
@@ -238,6 +243,9 @@ func (g *Gateway) get(ctx context.Context, r *http.Request, up *upstream, pathAn
 		}
 	}
 	req.Header.Set("Accept", "application/json")
+	// Whoever the services see is the gateway; tell them who is behind it, the way the reverse
+	// proxy does for forwarded requests.
+	req.Header.Set("X-Forwarded-For", httpx.ClientIP(r, g.cfg.TrustedProxies))
 	res, err := g.cfg.Client.Do(req)
 	if err != nil {
 		return 0, nil, nil, err
@@ -245,6 +253,25 @@ func (g *Gateway) get(ctx context.Context, r *http.Request, up *upstream, pathAn
 	defer res.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(res.Body, 32<<20))
 	return res.StatusCode, res.Header, body, err
+}
+
+// keepKeys trims a record's data object to the named keys.
+func keepKeys(raw json.RawMessage, keys []string) json.RawMessage {
+	var data map[string]json.RawMessage
+	if json.Unmarshal(raw, &data) != nil {
+		return raw
+	}
+	out := make(map[string]json.RawMessage, len(keys))
+	for _, k := range keys {
+		if v, ok := data[k]; ok {
+			out[k] = v
+		}
+	}
+	trimmed, err := json.Marshal(out)
+	if err != nil {
+		return raw
+	}
+	return trimmed
 }
 
 // serveExpanded answers GET /api/{entity}[/{id}]?expand=... itself: the owning service's answer
@@ -271,6 +298,23 @@ func (g *Gateway) serveExpanded(w http.ResponseWriter, r *http.Request, up *upst
 
 	q := r.URL.Query()
 	q.Del("expand")
+	// With ?fields= the owning service trims data to those fields, and the ids to expand must
+	// survive that: ask for them too, and drop them again from the answer unless the caller wanted
+	// them.
+	asked := splitList(q.Get("fields"))
+	if len(asked) > 0 {
+		have := map[string]bool{}
+		for _, f := range asked {
+			have[f] = true
+		}
+		upstreamFields := append([]string(nil), asked...)
+		for _, f := range fields {
+			if !have[f] {
+				upstreamFields = append(upstreamFields, f)
+			}
+		}
+		q.Set("fields", strings.Join(upstreamFields, ","))
+	}
 	path := r.URL.Path
 	if enc := q.Encode(); enc != "" {
 		path += "?" + enc
@@ -345,6 +389,9 @@ func (g *Gateway) serveExpanded(w http.ResponseWriter, r *http.Request, up *upst
 		}
 		raw, _ := json.Marshal(expanded)
 		rec["expanded"] = raw
+		if len(asked) > 0 {
+			rec["data"] = keepKeys(rec["data"], asked)
+		}
 	}
 	var data json.RawMessage
 	if single {

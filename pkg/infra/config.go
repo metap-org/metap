@@ -18,13 +18,16 @@ const (
 )
 
 type AppConfig struct {
-	NodeEnv               NodeEnv
-	Host                  string
-	Port                  int
-	DatabaseURL           string
-	OutboxDatabaseURL     string // "" means: use DatabaseURL
-	RabbitMQURL           string
-	CORSOrigins           []string
+	NodeEnv           NodeEnv
+	Host              string
+	Port              int
+	DatabaseURL       string
+	OutboxDatabaseURL string // "" means: use DatabaseURL
+	RabbitMQURL       string
+	CORSOrigins       []string
+	// TrustedProxies: proxies (CIDRs or IPs) whose X-Forwarded-For is believed when working out who
+	// is calling (rate limit, signup captcha). Empty: nobody is trusted, the TCP peer is the caller.
+	TrustedProxies        []string
 	AuthJWTPublicKeyPath  string
 	AuthJWTPrivateKeyPath string
 	// JWKSKeysDir (JWKS_KEYS_DIR): this service is the token issuer — it signs with the key dir's
@@ -119,6 +122,7 @@ func LoadConfig() (*AppConfig, error) {
 	}
 
 	corsOrigins := env.List("CORS_ORIGINS")
+	trustedProxies := env.List("TRUSTED_PROXIES")
 
 	jwksKeysDir := env.String("JWKS_KEYS_DIR", "")
 	jwksURL := env.String("JWKS_URL", "")
@@ -163,7 +167,7 @@ func LoadConfig() (*AppConfig, error) {
 	return &AppConfig{
 		NodeEnv: nodeEnv, Host: hostStr, Port: port,
 		DatabaseURL: databaseURL, OutboxDatabaseURL: outboxDatabaseURL, RabbitMQURL: rabbitmqURL,
-		CORSOrigins:          corsOrigins,
+		CORSOrigins: corsOrigins, TrustedProxies: trustedProxies,
 		AuthJWTPublicKeyPath: authJWTPublicKeyPath, AuthJWTPrivateKeyPath: authJWTPrivateKeyPath,
 		JWKSKeysDir: jwksKeysDir, JWKSURL: jwksURL,
 		StaticDir: staticDir,

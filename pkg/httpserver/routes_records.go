@@ -21,7 +21,7 @@ import (
 )
 
 // reservedQueryKeys are list parameters, never field filters. "ids", "expand" and "fields" are
-// roadmap 116's: ids is served here, expand by the API gateway (pkg/apigateway), fields is reserved.
+// roadmap 116's: ids and fields are served here, expand by the API gateway (pkg/apigateway).
 var reservedQueryKeys = map[string]bool{"limit": true, "sort": true, "cursor": true, "listView": true, "jql": true, "offset": true, "search": true, "withTotal": true,
 	"ids": true, "expand": true, "fields": true}
 
@@ -79,6 +79,10 @@ func parseListInput(w http.ResponseWriter, values map[string][]string) (query.Li
 // caller may read, in one call (what an `expand` across services batches into). Unknown, deleted
 // or denied ids are simply absent.
 func listRecordsByID(w http.ResponseWriter, r *http.Request, state *AppState, rc *permission.RequestContext, entity, raw string) {
+	fields, ok := parseFields(w, r, state, rc, entity, r.URL.Query())
+	if !ok {
+		return
+	}
 	parts := strings.Split(raw, ",")
 	if len(parts) > maxIDsPerRequest {
 		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed,
@@ -104,6 +108,7 @@ func listRecordsByID(w http.ResponseWriter, r *http.Request, state *AppState, rc
 	for _, res := range results {
 		records = append(records, res.Record)
 	}
+	projectRecords(records, fields)
 	writeJSON(w, http.StatusOK, map[string]any{"data": records, "page": map[string]any{"limit": len(ids)}})
 }
 
@@ -124,6 +129,10 @@ func listRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 		listRecordsByID(w, r, state, rc, entity, raw)
 		return
 	}
+	fields, ok := parseFields(w, r, state, rc, entity, r.URL.Query())
+	if !ok {
+		return
+	}
 	input, ok := parseListInput(w, r.URL.Query())
 	if !ok {
 		return
@@ -134,6 +143,7 @@ func listRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeCrudError(w, err)
 		return
 	}
+	projectRecords(result.Data, fields)
 	page := map[string]any{"limit": result.Page.Limit, "nextCursor": result.Page.NextCursor, "offset": result.Page.Offset}
 	if result.Page.Total != nil {
 		page["total"] = *result.Page.Total
@@ -153,12 +163,16 @@ func getRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 
+	fields, ok := parseFields(w, r, state, rc, entity, r.URL.Query())
+	if !ok {
+		return
+	}
 	result, err := state.RecordBackend().Get(r.Context(), entity, id, rc)
 	if err != nil {
 		writeCrudError(w, err)
 		return
 	}
-
+	result.Record.Data = projectData(result.Record.Data, fields) // get carries no RelatedDisplay
 	// The record plus a "capabilities" key merged in at the top level.
 	recordJSON, err := json.Marshal(result.Record)
 	if err != nil {
