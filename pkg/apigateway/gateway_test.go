@@ -180,3 +180,37 @@ func TestMetadataIsMergedAcrossServices(t *testing.T) {
 	res.Body.Close()
 	assert.Equal(t, http.StatusUnauthorized, res.StatusCode)
 }
+
+// ?fields= trims data at the owning service; the gateway must still get the ids it expands, and
+// give the caller back only the fields asked for.
+func TestExpandSurvivesAFieldsProjection(t *testing.T) {
+	_, zones, _ := fakeServices(t)
+	var gotFields atomic.Value
+	scanning := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/metadata/entities":
+			_, _ = w.Write([]byte(`{"data":[{"name":"waf.scan_jobs","fields":[{"name":"zoneId","kind":"reference","refEntity":"waf.zones"},{"name":"name","kind":"string"}]}]}`))
+		case "/api/waf.scan_jobs":
+			gotFields.Store(r.URL.Query().Get("fields"))
+			// Like the real service: data holds only the fields that were asked for.
+			data := map[string]string{}
+			for _, f := range strings.Split(r.URL.Query().Get("fields"), ",") {
+				data[f] = map[string]string{"name": "a", "zoneId": "z1"}[f]
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{map[string]any{"id": "j1", "data": data}}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(scanning.Close)
+	gw := gatewayFor(t, scanning, zones)
+
+	status, body := get(t, gw.URL+"/api/waf.scan_jobs?fields=name&expand=zoneId")
+	require.Equal(t, 200, status)
+	rec := body["data"].([]any)[0].(map[string]any)
+	assert.Equal(t, "name,zoneId", gotFields.Load(), "the expand field is asked of the service too")
+	assert.Equal(t, "z1.example.com", rec["expanded"].(map[string]any)["zoneId"].(map[string]any)["data"].(map[string]any)["hostname"])
+	data := rec["data"].(map[string]any)
+	assert.Equal(t, "a", data["name"])
+	assert.NotContains(t, data, "zoneId", "the caller did not ask for it")
+}

@@ -156,9 +156,9 @@ func entityAuditConfigJSONSchema() map[string]any {
 	}
 }
 
-// GenerateOpenAPIDocument is /metadata/*'s own static paths, plus the EntitySummary component
-// schema every one of them can reference. No per-entity /api/{entity}* CRUD path — REST entity
-// access is gone (GraphQL-only).
+// GenerateOpenAPIDocument is /metadata/*'s own static paths and the generic /api/{entity}* routes
+// (the entity is a path parameter, see openapi_entity.go), plus the component schemas they
+// reference. There is no per-entity path: what a record's data holds is that entity's EntitySummary.
 func GenerateOpenAPIDocument() map[string]any {
 	paths := map[string]any{
 		"/metadata/entities": map[string]any{
@@ -218,6 +218,14 @@ func GenerateOpenAPIDocument() map[string]any {
 				},
 			},
 		},
+	}
+
+	for path, item := range entityRoutePaths() {
+		paths[path] = item
+	}
+	schemas := map[string]any{"EntitySummary": entitySummaryJSONSchema()}
+	for name, schema := range entityCommonSchemas() {
+		schemas[name] = schema
 	}
 
 	return map[string]any{

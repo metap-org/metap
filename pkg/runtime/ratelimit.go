@@ -3,8 +3,8 @@ package runtime
 import (
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"math"
-	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -15,6 +15,13 @@ import (
 // RateLimit builds a per-peer-IP token-bucket rate limiter. burstSize tokens replenish one every
 // perMillisecond.
 func RateLimit(perMillisecond time.Duration, burstSize int) func(http.Handler) http.Handler {
+	return RateLimitBehind(perMillisecond, burstSize, nil)
+}
+
+// RateLimitBehind is RateLimit for a service that sits behind proxies: requests are counted per
+// httpx.ClientIP, so everyone arriving through the same gateway or load balancer does not share
+// one bucket. trusted lists those proxies; with none it is exactly RateLimit.
+func RateLimitBehind(perMillisecond time.Duration, burstSize int, trusted []netip.Prefix) func(http.Handler) http.Handler {
 	var mu sync.Mutex
 	limiters := map[string]*rate.Limiter{}
 
@@ -31,10 +38,7 @@ func RateLimit(perMillisecond time.Duration, burstSize int) func(http.Handler) h
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			host, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err != nil {
-				host = r.RemoteAddr
-			}
+			host := httpx.ClientIP(r, trusted)
 			// Reserve (not Allow) so a rejected request can carry a real Retry-After.
 			reservation := limiterFor(host).Reserve()
 			if delay := reservation.Delay(); delay > 0 {

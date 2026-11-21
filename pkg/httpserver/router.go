@@ -21,9 +21,10 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 	r := chi.NewRouter()
 
 	cfg := state.Config.Current()
-	rateLimit := runtime.RateLimit(
+	rateLimit := runtime.RateLimitBehind(
 		time.Duration(cfg.GetU64(config.HTTPRateLimitPerMs))*time.Millisecond,
 		int(cfg.GetU64(config.HTTPRateLimitBurst)),
+		state.TrustedProxies,
 	)
 	cors := httpx.CORS(httpx.CORSOptions{
 		Origins: corsOrigins,

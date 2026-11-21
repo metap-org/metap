@@ -31,6 +31,16 @@ gRPC/GraphQL mention below is history. Today:
   `/metadata/entity-access` are merged, other routes go by prefix (`UPSTREAMS`). It authenticates nobody.
 - An entity whose records live elsewhere (a read model) is `app.Options.ExternalEntities`: registered and served like the
   rest, never reconciled, every call going to its own backend (`crud.RouteBackends`).
+- `GET /api/{entity}` takes `limit`, `sort` (one field), `cursor`/`offset`, `withTotal`, `search`, `listView`, `field=value`
+  (list-view filters), `jql` (anything nested/ranged: AND/OR/NOT, comparisons, IN, IS EMPTY, ORDER BY), `ids`, `fields` (trim
+  `data`; unknown name = 400; the gateway also asks for the `expand` fields and drops them again) and `expand`. The generic
+  routes are in `/metadata/openapi.json` (`pkg/metadata/openapi_entity.go`). Conventions: `docs/architectures/08-cross-cutting`
+  "Quy ước REST" in `../metap-docs`.
+- **Who is calling** (rate limit, signup captcha, session IP) is `httpx.ClientIP(r, state.TrustedProxies)`: the TCP peer, unless
+  the peer is in `TRUSTED_PROXIES` (CIDRs/IPs), then `X-Forwarded-For` read right to left skipping trusted proxies. Never read
+  that header directly. Behind a gateway every user shares the gateway's address, so a service must list the gateway in
+  `TRUSTED_PROXIES` or the portal shares one rate-limit bucket; the gateway lists nginx/LB and rate limits per caller itself
+  (`RATE_LIMIT_PER_MS`/`RATE_LIMIT_BURST`).
 
 **`docs/` moved to a separate repo, `../metap-docs` (2026-08-31, `docs/roadmap/54-docs-repo-split.md`
 in that repo).** Every `docs/...` path mentioned anywhere below in this file, in `README.md`, or in

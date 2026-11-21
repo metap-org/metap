@@ -246,6 +246,11 @@ func Run(ctx context.Context, opts Options) error {
 	if modules == nil {
 		modules = DefaultModules()
 	}
+	trusted, err := httpx.ParseTrustedProxies(config.TrustedProxies)
+	if err != nil {
+		return fmt.Errorf("TRUSTED_PROXIES: %w", err)
+	}
+	state.TrustedProxies = trusted
 	state.Identity = identityConfig(state, auditStore)
 	handler := httpserver.BuildRouter(state, config.CORSOrigins, append(modules, opts.Routes)...)
 	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)

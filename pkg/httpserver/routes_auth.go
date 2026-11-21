@@ -120,7 +120,7 @@ func issueSession(w http.ResponseWriter, r *http.Request, state *AppState, ident
 	_ = identity.PurgeSessions(r.Context(), state.Pool, now)
 	ttl := sessionTTLSeconds(r, state, m.TenantID)
 	sessionID, err := identity.CreateSession(r.Context(), state.Pool, identityID, m.MemberID, m.TenantID,
-		time.Duration(ttl)*time.Second, clientIP(r), r.UserAgent(), now)
+		time.Duration(ttl)*time.Second, clientIP(r, state), r.UserAgent(), now)
 	if err != nil {
 		writeInternalError(w, err)
 		return "", false
