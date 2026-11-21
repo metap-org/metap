@@ -74,6 +74,15 @@ type PolicyCondition struct {
 	// failed ("the domain is not verified yet"), instead of the evaluator's technical reason. On a
 	// leaf it describes that one check; on an all/any group it describes the group as a whole.
 	Message string
+	// MessageKey is a stable identifier for Message ("waf.zones.domainNotVerified"), sent with the
+	// failure so a frontend can show its own translation; Message stays the default text.
+	MessageKey string
+}
+
+// WithMessageKey returns the condition with the key a frontend translates its message by.
+func (c PolicyCondition) WithMessageKey(key string) PolicyCondition {
+	c.MessageKey = key
+	return c
 }
 
 // WithMessage returns the condition with the text shown when it is the reason a check failed.
@@ -96,21 +105,24 @@ func (c PolicyCondition) MarshalJSON() ([]byte, error) {
 	switch {
 	case c.isLeaf:
 		return json.Marshal(struct {
-			Attribute string      `json:"attribute"`
-			Op        ConditionOp `json:"op"`
-			Value     PolicyValue `json:"value"`
-			Message   string      `json:"message,omitempty"`
-		}{c.Attribute, c.Op, c.Value, c.Message})
+			Attribute  string      `json:"attribute"`
+			Op         ConditionOp `json:"op"`
+			Value      PolicyValue `json:"value"`
+			Message    string      `json:"message,omitempty"`
+			MessageKey string      `json:"messageKey,omitempty"`
+		}{c.Attribute, c.Op, c.Value, c.Message, c.MessageKey})
 	case c.All != nil:
 		return json.Marshal(struct {
-			All     []PolicyCondition `json:"all"`
-			Message string            `json:"message,omitempty"`
-		}{c.All, c.Message})
+			All        []PolicyCondition `json:"all"`
+			Message    string            `json:"message,omitempty"`
+			MessageKey string            `json:"messageKey,omitempty"`
+		}{c.All, c.Message, c.MessageKey})
 	case c.Any != nil:
 		return json.Marshal(struct {
-			Any     []PolicyCondition `json:"any"`
-			Message string            `json:"message,omitempty"`
-		}{c.Any, c.Message})
+			Any        []PolicyCondition `json:"any"`
+			Message    string            `json:"message,omitempty"`
+			MessageKey string            `json:"messageKey,omitempty"`
+		}{c.Any, c.Message, c.MessageKey})
 	default:
 		return nil, fmt.Errorf("permission: PolicyCondition has no variant set")
 	}
@@ -118,23 +130,24 @@ func (c PolicyCondition) MarshalJSON() ([]byte, error) {
 
 func (c *PolicyCondition) UnmarshalJSON(data []byte) error {
 	var probe struct {
-		Attribute *string           `json:"attribute"`
-		Op        ConditionOp       `json:"op"`
-		Value     *PolicyValue      `json:"value"`
-		All       []PolicyCondition `json:"all"`
-		Any       []PolicyCondition `json:"any"`
-		Message   string            `json:"message"`
+		Attribute  *string           `json:"attribute"`
+		Op         ConditionOp       `json:"op"`
+		Value      *PolicyValue      `json:"value"`
+		All        []PolicyCondition `json:"all"`
+		Any        []PolicyCondition `json:"any"`
+		Message    string            `json:"message"`
+		MessageKey string            `json:"messageKey"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
 		return err
 	}
 	switch {
 	case probe.Attribute != nil:
-		*c = PolicyCondition{Attribute: *probe.Attribute, Op: probe.Op, Value: *probe.Value, isLeaf: true, Message: probe.Message}
+		*c = PolicyCondition{Attribute: *probe.Attribute, Op: probe.Op, Value: *probe.Value, isLeaf: true, Message: probe.Message, MessageKey: probe.MessageKey}
 	case probe.All != nil:
-		*c = PolicyCondition{All: probe.All, Message: probe.Message}
+		*c = PolicyCondition{All: probe.All, Message: probe.Message, MessageKey: probe.MessageKey}
 	case probe.Any != nil:
-		*c = PolicyCondition{Any: probe.Any, Message: probe.Message}
+		*c = PolicyCondition{Any: probe.Any, Message: probe.Message, MessageKey: probe.MessageKey}
 	default:
 		return fmt.Errorf("permission: PolicyCondition JSON matches no known variant")
 	}

@@ -32,6 +32,8 @@ type TransitionAvailability struct {
 	Action    string  `json:"action"`
 	Available bool    `json:"available"`
 	Reason    *string `json:"reason,omitempty"`
+	// ReasonKey is the translation key of Reason when the guard declared one.
+	ReasonKey *string `json:"reasonKey,omitempty"`
 }
 
 type RecordCapabilities struct {

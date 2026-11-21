@@ -77,3 +77,30 @@ func TestExplainGroupMessage(t *testing.T) {
 	assert.Equal(t, "Verify the domain and add a policy first.", message)
 	assert.Equal(t, "hasConfig", details["field"])
 }
+
+// A declared message can carry a translation key; Explain sends it with the failing check so a
+// frontend shows its own text, and the key survives only for a message that was declared.
+func TestExplainCarriesTheMessageKey(t *testing.T) {
+	guard := permission.AllCondition(
+		permission.AttributeCondition("verificationStatus", permission.OpEq, permission.LiteralValue(json.RawMessage(`"verified"`))).
+			WithMessage("The zone's domain is not verified yet.").WithMessageKey("waf.zones.domainNotVerified"),
+		permission.AttributeCondition("hasConfig", permission.OpEq, permission.LiteralValue(json.RawMessage("true"))).
+			WithMessage("The zone has no protection config yet."),
+	)
+	transition := metadata.WorkflowTransition{Action: "activate", Guard: &guard}
+	ctx := &permission.RequestContext{}
+
+	err := RunGuard(&transition, JSONObject{"hasConfig": json.RawMessage("true")}, ctx)
+	message, details := Explain(err, zoneLike())
+	assert.Equal(t, "The zone's domain is not verified yet.", message)
+	assert.Equal(t, "waf.zones.domainNotVerified", details["messageKey"])
+
+	err = RunGuard(&transition, JSONObject{"verificationStatus": json.RawMessage(`"verified"`)}, ctx)
+	_, details = Explain(err, zoneLike())
+	assert.NotContains(t, details, "messageKey", "a message with no key sends none")
+
+	transition.GuardMessage = "Not ready."
+	err = RunGuard(&transition, JSONObject{}, ctx)
+	_, details = Explain(err, zoneLike())
+	assert.NotContains(t, details, "messageKey", "the transition's own message has no key")
+}

@@ -94,6 +94,8 @@ type ConditionError struct {
 	Message string
 	// Declared: Message came from the definition, not the evaluator.
 	Declared bool
+	// MessageKey is the translation key of a declared condition message (empty otherwise).
+	MessageKey string
 	// Failure is the leaf check that failed, when there is one.
 	Failure *permission.ConditionFailure
 }
@@ -112,7 +114,7 @@ func conditionError(result permission.ConditionResult, transitionMessage, fallba
 	case transitionMessage != "":
 		e.Message, e.Declared = transitionMessage, true
 	case e.Failure != nil && e.Failure.Message != "":
-		e.Message, e.Declared = e.Failure.Message, true
+		e.Message, e.Declared, e.MessageKey = e.Failure.Message, true, e.Failure.MessageKey
 	default:
 		reason, ok := result.Reason()
 		if !ok || reason == "" {

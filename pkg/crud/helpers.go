@@ -436,12 +436,15 @@ func computeCapabilities(entity metadata.EntityDefinition, rc *permission.Reques
 				continue
 			}
 			guardErr := workflow.RunGuard(&transition, guardSubject, rc)
-			var reason *string
+			var reason, reasonKey *string
 			if guardErr != nil {
-				r, _ := workflow.Explain(guardErr, &entity)
+				r, details := workflow.Explain(guardErr, &entity)
 				reason = &r
+				if key, ok := details["messageKey"].(string); ok && key != "" {
+					reasonKey = &key
+				}
 			}
-			transitions = append(transitions, TransitionAvailability{Action: transition.Action, Available: guardErr == nil, Reason: reason})
+			transitions = append(transitions, TransitionAvailability{Action: transition.Action, Available: guardErr == nil, Reason: reason, ReasonKey: reasonKey})
 		}
 	}
 
