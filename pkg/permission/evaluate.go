@@ -178,20 +178,22 @@ type ConditionFailure struct {
 	// Message is the declared text for this failure (the leaf's own, or an enclosing group's);
 	// empty when the condition declares none.
 	Message string
+	// MessageKey is the declared message's translation key; empty when none is declared.
+	MessageKey string
 }
 
 func passed() ConditionResult              { return ConditionResult{passed: true} }
 func failed(reason string) ConditionResult { return ConditionResult{passed: false, reason: reason} }
 
 // withMessage: a group's own message replaces whatever its failing member reported.
-func (r ConditionResult) withMessage(message string) ConditionResult {
+func (r ConditionResult) withMessage(message, key string) ConditionResult {
 	if r.passed || message == "" {
 		return r
 	}
 	r.reason = message
 	if r.failure != nil {
 		f := *r.failure
-		f.Message = message
+		f.Message, f.MessageKey = message, key
 		r.failure = &f
 	}
 	return r
@@ -222,7 +224,7 @@ func EvaluateCondition(condition PolicyCondition, subject json.RawMessage, ctx *
 		for _, inner := range condition.All {
 			result := EvaluateCondition(inner, subject, ctx)
 			if !result.IsPassed() {
-				return result.withMessage(condition.Message)
+				return result.withMessage(condition.Message, condition.MessageKey)
 			}
 		}
 		return passed()
@@ -235,7 +237,7 @@ func EvaluateCondition(condition PolicyCondition, subject json.RawMessage, ctx *
 			}
 			last = result
 		}
-		return last.withMessage(condition.Message)
+		return last.withMessage(condition.Message, condition.MessageKey)
 	default:
 		actual := resolveAttribute(subject, condition.Attribute, ctx)
 		expected := ResolveValue(condition.Value, ctx)
@@ -249,7 +251,7 @@ func EvaluateCondition(condition PolicyCondition, subject json.RawMessage, ctx *
 		}
 		return ConditionResult{passed: false, reason: reason, failure: &ConditionFailure{
 			Attribute: condition.Attribute, Op: condition.Op, Expected: expected, Actual: actual,
-			Message: condition.Message,
+			Message: condition.Message, MessageKey: condition.MessageKey,
 		}}
 	}
 }

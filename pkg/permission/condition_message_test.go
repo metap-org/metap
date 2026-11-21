@@ -39,3 +39,15 @@ func TestFailureNamesTheLeafAndKeepsTheTechnicalReason(t *testing.T) {
 	reason, _ := result.Reason()
 	assert.Contains(t, reason, "condition failed", "callers that only read Reason keep the old text")
 }
+
+func TestMessageKeyRoundTripsThroughJSON(t *testing.T) {
+	c := AllCondition(
+		AttributeCondition("a", OpEq, LiteralValue(json.RawMessage("1"))).WithMessage("m").WithMessageKey("k.leaf"),
+	).WithMessageKey("k.group")
+	raw, err := json.Marshal(c)
+	require.NoError(t, err)
+	var back PolicyCondition
+	require.NoError(t, json.Unmarshal(raw, &back))
+	assert.Equal(t, "k.group", back.MessageKey)
+	assert.Equal(t, "k.leaf", back.All[0].MessageKey)
+}

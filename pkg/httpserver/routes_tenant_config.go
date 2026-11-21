@@ -44,6 +44,9 @@ func listTenantConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
 			// Distinguishes "we chose this" from "the platform chose this for us" — without it a
 			// tenant admin cannot tell whether clearing the key would change anything.
 			"overridden": entry.Overridden, "public": entry.Def.Public,
+			// A secret's value is never sent (`value` is only a marker): a client shows it as
+			// write-only, "set" when overridden.
+			"secret": entry.Def.Secret,
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": items})

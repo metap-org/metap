@@ -12,7 +12,8 @@ import (
 // Explain turns a failed guard or validator into what a client shows and what it can render
 // itself: the message (a declared one as is; otherwise a sentence built from the field's label,
 // e.g. `Verification Status must be "verified" (currently empty)`), and the failing check as data
-// (`field`, `label`, `op`, `expected`, `actual`) for a frontend that localizes it. Anything that is
+// (`field`, `label`, `op`, `expected`, `actual`, and `messageKey` when the declared message has a
+// translation key) for a frontend that localizes it. Anything that is
 // not a ConditionError comes back as its Error() with no details.
 func Explain(err error, entity *metadata.EntityDefinition) (string, map[string]any) {
 	var ce *ConditionError
@@ -29,6 +30,9 @@ func Explain(err error, entity *metadata.EntityDefinition) (string, map[string]a
 		"expected": rawOrNull(f.Expected), "actual": rawOrNull(f.Actual),
 	}
 	if ce.Declared {
+		if ce.MessageKey != "" {
+			details["messageKey"] = ce.MessageKey
+		}
 		return ce.Message, details
 	}
 	return label + " " + describeOp(f.Op) + " " + describeValue(f.Expected) +

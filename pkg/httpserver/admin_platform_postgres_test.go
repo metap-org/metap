@@ -392,16 +392,22 @@ func TestTenantConfigListSetResetAndPublicConfig(t *testing.T) {
 	listRes := doRequest(t, "GET", base+"/admin/config", adminToken, nil)
 	require.Equal(t, 200, listRes.StatusCode, "got %d", listRes.StatusCode)
 	items := decodeJSON(t, listRes)["data"].([]any)
-	foundTheme := false
+	foundTheme, foundSecret := false, false
 	for _, item := range items {
 		m := item.(map[string]any)
-		if m["key"] == "theme.primaryColor" {
+		switch m["key"] {
+		case "theme.primaryColor":
 			foundTheme = true
 			require.Equal(t, false, m["overridden"], "got %v", m)
 			require.Equal(t, true, m["public"], "got %v", m)
+			require.Equal(t, false, m["secret"], "got %v", m)
+		case "cron.webhookAuthorization":
+			foundSecret = true
+			require.Equal(t, true, m["secret"], "a secret key is flagged so clients show it write-only: %v", m)
 		}
 	}
 	require.True(t, foundTheme, "expected theme.primaryColor in the tenant view")
+	require.True(t, foundSecret, "expected cron.webhookAuthorization in the tenant view")
 
 	// a platform-tier key is not writable by a tenant admin
 	platformKeyRes := doRequest(t, "PUT", base+"/admin/config/graphql.maxDepth", adminToken, map[string]any{"value": 5})
