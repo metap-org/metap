@@ -437,6 +437,7 @@ func mountAuth(r chi.Router, state *AppState) {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
 	r.Post("/auth/login", wrap(login))
+	r.Get("/auth/signup/status", wrap(signupStatus))
 	r.Post("/auth/signup", wrap(signup))
 	r.Post("/auth/signup/verify", wrap(signupVerify))
 	r.Post("/auth/login/mfa", wrap(loginMFA))

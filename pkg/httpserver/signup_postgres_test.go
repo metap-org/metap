@@ -39,12 +39,17 @@ func TestSelfServiceSignup(t *testing.T) {
 	})
 	form := map[string]any{"email": email, "password": "long-enough-pw", "tenantName": "Acme Labs"}
 
-	// Off by default.
-	res := doRequest(t, "POST", base+"/auth/signup", "", form)
+	// Off by default, and a sign-in page can ask.
+	res := doRequest(t, "GET", base+"/auth/signup/status", "", nil)
+	require.Equal(t, 200, res.StatusCode)
+	assert.Equal(t, false, decodeJSON(t, res)["data"].(map[string]any)["enabled"])
+	res = doRequest(t, "POST", base+"/auth/signup", "", form)
 	require.Equal(t, 403, res.StatusCode)
 	assert.Equal(t, "signup_disabled", decodeJSON(t, res)["error"].(map[string]any)["code"])
 
 	require.NoError(t, state.Config.SetPlatformGlobal(ctx, config.SignupEnabled, json.RawMessage("true")))
+	res = doRequest(t, "GET", base+"/auth/signup/status", "", nil)
+	assert.Equal(t, true, decodeJSON(t, res)["data"].(map[string]any)["enabled"])
 
 	// Validation is reported (it tells nothing about who has an account).
 	res = doRequest(t, "POST", base+"/auth/signup", "", map[string]any{"email": "nope", "password": "x", "tenantName": ""})

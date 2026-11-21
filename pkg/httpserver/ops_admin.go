@@ -462,6 +462,10 @@ func registerWorkspaceOperations(api huma.API, state *AppState, cfg adminapi.Ide
 		func(ctx context.Context, _ *struct{}) (*adminapi.OwnerStatus, error) {
 			return owner.CancelOwnerRecovery(ctx, empty)
 		})
+	adminOp(api, state, opOf("getTenantOwner", http.MethodGet, "/platform/tenants/{id}/owner", "A tenant's owner, any open recovery and who could take over (platform admin)", "Owner"),
+		func(ctx context.Context, in *idPath) (*adminapi.TenantOwnerView, error) {
+			return owner.PlatformTenantOwner(ctx, &adminapi.TenantIdOnlyRequest{TenantId: in.ID})
+		})
 	adminOp(api, state, opOf("requestOwnerRecovery", http.MethodPost, "/platform/owner-recovery", "Start moving ownership of a tenant whose owner is gone (platform admin)", "Owner"),
 		func(ctx context.Context, in *bodyIn[adminapi.RequestOwnerRecoveryRequest]) (*adminapi.OwnerRecovery, error) {
 			return owner.RequestOwnerRecovery(ctx, &in.Body)

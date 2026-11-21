@@ -130,6 +130,47 @@ func (s *OwnerService) GetOwnerStatus(ctx context.Context, _ *Empty) (*OwnerStat
 	return s.status(ctx, c.tenant)
 }
 
+// PlatformTenantOwner is GetOwnerStatus for a platform admin on any tenant, plus the active people
+// who could take over. Read-only: unlike the tenant's own view it does not name a default owner
+// when none is set (that absence is exactly the case a recovery exists for).
+func (s *OwnerService) PlatformTenantOwner(ctx context.Context, req *TenantIdOnlyRequest) (*TenantOwnerView, error) {
+	if _, err := s.d.platformAdmin(ctx); err != nil {
+		return nil, err
+	}
+	tenant, err := uuid.Parse(req.GetTenantId())
+	if err != nil {
+		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "`tenantId` must be a tenant id.")
+	}
+	owner, err := identity.OwnerID(ctx, s.d.cfg.Shared, tenant)
+	if err != nil {
+		return nil, rpcError(ctx, err)
+	}
+	view := &TenantOwnerView{Owner: &OwnerStatus{}, People: []*TenantPerson{}}
+	if owner != uuid.Nil {
+		view.Owner.OwnerMemberId = owner.String()
+	}
+	if r, err := identity.PendingOwnerRecovery(ctx, s.d.cfg.Shared, tenant); err == nil {
+		view.Owner.PendingRecovery = toPBRecovery(r)
+	} else if !errors.Is(err, identity.ErrNoRecovery) {
+		return nil, rpcError(ctx, err)
+	}
+	members, _, err := identity.ListMembers(ctx, s.d.cfg.Shared, tenant, identity.ListQuery{Status: identity.StatusActive, Limit: identity.MaxListLimit})
+	if err != nil {
+		return nil, rpcError(ctx, err)
+	}
+	for _, m := range members {
+		if m.AuthProvider == identity.ServiceAccountProvider {
+			continue
+		}
+		isOwner := m.ID == owner
+		if isOwner {
+			view.Owner.OwnerEmail = m.Email
+		}
+		view.People = append(view.People, &TenantPerson{Id: m.ID.String(), Email: m.Email, DisplayName: m.DisplayName, IsOwner: isOwner})
+	}
+	return view, nil
+}
+
 func (s *OwnerService) TransferOwnership(ctx context.Context, req *TransferOwnershipRequest) (*OwnerStatus, error) {
 	c, err := s.d.admin(ctx)
 	if err != nil {
