@@ -190,6 +190,11 @@ func ssoCallback(w http.ResponseWriter, r *http.Request, state *AppState) {
 			"The identity provider has not verified this email address, so it cannot be used to sign in.", nil)
 		return
 	}
+	if errors.Is(err, errSSODomainUnverified) {
+		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed,
+			"This workspace has not verified that it owns the domain of your email address.", nil)
+		return
+	}
 	if err != nil {
 		writeIdentityError(w, err)
 		return
@@ -219,6 +224,10 @@ func ssoCallback(w http.ResponseWriter, r *http.Request, state *AppState) {
 // errSSOEmailUnverified: the provider did not vouch for the address, so it may not be used to find,
 // link or create a member.
 var errSSOEmailUnverified = errors.New("the identity provider has not verified the email address")
+
+// errSSODomainUnverified: the workspace has not proved it owns the address's domain, so the
+// provider's say-so is not enough to find, link or create a member with that address.
+var errSSODomainUnverified = errors.New("the workspace has not verified the email domain")
 
 // syncSSORoles brings the roles the provider's claim decides (cfg.RoleMap's values) in line with
 // the claim, at every sign-in. Roles outside the map are left alone, and the owner keeps theirs:
@@ -265,6 +274,11 @@ func ssoMember(ctx context.Context, state *AppState, tenant uuid.UUID, cfg *tena
 	// From here on the address is what identifies the person, so the provider must vouch for it.
 	if !who.EmailVerified {
 		return nil, errSSOEmailUnverified
+	}
+	if ok, err := tenantauth.DomainVerifiedFor(ctx, state.Pool, tenant, who.Email); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, errSSODomainUnverified
 	}
 	if m, err := identity.MemberByEmail(ctx, state.Pool, tenant, who.Email); err == nil {
 		if m.AuthProvider == identity.ServiceAccountProvider {

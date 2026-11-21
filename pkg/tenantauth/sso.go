@@ -90,10 +90,13 @@ func SSOEnforced(ctx context.Context, db DBTX, tenant uuid.UUID) (bool, error) {
 	return cfg.Enforced, nil
 }
 
-// TenantsForEmailDomain lists the tenants whose enabled OIDC settings claim domain.
+// TenantsForEmailDomain lists the tenants whose enabled OIDC settings name domain and that have
+// verified owning it.
 func TenantsForEmailDomain(ctx context.Context, db DBTX, domain string) ([]uuid.UUID, error) {
-	rows, err := db.Query(ctx, `SELECT tenant_id FROM tenant_auth_configs
-		WHERE provider_kind = 'oidc' AND enabled AND config->'emailDomains' ? $1`, strings.ToLower(domain))
+	// Only a tenant that proved it owns the domain is routed to; naming it is not enough.
+	rows, err := db.Query(ctx, `SELECT c.tenant_id FROM tenant_auth_configs c
+		JOIN sso_domains d ON d.tenant_id = c.tenant_id AND d.domain = $1 AND d.verified_at IS NOT NULL
+		WHERE c.provider_kind = 'oidc' AND c.enabled AND c.config->'emailDomains' ? $1`, strings.ToLower(domain))
 	if err != nil {
 		return nil, err
 	}

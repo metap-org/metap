@@ -163,6 +163,7 @@ func TestSSOSignInProvisioningAndEnforcement(t *testing.T) {
 		EmailDomains: []string{"acme.io"}, DefaultRole: "viewer", PostLoginRedirect: "PORTAL/home"}
 	cfg.PostLoginRedirect = base + "/home"
 	require.NoError(t, tenantauth.SaveOidcConfig(ctx, pool, tenant, cfg, true))
+	verifyTestDomain(t, pool, tenant, "acme.io")
 
 	// A password member (the owner) and discovery by email domain.
 	owner, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: "owner@acme.io", Password: "Owner-Passw0rd!"})
@@ -295,7 +296,21 @@ func setupSSOTenant(t *testing.T, idp *mockIdP, mutate func(*tenantauth.OidcConf
 		mutate(cfg)
 	}
 	require.NoError(t, tenantauth.SaveOidcConfig(context.Background(), p, tenant, cfg, true))
+	verifyTestDomain(t, p, tenant, "acme.io")
 	return state, base, tenant, cfg, p
+}
+
+// verifyTestDomain makes the tenant the verified owner of domain, as a passed DNS check would.
+func verifyTestDomain(t *testing.T, pool identity.DBTX, tenant uuid.UUID, domain string) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, tenantauth.SyncDomains(ctx, pool, tenant, []string{domain}))
+	ok, err := tenantauth.MarkDomainVerified(ctx, pool, tenant, domain, time.Now())
+	require.NoError(t, err)
+	require.True(t, ok)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM metadata.sso_domains WHERE tenant_id = $1`, tenant)
+	})
 }
 
 func rolesOf(t *testing.T, pool identity.DBTX, tenant, member uuid.UUID) []string {
@@ -423,4 +438,35 @@ func TestAcceptingAnInvitationDoesNotBypassEnforcedSSO(t *testing.T) {
 	for _, c := range res.Cookies() {
 		assert.False(t, strings.Contains(c.Name, "session") && c.Value != "" && c.MaxAge >= 0, "no session cookie: %s", c.Name)
 	}
+}
+
+// A workspace that only names a domain is not routed to, and cannot match or create members under
+// it, until it has proved it owns the domain.
+func TestSSODomainMustBeVerified(t *testing.T) {
+	idp := startMockIdP(t)
+	state, base, tenant, _, pool := setupSSOTenant(t, idp, nil)
+	ctx := context.Background()
+	// setupSSOTenant verified acme.io; un-verify it to model a freshly named domain.
+	_, err := pool.Exec(ctx, `UPDATE metadata.sso_domains SET verified_at = NULL WHERE tenant_id = $1`, tenant)
+	require.NoError(t, err)
+	_ = state
+
+	res := doRequest(t, "GET", base+"/auth/sso/discover?email=someone@acme.io", "", nil)
+	assert.Equal(t, false, decodeJSON(t, res)["data"].(map[string]any)["ssoAvailable"], "a named but unproved domain routes nowhere")
+
+	idp.signIn("newbie@acme.io", "sub-newbie")
+	cb, _ := ssoLogin(t, base, tenant)
+	assert.Equal(t, 403, cb.StatusCode, "no member is created under an unproved domain")
+	cb.Body.Close()
+	_, err = identity.MemberByEmail(ctx, pool, tenant, "newbie@acme.io")
+	assert.ErrorIs(t, err, identity.ErrNotFound)
+
+	ok, err := tenantauth.MarkDomainVerified(ctx, pool, tenant, "acme.io", time.Now())
+	require.NoError(t, err)
+	require.True(t, ok)
+	res = doRequest(t, "GET", base+"/auth/sso/discover?email=someone@acme.io", "", nil)
+	assert.Equal(t, true, decodeJSON(t, res)["data"].(map[string]any)["ssoAvailable"])
+	cb, _ = ssoLogin(t, base, tenant)
+	assert.Equal(t, 302, cb.StatusCode)
+	cb.Body.Close()
 }
