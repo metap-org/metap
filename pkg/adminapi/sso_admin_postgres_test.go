@@ -63,6 +63,20 @@ func TestSsoAdminConfig(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.DefaultRole = "admin" }), "SSO never mints admins")
 	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.DefaultRole = "no-such-role" }))
 	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.EmailDomains = []string{"not a domain"} }))
+	// Group to role mapping: needs a claim, never admin, only roles the tenant has.
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.RoleMap = map[string]string{"g": "viewer"} }), "a map needs a claim to read")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) {
+		r.RoleClaim, r.RoleMap = "groups", map[string]string{"g": "admin"}
+	}), "a provider group never makes an admin")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) {
+		r.RoleClaim, r.RoleMap = "groups", map[string]string{"g": "platform_admin"}
+	}))
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) {
+		r.RoleClaim, r.RoleMap = "groups", map[string]string{"g": "no-such-role"}
+	}))
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) {
+		r.RoleClaim, r.RoleMap = "groups", map[string]string{"": "viewer"}
+	}))
 	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.ClientSecret = "" }), "the first setup needs a secret")
 	_, err = h.client.SSO.SetSsoConfig(h.as(tenant, uuid.New()), valid())
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "admins only")
@@ -72,6 +86,18 @@ func TestSsoAdminConfig(t *testing.T) {
 	assert.True(t, set.GetConfigured() && set.GetEnabled() && set.GetHasClientSecret())
 	assert.Equal(t, []string{"acme.io"}, set.GetEmailDomains(), "domains are normalised")
 	assert.Equal(t, []string{"openid", "email", "profile"}, set.GetScopes())
+
+	// A valid mapping is stored and read back (never null).
+	mapped := valid()
+	mapped.RoleClaim, mapped.RoleMap = " groups ", map[string]string{"sec-team": "viewer"}
+	set, err = h.client.SSO.SetSsoConfig(asOther, mapped)
+	require.NoError(t, err)
+	assert.Equal(t, "groups", set.RoleClaim)
+	assert.Equal(t, map[string]string{"sec-team": "viewer"}, set.RoleMap)
+	plain, err := h.client.SSO.SetSsoConfig(asOther, valid())
+	require.NoError(t, err)
+	assert.NotNil(t, plain.RoleMap, "no mapping reads back as {}, not null")
+	assert.Empty(t, plain.RoleMap)
 
 	// A later update without a secret keeps the stored one.
 	upd := valid()

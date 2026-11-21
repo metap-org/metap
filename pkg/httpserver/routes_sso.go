@@ -185,12 +185,22 @@ func ssoCallback(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	member, err := ssoMember(r.Context(), state, st.Tenant, cfg, who)
+	if errors.Is(err, errSSOEmailUnverified) {
+		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed,
+			"The identity provider has not verified this email address, so it cannot be used to sign in.", nil)
+		return
+	}
 	if err != nil {
 		writeIdentityError(w, err)
 		return
 	}
 	if member.Status != identity.StatusActive {
 		writeServiceError(w, http.StatusForbidden, errcode.AccountDisabled, "This account is disabled.", nil)
+		return
+	}
+	if err := syncSSORoles(r.Context(), state, st.Tenant, member, cfg, who.Roles); err != nil {
+		slog.Error("sso: syncing roles from the identity provider", "tenant_id", st.Tenant, "error", err)
+		writeServiceError(w, http.StatusInternalServerError, errcode.SSOFailed, "Your roles could not be applied. Try again.", nil)
 		return
 	}
 	token, ok := issueSession(w, r, state, member.IdentityID,
@@ -206,11 +216,55 @@ func ssoCallback(w http.ResponseWriter, r *http.Request, state *AppState) {
 	redirectTo(w, dest)
 }
 
+// errSSOEmailUnverified: the provider did not vouch for the address, so it may not be used to find,
+// link or create a member.
+var errSSOEmailUnverified = errors.New("the identity provider has not verified the email address")
+
+// syncSSORoles brings the roles the provider's claim decides (cfg.RoleMap's values) in line with
+// the claim, at every sign-in. Roles outside the map are left alone, and the owner keeps theirs:
+// the provider cannot lock the person who is the way back in out of their own workspace.
+func syncSSORoles(ctx context.Context, state *AppState, tenant uuid.UUID, member *identity.Member, cfg *tenantauth.OidcConfig, claimValues []string) error {
+	managed := cfg.ManagedRoles()
+	if cfg.RoleClaim == "" || len(managed) == 0 {
+		return nil
+	}
+	want := cfg.MappedRoles(claimValues)
+	have, err := peripherals.GetRolesForUser(ctx, state.Pool, tenant, member.ID)
+	if err != nil {
+		return err
+	}
+	held := map[string]bool{}
+	for _, role := range have {
+		held[role] = true
+	}
+	owner, err := identity.OwnerID(ctx, state.Pool, tenant)
+	if err != nil {
+		return err
+	}
+	for _, role := range managed {
+		switch {
+		case want[role] && !held[role]:
+			if err := peripherals.AssignRole(ctx, state.Pool, tenant, member.ID, role, nil); err != nil {
+				return err
+			}
+		case !want[role] && held[role] && owner != member.ID:
+			if err := peripherals.RevokeRole(ctx, state.Pool, tenant, member.ID, role); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // ssoMember finds the member an IdP identity signs in as: the one already tied to this subject, an
 // existing member with that address (tied now), or a new one provisioned with the default role.
 func ssoMember(ctx context.Context, state *AppState, tenant uuid.UUID, cfg *tenantauth.OidcConfig, who *tenantauth.VerifiedIdentity) (*identity.Member, error) {
 	if m, err := identity.FindExternalMember(ctx, state.Pool, tenant, ssoProvider, who.ExternalSubject); err != nil || m != nil {
 		return m, err
+	}
+	// From here on the address is what identifies the person, so the provider must vouch for it.
+	if !who.EmailVerified {
+		return nil, errSSOEmailUnverified
 	}
 	if m, err := identity.MemberByEmail(ctx, state.Pool, tenant, who.Email); err == nil {
 		if m.AuthProvider == identity.ServiceAccountProvider {

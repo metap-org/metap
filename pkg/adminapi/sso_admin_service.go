@@ -54,6 +54,10 @@ func (s *SsoAdminService) view(ctx context.Context, tenant uuid.UUID) (*SsoConfi
 	out.IssuerUrl, out.ClientId, out.HasClientSecret = cfg.IssuerURL, cfg.ClientID, secretErr == nil
 	out.Scopes, out.EmailDomains, out.DefaultRole = cfg.Scopes, cfg.EmailDomains, cfg.DefaultRole
 	out.Enforced, out.PostLoginRedirect = cfg.Enforced, cfg.PostLoginRedirect
+	out.RoleClaim, out.RoleMap = cfg.RoleClaim, cfg.RoleMap
+	if out.RoleMap == nil {
+		out.RoleMap = map[string]string{}
+	}
 	return out, nil
 }
 
@@ -119,6 +123,30 @@ func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *SetSsoConfigReq
 			return bad("`defaultRole` must be a role of this tenant.")
 		}
 	}
+	roleClaim := strings.TrimSpace(req.GetRoleClaim())
+	roleMap := map[string]string{}
+	for value, mapped := range req.GetRoleMap() {
+		value, mapped = strings.TrimSpace(value), strings.TrimSpace(mapped)
+		if value == "" || mapped == "" {
+			return bad("`roleMap` needs a provider value and a role on every line.")
+		}
+		roleMap[value] = mapped
+	}
+	if len(roleMap) > 50 {
+		return bad("At most 50 role mappings.")
+	}
+	if len(roleMap) > 0 && roleClaim == "" {
+		return bad("`roleClaim` is required when `roleMap` is set.")
+	}
+	for _, mapped := range roleMap {
+		// Like `defaultRole`: the provider never decides who administers the workspace.
+		if mapped == permission.RoleAdmin || mapped == RolePlatformAdmin {
+			return bad("A provider group cannot be mapped to " + mapped + ".")
+		}
+		if err := s.d.checkRoles(ctx, c.tenant, []string{mapped}); err != nil {
+			return bad("`roleMap` names a role this tenant does not have: " + mapped + ".")
+		}
+	}
 	if req.GetEnforced() {
 		if !req.GetEnabled() {
 			return bad("Single sign-on must be enabled to be enforced.")
@@ -149,7 +177,7 @@ func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *SetSsoConfigReq
 	}
 	cfg := &tenantauth.OidcConfig{IssuerURL: issuer, ClientID: clientID, ClientSecretRef: ref, RedirectURI: s.redirectURI(),
 		Scopes: scopes, PostLoginRedirect: strings.TrimSpace(req.GetPostLoginRedirect()), EmailDomains: domains,
-		DefaultRole: role, Enforced: req.GetEnforced()}
+		DefaultRole: role, Enforced: req.GetEnforced(), RoleClaim: roleClaim, RoleMap: roleMap}
 	// Catch a wrong issuer now, not at someone's first sign-in.
 	if _, _, _, _, err := tenantauth.OidcAuthorizeURL(ctx, cfg, secret); err != nil {
 		return bad("The identity provider could not be reached or is not an OpenID Connect issuer.")

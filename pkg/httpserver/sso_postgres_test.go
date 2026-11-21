@@ -27,6 +27,7 @@ import (
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/httpserver"
 	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
@@ -40,6 +41,10 @@ type mockIdP struct {
 	nonce string
 	email string
 	sub   string
+	// unverified makes the next id_token say email_verified=false; groups are sent as the
+	// "groups" claim when set.
+	unverified bool
+	groups     []string
 }
 
 func startMockIdP(t *testing.T) *mockIdP {
@@ -72,8 +77,13 @@ func startMockIdP(t *testing.T) *mockIdP {
 		idp.mu.Lock()
 		defer idp.mu.Unlock()
 		now := time.Now()
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"iss": idp.srv.URL, "sub": idp.sub, "aud": "client-1",
-			"exp": now.Add(5 * time.Minute).Unix(), "iat": now.Unix(), "nonce": idp.nonce, "email": idp.email})
+		claims := jwt.MapClaims{"iss": idp.srv.URL, "sub": idp.sub, "aud": "client-1",
+			"exp": now.Add(5 * time.Minute).Unix(), "iat": now.Unix(), "nonce": idp.nonce, "email": idp.email,
+			"email_verified": !idp.unverified}
+		if idp.groups != nil {
+			claims["groups"] = idp.groups
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 		tok.Header["kid"] = "k1"
 		signed, err := tok.SignedString(key)
 		if err != nil {
@@ -90,7 +100,23 @@ func startMockIdP(t *testing.T) *mockIdP {
 
 func (idp *mockIdP) signIn(email, sub string) {
 	idp.mu.Lock()
-	idp.email, idp.sub = email, sub
+	idp.email, idp.sub, idp.unverified, idp.groups = email, sub, false, nil
+	idp.mu.Unlock()
+}
+
+// signInUnverified is a sign-in whose address the provider does not vouch for.
+func (idp *mockIdP) signInUnverified(email, sub string) {
+	idp.signIn(email, sub)
+	idp.mu.Lock()
+	idp.unverified = true
+	idp.mu.Unlock()
+}
+
+// signInWithGroups sends the "groups" claim.
+func (idp *mockIdP) signInWithGroups(email, sub string, groups ...string) {
+	idp.signIn(email, sub)
+	idp.mu.Lock()
+	idp.groups = groups
 	idp.mu.Unlock()
 }
 
@@ -250,4 +276,151 @@ func startTestServerWithPublicURL(t *testing.T, state *httpserver.AppState) stri
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { server.Close() })
 	return state.PublicAppURL
+}
+
+// setupSSOTenant registers an OIDC config for a new tenant against idp and returns its pieces.
+func setupSSOTenant(t *testing.T, idp *mockIdP, mutate func(*tenantauth.OidcConfig)) (state *httpserver.AppState, base string, tenant uuid.UUID, cfg *tenantauth.OidcConfig, pool interface {
+	identity.DBTX
+}) {
+	t.Helper()
+	p := httpTestPool(t)
+	tenant = uuid.New()
+	state, _ = newTestAppState(t, p, httpTestEntity())
+	base = startTestServerWithPublicURL(t, state)
+	ref := control.TenantSecretRef(tenant, "sso.clientSecret")
+	require.NoError(t, state.Router.Secrets().PutSecret(context.Background(), ref, "shh"))
+	cfg = &tenantauth.OidcConfig{IssuerURL: idp.srv.URL, ClientID: "client-1", ClientSecretRef: ref, Scopes: []string{"openid", "email"},
+		EmailDomains: []string{"acme.io"}, PostLoginRedirect: base + "/home"}
+	if mutate != nil {
+		mutate(cfg)
+	}
+	require.NoError(t, tenantauth.SaveOidcConfig(context.Background(), p, tenant, cfg, true))
+	return state, base, tenant, cfg, p
+}
+
+func rolesOf(t *testing.T, pool identity.DBTX, tenant, member uuid.UUID) []string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `SELECT role FROM metadata.user_roles WHERE tenant_id = $1 AND user_id = $2 ORDER BY role`, tenant, member)
+	require.NoError(t, err)
+	defer rows.Close()
+	var roles []string
+	for rows.Next() {
+		var r string
+		require.NoError(t, rows.Scan(&r))
+		roles = append(roles, r)
+	}
+	return roles
+}
+
+// An address the provider does not vouch for cannot be used to take over a member or to create
+// one; a person already tied to the provider by subject still signs in.
+func TestSSORefusesAnAddressTheProviderDidNotVerify(t *testing.T) {
+	idp := startMockIdP(t)
+	_, base, tenant, _, pool := setupSSOTenant(t, idp, nil)
+	ctx := context.Background()
+
+	victim, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: "victim@acme.io", Password: "Victim-Passw0rd!"})
+	require.NoError(t, err)
+
+	// Claiming the victim's address with an unverified claim: refused, and nothing is linked.
+	idp.signInUnverified("victim@acme.io", "sub-attacker")
+	cb, _ := ssoLogin(t, base, tenant)
+	assert.Equal(t, 403, cb.StatusCode)
+	cb.Body.Close()
+	linked, err := identity.FindExternalMember(ctx, pool, tenant, "oidc", "sub-attacker")
+	require.NoError(t, err)
+	assert.Nil(t, linked, "no link was made")
+
+	// An unknown address with an unverified claim is not provisioned either.
+	idp.signInUnverified("squatter@acme.io", "sub-squatter")
+	cb, _ = ssoLogin(t, base, tenant)
+	assert.Equal(t, 403, cb.StatusCode)
+	cb.Body.Close()
+	_, err = identity.MemberByEmail(ctx, pool, tenant, "squatter@acme.io")
+	assert.ErrorIs(t, err, identity.ErrNotFound)
+
+	// Verified, the victim's own provider account links as before.
+	idp.signIn("victim@acme.io", "sub-victim")
+	cb, _ = ssoLogin(t, base, tenant)
+	assert.Equal(t, 302, cb.StatusCode)
+	cb.Body.Close()
+	member, err := identity.FindExternalMember(ctx, pool, tenant, "oidc", "sub-victim")
+	require.NoError(t, err)
+	require.NotNil(t, member)
+	assert.Equal(t, victim.ID, member.ID)
+
+	// Already tied by subject: an unverified claim no longer decides who they are.
+	idp.signInUnverified("victim@acme.io", "sub-victim")
+	cb, _ = ssoLogin(t, base, tenant)
+	assert.Equal(t, 302, cb.StatusCode)
+	cb.Body.Close()
+}
+
+// The provider's group claim decides the roles named in roleMap at every sign-in, and nothing else.
+func TestSSOMapsGroupsToRoles(t *testing.T) {
+	idp := startMockIdP(t)
+	_, base, tenant, _, pool := setupSSOTenant(t, idp, func(c *tenantauth.OidcConfig) {
+		c.DefaultRole = "viewer"
+		c.RoleClaim = "groups"
+		c.RoleMap = map[string]string{"sec-team": "security_analyst", "ops": "operator"}
+	})
+	ctx := context.Background()
+	signIn := func(email, sub string, groups ...string) {
+		idp.signInWithGroups(email, sub, groups...)
+		cb, _ := ssoLogin(t, base, tenant)
+		require.Equal(t, 302, cb.StatusCode)
+		cb.Body.Close()
+	}
+
+	signIn("dana@acme.io", "sub-dana", "sec-team", "unrelated")
+	dana, err := identity.FindExternalMember(ctx, pool, tenant, "oidc", "sub-dana")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"security_analyst", "viewer"}, rolesOf(t, pool, tenant, dana.ID), "default role plus the mapped one")
+
+	// A role an admin granted by hand is not the provider's to remove.
+	require.NoError(t, peripherals.AssignRole(ctx, pool, tenant, dana.ID, "custom_reader", nil))
+
+	// The groups change: one mapped role goes, another comes; unmanaged roles stay.
+	signIn("dana@acme.io", "sub-dana", "ops")
+	assert.Equal(t, []string{"custom_reader", "operator", "viewer"}, rolesOf(t, pool, tenant, dana.ID))
+
+	// No groups at all: every managed role is withdrawn.
+	signIn("dana@acme.io", "sub-dana")
+	assert.Equal(t, []string{"custom_reader", "viewer"}, rolesOf(t, pool, tenant, dana.ID))
+
+	// The owner keeps a managed role even when the claim drops it: the provider cannot lock the
+	// way back in.
+	boss, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: "boss@acme.io", Password: "Boss-Passw0rd!"})
+	require.NoError(t, err)
+	require.NoError(t, identity.SetOwner(ctx, pool, tenant, boss.ID))
+	signIn("boss@acme.io", "sub-boss", "ops")
+	assert.Contains(t, rolesOf(t, pool, tenant, boss.ID), "operator")
+	signIn("boss@acme.io", "sub-boss")
+	assert.Contains(t, rolesOf(t, pool, tenant, boss.ID), "operator", "the owner is not demoted by the provider")
+}
+
+// A tenant that signs in through its provider does not hand out a password session when an
+// invitation is accepted.
+func TestAcceptingAnInvitationDoesNotBypassEnforcedSSO(t *testing.T) {
+	idp := startMockIdP(t)
+	_, base, tenant, cfg, pool := setupSSOTenant(t, idp, nil)
+	ctx := context.Background()
+	owner, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: "owner@acme.io", Password: "Owner-Passw0rd!"})
+	require.NoError(t, err)
+	require.NoError(t, identity.SetOwner(ctx, pool, tenant, owner.ID))
+	cfg.Enforced = true
+	require.NoError(t, tenantauth.SaveOidcConfig(ctx, pool, tenant, cfg, true))
+
+	email := uuid.NewString() + "@acme.io"
+	invited, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: email, Status: identity.StatusInvited})
+	require.NoError(t, err)
+	token, _, err := identity.CreateInvitation(ctx, pool, tenant, invited.ID, invited.IdentityID, true, nil, time.Now())
+	require.NoError(t, err)
+
+	res := doRequest(t, "POST", base+"/auth/invitations/accept", "", map[string]any{"token": token, "password": "a-long-enough-password"})
+	assert.Equal(t, 403, res.StatusCode)
+	assert.Equal(t, "sso_required", decodeJSON(t, res)["error"].(map[string]any)["code"])
+	for _, c := range res.Cookies() {
+		assert.False(t, strings.Contains(c.Name, "session") && c.Value != "" && c.MaxAge >= 0, "no session cookie: %s", c.Name)
+	}
 }

@@ -586,6 +586,10 @@ type SetSsoConfigRequest struct {
 	Enforced    bool   `json:"enforced" required:"false"`
 	// Where the browser lands after sign-in (absolute URL); default: the portal root.
 	PostLoginRedirect string `json:"postLoginRedirect" required:"false"`
+	// The id_token claim that carries groups or roles, and which tenant role each value means.
+	// Only the roles named in roleMap follow the provider; never admin.
+	RoleClaim string            `json:"roleClaim" required:"false"`
+	RoleMap   map[string]string `json:"roleMap" required:"false"`
 }
 
 type SsoConfig struct {
@@ -599,6 +603,9 @@ type SsoConfig struct {
 	DefaultRole       string   `json:"defaultRole" required:"false"`
 	Enforced          bool     `json:"enforced" required:"false"`
 	PostLoginRedirect string   `json:"postLoginRedirect" required:"false"`
+	RoleClaim         string   `json:"roleClaim" required:"false"`
+	// Never null.
+	RoleMap map[string]string `json:"roleMap" required:"false"`
 	// Register this redirect URI at the identity provider.
 	RedirectUri string `json:"redirectUri" required:"false"`
 }
@@ -2642,6 +2649,20 @@ func (x *TenantOwnerView) GetOwner() *OwnerStatus {
 func (x *TenantOwnerView) GetPeople() []*TenantPerson {
 	if x != nil {
 		return x.People
+	}
+	return nil
+}
+
+func (x *SetSsoConfigRequest) GetRoleClaim() string {
+	if x != nil {
+		return x.RoleClaim
+	}
+	return ""
+}
+
+func (x *SetSsoConfigRequest) GetRoleMap() map[string]string {
+	if x != nil {
+		return x.RoleMap
 	}
 	return nil
 }

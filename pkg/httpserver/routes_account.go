@@ -165,6 +165,11 @@ func acceptInvitation(w http.ResponseWriter, r *http.Request, state *AppState) {
 	}
 	for _, m := range memberships {
 		if m.MemberID == inv.MemberID {
+			// A tenant that signs in through its identity provider must not hand out a password
+			// session here. The person has joined; they continue through the provider.
+			if ssoRequired(w, r, state, m) {
+				return
+			}
 			// SetPassword revoked earlier sessions; this one is minted after, so it survives.
 			startSession(w, r, state, inv.IdentityID, m, time.Now())
 			return
