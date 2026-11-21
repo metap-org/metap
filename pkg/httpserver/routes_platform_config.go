@@ -73,7 +73,11 @@ func listPlatformConfig(w http.ResponseWriter, r *http.Request, state *AppState)
 // appliesImmediately reports whether a change takes effect without a restart (false for the
 // rate-limit keys, which are baked into a middleware layer at router-build time).
 func appliesImmediately(key string) bool {
-	return key != config.HTTPRateLimitPerMs && key != config.HTTPRateLimitBurst
+	switch key {
+	case config.HTTPRateLimitPerMs, config.HTTPRateLimitBurst, config.HTTPAuthRateLimitPerMs, config.HTTPAuthRateLimitBurst:
+		return false
+	}
+	return true
 }
 
 type setConfigBody struct {

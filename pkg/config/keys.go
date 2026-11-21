@@ -218,6 +218,8 @@ const (
 	GraphQLMaxComplexity           = "graphql.maxComplexity"
 	HTTPRateLimitPerMs             = "http.rateLimitPerMillisecond"
 	HTTPRateLimitBurst             = "http.rateLimitBurst"
+	HTTPAuthRateLimitPerMs         = "http.authRateLimitPerMillisecond"
+	HTTPAuthRateLimitBurst         = "http.authRateLimitBurst"
 	AuthSessionTTLSeconds          = "auth.sessionTtlSeconds"
 	AuthSessionAbsoluteMaxSeconds  = "auth.sessionAbsoluteMaxSeconds"
 	AuthPasswordMinLength          = "auth.passwordMinLength"
@@ -245,6 +247,12 @@ var Registry = []KeyDef{
 		Validate: positiveIntIn(1, 60_000)},
 	{Key: HTTPRateLimitBurst, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(300) },
 		Validate: positiveIntIn(1, 100_000)},
+	// The stricter per-IP bucket for the public routes a guesser would hammer (login, MFA code,
+	// signup, invitation, password reset): one token every 3s, burst 20, shared by all of them.
+	{Key: HTTPAuthRateLimitPerMs, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(3000) },
+		Validate: positiveIntIn(1, 3_600_000)},
+	{Key: HTTPAuthRateLimitBurst, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(20) },
+		Validate: positiveIntIn(1, 10_000)},
 	// --- Tenant: a fleet default a platform admin sets, that each tenant may override ---
 	{Key: AuthSessionTTLSeconds, Level: LevelTenant, Default: func() json.RawMessage { return num(3600) },
 		Validate: positiveIntIn(60, 2_592_000)},
