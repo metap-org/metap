@@ -43,6 +43,10 @@ type webhookConfig struct {
 	// the reference is derived from the job's own tenantID, so a job can only ever present its
 	// own tenant's credential, whatever it puts in target_config.
 	AuthorizationFromSecret bool `json:"authorizationFromSecret,omitempty"`
+	// CredentialID: the id of one of the tenant's named credentials (Workspace > Credentials);
+	// its value is sent as the Authorization header (a username and password as Basic). An id, not a reference — the reference is
+	// derived from (the job's tenant, this id), so it can only ever reach the job's own tenant's.
+	CredentialID string `json:"credentialId,omitempty"`
 }
 
 var (
@@ -97,7 +101,21 @@ func RunWebhook(ctx context.Context, policy WebhookPolicy, secrets control.Secre
 	// audit 04 A#1 closed.
 	var credential string
 	hasCredential := false
-	if cfg.AuthorizationFromSecret {
+	if cfg.CredentialID != "" {
+		credentialID, perr := uuid.Parse(cfg.CredentialID)
+		if perr != nil {
+			return nil, fmt.Errorf("invalid credentialId %q", cfg.CredentialID)
+		}
+		if secrets == nil {
+			return nil, fmt.Errorf("this job uses a stored credential, but no secret backend is configured for cron-scheduler")
+		}
+		secretRef := control.TenantCredentialRef(tenantID, credentialID)
+		value, serr := secrets.GetSecret(ctx, secretRef)
+		if serr != nil {
+			return nil, fmt.Errorf("could not read credential %s (deleted, or its secret store is unreachable): %w", credentialID, serr)
+		}
+		credential, hasCredential = control.AuthorizationFromCredential(value), true
+	} else if cfg.AuthorizationFromSecret {
 		if secrets == nil {
 			return nil, fmt.Errorf("this job requests its tenant's stored credential, but no secret backend is configured for cron-scheduler")
 		}

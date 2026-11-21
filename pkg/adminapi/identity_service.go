@@ -47,6 +47,8 @@ type IdentityConfig struct {
 	// APIKeyMaxDays is the tenant's cap on an API key's lifetime in days (auth.apiKeyMaxLifetimeDays);
 	// nil or 0 means no tenant cap.
 	APIKeyMaxDays func(ctx context.Context, tenant uuid.UUID) int
+	// Credentials stores the tenant credentials the Credentials tab manages; nil serves none.
+	Credentials CredentialManager
 }
 
 type identityDeps struct {

@@ -94,3 +94,89 @@ func TestAdminOperationsOverREST(t *testing.T) {
 	verifyOnly := startTestServer(t, state, nil)
 	assert.Equal(t, 404, doRequest(t, "GET", verifyOnly+"/admin/users", asAdmin, nil).StatusCode)
 }
+
+type memCredentials struct{ source, value map[string]string }
+
+func (m *memCredentials) Capabilities() adminapi.CredentialCapabilities {
+	return adminapi.CredentialCapabilities{Database: true, External: false, ExternalKind: "env"}
+}
+func (m *memCredentials) Put(_ context.Context, ref, source, value string) error {
+	m.source[ref], m.value[ref] = source, value
+	return nil
+}
+func (m *memCredentials) Get(_ context.Context, ref string) (string, error) { return m.value[ref], nil }
+func (m *memCredentials) Remove(_ context.Context, ref string) error {
+	delete(m.source, ref)
+	delete(m.value, ref)
+	return nil
+}
+
+// The Credentials tab over REST, and a cron webhook linking to a credential by id: values are
+// write-only, the schema is enforced, a job cannot name a credential that does not exist, and a
+// credential in use cannot be removed.
+func TestCredentialOperationsOverREST(t *testing.T) {
+	pool := httpTestPool(t)
+	ctx := context.Background()
+	tenant := uuid.New()
+	admin, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: "admin@acme.io", Password: "password-1"})
+	require.NoError(t, err)
+	testkit.SeedRole(t, pool, tenant, admin.ID, "admin")
+
+	state, privPEM := newTestAppState(t, pool, httpTestEntity())
+	store := &memCredentials{source: map[string]string{}, value: map[string]string{}}
+	state.Identity = &adminapi.IdentityConfig{Shared: pool, Router: state.Router, Audit: audit.NewPostgresStore(pool), Credentials: store}
+	base := startTestServer(t, state, nil)
+	token, err := peripherals.MintJWT(privPEM, tenant, admin.ID, 3600)
+	require.NoError(t, err)
+
+	res := doRequest(t, "GET", base+"/admin/credentials", token, nil)
+	require.Equal(t, 200, res.StatusCode)
+	view := decodeJSON(t, res)
+	assert.Equal(t, true, view["databaseAvailable"])
+	assert.Equal(t, false, view["externalAvailable"])
+	assert.Empty(t, view["credentials"])
+
+	res = doRequest(t, "POST", base+"/admin/credentials", token,
+		map[string]any{"name": "CRM webhook", "kind": "authorization", "source": "database", "value": "Bearer abc"})
+	require.Equal(t, 201, res.StatusCode)
+	cred := decodeJSON(t, res)["credentials"].([]any)[0].(map[string]any)
+	id := cred["id"].(string)
+	assert.Equal(t, "CRM webhook", cred["name"])
+	assert.NotContains(t, cred, "value", "the value is never sent back")
+	assert.Equal(t, []any{}, cred["usedBy"])
+
+	res = doRequest(t, "POST", base+"/admin/credentials", token, map[string]any{"name": "x", "kind": "authorization", "source": "vault-ish", "value": "x"})
+	require.Equal(t, 400, res.StatusCode)
+	assert.Equal(t, "validation_failed", decodeJSON(t, res)["error"].(map[string]any)["code"])
+	res = doRequest(t, "POST", base+"/admin/credentials", token, map[string]any{"name": "y", "kind": "secret", "source": "external", "value": "x"})
+	assert.Equal(t, 409, res.StatusCode, "a home this deployment does not offer")
+	assert.Equal(t, 401, doRequest(t, "GET", base+"/admin/credentials", "", nil).StatusCode)
+
+	res = doRequest(t, "PATCH", base+"/admin/credentials/"+id, token, map[string]any{"description": "Auth for the CRM"})
+	require.Equal(t, 200, res.StatusCode)
+	assert.Equal(t, "Auth for the CRM", decodeJSON(t, res)["credentials"].([]any)[0].(map[string]any)["description"])
+
+	// A cron webhook links by id; an unknown id is refused.
+	job := func(credentialID string) map[string]any {
+		return map[string]any{"name": "notify", "triggerType": "schedule", "cronExpr": "0 * * * *", "timezone": "UTC",
+			"targetType": "webhook", "targetConfig": map[string]any{"url": "https://example.com/hook", "credentialId": credentialID}}
+	}
+	res = doRequest(t, "POST", base+"/admin/cron-jobs", token, job(uuid.NewString()))
+	require.Equal(t, 400, res.StatusCode, "an unknown credential is refused")
+	res = doRequest(t, "POST", base+"/admin/cron-jobs", token, job(id))
+	require.Equal(t, 201, res.StatusCode)
+	jobID := decodeJSON(t, res)["data"].(map[string]any)["id"].(string)
+
+	res = doRequest(t, "GET", base+"/admin/credentials", token, nil)
+	used := decodeJSON(t, res)["credentials"].([]any)[0].(map[string]any)["usedBy"].([]any)
+	require.Len(t, used, 1)
+	assert.Equal(t, "notify", used[0].(map[string]any)["name"])
+	res = doRequest(t, "DELETE", base+"/admin/credentials/"+id, token, nil)
+	require.Equal(t, 409, res.StatusCode, "a credential in use is kept")
+	assert.Equal(t, "record_referenced", decodeJSON(t, res)["error"].(map[string]any)["code"])
+
+	require.Equal(t, 204, doRequest(t, "DELETE", base+"/admin/cron-jobs/"+jobID, token, nil).StatusCode)
+	res = doRequest(t, "DELETE", base+"/admin/credentials/"+id, token, nil)
+	require.Equal(t, 200, res.StatusCode)
+	assert.Empty(t, decodeJSON(t, res)["credentials"])
+}

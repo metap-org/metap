@@ -46,6 +46,13 @@ func TenantSecretRef(tenantID uuid.UUID, key string) string {
 		strings.ToUpper(b.String()))
 }
 
+// TenantCredentialRef is the reference of one named tenant credential (the workspace Credentials
+// tab): derived from the tenant and the credential's own id, so nothing a caller supplies chooses
+// which secret is read — a job that names a credential id can only ever reach its own tenant's.
+func TenantCredentialRef(tenantID, credentialID uuid.UUID) string {
+	return TenantSecretRef(tenantID, "credential."+credentialID.String())
+}
+
 type SecretStore interface {
 	// DbCredentials: dsnSecretRef is control.tenants.dsn_secret_ref — Router already resolved
 	// the tenant's routing row before calling this, so it's passed the reference directly

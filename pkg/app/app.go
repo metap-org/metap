@@ -122,11 +122,11 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	defer pool.Close()
 
-	secretStore, err := secrets.Build(ctx, secrets.ConfigFromAppConfig(config))
+	secretManager, err := secrets.NewManager(ctx, secrets.ConfigFromAppConfig(config), pool)
 	if err != nil {
 		return fmt.Errorf("building secret store: %w", err)
 	}
-	router := control.NewRouter(pool, control.NewRegistryCache(control.NewPostgresTenantRegistry(pool)), secretStore)
+	router := control.NewRouter(pool, control.NewRegistryCache(control.NewPostgresTenantRegistry(pool)), secretManager)
 	permissions := permission.NewPermissionService(control.NewPostgresPolicyStore(router))
 
 	tokens, err := BuildTokenAuth(ctx, config)
@@ -251,7 +251,7 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("TRUSTED_PROXIES: %w", err)
 	}
 	state.TrustedProxies = trusted
-	state.Identity = identityConfig(state, auditStore)
+	state.Identity = identityConfig(state, auditStore, secretManager)
 	handler := httpserver.BuildRouter(state, config.CORSOrigins, append(modules, opts.Routes)...)
 	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
 	slog.Info(opts.Name+" listening", "addr", addr)
@@ -262,12 +262,13 @@ func Run(ctx context.Context, opts Options) error {
 
 // identityConfig serves user administration on the token issuer only (it owns identities); a
 // verify-only service returns nil.
-func identityConfig(state *httpserver.AppState, auditStore audit.Store) *adminapi.IdentityConfig {
+func identityConfig(state *httpserver.AppState, auditStore audit.Store, manager *secrets.Manager) *adminapi.IdentityConfig {
 	if !state.CanIssueTokens() {
 		return nil
 	}
 	return &adminapi.IdentityConfig{Shared: state.Pool, Router: state.Router, Audit: auditStore,
-		Mailer: state.Mailer, PasswordPolicy: state.PasswordPolicy(), APIKeyMaxDays: state.APIKeyMaxDays, PublicURL: state.PublicAppURL}
+		Mailer: state.Mailer, PasswordPolicy: state.PasswordPolicy(), APIKeyMaxDays: state.APIKeyMaxDays, PublicURL: state.PublicAppURL,
+		Credentials: credentialAdapter{manager}}
 }
 
 // ReadPublicKey loads a PEM public key: PKIX ("PUBLIC KEY", any algorithm) first, falling back to
@@ -285,4 +286,23 @@ func ReadPublicKey(path string) (any, error) {
 		return pub, nil
 	}
 	return jwt.ParseRSAPublicKeyFromPEM(data)
+}
+
+// credentialAdapter presents the secrets.Manager to adminapi, which cannot import the package
+// (it links the cloud SDKs).
+type credentialAdapter struct{ m *secrets.Manager }
+
+func (a credentialAdapter) Capabilities() adminapi.CredentialCapabilities {
+	c := a.m.Capabilities()
+	return adminapi.CredentialCapabilities{Database: c.Database, External: c.External, ExternalKind: c.Kind}
+}
+
+func (a credentialAdapter) Put(ctx context.Context, ref, source, value string) error {
+	return a.m.Put(ctx, ref, source, value)
+}
+
+func (a credentialAdapter) Remove(ctx context.Context, ref string) error { return a.m.Remove(ctx, ref) }
+
+func (a credentialAdapter) Get(ctx context.Context, ref string) (string, error) {
+	return a.m.GetSecret(ctx, ref)
 }

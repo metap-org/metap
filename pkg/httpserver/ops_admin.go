@@ -110,6 +110,31 @@ func registerAdminOperations(api huma.API, state *AppState) {
 	registerAccountOperations(api, state, adminapi.NewAccountService(cfg))
 	registerTenantOperations(api, state, adminapi.NewTenantAdminService(cfg))
 	registerWorkspaceOperations(api, state, cfg)
+	registerCredentialOperations(api, state, adminapi.NewCredentialsService(cfg))
+}
+
+// registerCredentialOperations: the Credentials tab (named tenant credentials, stored encrypted in
+// the database or in the deployment's secret manager). Values are write-only.
+func registerCredentialOperations(api huma.API, state *AppState, s *adminapi.CredentialsService) {
+	const tag = "Credentials"
+	adminOp(api, state, opOf("listCredentials", http.MethodGet, "/admin/credentials", "The tenant's credentials, where they are used, and where this deployment can store them", tag),
+		func(ctx context.Context, _ *struct{}) (*adminapi.CredentialsView, error) {
+			return s.ListCredentials(ctx, &adminapi.Empty{})
+		})
+	create := opOf("createCredential", http.MethodPost, "/admin/credentials", "Add a credential (write-only value)", tag)
+	create.DefaultStatus = http.StatusCreated
+	adminOp(api, state, create, func(ctx context.Context, in *bodyIn[adminapi.CreateCredentialRequest]) (*adminapi.CredentialsView, error) {
+		return s.CreateCredential(ctx, &in.Body)
+	})
+	adminOp(api, state, opOf("updateCredential", http.MethodPatch, "/admin/credentials/{id}", "Rename a credential, replace its value, or move it to the other store", tag),
+		func(ctx context.Context, in *idBodyIn[adminapi.UpdateCredentialRequest]) (*adminapi.CredentialsView, error) {
+			in.Body.Id = in.ID
+			return s.UpdateCredential(ctx, &in.Body)
+		})
+	adminOp(api, state, opOf("deleteCredential", http.MethodDelete, "/admin/credentials/{id}", "Remove a credential no job uses", tag),
+		func(ctx context.Context, in *idPath) (*adminapi.CredentialsView, error) {
+			return s.DeleteCredential(ctx, &adminapi.CredentialIdRequest{Id: in.ID})
+		})
 }
 
 type listUsersIn struct {

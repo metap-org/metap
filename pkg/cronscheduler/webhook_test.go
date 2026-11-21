@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/metap-org/metap/pkg/control"
 )
 
 // Live verification (a real outbound HTTP call, against a real test server) that an
@@ -118,4 +120,67 @@ func TestTruncateHandlesAStringThatIsEntirelyMultibyte(t *testing.T) {
 	s := "🙂🙂🙂🙂"
 	out := truncate(s, 5)
 	assert.True(t, strings.HasSuffix(out, "..."), "expected ... suffix, got %q", out)
+}
+
+// mapSecrets is a control.SecretStore over a map of reference -> value.
+type mapSecrets map[string]string
+
+func (m mapSecrets) DbCredentials(context.Context, string) (*control.DbCreds, error) {
+	return nil, fmt.Errorf("not used")
+}
+func (m mapSecrets) GetSecret(_ context.Context, ref string) (string, error) {
+	if v, ok := m[ref]; ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("no secret %s", ref)
+}
+func (m mapSecrets) PutSecret(context.Context, string, string) error { return nil }
+func (m mapSecrets) DeleteSecret(context.Context, string) error      { return nil }
+
+// A webhook that names one of the tenant's credentials sends its value as the Authorization
+// header — and the reference is derived from the JOB's tenant, so naming another tenant's
+// credential id reaches nothing.
+func TestWebhookSendsTheNamedCredentialOfItsOwnTenantOnly(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	tenant, other, credential := uuid.New(), uuid.New(), uuid.New()
+	secrets := mapSecrets{control.TenantCredentialRef(tenant, credential): "Bearer mine"}
+	policy := WebhookPolicy{AllowPrivateTargets: true}
+	config, _ := json.Marshal(map[string]any{"url": srv.URL, "credentialId": credential.String()})
+
+	_, err := RunWebhook(context.Background(), policy, secrets, tenant, uuid.New(), uuid.New(), nil, nil, config)
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer mine", gotAuth)
+
+	gotAuth = ""
+	_, err = RunWebhook(context.Background(), policy, secrets, other, uuid.New(), uuid.New(), nil, nil, config)
+	require.Error(t, err, "the same credential id under another tenant resolves to nothing")
+	assert.Empty(t, gotAuth, "nothing was sent")
+
+	bad, _ := json.Marshal(map[string]any{"url": srv.URL, "credentialId": "not-a-uuid"})
+	_, err = RunWebhook(context.Background(), policy, secrets, tenant, uuid.New(), uuid.New(), nil, nil, bad)
+	require.Error(t, err)
+}
+
+// A username-and-password credential goes out as HTTP Basic.
+func TestWebhookSendsAUserPassCredentialAsBasic(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	tenant, credential := uuid.New(), uuid.New()
+	secrets := mapSecrets{control.TenantCredentialRef(tenant, credential): control.EncodeUserPass("alice", "s3:cret")}
+	config, _ := json.Marshal(map[string]any{"url": srv.URL, "credentialId": credential.String()})
+
+	_, err := RunWebhook(context.Background(), WebhookPolicy{AllowPrivateTargets: true}, secrets, tenant, uuid.New(), uuid.New(), nil, nil, config)
+	require.NoError(t, err)
+	user, pass, ok := (&http.Request{Header: http.Header{"Authorization": {gotAuth}}}).BasicAuth()
+	require.True(t, ok, "got %q", gotAuth)
+	assert.Equal(t, []string{"alice", "s3:cret"}, []string{user, pass})
 }
