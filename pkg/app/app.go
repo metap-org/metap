@@ -20,9 +20,12 @@ import (
 	"fmt"
 	"github.com/metap-org/metap/pkg/captcha"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -30,6 +33,7 @@ import (
 	"github.com/metap-org/metap/pkg/adminapi"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/cronscheduler"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/httpserver"
 	"github.com/metap-org/metap/pkg/httpserver/attachmentroutes"
@@ -268,7 +272,29 @@ func identityConfig(state *httpserver.AppState, auditStore audit.Store, manager 
 	}
 	return &adminapi.IdentityConfig{Shared: state.Pool, Router: state.Router, Audit: auditStore,
 		Mailer: state.Mailer, PasswordPolicy: state.PasswordPolicy(), APIKeyMaxDays: state.APIKeyMaxDays, PublicURL: state.PublicAppURL,
-		Credentials: credentialAdapter{manager}}
+		Credentials: credentialAdapter{manager}, HTTPClient: metadataHTTPClient()}
+}
+
+// metadataHTTPClient fetches a SAML provider's metadata from a URL a tenant admin typed in. It
+// refuses to connect to loopback, private and link-local addresses (checked on the address actually
+// dialled, so a name that resolves inward is caught too) unless SSO_METADATA_ALLOW_PRIVATE_HOSTS is
+// set, which a development stack with its provider on the same host needs.
+func metadataHTTPClient() *http.Client {
+	allow, _ := env.Lookup("SSO_METADATA_ALLOW_PRIVATE_HOSTS")
+	if allow == "true" {
+		return &http.Client{Timeout: 15 * time.Second}
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return err
+		}
+		if ip := net.ParseIP(host); ip == nil || cronscheduler.IsBlockedIP(ip) {
+			return fmt.Errorf("metadata fetches may not connect to %s", host)
+		}
+		return nil
+	}}
+	return &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{DialContext: dialer.DialContext}}
 }
 
 // ReadPublicKey loads a PEM public key: PKIX ("PUBLIC KEY", any algorithm) first, falling back to

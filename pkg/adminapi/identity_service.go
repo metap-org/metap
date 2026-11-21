@@ -50,6 +50,9 @@ type IdentityConfig struct {
 	APIKeyMaxDays func(ctx context.Context, tenant uuid.UUID) int
 	// Credentials stores the tenant credentials the Credentials tab manages; nil serves none.
 	Credentials CredentialManager
+	// HTTPClient fetches a SAML provider's metadata from the URL an admin gives (nil: a plain client
+	// with a timeout); a deployment can put its outbound-request guard here.
+	HTTPClient *http.Client
 	// TXTLookup resolves the DNS record that proves a domain is owned; nil uses the system resolver.
 	TXTLookup tenantauth.TXTLookup
 }

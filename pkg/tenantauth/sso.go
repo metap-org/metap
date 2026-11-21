@@ -81,13 +81,31 @@ func DeleteOidcConfig(ctx context.Context, db DBTX, tenant uuid.UUID) error {
 	return err
 }
 
-// SSOEnforced reports whether the tenant has turned password sign-in off.
+// SSOEnforced reports whether the tenant has turned password sign-in off, through either provider.
 func SSOEnforced(ctx context.Context, db DBTX, tenant uuid.UUID) (bool, error) {
-	cfg, err := OidcConfigFor(ctx, db, tenant)
-	if err != nil || cfg == nil {
+	oidc, err := OidcConfigFor(ctx, db, tenant)
+	if err != nil {
 		return false, err
 	}
-	return cfg.Enforced, nil
+	if oidc != nil && oidc.Enforced {
+		return true, nil
+	}
+	saml, err := SamlConfigFor(ctx, db, tenant)
+	if err != nil {
+		return false, err
+	}
+	return saml != nil && saml.Enforced, nil
+}
+
+// ProviderOf names the single sign-on protocol the tenant has switched on: "oidc", "saml" or "".
+func ProviderOf(ctx context.Context, db DBTX, tenant uuid.UUID) (string, error) {
+	if cfg, err := OidcConfigFor(ctx, db, tenant); err != nil || cfg != nil {
+		return "oidc", err
+	}
+	if cfg, err := SamlConfigFor(ctx, db, tenant); err != nil || cfg != nil {
+		return ProviderSAML, err
+	}
+	return "", nil
 }
 
 // TenantsForEmailDomain lists the tenants whose enabled OIDC settings name domain and that have
@@ -96,7 +114,7 @@ func TenantsForEmailDomain(ctx context.Context, db DBTX, domain string) ([]uuid.
 	// Only a tenant that proved it owns the domain is routed to; naming it is not enough.
 	rows, err := db.Query(ctx, `SELECT c.tenant_id FROM tenant_auth_configs c
 		JOIN sso_domains d ON d.tenant_id = c.tenant_id AND d.domain = $1 AND d.verified_at IS NOT NULL
-		WHERE c.provider_kind = 'oidc' AND c.enabled AND c.config->'emailDomains' ? $1`, strings.ToLower(domain))
+		WHERE c.provider_kind IN ('oidc', 'saml') AND c.enabled AND c.config->'emailDomains' ? $1`, strings.ToLower(domain))
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +133,11 @@ func TenantsForEmailDomain(ctx context.Context, db DBTX, domain string) ([]uuid.
 // EmailAllowed reports whether address is in the config's domain list (everything is allowed
 // when the list is empty).
 func (c *OidcConfig) EmailAllowed(address string) bool {
-	if len(c.EmailDomains) == 0 {
+	return emailInDomains(c.EmailDomains, address)
+}
+
+func emailInDomains(domains []string, address string) bool {
+	if len(domains) == 0 {
 		return true
 	}
 	at := strings.LastIndex(address, "@")
@@ -123,7 +145,7 @@ func (c *OidcConfig) EmailAllowed(address string) bool {
 		return false
 	}
 	domain := strings.ToLower(address[at+1:])
-	for _, d := range c.EmailDomains {
+	for _, d := range domains {
 		if d == domain {
 			return true
 		}

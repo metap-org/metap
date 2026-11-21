@@ -21,6 +21,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	saml2 "github.com/russellhaering/gosaml2"
 
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -101,9 +102,17 @@ func ssoDiscover(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"ssoAvailable": false}})
 		return
 	}
+	kind, err := tenantauth.ProviderOf(r.Context(), state.Pool, tenants[0])
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	start := "/auth/sso/start?tenant=" + tenants[0].String()
+	if kind == tenantauth.ProviderSAML {
+		start = "/auth/saml/" + tenants[0].String() + "/start"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-		"ssoAvailable": true, "tenantId": tenants[0],
-		"startUrl": "/auth/sso/start?tenant=" + tenants[0].String()}})
+		"ssoAvailable": true, "tenantId": tenants[0], "protocol": kind, "startUrl": start}})
 }
 
 func ssoStart(w http.ResponseWriter, r *http.Request, state *AppState) {
@@ -180,11 +189,29 @@ func ssoCallback(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed, "The identity provider's answer could not be verified.", nil)
 		return
 	}
-	if !cfg.EmailAllowed(who.Email) {
+	finishSSO(w, r, state, st.Tenant, ssoPolicy{provider: ssoProvider, defaultRole: cfg.DefaultRole, mapping: cfg.Mapping(),
+		postLoginRedirect: cfg.PostLoginRedirect, allowed: cfg.EmailAllowed}, who)
+}
+
+// ssoPolicy is what a tenant's provider settings decide once somebody has been verified, whichever
+// protocol verified them.
+type ssoPolicy struct {
+	provider          string // the external-subject namespace: "oidc" or "saml"
+	defaultRole       string
+	mapping           tenantauth.RoleMapping
+	postLoginRedirect string
+	allowed           func(address string) bool
+}
+
+// finishSSO turns a verified identity into a session: domain restriction, member lookup or
+// creation, role sync, then the session cookie and the redirect into the app.
+func finishSSO(w http.ResponseWriter, r *http.Request, state *AppState, tenant uuid.UUID, p ssoPolicy, who *tenantauth.VerifiedIdentity) {
+	now := time.Now()
+	if !p.allowed(who.Email) {
 		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed, "This email address is not allowed to sign in to this workspace.", nil)
 		return
 	}
-	member, err := ssoMember(r.Context(), state, st.Tenant, cfg, who)
+	member, err := ssoMember(r.Context(), state, tenant, p, who)
 	if errors.Is(err, errSSOEmailUnverified) {
 		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed,
 			"The identity provider has not verified this email address, so it cannot be used to sign in.", nil)
@@ -203,20 +230,20 @@ func ssoCallback(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeServiceError(w, http.StatusForbidden, errcode.AccountDisabled, "This account is disabled.", nil)
 		return
 	}
-	if err := syncSSORoles(r.Context(), state, st.Tenant, member, cfg, who.Roles); err != nil {
-		slog.Error("sso: syncing roles from the identity provider", "tenant_id", st.Tenant, "error", err)
+	if err := syncSSORoles(r.Context(), state, tenant, member, p.mapping, who.Roles); err != nil {
+		slog.Error("sso: syncing roles from the identity provider", "tenant_id", tenant, "error", err)
 		writeServiceError(w, http.StatusInternalServerError, errcode.SSOFailed, "Your roles could not be applied. Try again.", nil)
 		return
 	}
 	token, ok := issueSession(w, r, state, member.IdentityID,
-		identity.Membership{MemberID: member.ID, TenantID: st.Tenant}, now)
+		identity.Membership{MemberID: member.ID, TenantID: tenant}, now)
 	if !ok {
 		return
 	}
 	_ = token
 	dest := strings.TrimRight(state.PublicAppURL, "/") + "/"
-	if SameOrigin(cfg.PostLoginRedirect, state.PublicAppURL) {
-		dest = cfg.PostLoginRedirect
+	if SameOrigin(p.postLoginRedirect, state.PublicAppURL) {
+		dest = p.postLoginRedirect
 	}
 	redirectTo(w, dest)
 }
@@ -232,12 +259,12 @@ var errSSODomainUnverified = errors.New("the workspace has not verified the emai
 // syncSSORoles brings the roles the provider's claim decides (cfg.RoleMap's values) in line with
 // the claim, at every sign-in. Roles outside the map are left alone, and the owner keeps theirs:
 // the provider cannot lock the person who is the way back in out of their own workspace.
-func syncSSORoles(ctx context.Context, state *AppState, tenant uuid.UUID, member *identity.Member, cfg *tenantauth.OidcConfig, claimValues []string) error {
-	managed := cfg.ManagedRoles()
-	if cfg.RoleClaim == "" || len(managed) == 0 {
+func syncSSORoles(ctx context.Context, state *AppState, tenant uuid.UUID, member *identity.Member, mapping tenantauth.RoleMapping, claimValues []string) error {
+	managed := mapping.ManagedRoles()
+	if mapping.Claim == "" || len(managed) == 0 {
 		return nil
 	}
-	want := cfg.MappedRoles(claimValues)
+	want := mapping.MappedRoles(claimValues)
 	have, err := peripherals.GetRolesForUser(ctx, state.Pool, tenant, member.ID)
 	if err != nil {
 		return err
@@ -267,8 +294,8 @@ func syncSSORoles(ctx context.Context, state *AppState, tenant uuid.UUID, member
 
 // ssoMember finds the member an IdP identity signs in as: the one already tied to this subject, an
 // existing member with that address (tied now), or a new one provisioned with the default role.
-func ssoMember(ctx context.Context, state *AppState, tenant uuid.UUID, cfg *tenantauth.OidcConfig, who *tenantauth.VerifiedIdentity) (*identity.Member, error) {
-	if m, err := identity.FindExternalMember(ctx, state.Pool, tenant, ssoProvider, who.ExternalSubject); err != nil || m != nil {
+func ssoMember(ctx context.Context, state *AppState, tenant uuid.UUID, p ssoPolicy, who *tenantauth.VerifiedIdentity) (*identity.Member, error) {
+	if m, err := identity.FindExternalMember(ctx, state.Pool, tenant, p.provider, who.ExternalSubject); err != nil || m != nil {
 		return m, err
 	}
 	// From here on the address is what identifies the person, so the provider must vouch for it.
@@ -284,7 +311,7 @@ func ssoMember(ctx context.Context, state *AppState, tenant uuid.UUID, cfg *tena
 		if m.AuthProvider == identity.ServiceAccountProvider {
 			return nil, errors.New("not a person")
 		}
-		if err := identity.LinkExternalSubject(ctx, state.Pool, tenant, m.ID, ssoProvider, who.ExternalSubject); err != nil {
+		if err := identity.LinkExternalSubject(ctx, state.Pool, tenant, m.ID, p.provider, who.ExternalSubject); err != nil {
 			return nil, err
 		}
 		return m, nil
@@ -292,12 +319,12 @@ func ssoMember(ctx context.Context, state *AppState, tenant uuid.UUID, cfg *tena
 		return nil, err
 	}
 	m, _, err := identity.AddMember(ctx, state.Pool, identity.NewMember{TenantID: tenant, Email: who.Email,
-		AuthProvider: ssoProvider, ExternalSubject: who.ExternalSubject})
+		AuthProvider: p.provider, ExternalSubject: who.ExternalSubject})
 	if err != nil {
 		return nil, err
 	}
-	if cfg.DefaultRole != "" {
-		if err := peripherals.AssignRole(ctx, state.Pool, tenant, m.ID, cfg.DefaultRole, nil); err != nil {
+	if p.defaultRole != "" {
+		if err := peripherals.AssignRole(ctx, state.Pool, tenant, m.ID, p.defaultRole, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -305,7 +332,104 @@ func ssoMember(ctx context.Context, state *AppState, tenant uuid.UUID, cfg *tena
 }
 
 func mountSSO(r chi.Router, state *AppState) {
+	r.Get("/auth/saml/{tenant}/metadata", func(w http.ResponseWriter, r *http.Request) { samlMetadata(w, r, state) })
+	r.Get("/auth/saml/{tenant}/start", func(w http.ResponseWriter, r *http.Request) { samlStart(w, r, state) })
+	r.Post("/auth/saml/{tenant}/acs", func(w http.ResponseWriter, r *http.Request) { samlACS(w, r, state) })
 	r.Get("/auth/sso/discover", func(w http.ResponseWriter, r *http.Request) { ssoDiscover(w, r, state) })
 	r.Get("/auth/sso/start", func(w http.ResponseWriter, r *http.Request) { ssoStart(w, r, state) })
 	r.Get("/auth/sso/callback", func(w http.ResponseWriter, r *http.Request) { ssoCallback(w, r, state) })
+}
+
+// samlProvider loads the tenant's enabled SAML settings and builds the service provider for them.
+func samlProvider(w http.ResponseWriter, r *http.Request, state *AppState) (uuid.UUID, *tenantauth.SamlConfig, *saml2.SAMLServiceProvider, bool) {
+	if !state.CanIssueTokens() {
+		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
+		return uuid.Nil, nil, nil, false
+	}
+	tenant, err := uuid.Parse(chi.URLParam(r, "tenant"))
+	if err != nil {
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "The tenant in the path is not a tenant id.", nil)
+		return uuid.Nil, nil, nil, false
+	}
+	cfg, err := tenantauth.SamlConfigFor(r.Context(), state.Pool, tenant)
+	if err != nil {
+		writeInternalError(w, err)
+		return uuid.Nil, nil, nil, false
+	}
+	if cfg == nil || state.PublicAppURL == "" {
+		writeServiceError(w, http.StatusNotFound, errcode.NotFound, "Single sign-on is not set up for this workspace.", nil)
+		return uuid.Nil, nil, nil, false
+	}
+	sp, err := cfg.ServiceProvider(tenantauth.SamlURLsFor(state.PublicAppURL, tenant))
+	if err != nil {
+		slog.Error("saml: building the service provider", "tenant_id", tenant, "error", err)
+		writeServiceError(w, http.StatusServiceUnavailable, errcode.SSOFailed, "Single sign-on is not available right now.", nil)
+		return uuid.Nil, nil, nil, false
+	}
+	return tenant, cfg, sp, true
+}
+
+// samlMetadata is what an admin registers at the identity provider: this service's entity ID and
+// assertion consumer URL for the tenant.
+func samlMetadata(w http.ResponseWriter, r *http.Request, state *AppState) {
+	tenant, _, _, ok := samlProvider(w, r, state)
+	if !ok {
+		return
+	}
+	out, err := tenantauth.ServiceProviderMetadata(tenantauth.SamlURLsFor(state.PublicAppURL, tenant))
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/samlmetadata+xml")
+	_, _ = w.Write(out)
+}
+
+func samlStart(w http.ResponseWriter, r *http.Request, state *AppState) {
+	tenant, _, sp, ok := samlProvider(w, r, state)
+	if !ok {
+		return
+	}
+	// The relay state is our own single-use state row; the AuthnRequest's ID rides in it so the
+	// response can be bound to this sign-in (InResponseTo).
+	relay := tenantauth.NewStateToken()
+	target, requestID, err := tenantauth.StartRedirect(sp, relay)
+	if err != nil {
+		slog.Error("saml: building the sign-in request", "tenant_id", tenant, "error", err)
+		writeServiceError(w, http.StatusBadGateway, errcode.SSOFailed, "The identity provider could not be reached.", nil)
+		return
+	}
+	if err := tenantauth.CreateSSOState(r.Context(), state.Pool, tenant, relay, requestID, "", time.Now()); err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	redirectTo(w, target.String())
+}
+
+// samlACS receives the provider's signed response.
+func samlACS(w http.ResponseWriter, r *http.Request, state *AppState) {
+	tenant, cfg, sp, ok := samlProvider(w, r, state)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := r.ParseForm(); err != nil {
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "The response is not a form post.", nil)
+		return
+	}
+	st, err := tenantauth.ConsumeSSOState(r.Context(), state.Pool, r.PostForm.Get("RelayState"), time.Now())
+	if err != nil || st.Tenant != tenant {
+		writeServiceError(w, http.StatusBadRequest, errcode.SSOFailed, "The sign-in is unknown, used or expired. Start again.", nil)
+		return
+	}
+	// What is checked is the response against the single-use request this sign-in made, with the
+	// provider's own certificates; the destination and recipient are our registered ACS URL.
+	who, err := cfg.VerifyResponse(sp, r.PostForm.Get("SAMLResponse"), st.Nonce)
+	if err != nil {
+		slog.Warn("saml response verification failed", "tenant_id", tenant, "error", err)
+		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed, "The identity provider's answer could not be verified.", nil)
+		return
+	}
+	finishSSO(w, r, state, tenant, ssoPolicy{provider: tenantauth.ProviderSAML, defaultRole: cfg.DefaultRole, mapping: cfg.Mapping(),
+		postLoginRedirect: cfg.PostLoginRedirect, allowed: cfg.EmailAllowed}, who)
 }

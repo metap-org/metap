@@ -13,3 +13,6 @@ func generateRandomToken() string {
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }
+
+// NewStateToken is a fresh random value for a sign-in's state (the SAML relay state).
+func NewStateToken() string { return generateRandomToken() }
