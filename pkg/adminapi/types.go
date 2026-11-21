@@ -608,6 +608,22 @@ type SsoConfig struct {
 	RoleMap map[string]string `json:"roleMap" required:"false"`
 	// Register this redirect URI at the identity provider.
 	RedirectUri string `json:"redirectUri" required:"false"`
+	// Every email domain named above and whether the workspace has proved it owns it. Only a
+	// verified domain routes a sign-in here or lets an address match or create a member.
+	Domains []*SsoDomain `json:"domains" required:"false"`
+}
+
+type SsoDomain struct {
+	Domain string `json:"domain" required:"false"`
+	// "pending" or "verified".
+	Status string `json:"status" required:"false"`
+	// Publish verifyValue as a TXT record at verifyHost, then ask for a check.
+	VerifyHost  string `json:"verifyHost" required:"false"`
+	VerifyValue string `json:"verifyValue" required:"false"`
+}
+
+type VerifySsoDomainRequest struct {
+	Domain string `json:"domain" required:"false"`
 }
 
 func (x *User) GetId() string {
@@ -2665,4 +2681,11 @@ func (x *SetSsoConfigRequest) GetRoleMap() map[string]string {
 		return x.RoleMap
 	}
 	return nil
+}
+
+func (x *VerifySsoDomainRequest) GetDomain() string {
+	if x != nil {
+		return x.Domain
+	}
+	return ""
 }

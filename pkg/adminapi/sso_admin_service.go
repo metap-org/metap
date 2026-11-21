@@ -2,6 +2,8 @@ package adminapi
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -55,6 +57,18 @@ func (s *SsoAdminService) view(ctx context.Context, tenant uuid.UUID) (*SsoConfi
 	out.Scopes, out.EmailDomains, out.DefaultRole = cfg.Scopes, cfg.EmailDomains, cfg.DefaultRole
 	out.Enforced, out.PostLoginRedirect = cfg.Enforced, cfg.PostLoginRedirect
 	out.RoleClaim, out.RoleMap = cfg.RoleClaim, cfg.RoleMap
+	domains, err := tenantauth.Domains(ctx, s.d.cfg.Shared, tenant)
+	if err != nil {
+		return nil, rpcError(ctx, err)
+	}
+	out.Domains = make([]*SsoDomain, 0, len(domains))
+	for _, d := range domains {
+		status := "pending"
+		if d.VerifiedAt != nil {
+			status = "verified"
+		}
+		out.Domains = append(out.Domains, &SsoDomain{Domain: d.Domain, Status: status, VerifyHost: d.VerifyHost(), VerifyValue: d.Token})
+	}
 	if out.RoleMap == nil {
 		out.RoleMap = map[string]string{}
 	}
@@ -191,6 +205,9 @@ func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *SetSsoConfigReq
 	if err := tenantauth.SaveOidcConfig(ctx, s.d.cfg.Shared, c.tenant, cfg, req.GetEnabled()); err != nil {
 		return nil, rpcError(ctx, err)
 	}
+	if err := tenantauth.SyncDomains(ctx, s.d.cfg.Shared, c.tenant, domains); err != nil {
+		return nil, rpcError(ctx, err)
+	}
 	diff := map[string][2]any{"issuerUrl": {nil, issuer}, "enabled": {nil, req.GetEnabled()}, "enforced": {nil, req.GetEnforced()}}
 	if before != nil {
 		diff = map[string][2]any{"issuerUrl": {before.IssuerURL, issuer}, "enforced": {before.Enforced, req.GetEnforced()}}
@@ -211,4 +228,43 @@ func (s *SsoAdminService) DeleteSsoConfig(ctx context.Context, _ *Empty) (*Empty
 	_ = s.d.cfg.Router.Secrets().DeleteSecret(ctx, control.TenantSecretRef(c.tenant, ssoSecretKey))
 	s.d.recordFor(ctx, c, AuditEntitySSO, c.tenant, audit.ActionDelete, map[string][2]any{"sso": {"configured", nil}})
 	return &Empty{}, nil
+}
+
+// VerifySsoDomain looks for the ownership record and, if it is there, marks the domain verified.
+// A record that is not there yet answers 409 so the page can say "not found yet, try again".
+func (s *SsoAdminService) VerifySsoDomain(ctx context.Context, req *VerifySsoDomainRequest) (*SsoConfig, error) {
+	c, err := s.d.admin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	domain := strings.ToLower(strings.TrimSpace(req.GetDomain()))
+	domains, err := tenantauth.Domains(ctx, s.d.cfg.Shared, c.tenant)
+	if err != nil {
+		return nil, rpcError(ctx, err)
+	}
+	var found *tenantauth.SSODomain
+	for i := range domains {
+		if domains[i].Domain == domain {
+			found = &domains[i]
+		}
+	}
+	if found == nil {
+		return nil, svcErr(ctx, http.StatusNotFound, errcode.NotFound, "That domain is not in this workspace's single sign-on settings.")
+	}
+	lookup := s.d.cfg.TXTLookup
+	if lookup == nil {
+		lookup = net.DefaultResolver.LookupTXT
+	}
+	ok, err := tenantauth.CheckDomain(ctx, s.d.cfg.Shared, lookup, c.tenant, *found, s.d.now())
+	switch {
+	case errors.Is(err, tenantauth.ErrDomainClaimed):
+		return nil, svcErr(ctx, http.StatusConflict, errcode.UniqueViolation, "Another workspace has already verified this domain.")
+	case err != nil:
+		return nil, rpcError(ctx, err)
+	case !ok:
+		return nil, svcErr(ctx, http.StatusConflict, errcode.DomainNotVerified,
+			"The record "+found.VerifyHost()+" was not found with the expected value yet. DNS changes can take a while; try again shortly.")
+	}
+	s.d.recordFor(ctx, c, AuditEntitySSO, c.tenant, audit.ActionUpdate, map[string][2]any{"verifiedDomain": {nil, domain}})
+	return s.view(ctx, c.tenant)
 }

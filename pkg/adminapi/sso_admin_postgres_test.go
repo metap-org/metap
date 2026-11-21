@@ -3,7 +3,9 @@
 package adminapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -129,4 +131,83 @@ func TestSsoAdminConfig(t *testing.T) {
 	trail, err := h.client.Audit.SearchAudit(asOwner, &SearchAuditRequest{Entity: AuditEntitySSO})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(trail.GetEntries()), 3, "every change is audited")
+}
+
+// The domains a workspace names start pending with a token to publish; a check that finds the
+// record verifies them; one other workspace cannot then take the same domain.
+func TestSsoDomainOwnershipIsProvedByDNS(t *testing.T) {
+	h := newIdentityHarness(t)
+	issuer := discoveryOnly(t)
+	records := map[string][]string{}
+	withLookup := h.cfg
+	withLookup.TXTLookup = func(_ context.Context, name string) ([]string, error) {
+		if v, ok := records[name]; ok {
+			return v, nil
+		}
+		return nil, errors.New("no such host")
+	}
+	h.client.SSO = NewSsoAdminService(withLookup)
+	setup := func(tenant uuid.UUID, email string) context.Context {
+		admin := h.member(tenant, email, "admin")
+		return h.as(tenant, admin.ID)
+	}
+	save := func(ctx context.Context, domains ...string) *SsoConfig {
+		cfg, err := h.client.SSO.SetSsoConfig(ctx, &SetSsoConfigRequest{IssuerUrl: issuer, ClientId: "c1", ClientSecret: "s3cret",
+			EmailDomains: domains, Enabled: true, PostLoginRedirect: "http://portal.test/home"})
+		require.NoError(t, err)
+		return cfg
+	}
+	byName := func(cfg *SsoConfig, domain string) *SsoDomain {
+		for _, d := range cfg.Domains {
+			if d.Domain == domain {
+				return d
+			}
+		}
+		return nil
+	}
+
+	acme, rival := uuid.New(), uuid.New()
+	asAcme, asRival := setup(acme, "admin@acme.io"), setup(rival, "admin@rival.io")
+
+	cfg := save(asAcme, "acme.io", "acme.org")
+	d := byName(cfg, "acme.io")
+	require.NotNil(t, d)
+	assert.Equal(t, "pending", d.Status)
+	assert.Equal(t, "_metap-verify.acme.io", d.VerifyHost)
+	assert.NotEmpty(t, d.VerifyValue)
+
+	// No record yet, and a record with the wrong value, both leave it pending.
+	_, err := h.client.SSO.VerifySsoDomain(asAcme, &VerifySsoDomainRequest{Domain: "acme.io"})
+	assert.Equal(t, http.StatusConflict, statusOf(err))
+	records["_metap-verify.acme.io"] = []string{"something-else"}
+	_, err = h.client.SSO.VerifySsoDomain(asAcme, &VerifySsoDomainRequest{Domain: "acme.io"})
+	assert.Equal(t, http.StatusConflict, statusOf(err))
+
+	records["_metap-verify.acme.io"] = []string{"unrelated", d.VerifyValue}
+	cfg, err = h.client.SSO.VerifySsoDomain(asAcme, &VerifySsoDomainRequest{Domain: "acme.io"})
+	require.NoError(t, err)
+	assert.Equal(t, "verified", byName(cfg, "acme.io").Status)
+	assert.Equal(t, "pending", byName(cfg, "acme.org").Status, "each domain is proved on its own")
+
+	// Re-saving the settings keeps a verified domain verified (and its token).
+	cfg = save(asAcme, "acme.io", "acme.org")
+	assert.Equal(t, "verified", byName(cfg, "acme.io").Status)
+	assert.Equal(t, d.VerifyValue, byName(cfg, "acme.io").VerifyValue)
+
+	// A domain the workspace did not name cannot be checked.
+	_, err = h.client.SSO.VerifySsoDomain(asAcme, &VerifySsoDomainRequest{Domain: "unnamed.io"})
+	assert.Equal(t, http.StatusNotFound, statusOf(err))
+
+	// Another workspace can name it, but cannot verify what acme already owns.
+	rcfg := save(asRival, "acme.io")
+	records["_metap-verify.acme.io"] = []string{byName(rcfg, "acme.io").VerifyValue}
+	_, err = h.client.SSO.VerifySsoDomain(asRival, &VerifySsoDomainRequest{Domain: "acme.io"})
+	assert.Equal(t, http.StatusConflict, statusOf(err))
+	rcfg, err = h.client.SSO.GetSsoConfig(asRival, &Empty{})
+	require.NoError(t, err)
+	assert.Equal(t, "pending", byName(rcfg, "acme.io").Status)
+
+	// Dropping a domain from the settings drops its row.
+	cfg = save(asAcme, "acme.io")
+	assert.Nil(t, byName(cfg, "acme.org"))
 }

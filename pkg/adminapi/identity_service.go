@@ -24,6 +24,7 @@ import (
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
 // AuditEntityUsers is the audit-trail entity name user administration records under.
@@ -49,6 +50,8 @@ type IdentityConfig struct {
 	APIKeyMaxDays func(ctx context.Context, tenant uuid.UUID) int
 	// Credentials stores the tenant credentials the Credentials tab manages; nil serves none.
 	Credentials CredentialManager
+	// TXTLookup resolves the DNS record that proves a domain is owned; nil uses the system resolver.
+	TXTLookup tenantauth.TXTLookup
 }
 
 type identityDeps struct {

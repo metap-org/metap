@@ -34,25 +34,26 @@ const (
 	UnsupportedPolicyCondition = "unsupported_policy_condition"
 
 	// Sign-in and user administration (roadmap 113).
-	CaptchaFailed    = "captcha_failed"    // 400: the proof-of-humanity token was missing or wrong
-	SignupDisabled   = "signup_disabled"   // 403: self-service signup is switched off
-	SignupInvalid    = "signup_invalid"    // 400: unknown, expired or used signup link
-	MFAInvalidCode   = "mfa_invalid_code"  // 401: wrong, replayed or used-up second-factor code
-	MFAChallenge     = "mfa_challenge"     // 401: the second-step token expired or ran out of tries
-	MFAAlreadyOn     = "mfa_already_on"    // 409
-	MFANotEnrolled   = "mfa_not_enrolled"  // 409
-	AccountLocked    = "account_locked"    // 429: too many failed sign-ins, retry later
-	AccountDisabled  = "account_disabled"  // 403: the identity or this membership is disabled
-	SessionRevoked   = "session_revoked"   // 401: token issued before the user's sessions were revoked
-	NoTenantAccess   = "no_tenant_access"  // 403: signed in, but not an active member of that tenant
-	AlreadyMember    = "already_member"    // 409: the person is already a member of the tenant
-	WeakPassword     = "weak_password"     // 400: password fails the policy
-	LastAdmin        = "last_admin"        // 409: the change would leave the tenant without an admin
-	SelfModification = "self_modification" // 409: an admin cannot disable, remove or demote themselves
-	OwnerProtected   = "owner_protected"   // 403: only the tenant owner may change the owner
-	SSORequired      = "sso_required"      // 403: this tenant signs in through its identity provider, not a password
-	SSOFailed        = "sso_failed"        // 400/403: the single sign-in could not be completed
-	WrongPassword    = "wrong_password"    // 400: the current password given to a change is wrong
+	CaptchaFailed     = "captcha_failed"      // 400: the proof-of-humanity token was missing or wrong
+	DomainNotVerified = "domain_not_verified" // 409: the DNS record that proves a domain is owned was not found yet
+	SignupDisabled    = "signup_disabled"     // 403: self-service signup is switched off
+	SignupInvalid     = "signup_invalid"      // 400: unknown, expired or used signup link
+	MFAInvalidCode    = "mfa_invalid_code"    // 401: wrong, replayed or used-up second-factor code
+	MFAChallenge      = "mfa_challenge"       // 401: the second-step token expired or ran out of tries
+	MFAAlreadyOn      = "mfa_already_on"      // 409
+	MFANotEnrolled    = "mfa_not_enrolled"    // 409
+	AccountLocked     = "account_locked"      // 429: too many failed sign-ins, retry later
+	AccountDisabled   = "account_disabled"    // 403: the identity or this membership is disabled
+	SessionRevoked    = "session_revoked"     // 401: token issued before the user's sessions were revoked
+	NoTenantAccess    = "no_tenant_access"    // 403: signed in, but not an active member of that tenant
+	AlreadyMember     = "already_member"      // 409: the person is already a member of the tenant
+	WeakPassword      = "weak_password"       // 400: password fails the policy
+	LastAdmin         = "last_admin"          // 409: the change would leave the tenant without an admin
+	SelfModification  = "self_modification"   // 409: an admin cannot disable, remove or demote themselves
+	OwnerProtected    = "owner_protected"     // 403: only the tenant owner may change the owner
+	SSORequired       = "sso_required"        // 403: this tenant signs in through its identity provider, not a password
+	SSOFailed         = "sso_failed"          // 400/403: the single sign-in could not be completed
+	WrongPassword     = "wrong_password"      // 400: the current password given to a change is wrong
 
 	// Invitations and password reset (roadmap 113 P2).
 	InvitationInvalid     = "invitation_invalid"       // 400: unknown, expired, used or revoked invitation link

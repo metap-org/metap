@@ -483,6 +483,12 @@ func registerWorkspaceOperations(api huma.API, state *AppState, cfg adminapi.Ide
 		func(ctx context.Context, in *bodyIn[adminapi.SetSsoConfigRequest]) (*adminapi.SsoConfig, error) {
 			return sso.SetSsoConfig(ctx, &in.Body)
 		})
+	adminOp(api, state, opOf("verifySsoDomain", http.MethodPost, "/admin/sso/domains/{domain}/verify", "Check the DNS record that proves a domain is owned", "SSO"),
+		func(ctx context.Context, in *struct {
+			Domain string `path:"domain"`
+		}) (*adminapi.SsoConfig, error) {
+			return sso.VerifySsoDomain(ctx, &adminapi.VerifySsoDomainRequest{Domain: in.Domain})
+		})
 	adminNoContent(api, state, opOf("deleteSsoConfig", http.MethodDelete, "/admin/sso", "Remove single sign-on", "SSO"),
 		func(ctx context.Context, _ *struct{}) (*adminapi.Empty, error) {
 			return sso.DeleteSsoConfig(ctx, empty)
