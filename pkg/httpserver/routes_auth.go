@@ -20,6 +20,7 @@ import (
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/runtime"
 )
 
 func sessionTTLSeconds(ctx *http.Request, state *AppState, tenantID uuid.UUID) uint64 {
@@ -436,21 +437,31 @@ func mountAuth(r chi.Router, state *AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	r.Post("/auth/login", wrap(login))
+	// The routes someone guessing credentials, codes or tokens would hammer share one stricter
+	// per-IP bucket (a guesser cannot multiply the allowance by spreading over routes). The
+	// account lockout counts per identity; this counts per source, so one address cannot walk
+	// through many identities or many reset tokens either.
+	cfg := state.Config.Current()
+	guarded := r.With(runtime.RateLimitBehind(
+		time.Duration(cfg.GetU64(config.HTTPAuthRateLimitPerMs))*time.Millisecond,
+		int(cfg.GetU64(config.HTTPAuthRateLimitBurst)),
+		state.TrustedProxies,
+	))
+	guarded.Post("/auth/login", wrap(login))
 	r.Get("/auth/signup/status", wrap(signupStatus))
-	r.Post("/auth/signup", wrap(signup))
-	r.Post("/auth/signup/verify", wrap(signupVerify))
-	r.Post("/auth/login/mfa", wrap(loginMFA))
+	guarded.Post("/auth/signup", wrap(signup))
+	guarded.Post("/auth/signup/verify", wrap(signupVerify))
+	guarded.Post("/auth/login/mfa", wrap(loginMFA))
 	r.Post("/auth/mfa/setup", wrap(mfaSetup))
 	r.Post("/auth/mfa/setup/confirm", wrap(mfaSetupConfirm))
 	r.Post("/auth/logout", wrap(logout))
 	r.Post("/auth/switch-tenant", wrap(switchTenant))
 	r.Post("/auth/password", wrap(changePassword))
 	r.Get("/auth/me", wrap(me))
-	r.Post("/auth/invitations/lookup", wrap(lookupInvitation))
-	r.Post("/auth/invitations/accept", wrap(acceptInvitation))
-	r.Post("/auth/password/forgot", wrap(forgotPassword))
-	r.Post("/auth/password/reset", wrap(resetPassword))
+	guarded.Post("/auth/invitations/lookup", wrap(lookupInvitation))
+	guarded.Post("/auth/invitations/accept", wrap(acceptInvitation))
+	guarded.Post("/auth/password/forgot", wrap(forgotPassword))
+	guarded.Post("/auth/password/reset", wrap(resetPassword))
 	r.Get("/auth/token", wrap(issueToken))
 }
 
