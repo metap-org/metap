@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -13,17 +15,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crewjam/saml"
+	saml2 "github.com/russellhaering/gosaml2"
+	"github.com/russellhaering/gosaml2/types"
+	dsig "github.com/russellhaering/goxmldsig"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 )
 
-// SAML single sign-on (service-provider initiated, HTTP-Redirect out, HTTP-POST back). A tenant's
-// settings live in tenant_auth_configs (provider_kind 'saml'); the identity provider's metadata is
-// fetched once, when the admin saves, and the XML is kept with the settings so a sign-in never
-// depends on the provider's metadata endpoint being up. Assertions must be signed by a key in that
-// metadata; encrypted assertions are not supported.
+// SAML single sign-on (service-provider initiated, HTTP-Redirect out, HTTP-POST back), on
+// gosaml2. A tenant's settings live in tenant_auth_configs (provider_kind 'saml'); the identity
+// provider's metadata is fetched once, when the admin saves, and the XML is kept with the settings
+// so a sign-in never depends on the provider's metadata endpoint being up. Assertions must be signed
+// by a certificate in that metadata; encrypted assertions are not supported.
 
 const ProviderSAML = "saml"
 
@@ -65,68 +70,85 @@ func SamlURLsFor(publicURL string, tenant uuid.UUID) SamlURLs {
 	return SamlURLs{EntityID: base + "/metadata", Metadata: base + "/metadata", ACS: base + "/acs"}
 }
 
+// IdpMetadata is what a service provider needs from a provider's metadata.
+type IdpMetadata struct {
+	EntityID string
+	// RedirectURL is the HTTP-Redirect single sign-on endpoint.
+	RedirectURL string
+	// Certs are the certificates the provider signs with.
+	Certs []*x509.Certificate
+}
+
+// entitiesDescriptor is a federation's wrapper around several entities.
+type entitiesDescriptor struct {
+	XMLName  xml.Name                 `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntitiesDescriptor"`
+	Entities []types.EntityDescriptor `xml:"EntityDescriptor"`
+}
+
 // ParseIdpMetadata reads and sanity-checks a provider's metadata: it must describe an identity
-// provider with a sign-in endpoint and at least one signing certificate.
-func ParseIdpMetadata(raw []byte) (*saml.EntityDescriptor, error) {
-	md, err := parseMetadata(raw)
-	if err != nil {
+// provider with an HTTP-Redirect sign-in endpoint and at least one signing certificate. Metadata
+// that wraps several entities (a federation's) yields the first identity provider.
+func ParseIdpMetadata(raw []byte) (*IdpMetadata, error) {
+	if err := xrv.Validate(bytes.NewReader(raw)); err != nil {
 		return nil, fmt.Errorf("not SAML metadata: %w", err)
 	}
-	if len(md.IDPSSODescriptors) == 0 {
-		return nil, errors.New("the metadata does not describe an identity provider")
-	}
-	idp := md.IDPSSODescriptors[0]
-	if IdpRedirectLocation(md) == "" {
-		return nil, errors.New("the metadata has no HTTP-Redirect single sign-on endpoint")
-	}
-	signing := 0
-	for _, kd := range idp.KeyDescriptors {
-		if kd.Use == "" || kd.Use == "signing" {
-			signing++
-		}
-	}
-	if signing == 0 {
-		return nil, errors.New("the metadata has no signing certificate")
-	}
-	return md, nil
-}
-
-// parseMetadata reads metadata whose top element is an EntityDescriptor or an EntitiesDescriptor
-// (federations publish the latter): in that case the first entity that is an identity provider.
-func parseMetadata(raw []byte) (*saml.EntityDescriptor, error) {
-	if err := xrv.Validate(bytes.NewReader(raw)); err != nil {
-		return nil, err
-	}
-	entity := &saml.EntityDescriptor{}
-	err := xml.Unmarshal(raw, entity)
+	var entity types.EntityDescriptor
+	err := xml.Unmarshal(raw, &entity)
 	if err != nil && strings.Contains(err.Error(), "EntitiesDescriptor") {
-		entities := &saml.EntitiesDescriptor{}
-		if err := xml.Unmarshal(raw, entities); err != nil {
+		var many entitiesDescriptor
+		if err := xml.Unmarshal(raw, &many); err != nil {
+			return nil, fmt.Errorf("not SAML metadata: %w", err)
+		}
+		entity, err = firstIdentityProvider(many)
+		if err != nil {
 			return nil, err
 		}
-		for i := range entities.EntityDescriptors {
-			if len(entities.EntityDescriptors[i].IDPSSODescriptors) > 0 {
-				return &entities.EntityDescriptors[i], nil
-			}
+	} else if err != nil {
+		return nil, fmt.Errorf("not SAML metadata: %w", err)
+	}
+	idp := entity.IDPSSODescriptor
+	if idp == nil {
+		return nil, errors.New("the metadata does not describe an identity provider")
+	}
+	out := &IdpMetadata{EntityID: entity.EntityID}
+	for _, s := range idp.SingleSignOnServices {
+		if s.Binding == saml2.BindingHttpRedirect {
+			out.RedirectURL = s.Location
+			break
 		}
-		return nil, errors.New("no entity found with an identity provider description")
 	}
-	if err != nil {
-		return nil, err
+	if out.RedirectURL == "" {
+		return nil, errors.New("the metadata has no HTTP-Redirect single sign-on endpoint")
 	}
-	return entity, nil
+	for _, kd := range idp.KeyDescriptors {
+		if kd.Use != "" && kd.Use != "signing" {
+			continue
+		}
+		for _, c := range kd.KeyInfo.X509Data.X509Certificates {
+			der, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(c.Data), ""))
+			if err != nil {
+				return nil, errors.New("a certificate in the metadata is not valid base64")
+			}
+			cert, err := x509.ParseCertificate(der)
+			if err != nil {
+				return nil, errors.New("a certificate in the metadata could not be read")
+			}
+			out.Certs = append(out.Certs, cert)
+		}
+	}
+	if len(out.Certs) == 0 {
+		return nil, errors.New("the metadata has no signing certificate")
+	}
+	return out, nil
 }
 
-// IdpRedirectLocation is the provider's HTTP-Redirect sign-in endpoint ("" when it has none).
-func IdpRedirectLocation(md *saml.EntityDescriptor) string {
-	for _, d := range md.IDPSSODescriptors {
-		for _, s := range d.SingleSignOnServices {
-			if s.Binding == saml.HTTPRedirectBinding {
-				return s.Location
-			}
+func firstIdentityProvider(many entitiesDescriptor) (types.EntityDescriptor, error) {
+	for _, e := range many.Entities {
+		if e.IDPSSODescriptor != nil {
+			return e, nil
 		}
 	}
-	return ""
+	return types.EntityDescriptor{}, errors.New("no entity found with an identity provider description")
 }
 
 // FetchIdpMetadata downloads metadata from an https URL (plain http only for loopback, for local
@@ -173,44 +195,64 @@ func FetchIdpMetadata(ctx context.Context, client *http.Client, rawURL string) (
 }
 
 // ServiceProvider builds the SAML service provider for a tenant from its settings.
-func (c *SamlConfig) ServiceProvider(urls SamlURLs) (*saml.ServiceProvider, error) {
+func (c *SamlConfig) ServiceProvider(urls SamlURLs) (*saml2.SAMLServiceProvider, error) {
 	md, err := ParseIdpMetadata([]byte(c.IdpMetadataXML))
 	if err != nil {
 		return nil, err
 	}
-	meta, err := url.Parse(urls.Metadata)
-	if err != nil {
-		return nil, err
-	}
-	acs, err := url.Parse(urls.ACS)
-	if err != nil {
-		return nil, err
-	}
-	return &saml.ServiceProvider{
-		EntityID:          urls.EntityID,
-		MetadataURL:       *meta,
-		AcsURL:            *acs,
-		IDPMetadata:       md,
-		AuthnNameIDFormat: saml.EmailAddressNameIDFormat,
-		// Only answers to a request this service made: an unsolicited (IdP-initiated) response has
-		// no state to bind it to a browser, so it is refused.
-		AllowIDPInitiated: false,
+	return &saml2.SAMLServiceProvider{
+		IdentityProviderSSOURL:      md.RedirectURL,
+		IdentityProviderSSOBinding:  saml2.BindingHttpRedirect,
+		IdentityProviderIssuer:      md.EntityID,
+		ServiceProviderIssuer:       urls.EntityID,
+		AudienceURI:                 urls.EntityID,
+		AssertionConsumerServiceURL: urls.ACS,
+		// Exactly the provider's own signing certificates are trusted.
+		IDPCertificateStore:    &dsig.MemoryX509CertificateStore{Roots: md.Certs},
+		NameIdFormat:           "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+		AllowMissingAttributes: true,
+		Clock:                  dsig.NewRealClock(),
 	}, nil
 }
 
 // StartRedirect builds the redirect to the provider and returns it with the request's ID, which
 // the response must echo (InResponseTo).
-func StartRedirect(sp *saml.ServiceProvider, relayState string) (redirectURL *url.URL, requestID string, err error) {
-	binding := saml.HTTPRedirectBinding
-	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(binding), binding, saml.HTTPPostBinding)
+func StartRedirect(sp *saml2.SAMLServiceProvider, relayState string) (redirectURL *url.URL, requestID string, err error) {
+	doc, err := sp.BuildAuthRequestDocument()
 	if err != nil {
 		return nil, "", err
 	}
-	u, err := req.Redirect(relayState, sp)
+	requestID = doc.Root().SelectAttrValue("ID", "")
+	if requestID == "" {
+		return nil, "", errors.New("the sign-in request has no ID")
+	}
+	raw, err := sp.BuildAuthURLRedirect(relayState, doc)
 	if err != nil {
 		return nil, "", err
 	}
-	return u, req.ID, nil
+	redirectURL, err = url.Parse(raw)
+	return redirectURL, requestID, err
+}
+
+// ServiceProviderMetadata is what an admin registers at the identity provider: this service's
+// entity ID and assertion consumer URL for the tenant. It asks for signed assertions and signs
+// nothing itself, so it carries no keys.
+func ServiceProviderMetadata(urls SamlURLs) ([]byte, error) {
+	md := types.EntityDescriptor{
+		EntityID: urls.EntityID,
+		SPSSODescriptor: &types.SPSSODescriptor{
+			AuthnRequestsSigned:        false,
+			WantAssertionsSigned:       true,
+			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
+			NameIDFormats:              []string{"urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"},
+			AssertionConsumerServices:  []types.IndexedEndpoint{{Binding: saml2.BindingHttpPost, Location: urls.ACS, Index: 1}},
+		},
+	}
+	out, err := xml.MarshalIndent(md, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(xml.Header), out...), nil
 }
 
 // emailAttributeNames are tried, in order, when no attribute is configured.
@@ -220,16 +262,60 @@ var emailAttributeNames = []string{
 	"urn:oid:0.9.2342.19200300.100.1.3",
 }
 
-// IdentityFromAssertion turns a verified assertion into who signed in. A SAML assertion carries no
-// `email_verified`: the provider the tenant chose signed it, and the tenant's domain proof (checked
-// by the caller) is what says the tenant may speak for that address.
-func (c *SamlConfig) IdentityFromAssertion(a *saml.Assertion) (*VerifiedIdentity, error) {
-	if a == nil || a.Subject == nil || a.Subject.NameID == nil || strings.TrimSpace(a.Subject.NameID.Value) == "" {
+// VerifyResponse checks a provider's signed response and returns who signed in. Besides what
+// gosaml2 verifies (signature against the provider's certificates, issuer, destination, recipient,
+// status), it requires the response to answer the request this sign-in made (InResponseTo), to carry
+// exactly one assertion that is current and addressed to this service, and it never trusts a panic
+// in parsing hostile XML to stay inside the library.
+//
+// A SAML assertion carries no `email_verified`: the provider the tenant chose signed it, and the
+// tenant's domain proof (checked by the caller) is what says the tenant may speak for that address.
+func (c *SamlConfig) VerifyResponse(sp *saml2.SAMLServiceProvider, encoded, requestID string) (who *VerifiedIdentity, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			who, err = nil, fmt.Errorf("the response could not be parsed")
+		}
+	}()
+	resp, err := sp.ValidateEncodedResponse(encoded)
+	if err != nil {
+		return nil, err
+	}
+	if requestID == "" || resp.InResponseTo != requestID {
+		return nil, errors.New("the response does not answer this sign-in")
+	}
+	if len(resp.Assertions) != 1 {
+		return nil, errors.New("the response must carry exactly one assertion")
+	}
+	a := resp.Assertions[0]
+	if a.Subject == nil || a.Subject.SubjectConfirmation == nil || a.Subject.SubjectConfirmation.SubjectConfirmationData == nil {
+		return nil, errors.New("the assertion has no subject confirmation")
+	}
+	if got := a.Subject.SubjectConfirmation.SubjectConfirmationData.InResponseTo; got != requestID {
+		return nil, errors.New("the assertion does not answer this sign-in")
+	}
+	if a.Conditions == nil || len(a.Conditions.AudienceRestrictions) == 0 {
+		return nil, errors.New("the assertion names no audience")
+	}
+	warn, err := sp.VerifyAssertionConditions(&a)
+	if err != nil {
+		return nil, err
+	}
+	if warn.InvalidTime {
+		return nil, errors.New("the assertion is not valid at this time")
+	}
+	if warn.NotInAudience {
+		return nil, errors.New("the assertion is not addressed to this service")
+	}
+	return c.identityFromAssertion(&a)
+}
+
+func (c *SamlConfig) identityFromAssertion(a *types.Assertion) (*VerifiedIdentity, error) {
+	if a.Subject == nil || a.Subject.NameID == nil || strings.TrimSpace(a.Subject.NameID.Value) == "" {
 		return nil, errors.New("the assertion names no subject")
 	}
 	attrs := map[string][]string{}
-	for _, st := range a.AttributeStatements {
-		for _, at := range st.Attributes {
+	if a.AttributeStatement != nil {
+		for _, at := range a.AttributeStatement.Attributes {
 			var values []string
 			for _, v := range at.Values {
 				values = append(values, strings.TrimSpace(v.Value))

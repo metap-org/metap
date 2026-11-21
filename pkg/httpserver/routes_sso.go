@@ -12,8 +12,6 @@ package httpserver
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/xml"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -21,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crewjam/saml"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	saml2 "github.com/russellhaering/gosaml2"
 
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -343,7 +341,7 @@ func mountSSO(r chi.Router, state *AppState) {
 }
 
 // samlProvider loads the tenant's enabled SAML settings and builds the service provider for them.
-func samlProvider(w http.ResponseWriter, r *http.Request, state *AppState) (uuid.UUID, *tenantauth.SamlConfig, *saml.ServiceProvider, bool) {
+func samlProvider(w http.ResponseWriter, r *http.Request, state *AppState) (uuid.UUID, *tenantauth.SamlConfig, *saml2.SAMLServiceProvider, bool) {
 	if !state.CanIssueTokens() {
 		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
 		return uuid.Nil, nil, nil, false
@@ -374,17 +372,17 @@ func samlProvider(w http.ResponseWriter, r *http.Request, state *AppState) (uuid
 // samlMetadata is what an admin registers at the identity provider: this service's entity ID and
 // assertion consumer URL for the tenant.
 func samlMetadata(w http.ResponseWriter, r *http.Request, state *AppState) {
-	_, _, sp, ok := samlProvider(w, r, state)
+	tenant, _, _, ok := samlProvider(w, r, state)
 	if !ok {
 		return
 	}
-	out, err := xml.MarshalIndent(sp.Metadata(), "", "  ")
+	out, err := tenantauth.ServiceProviderMetadata(tenantauth.SamlURLsFor(state.PublicAppURL, tenant))
 	if err != nil {
 		writeInternalError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
-	_, _ = w.Write(append([]byte(xml.Header), out...))
+	_, _ = w.Write(out)
 }
 
 func samlStart(w http.ResponseWriter, r *http.Request, state *AppState) {
@@ -424,21 +422,12 @@ func samlACS(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeServiceError(w, http.StatusBadRequest, errcode.SSOFailed, "The sign-in is unknown, used or expired. Start again.", nil)
 		return
 	}
-	raw, err := base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLResponse"))
-	if err != nil {
-		writeServiceError(w, http.StatusBadRequest, errcode.SSOFailed, "The identity provider's answer could not be read.", nil)
-		return
-	}
-	// Checked against the ACS URL we registered, not the request URL, which a proxy may rewrite.
-	assertion, err := sp.ParseXMLResponse(raw, []string{st.Nonce}, sp.AcsURL)
+	// What is checked is the response against the single-use request this sign-in made, with the
+	// provider's own certificates; the destination and recipient are our registered ACS URL.
+	who, err := cfg.VerifyResponse(sp, r.PostForm.Get("SAMLResponse"), st.Nonce)
 	if err != nil {
 		slog.Warn("saml response verification failed", "tenant_id", tenant, "error", err)
 		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed, "The identity provider's answer could not be verified.", nil)
-		return
-	}
-	who, err := cfg.IdentityFromAssertion(assertion)
-	if err != nil {
-		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed, "The identity provider's answer does not say who you are: "+err.Error()+".", nil)
 		return
 	}
 	finishSSO(w, r, state, tenant, ssoPolicy{provider: tenantauth.ProviderSAML, defaultRole: cfg.DefaultRole, mapping: cfg.Mapping(),

@@ -337,7 +337,7 @@ func (s *SsoAdminService) samlView(ctx context.Context, tenant uuid.UUID) (*Saml
 		out.DefaultRole, out.Enforced, out.PostLoginRedirect = cfg.DefaultRole, cfg.Enforced, cfg.PostLoginRedirect
 		if md, err := tenantauth.ParseIdpMetadata([]byte(cfg.IdpMetadataXML)); err == nil {
 			out.IdpEntityId = md.EntityID
-			out.IdpSsoUrl = tenantauth.IdpRedirectLocation(md)
+			out.IdpSsoUrl = md.RedirectURL
 		}
 	}
 	if out.Domains, err = s.domainsView(ctx, tenant); err != nil {
