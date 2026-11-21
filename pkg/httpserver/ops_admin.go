@@ -483,6 +483,18 @@ func registerWorkspaceOperations(api huma.API, state *AppState, cfg adminapi.Ide
 		func(ctx context.Context, in *bodyIn[adminapi.SetSsoConfigRequest]) (*adminapi.SsoConfig, error) {
 			return sso.SetSsoConfig(ctx, &in.Body)
 		})
+	adminOp(api, state, opOf("getSamlConfig", http.MethodGet, "/admin/sso/saml", "The tenant's SAML single sign-on setup", "SSO"),
+		func(ctx context.Context, _ *struct{}) (*adminapi.SamlConfig, error) {
+			return sso.GetSamlConfig(ctx, empty)
+		})
+	adminOp(api, state, opOf("setSamlConfig", http.MethodPut, "/admin/sso/saml", "Set up SAML single sign-on", "SSO"),
+		func(ctx context.Context, in *bodyIn[adminapi.SetSamlConfigRequest]) (*adminapi.SamlConfig, error) {
+			return sso.SetSamlConfig(ctx, &in.Body)
+		})
+	adminNoContent(api, state, opOf("deleteSamlConfig", http.MethodDelete, "/admin/sso/saml", "Remove SAML single sign-on", "SSO"),
+		func(ctx context.Context, _ *struct{}) (*adminapi.Empty, error) {
+			return sso.DeleteSamlConfig(ctx, empty)
+		})
 	adminOp(api, state, opOf("verifySsoDomain", http.MethodPost, "/admin/sso/domains/{domain}/verify", "Check the DNS record that proves a domain is owned", "SSO"),
 		func(ctx context.Context, in *struct {
 			Domain string `path:"domain"`

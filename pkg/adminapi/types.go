@@ -622,6 +622,45 @@ type SsoDomain struct {
 	VerifyValue string `json:"verifyValue" required:"false"`
 }
 
+// SetSamlConfigRequest sets up SAML single sign-on. Give the provider's metadata as a URL (fetched
+// now) or as XML; give neither to keep the metadata already stored.
+type SetSamlConfigRequest struct {
+	IdpMetadataUrl string `json:"idpMetadataUrl" required:"false"`
+	IdpMetadataXml string `json:"idpMetadataXml" required:"false"`
+	// The attribute that carries the address; empty uses the NameID when it is an address.
+	EmailAttribute string `json:"emailAttribute" required:"false"`
+	// The attribute that lists groups or roles, and which tenant role each value means. Never admin.
+	RoleAttribute     string            `json:"roleAttribute" required:"false"`
+	RoleMap           map[string]string `json:"roleMap" required:"false"`
+	EmailDomains      []string          `json:"emailDomains" required:"false"`
+	DefaultRole       string            `json:"defaultRole" required:"false"`
+	Enabled           bool              `json:"enabled" required:"false"`
+	Enforced          bool              `json:"enforced" required:"false"`
+	PostLoginRedirect string            `json:"postLoginRedirect" required:"false"`
+}
+
+type SamlConfig struct {
+	Configured     bool   `json:"configured" required:"false"`
+	Enabled        bool   `json:"enabled" required:"false"`
+	IdpMetadataUrl string `json:"idpMetadataUrl" required:"false"`
+	IdpEntityId    string `json:"idpEntityId" required:"false"`
+	// The provider's sign-in endpoint taken from its metadata.
+	IdpSsoUrl         string            `json:"idpSsoUrl" required:"false"`
+	EmailAttribute    string            `json:"emailAttribute" required:"false"`
+	RoleAttribute     string            `json:"roleAttribute" required:"false"`
+	RoleMap           map[string]string `json:"roleMap" required:"false"`
+	EmailDomains      []string          `json:"emailDomains" required:"false"`
+	DefaultRole       string            `json:"defaultRole" required:"false"`
+	Enforced          bool              `json:"enforced" required:"false"`
+	PostLoginRedirect string            `json:"postLoginRedirect" required:"false"`
+	// Register these at the identity provider.
+	EntityId    string `json:"entityId" required:"false"`
+	AcsUrl      string `json:"acsUrl" required:"false"`
+	MetadataUrl string `json:"metadataUrl" required:"false"`
+	// Each domain above and whether the workspace has proved it owns it.
+	Domains []*SsoDomain `json:"domains" required:"false"`
+}
+
 type VerifySsoDomainRequest struct {
 	Domain string `json:"domain" required:"false"`
 }
@@ -2688,4 +2727,25 @@ func (x *VerifySsoDomainRequest) GetDomain() string {
 		return x.Domain
 	}
 	return ""
+}
+
+func (x *SetSamlConfigRequest) GetIdpMetadataUrl() string {
+	if x != nil {
+		return x.IdpMetadataUrl
+	}
+	return ""
+}
+
+func (x *SetSamlConfigRequest) GetIdpMetadataXml() string {
+	if x != nil {
+		return x.IdpMetadataXml
+	}
+	return ""
+}
+
+func (x *SetSamlConfigRequest) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
 }

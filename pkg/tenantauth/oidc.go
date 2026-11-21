@@ -52,11 +52,22 @@ type OidcConfig struct {
 	RoleMap   map[string]string `json:"roleMap,omitempty"`
 }
 
-// ManagedRoles is every tenant role the identity provider's claim decides (RoleMap's values).
-func (c *OidcConfig) ManagedRoles() []string {
+// Mapping is the settings' group-to-role mapping.
+func (c *OidcConfig) Mapping() RoleMapping { return RoleMapping{Claim: c.RoleClaim, Map: c.RoleMap} }
+
+// RoleMapping says which tenant role each value of a provider's group claim (or SAML attribute)
+// stands for. At every sign-in the mapped roles are brought in line with the claim; a role not named
+// in the map is never touched, so what an admin grants by hand stays.
+type RoleMapping struct {
+	Claim string
+	Map   map[string]string
+}
+
+// ManagedRoles is every tenant role the provider's claim decides (the map's values).
+func (m RoleMapping) ManagedRoles() []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, role := range c.RoleMap {
+	for _, role := range m.Map {
 		if !seen[role] {
 			seen[role] = true
 			out = append(out, role)
@@ -67,10 +78,10 @@ func (c *OidcConfig) ManagedRoles() []string {
 }
 
 // MappedRoles is the managed roles the given claim values grant.
-func (c *OidcConfig) MappedRoles(claimValues []string) map[string]bool {
+func (m RoleMapping) MappedRoles(claimValues []string) map[string]bool {
 	out := map[string]bool{}
 	for _, v := range claimValues {
-		if role, ok := c.RoleMap[v]; ok {
+		if role, ok := m.Map[v]; ok {
 			out[role] = true
 		}
 	}

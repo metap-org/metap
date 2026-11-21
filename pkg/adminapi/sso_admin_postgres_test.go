@@ -4,12 +4,21 @@ package adminapi
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
+	"time"
 
+	"github.com/crewjam/saml"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -210,4 +219,108 @@ func TestSsoDomainOwnershipIsProvedByDNS(t *testing.T) {
 	// Dropping a domain from the settings drops its row.
 	cfg = save(asAcme, "acme.io")
 	assert.Nil(t, byName(cfg, "acme.org"))
+}
+
+// samlMetadataXML is metadata for a throwaway SAML identity provider.
+func samlMetadataXML(t *testing.T) string {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "idp"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), BasicConstraintsValid: true}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	meta, _ := url.Parse("https://idp.example.com/metadata")
+	sso, _ := url.Parse("https://idp.example.com/sso")
+	idp := &saml.IdentityProvider{Key: key, Signer: key, Certificate: cert, MetadataURL: *meta, SSOURL: *sso}
+	raw, err := xml.Marshal(idp.Metadata())
+	require.NoError(t, err)
+	return string(raw)
+}
+
+// SAML settings: the provider's metadata is checked when saved (as XML or fetched from a URL), the
+// endpoints to register at the provider are returned, the shared rules apply (never admin, only the
+// owner enforces), and only one protocol can be on.
+func TestSamlAdminConfig(t *testing.T) {
+	h := newIdentityHarness(t)
+	tenant := uuid.New()
+	owner := h.member(tenant, "owner@acme.io", "admin")
+	other := h.member(tenant, "admin2@acme.io", "admin")
+	h.policyRole(tenant, "viewer")
+	asOwner, asOther := h.as(tenant, owner.ID), h.as(tenant, other.ID)
+	metadata := samlMetadataXML(t)
+
+	cfg, err := h.client.SSO.GetSamlConfig(asOwner, &Empty{})
+	require.NoError(t, err)
+	assert.False(t, cfg.Configured)
+	assert.Equal(t, "http://portal.test/auth/saml/"+tenant.String()+"/acs", cfg.AcsUrl, "what to register at the provider")
+	assert.Equal(t, "http://portal.test/auth/saml/"+tenant.String()+"/metadata", cfg.EntityId)
+
+	valid := func() *SetSamlConfigRequest {
+		return &SetSamlConfigRequest{IdpMetadataXml: metadata, EmailDomains: []string{"Acme.io"}, DefaultRole: "viewer", Enabled: true,
+			PostLoginRedirect: "http://portal.test/home"}
+	}
+	code := func(mut func(*SetSamlConfigRequest)) int {
+		r := valid()
+		mut(r)
+		_, err := h.client.SSO.SetSamlConfig(asOwner, r)
+		return statusOf(err)
+	}
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.IdpMetadataXml = "<nope/>" }), "must be SAML metadata")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.IdpMetadataXml = "" }), "the first setup needs metadata")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.IdpMetadataXml, r.IdpMetadataUrl = "", "http://idp.example.com/m" }), "https only")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.DefaultRole = "admin" }), "SSO never mints admins")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.RoleMap = map[string]string{"g": "viewer"} }), "a map needs an attribute")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) {
+		r.RoleAttribute, r.RoleMap = "groups", map[string]string{"g": "admin"}
+	}), "a provider group never makes an admin")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.PostLoginRedirect = "https://evil.example.com/" }))
+	_, err = h.client.SSO.SetSamlConfig(h.as(tenant, uuid.New()), valid())
+	assert.Equal(t, http.StatusForbidden, statusOf(err), "admins only")
+
+	// Metadata fetched from a URL is stored.
+	served := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(metadata)) }))
+	t.Cleanup(served.Close)
+	byURL := valid()
+	byURL.IdpMetadataXml, byURL.IdpMetadataUrl = "", served.URL
+	set, err := h.client.SSO.SetSamlConfig(asOther, byURL)
+	require.NoError(t, err, "plain http is accepted for a loopback provider")
+	assert.True(t, set.Configured && set.Enabled)
+	assert.Equal(t, "https://idp.example.com/metadata", set.IdpEntityId)
+	assert.Equal(t, "https://idp.example.com/sso", set.IdpSsoUrl)
+	assert.Equal(t, []string{"acme.io"}, set.EmailDomains)
+	require.Len(t, set.Domains, 1)
+	assert.Equal(t, "pending", set.Domains[0].Status, "domains start unproved")
+
+	// A later save without metadata keeps what is stored.
+	keep := valid()
+	keep.IdpMetadataXml, keep.DefaultRole = "", ""
+	set, err = h.client.SSO.SetSamlConfig(asOther, keep)
+	require.NoError(t, err)
+	assert.Equal(t, "https://idp.example.com/metadata", set.IdpEntityId)
+
+	// Only the owner enforces.
+	enforce := valid()
+	enforce.IdpMetadataXml, enforce.Enforced = "", true
+	_, err = h.client.SSO.SetSamlConfig(asOther, enforce)
+	assert.Equal(t, http.StatusForbidden, statusOf(err))
+	set, err = h.client.SSO.SetSamlConfig(asOwner, enforce)
+	require.NoError(t, err)
+	assert.True(t, set.Enforced)
+
+	// One protocol at a time.
+	oidc := &SetSsoConfigRequest{IssuerUrl: discoveryOnly(t), ClientId: "c1", ClientSecret: "s3cret", Enabled: true}
+	_, err = h.client.SSO.SetSsoConfig(asOwner, oidc)
+	assert.Equal(t, http.StatusBadRequest, statusOf(err), "SAML is on")
+
+	_, err = h.client.SSO.DeleteSamlConfig(asOther, &Empty{})
+	require.NoError(t, err)
+	cfg, err = h.client.SSO.GetSamlConfig(asOwner, &Empty{})
+	require.NoError(t, err)
+	assert.False(t, cfg.Configured)
+	_, err = h.client.SSO.SetSsoConfig(asOwner, oidc)
+	assert.NoError(t, err, "with SAML removed, OpenID Connect can be turned on")
+	_, err = h.client.SSO.SetSamlConfig(asOwner, valid())
+	assert.Equal(t, http.StatusBadRequest, statusOf(err), "and now OpenID Connect is on")
 }
