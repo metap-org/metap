@@ -10,6 +10,7 @@ package secrets
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/metap-org/metap/pkg/control"
 
@@ -33,6 +34,10 @@ type Config struct {
 	AWSSecretsEndpointURL string
 
 	GCPSecretsProjectID string
+
+	// EncryptionKeys (SECRETS_ENCRYPTION_KEYS, "id:base64key[,...]") enables storing tenant
+	// credentials in the database, encrypted; empty leaves that mode off.
+	EncryptionKeys string
 }
 
 func ConfigFromAppConfig(config *infra.AppConfig) Config {
@@ -47,6 +52,7 @@ func ConfigFromAppConfig(config *infra.AppConfig) Config {
 		AWSSecretsSecretKey:   config.AWSSecretsSecretKey,
 		AWSSecretsEndpointURL: config.AWSSecretsEndpointURL,
 		GCPSecretsProjectID:   config.GCPSecretsProjectID,
+		EncryptionKeys:        os.Getenv("SECRETS_ENCRYPTION_KEYS"),
 	}
 }
 
@@ -71,6 +77,7 @@ func ConfigFromEnv() Config {
 		AWSSecretsRegion: awsRegion, AWSSecretsAccessKey: awsAccessKey,
 		AWSSecretsSecretKey: awsSecretKey, AWSSecretsEndpointURL: awsEndpointURL,
 		GCPSecretsProjectID: gcpProjectID,
+		EncryptionKeys:      os.Getenv("SECRETS_ENCRYPTION_KEYS"),
 	}
 }
 
@@ -78,21 +85,30 @@ func ConfigFromEnv() Config {
 // GCP, then AWS, then Vault, then the EnvStore fallback — an arbitrary but fixed order,
 // deterministic and documented rather than left to if/match arm evaluation order.
 func Build(ctx context.Context, config Config) (control.SecretStore, error) {
+	store, _, err := buildExternal(ctx, config)
+	return store, err
+}
+
+// buildExternal builds the deployment's secret manager and names its kind: "gcp", "aws", "vault",
+// or "env" (the read-only environment fallback).
+func buildExternal(ctx context.Context, config Config) (control.SecretStore, string, error) {
 	if config.GCPSecretsProjectID != "" {
-		return NewGcpSecretManagerStore(ctx, config.GCPSecretsProjectID)
+		store, err := NewGcpSecretManagerStore(ctx, config.GCPSecretsProjectID)
+		return store, KindGCP, err
 	}
 
 	if config.AWSSecretsRegion != "" {
 		if config.AWSSecretsAccessKey == "" {
-			return nil, fmt.Errorf("AWS_SECRETS_REGION is set but AWS_SECRETS_ACCESS_KEY is not")
+			return nil, "", fmt.Errorf("AWS_SECRETS_REGION is set but AWS_SECRETS_ACCESS_KEY is not")
 		}
 		if config.AWSSecretsSecretKey == "" {
-			return nil, fmt.Errorf("AWS_SECRETS_REGION is set but AWS_SECRETS_SECRET_KEY is not")
+			return nil, "", fmt.Errorf("AWS_SECRETS_REGION is set but AWS_SECRETS_SECRET_KEY is not")
 		}
-		return NewAwsSecretsManagerStore(ctx, AwsSecretsManagerStoreConfig{
+		store, err := NewAwsSecretsManagerStore(ctx, AwsSecretsManagerStoreConfig{
 			Region: config.AWSSecretsRegion, AccessKey: config.AWSSecretsAccessKey,
 			SecretKey: config.AWSSecretsSecretKey, EndpointURL: config.AWSSecretsEndpointURL,
 		})
+		return store, KindAWS, err
 	}
 
 	if config.VaultAddr != "" {
@@ -102,13 +118,15 @@ func Build(ctx context.Context, config Config) (control.SecretStore, error) {
 			if mount == "" {
 				mount = defaultApproleMount
 			}
-			return NewVaultStoreWithAppRole(ctx, config.VaultAddr, mount, config.VaultRoleID, config.VaultSecretID)
+			store, err := NewVaultStoreWithAppRole(ctx, config.VaultAddr, mount, config.VaultRoleID, config.VaultSecretID)
+			return store, KindVault, err
 		case config.VaultToken != "":
-			return NewVaultStore(config.VaultAddr, config.VaultToken)
+			store, err := NewVaultStore(config.VaultAddr, config.VaultToken)
+			return store, KindVault, err
 		default:
-			return nil, fmt.Errorf("VAULT_ADDR is set but neither VAULT_TOKEN nor VAULT_ROLE_ID+VAULT_SECRET_ID is")
+			return nil, "", fmt.Errorf("VAULT_ADDR is set but neither VAULT_TOKEN nor VAULT_ROLE_ID+VAULT_SECRET_ID is")
 		}
 	}
 
-	return control.EnvStore{}, nil
+	return control.EnvStore{}, KindEnv, nil
 }

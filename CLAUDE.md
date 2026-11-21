@@ -23,6 +23,21 @@ gRPC/GraphQL mention below is history. Today:
   (`AppState.Identity`). The services themselves are plain Go in `pkg/adminapi` (request/response structs in `types.go`,
   failures are `*crud.ServiceError`, the caller comes from `adminapi.WithCaller`/`WithAuthenticator`); SCIM (`/scim/v2`)
   runs `adminapi.UserAdminService` in-process.
+- **Tenant credentials: many named ones, two homes (2026-11-21).** A tenant keeps any number of credentials
+  (`metadata.tenant_credentials`: id, name, kind `authorization`|`secret`, where it lives; no value) and other features link to one
+  by id — a cron webhook's `targetConfig.credentialId` (validated on create/update; `cron.ReferencedCredentials` also feeds the
+  tab's "used by", and a credential in use cannot be removed: 409 `record_referenced`). The value lives under
+  `control.TenantCredentialRef(tenant, id)` — derived from the row, never typed, so a job can only ever reach its own tenant's
+  credential. `secrets.Manager` is the deployment's `control.SecretStore`: reads look in the metap database first
+  (`metadata.tenant_secrets`, AES-256-GCM, the reference as authenticated data; keys from
+  `SECRETS_ENCRYPTION_KEYS="id:base64[,old...]"`, first is active, so rotation = new key first) and then in the external manager
+  (Vault/AWS/GCP, else the read-only environment). The Credentials tab (`/admin/credentials*`, `adminapi.CredentialsService`)
+  chooses a home per credential (`database` or `external`), keeps one copy, values are write-only (moving needs the value again),
+  and the audit trail never holds one. The legacy `authorizationFromSecret` flag (config key `cron.webhookAuthorization`) still
+  works for existing jobs. Kinds: `authorization` (a header value), `secret` (opaque) and `userpass` (username shown from the row,
+  password write-only; both are stored as one value `control.EncodeUserPass` — a reserved `userpass:` prefix no other kind may use —
+  and a webhook sends it as HTTP Basic via `control.AuthorizationFromCredential`; a new username keeps the password). Every binary that reads tenant secrets (cron-scheduler too) builds the Manager, or it would not see the
+  database copy.
 - A service calling a sibling uses `pkg/recordclient` (a `crud.RecordBackend` + `crud.ActionInvoker` over REST, forwarding
   the caller's token); `cmd/cron-scheduler` reaches its target the same way (`CRON_TARGET_URL`).
 - A multi-service product puts `pkg/apigateway` in front (`cmd/api-gateway`, or `apigateway.Main()` from the product's own

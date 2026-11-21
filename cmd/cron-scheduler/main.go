@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/cronscheduler"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/infra"
@@ -93,10 +94,12 @@ func main() {
 	// and every process agrees on where a tenant's credentials live. A backend that fails to
 	// construct degrades to nil rather than refusing to boot — most job types need no credential
 	// at all, and only the jobs that asked for one should fail.
-	secretStore, err := secrets.Build(ctx, secrets.ConfigFromAppConfig(config))
+	var secretStore control.SecretStore
+	secretManager, err := secrets.NewManager(ctx, secrets.ConfigFromAppConfig(config), pool)
 	if err != nil {
 		slog.Warn("no secret backend available — webhook jobs requesting their tenant's stored credential will fail; every other job type is unaffected", standard.LogError, err)
-		secretStore = nil
+	} else {
+		secretStore = secretManager
 	}
 
 	executorConfig := &cronscheduler.ExecutorConfig{

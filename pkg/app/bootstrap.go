@@ -61,11 +61,11 @@ func RunBootstrap(ctx context.Context, opts BootstrapOptions) error {
 		return fmt.Errorf("connecting to postgres: %w", err)
 	}
 	defer pool.Close()
-	secretStore, err := secrets.Build(ctx, secrets.ConfigFromEnv())
+	secretManager, err := secrets.NewManager(ctx, secrets.ConfigFromEnv(), pool)
 	if err != nil {
 		return fmt.Errorf("building secret store: %w", err)
 	}
-	router := control.NewRouter(pool, control.NewRegistryCache(control.NewPostgresTenantRegistry(pool)), secretStore)
+	router := control.NewRouter(pool, control.NewRegistryCache(control.NewPostgresTenantRegistry(pool)), secretManager)
 	permissions := permission.NewPermissionService(control.NewPostgresPolicyStore(router))
 
 	registry := metadata.NewMetadataRegistry()

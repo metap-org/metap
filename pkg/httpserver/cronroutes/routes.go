@@ -211,6 +211,13 @@ func createCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.App
 		cronValidationError(w, msg)
 		return
 	}
+	if missing, bad, err := missingCredential(r.Context(), state.Pool, tenantID, cron.ReferencedCredentials(body.TargetType, body.TargetConfig)); err != nil {
+		httpserver.WriteInternalError(w, err)
+		return
+	} else if bad {
+		cronValidationError(w, "`targetConfig.credentialId` "+missing.String()+" is not one of this workspace's credentials.")
+		return
+	}
 	if _, ok := cron.ParseDispatchMode(body.DispatchMode); !ok {
 		cronValidationError(w, "`dispatchMode` must be one of: outbox, direct.")
 		return
@@ -330,6 +337,24 @@ func updateCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.App
 	if body.DispatchMode != nil {
 		if _, ok := cron.ParseDispatchMode(*body.DispatchMode); !ok {
 			cronValidationError(w, "`dispatchMode` must be one of: outbox, direct.")
+			return
+		}
+	}
+	if body.TargetConfig != nil {
+		targetType := ""
+		if body.TargetType != nil {
+			targetType = *body.TargetType
+		} else if existing, gerr := cron.GetJob(r.Context(), state.Pool, tenantID, id); gerr != nil {
+			httpserver.WriteInternalError(w, gerr)
+			return
+		} else if existing != nil {
+			targetType = existing.TargetType
+		}
+		if missing, bad, err := missingCredential(r.Context(), state.Pool, tenantID, cron.ReferencedCredentials(targetType, body.TargetConfig)); err != nil {
+			httpserver.WriteInternalError(w, err)
+			return
+		} else if bad {
+			cronValidationError(w, "`targetConfig.credentialId` "+missing.String()+" is not one of this workspace's credentials.")
 			return
 		}
 	}
