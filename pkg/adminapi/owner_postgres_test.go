@@ -75,6 +75,21 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, st.GetPendingRecovery(), "the tenant sees the pending recovery")
 
+	// The platform admin sees the same, plus who could take over; nobody else may look.
+	_, err = h.client.Owner.PlatformTenantOwner(asOwner, &TenantIdOnlyRequest{TenantId: tenant.String()})
+	assert.Equal(t, http.StatusForbidden, statusOf(err))
+	view, err := h.client.Owner.PlatformTenantOwner(asVendor, &TenantIdOnlyRequest{TenantId: tenant.String()})
+	require.NoError(t, err)
+	assert.Equal(t, owner.ID.String(), view.GetOwner().GetOwnerMemberId())
+	assert.Equal(t, "owner@acme.io", view.GetOwner().GetOwnerEmail())
+	assert.NotNil(t, view.GetOwner().GetPendingRecovery())
+	var emails []string
+	for _, p := range view.GetPeople() {
+		emails = append(emails, p.GetEmail())
+		assert.Equal(t, p.GetId() == owner.ID.String(), p.GetIsOwner())
+	}
+	assert.ElementsMatch(t, []string{"owner@acme.io", "admin2@acme.io"}, emails, "the disabled viewer is not offered")
+
 	// An admin cancels it: nothing changes.
 	st, err = h.client.Owner.CancelOwnerRecovery(asOther, &Empty{})
 	require.NoError(t, err)

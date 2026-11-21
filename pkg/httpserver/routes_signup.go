@@ -83,6 +83,12 @@ func clientIP(r *http.Request, state *AppState) string {
 	return httpx.ClientIP(r, state.TrustedProxies)
 }
 
+// signupStatus tells a sign-in page whether to offer "create an account". Deliberately its own
+// route rather than a public config key: only tenant-tier keys may be served unauthenticated.
+func signupStatus(w http.ResponseWriter, _ *http.Request, state *AppState) {
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"enabled": state.CanIssueTokens() && signupEnabled(state)}})
+}
+
 // signup starts self-service registration (roadmap 115 M2): it validates what the person typed,
 // emails a link and creates nothing else. It answers 202 whether or not the address is already
 // registered or was rate limited, so it cannot be used to find out who has an account.

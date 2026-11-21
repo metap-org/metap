@@ -448,6 +448,7 @@ func mountAuth(r chi.Router, state *AppState) {
 		state.TrustedProxies,
 	))
 	guarded.Post("/auth/login", wrap(login))
+	r.Get("/auth/signup/status", wrap(signupStatus))
 	guarded.Post("/auth/signup", wrap(signup))
 	guarded.Post("/auth/signup/verify", wrap(signupVerify))
 	guarded.Post("/auth/login/mfa", wrap(loginMFA))

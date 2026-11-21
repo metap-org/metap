@@ -550,6 +550,20 @@ type OwnerRecovery struct {
 	CompletedAt      string `json:"completedAt" required:"false"`
 }
 
+// TenantPerson is an active person in a tenant: who a platform admin can name as the new owner.
+type TenantPerson struct {
+	Id          string `json:"id" required:"false"`
+	Email       string `json:"email" required:"false"`
+	DisplayName string `json:"displayName" required:"false"`
+	IsOwner     bool   `json:"isOwner" required:"false"`
+}
+
+// TenantOwnerView is what a platform admin sees before starting or finishing an owner recovery.
+type TenantOwnerView struct {
+	Owner  *OwnerStatus    `json:"owner" required:"false"`
+	People []*TenantPerson `json:"people" required:"false"`
+}
+
 type OwnerStatus struct {
 	OwnerMemberId string `json:"ownerMemberId" required:"false"`
 	OwnerEmail    string `json:"ownerEmail" required:"false"`
@@ -2595,4 +2609,39 @@ type UpdateCredentialRequest struct {
 
 type CredentialIdRequest struct {
 	Id string `json:"id" required:"false"`
+}
+
+func (x *TenantPerson) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *TenantPerson) GetEmail() string {
+	if x != nil {
+		return x.Email
+	}
+	return ""
+}
+
+func (x *TenantPerson) GetIsOwner() bool {
+	if x != nil {
+		return x.IsOwner
+	}
+	return false
+}
+
+func (x *TenantOwnerView) GetOwner() *OwnerStatus {
+	if x != nil {
+		return x.Owner
+	}
+	return nil
+}
+
+func (x *TenantOwnerView) GetPeople() []*TenantPerson {
+	if x != nil {
+		return x.People
+	}
+	return nil
 }

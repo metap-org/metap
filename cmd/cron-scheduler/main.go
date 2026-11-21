@@ -157,6 +157,10 @@ func main() {
 		}
 	}
 
+	// TENANT_PURGE_INTERVAL_SECONDS=0 turns the tenant deletion sweep off. The registry
+	// (control.tenants) lives in the main database, like the audit trail.
+	tenantPurgeSecs := uint64(env.Int("TENANT_PURGE_INTERVAL_SECONDS", 3600))
+
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return cronscheduler.RunTicker(gctx, pool, executorConfig, tickerConfig) })
 	g.Go(func() error { return cronscheduler.RunExecutor(gctx, executorConnect, pool, executorConfig) })
@@ -171,6 +175,20 @@ func main() {
 	if auditPool != nil {
 		g.Go(func() error {
 			cronscheduler.RunAuditPartitionMaintenance(gctx, auditPool, time.Duration(auditPartitionSecs)*time.Second, auditMonthsAhead)
+			return nil
+		})
+	}
+
+	if tenantPurgeSecs != 0 {
+		// Own short-lived pool: it must point at the main database whatever the outbox pool does.
+		purgePool, err := pgxpool.New(ctx, config.DatabaseURL)
+		if err != nil {
+			slog.Error("connecting to postgres for the tenant deletion sweep", standard.LogError, err)
+			os.Exit(1)
+		}
+		defer purgePool.Close()
+		g.Go(func() error {
+			cronscheduler.RunTenantPurge(gctx, purgePool, time.Duration(tenantPurgeSecs)*time.Second)
 			return nil
 		})
 	}
