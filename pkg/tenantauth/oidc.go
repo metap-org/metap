@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
@@ -42,11 +44,48 @@ type OidcConfig struct {
 	DefaultRole string `json:"defaultRole,omitempty"`
 	// Enforced turns password sign-in off for this tenant's members, the owner excepted (M8).
 	Enforced bool `json:"enforced,omitempty"`
+	// RoleClaim names the id_token claim that carries the person's groups or roles (a string or a
+	// list of strings), and RoleMap says which tenant role each value stands for. At every sign-in
+	// the mapped roles are brought in line with the claim; a role not named in RoleMap is never
+	// touched, so what an admin grants by hand stays.
+	RoleClaim string            `json:"roleClaim,omitempty"`
+	RoleMap   map[string]string `json:"roleMap,omitempty"`
+}
+
+// ManagedRoles is every tenant role the identity provider's claim decides (RoleMap's values).
+func (c *OidcConfig) ManagedRoles() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, role := range c.RoleMap {
+		if !seen[role] {
+			seen[role] = true
+			out = append(out, role)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// MappedRoles is the managed roles the given claim values grant.
+func (c *OidcConfig) MappedRoles(claimValues []string) map[string]bool {
+	out := map[string]bool{}
+	for _, v := range claimValues {
+		if role, ok := c.RoleMap[v]; ok {
+			out[role] = true
+		}
+	}
+	return out
 }
 
 type VerifiedIdentity struct {
-	Email           string
+	Email string
+	// EmailVerified is true only when the identity provider said so (`email_verified` true). An
+	// address it did not vouch for must not be used to find, link or create a member: anyone can
+	// register at some providers with someone else's address.
+	EmailVerified   bool
 	ExternalSubject string
+	// Roles are the values of the configured role claim (empty without one).
+	Roles []string
 }
 
 // OidcConfigFor: a tenant's enabled OIDC config, or (nil, nil) if it has none.
@@ -163,15 +202,42 @@ func OidcVerifyCallback(
 		return nil, fmt.Errorf("id_token nonce does not match the expected value")
 	}
 
-	var claims struct {
-		Email string `json:"email"`
-	}
+	var claims map[string]json.RawMessage
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, err
 	}
-	if claims.Email == "" {
+	var email string
+	_ = json.Unmarshal(claims["email"], &email)
+	if email == "" {
 		return nil, fmt.Errorf("IdP did not return an email claim")
 	}
 
-	return &VerifiedIdentity{Email: claims.Email, ExternalSubject: idToken.Subject}, nil
+	identity := &VerifiedIdentity{Email: email, EmailVerified: claimTrue(claims["email_verified"]), ExternalSubject: idToken.Subject}
+	if config.RoleClaim != "" {
+		identity.Roles = claimStrings(claims[config.RoleClaim])
+	}
+	return identity, nil
+}
+
+// claimTrue reads a boolean claim; some providers send it as the string "true".
+func claimTrue(raw json.RawMessage) bool {
+	var b bool
+	if json.Unmarshal(raw, &b) == nil {
+		return b
+	}
+	var str string
+	return json.Unmarshal(raw, &str) == nil && strings.EqualFold(str, "true")
+}
+
+// claimStrings reads a claim that is one string or a list of strings.
+func claimStrings(raw json.RawMessage) []string {
+	var list []string
+	if json.Unmarshal(raw, &list) == nil {
+		return list
+	}
+	var one string
+	if json.Unmarshal(raw, &one) == nil && one != "" {
+		return []string{one}
+	}
+	return nil
 }
