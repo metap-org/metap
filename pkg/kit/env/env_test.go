@@ -85,3 +85,20 @@ func TestListSplitsTrimsAndDropsEmpties(t *testing.T) {
 	t.Setenv("KIT_TEST_LIST", " a, b ,,c ")
 	assert.Equal(t, []string{"a", "b", "c"}, env.List("KIT_TEST_LIST"))
 }
+
+func TestFallbackIsReadWhenTheEnvironmentHasNoValue(t *testing.T) {
+	env.SetFallback(func(name string) (string, bool) {
+		return map[string]string{"FB_NAME": "from-file", "FB_BOTH": "from-file", "FB_N": "7", "FB_ON": "true"}[name], true
+	})
+	t.Cleanup(func() { env.SetFallback(nil) })
+
+	t.Setenv("FB_BOTH", "from-env")
+	assert.Equal(t, "from-file", env.String("FB_NAME", "default"))
+	assert.Equal(t, "from-env", env.String("FB_BOTH", "default"), "the environment wins over the fallback")
+	assert.Equal(t, 7, env.Int("FB_N", 1))
+	assert.True(t, env.Bool("FB_ON"))
+	assert.Equal(t, "default", env.String("FB_MISSING", "default"))
+
+	t.Setenv("FB_NAME", "")
+	assert.Equal(t, "from-file", env.String("FB_NAME", "default"), "an empty variable counts as unset")
+}

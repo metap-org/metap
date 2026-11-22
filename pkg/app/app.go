@@ -175,7 +175,7 @@ func Run(ctx context.Context, opts Options) error {
 		if err != nil {
 			return fmt.Errorf("bootstrap on boot: %w", err)
 		}
-		tenants, err := bootstrapTargets(ctx, pool, os.Getenv("BOOTSTRAP_TENANT_IDS"))
+		tenants, err := bootstrapTargets(ctx, pool, env.String("BOOTSTRAP_TENANT_IDS", ""))
 		if err != nil {
 			return fmt.Errorf("bootstrap on boot: %w", err)
 		}

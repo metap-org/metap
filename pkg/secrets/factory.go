@@ -10,7 +10,6 @@ package secrets
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/metap-org/metap/pkg/control"
 
@@ -52,7 +51,7 @@ func ConfigFromAppConfig(config *infra.AppConfig) Config {
 		AWSSecretsSecretKey:   config.AWSSecretsSecretKey,
 		AWSSecretsEndpointURL: config.AWSSecretsEndpointURL,
 		GCPSecretsProjectID:   config.GCPSecretsProjectID,
-		EncryptionKeys:        os.Getenv("SECRETS_ENCRYPTION_KEYS"),
+		EncryptionKeys:        env.String("SECRETS_ENCRYPTION_KEYS", ""),
 	}
 }
 
@@ -77,7 +76,7 @@ func ConfigFromEnv() Config {
 		AWSSecretsRegion: awsRegion, AWSSecretsAccessKey: awsAccessKey,
 		AWSSecretsSecretKey: awsSecretKey, AWSSecretsEndpointURL: awsEndpointURL,
 		GCPSecretsProjectID: gcpProjectID,
-		EncryptionKeys:      os.Getenv("SECRETS_ENCRYPTION_KEYS"),
+		EncryptionKeys:      env.String("SECRETS_ENCRYPTION_KEYS", ""),
 	}
 }
 
