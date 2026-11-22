@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/accountmail"
+	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
@@ -255,4 +256,37 @@ func resetPassword(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type cancelDeletionBody struct {
+	Token string `json:"token"`
+}
+
+// cancelWorkspaceDeletion is POST /auth/workspace-deletion/cancel: the emailed link's token reopens
+// a workspace whose owner asked to delete it (UC-81). Public, like the other link-token routes,
+// because the workspace is suspended and nobody can sign in to it meanwhile. A token works once and
+// only until the deletion would have taken effect.
+func cancelWorkspaceDeletion(w http.ResponseWriter, r *http.Request, state *AppState) {
+	var body cancelDeletionBody
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	now := time.Now()
+	tenant, err := identity.ConsumeDeletionCancelToken(r.Context(), state.Pool, strings.TrimSpace(body.Token), now)
+	if errors.Is(err, identity.ErrCancelInvalid) {
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, err.Error(), nil)
+		return
+	}
+	if err != nil {
+		slog.Error("cancel workspace deletion: using token", standard.LogError, err)
+		writeServiceError(w, http.StatusInternalServerError, errcode.InternalError, "Something went wrong.", nil)
+		return
+	}
+	if err := control.NewPostgresTenantRegistry(state.Pool).CancelDeletion(r.Context(), tenant, now); err != nil {
+		// Already cancelled by a platform admin, or past the point of no return: the link is spent
+		// either way, and saying "invalid" matches what the person would find.
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, identity.ErrCancelInvalid.Error(), nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"cancelled": true}})
 }
