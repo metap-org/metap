@@ -12,6 +12,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/metap-org/metap/pkg/bootstrap"
+	"github.com/metap-org/metap/pkg/configfile"
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/kit/env"
@@ -52,6 +53,9 @@ func BootstrapMain(opts BootstrapOptions) {
 // infra.LoadConfig: a one-shot that only writes grants and users needs no RabbitMQ or token keys.
 func RunBootstrap(ctx context.Context, opts BootstrapOptions) error {
 	_ = godotenv.Load()
+	if err := configfile.LoadFromEnv(); err != nil {
+		return err
+	}
 	databaseURL, err := env.Require("DATABASE_URL")
 	if err != nil {
 		return err
@@ -78,7 +82,7 @@ func RunBootstrap(ctx context.Context, opts BootstrapOptions) error {
 		return err
 	}
 
-	tenants, err := bootstrapTargets(ctx, pool, os.Getenv("BOOTSTRAP_TENANT_IDS"))
+	tenants, err := bootstrapTargets(ctx, pool, env.String("BOOTSTRAP_TENANT_IDS", ""))
 	if err != nil {
 		return err
 	}
@@ -91,7 +95,7 @@ func declaration(extra *bootstrap.Bootstrap) (bootstrap.Bootstrap, error) {
 	if extra != nil {
 		decl = bootstrap.Merge(decl, *extra)
 	}
-	if path := os.Getenv("BOOTSTRAP_FILE"); path != "" {
+	if path := env.String("BOOTSTRAP_FILE", ""); path != "" {
 		overlay, err := bootstrap.LoadFile(path)
 		if err != nil {
 			return decl, err

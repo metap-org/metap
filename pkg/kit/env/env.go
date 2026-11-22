@@ -10,13 +10,38 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
-// Lookup returns the variable's value and true when it is set to a non-empty string.
+// fallback is consulted when the process environment has no value for a name; see SetFallback.
+var fallback atomic.Pointer[func(string) (string, bool)]
+
+// SetFallback installs a second source of values, read when the process environment has none
+// (unset or empty) for a name. The environment therefore always wins, and every reader in this
+// package (String, Int, Bool, List, ...) sees the second source without knowing it exists. It is
+// how a configuration file plugs in (metap's pkg/configfile) while this package stays
+// standard-library-only. Pass nil to remove it.
+func SetFallback(src func(name string) (string, bool)) {
+	if src == nil {
+		fallback.Store(nil)
+		return
+	}
+	fallback.Store(&src)
+}
+
+// Lookup returns the variable's value and true when it is set to a non-empty string, in the
+// process environment first and then in the fallback source (SetFallback).
 func Lookup(name string) (string, bool) {
-	v := os.Getenv(name)
-	return v, v != ""
+	if v := os.Getenv(name); v != "" {
+		return v, true
+	}
+	if src := fallback.Load(); src != nil {
+		if v, ok := (*src)(name); ok && v != "" {
+			return v, true
+		}
+	}
+	return "", false
 }
 
 // Ptr returns a pointer to the variable's value, or nil when it is unset or empty — for optional
@@ -50,7 +75,7 @@ func Int(name string, def int) int {
 
 // Bool reports whether the variable is "true" or "1".
 func Bool(name string) bool {
-	v := os.Getenv(name)
+	v, _ := Lookup(name)
 	return v == "true" || v == "1"
 }
 

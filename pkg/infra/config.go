@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/metap-org/metap/pkg/configfile"
 	"github.com/metap-org/metap/pkg/kit/env"
 )
 
@@ -78,9 +79,13 @@ func isURLLike(s string) bool {
 	return strings.Contains(s, "://") && strings.TrimSpace(s) != ""
 }
 
-// LoadConfig loads .env (if present) then reads every env var.
+// LoadConfig loads .env (if present), then the YAML file CONFIG_FILE names (pkg/configfile), then
+// reads every setting: from the environment first, the file second, the default last.
 func LoadConfig() (*AppConfig, error) {
 	_ = godotenv.Load()
+	if err := configfile.LoadFromEnv(); err != nil {
+		return nil, err
+	}
 
 	nodeEnv := NodeEnvDevelopment
 	switch env.String("NODE_ENV", "") {
