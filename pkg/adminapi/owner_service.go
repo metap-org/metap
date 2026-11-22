@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -317,3 +318,59 @@ func (s *OwnerService) CompleteOwnerRecovery(ctx context.Context, req *TenantIdO
 
 // AuditEntityOwner is the audit-trail entity owner changes are recorded under (the record is the tenant).
 const AuditEntityOwner = "metadata.tenant_owner"
+
+// RequestWorkspaceDeletion lets the owner (and only the owner) delete the workspace (UC-81): it is
+// suspended for the retention period, then deleted unless someone cancels with the link every
+// admin is emailed. The caller must type the workspace's name.
+func (s *OwnerService) RequestWorkspaceDeletion(ctx context.Context, req *RequestWorkspaceDeletionRequest) (*WorkspaceDeletion, error) {
+	c, err := s.d.admin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	owner, err := s.d.ensureOwner(ctx, c.tenant)
+	if err != nil {
+		return nil, rpcError(ctx, err)
+	}
+	if owner == uuid.Nil || c.self != owner {
+		return nil, svcErr(ctx, http.StatusForbidden, errcode.OwnerProtected, "Only the workspace owner can delete it.")
+	}
+	name := s.tenantName(ctx, c.tenant)
+	if strings.TrimSpace(req.ConfirmName) != name || name == "" {
+		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "Type the workspace's name to confirm.")
+	}
+	now := s.d.now()
+	registry := control.NewPostgresTenantRegistry(s.d.cfg.Shared)
+	if err := registry.RequestDeletion(ctx, c.tenant, now, control.DefaultDeletionRetention); err != nil {
+		return nil, svcErr(ctx, http.StatusConflict, errcode.ValidationFailed, "A deletion is already scheduled for this workspace.")
+	}
+	effective := now.Add(control.DefaultDeletionRetention)
+	token, err := identity.CreateDeletionCancelToken(ctx, s.d.cfg.Shared, c.tenant, effective)
+	if err != nil {
+		// Without a way to cancel, do not leave the workspace scheduled.
+		_ = registry.CancelDeletion(ctx, c.tenant, now)
+		return nil, rpcError(ctx, err)
+	}
+	link := s.d.cfg.Mailer.Link("/cancel-deletion", token)
+	out := &WorkspaceDeletion{EffectiveAt: formatTime(&effective)}
+	sent := 0
+	if s.d.cfg.Mailer.Configured() {
+		requestedBy := ""
+		if m, err := identity.GetMember(ctx, s.d.cfg.Shared, c.tenant, c.self); err == nil {
+			requestedBy = m.Email
+		}
+		if admins, err := s.d.activeAdmins(ctx, c.tenant); err == nil {
+			for _, a := range admins {
+				if s.d.cfg.Mailer.SendWorkspaceDeletionNotice(ctx, accountmail.WorkspaceDeletionNotice{
+					To: a.Email, TenantName: name, RequestedBy: requestedBy, EffectiveAt: effective, CancelLink: link,
+				}) == nil {
+					sent++
+				}
+			}
+		}
+	}
+	if sent == 0 {
+		out.CancelLink = link
+	}
+	s.d.recordFor(ctx, c, AuditEntityOwner, c.tenant, audit.ActionUpdate, map[string][2]any{"deletionRequested": {false, true}})
+	return out, nil
+}

@@ -458,6 +458,10 @@ func registerWorkspaceOperations(api huma.API, state *AppState, cfg adminapi.Ide
 		func(ctx context.Context, in *bodyIn[adminapi.TransferOwnershipRequest]) (*adminapi.OwnerStatus, error) {
 			return owner.TransferOwnership(ctx, &in.Body)
 		})
+	adminOp(api, state, opOf("requestWorkspaceDeletion", http.MethodPost, "/admin/workspace/deletion", "Delete the workspace after the retention period (the owner)", "Owner"),
+		func(ctx context.Context, in *bodyIn[adminapi.RequestWorkspaceDeletionRequest]) (*adminapi.WorkspaceDeletion, error) {
+			return owner.RequestWorkspaceDeletion(ctx, &in.Body)
+		})
 	adminOp(api, state, opOf("cancelOwnerRecovery", http.MethodPost, "/admin/owner/recovery/cancel", "Stop an owner recovery (the owner)", "Owner"),
 		func(ctx context.Context, _ *struct{}) (*adminapi.OwnerStatus, error) {
 			return owner.CancelOwnerRecovery(ctx, empty)

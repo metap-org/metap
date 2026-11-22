@@ -193,6 +193,28 @@ It completes only after %[5]s. If you do not agree, cancel it in the admin area 
 	return m.deliver(ctx, n.To, subject, body)
 }
 
+// WorkspaceDeletionNotice tells a workspace's admins that the owner asked to delete it, when it
+// takes effect, and gives the link that cancels it (the workspace is suspended meanwhile, so the
+// admin area cannot).
+type WorkspaceDeletionNotice struct {
+	To          string
+	TenantName  string
+	RequestedBy string
+	EffectiveAt time.Time
+	CancelLink  string
+}
+
+func (m *Mailer) SendWorkspaceDeletionNotice(ctx context.Context, n WorkspaceDeletionNotice) error {
+	subject := "Yêu cầu xoá workspace / Workspace deletion requested: " + n.TenantName
+	body := fmt.Sprintf(`%[2]s đã yêu cầu xoá workspace %[1]s. Workspace bị tạm khoá và sẽ bị xoá sau %[3]s.
+%[2]s asked to delete the workspace %[1]s. It is suspended now and will be deleted after %[3]s.
+
+Nếu đây là nhầm lẫn, huỷ việc xoá bằng liên kết này / If this is a mistake, cancel the deletion with this link:
+%[4]s
+`, n.TenantName, n.RequestedBy, n.EffectiveAt.UTC().Format("2006-01-02 15:04 UTC"), n.CancelLink)
+	return m.deliver(ctx, n.To, subject, body)
+}
+
 func (m *Mailer) deliver(ctx context.Context, to, subject, body string) error {
 	if !m.Configured() {
 		return ErrNotConfigured

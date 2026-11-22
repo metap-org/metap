@@ -5,13 +5,17 @@ package adminapi
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"regexp"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/identity"
 )
 
 // Roadmap 115 M8: the owner is protected from other admins; ownership moves by the owner's own
@@ -116,4 +120,73 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	back, err := h.client.Owner.TransferOwnership(asOther, &TransferOwnershipRequest{MemberId: owner.ID.String()})
 	require.NoError(t, err)
 	assert.Equal(t, owner.ID.String(), back.GetOwnerMemberId())
+}
+
+// UC-81: only the owner deletes the workspace, by typing its name; every admin is emailed a link
+// that cancels it (the workspace is suspended, so the admin area cannot), usable once.
+func TestOwnerDeletesTheWorkspaceAndTheLinkCancelsIt(t *testing.T) {
+	h := newIdentityHarness(t)
+	tenant := uuid.New()
+	require.NoError(t, control.NewPostgresTenantRegistry(h.pool).RegisterShared(context.Background(), tenant, "Acme Ltd", "trial", "active"))
+	owner := h.member(tenant, "owner@acme.io", "admin")
+	other := h.member(tenant, "admin2@acme.io", "admin")
+	asOwner, asOther := h.as(tenant, owner.ID), h.as(tenant, other.ID)
+	registry := control.NewPostgresTenantRegistry(h.pool)
+	ctx := context.Background()
+
+	// Not the owner; wrong name.
+	_, err := h.client.Owner.RequestWorkspaceDeletion(asOther, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd"})
+	assert.Equal(t, http.StatusForbidden, statusOf(err))
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "acme"})
+	assert.Equal(t, http.StatusBadRequest, statusOf(err))
+
+	out, err := h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd"})
+	require.NoError(t, err)
+	assert.NotEmpty(t, out.EffectiveAt)
+	assert.Empty(t, out.CancelLink, "the link is in the emails when mail works")
+	d, err := registry.Get(ctx, tenant)
+	require.NoError(t, err)
+	assert.Equal(t, control.StatusSuspended, d.Status)
+
+	// Both admins were emailed the same working link.
+	token := cancelTokenFrom(t, h.mail.last(t, "owner@acme.io"))
+	assert.Equal(t, token, cancelTokenFrom(t, h.mail.last(t, "admin2@acme.io")))
+
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd"})
+	assert.Error(t, err, "already scheduled")
+
+	// The link reopens the workspace once; a second use, or a wrong token, does nothing.
+	got, err := identity.ConsumeDeletionCancelToken(ctx, h.pool, "not-a-token", time.Now())
+	assert.ErrorIs(t, err, identity.ErrCancelInvalid)
+	assert.Equal(t, uuid.Nil, got)
+	got, err = identity.ConsumeDeletionCancelToken(ctx, h.pool, token, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, tenant, got)
+	require.NoError(t, registry.CancelDeletion(ctx, got, time.Now()))
+	_, err = identity.ConsumeDeletionCancelToken(ctx, h.pool, token, time.Now())
+	assert.ErrorIs(t, err, identity.ErrCancelInvalid, "a link works once")
+	d, _ = registry.Get(ctx, tenant)
+	assert.Equal(t, control.StatusActive, d.Status)
+}
+
+// A link stops working once the deletion would have taken effect.
+func TestDeletionCancelTokenExpires(t *testing.T) {
+	h := newIdentityHarness(t)
+	tenant := uuid.New()
+	ctx := context.Background()
+	token, err := identity.CreateDeletionCancelToken(ctx, h.pool, tenant, time.Now().Add(-time.Minute))
+	require.NoError(t, err)
+	_, err = identity.ConsumeDeletionCancelToken(ctx, h.pool, token, time.Now())
+	assert.ErrorIs(t, err, identity.ErrCancelInvalid)
+}
+
+var cancelToken = regexp.MustCompile(`/cancel-deletion\?token=([^\s&]+)`)
+
+func cancelTokenFrom(t *testing.T, text string) string {
+	t.Helper()
+	m := cancelToken.FindStringSubmatch(text)
+	require.Len(t, m, 2, "a cancel-deletion link")
+	tok, err := url.QueryUnescape(m[1])
+	require.NoError(t, err)
+	return tok
 }

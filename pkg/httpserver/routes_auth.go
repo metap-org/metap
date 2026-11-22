@@ -462,6 +462,7 @@ func mountAuth(r chi.Router, state *AppState) {
 	guarded.Post("/auth/invitations/accept", wrap(acceptInvitation))
 	guarded.Post("/auth/password/forgot", wrap(forgotPassword))
 	guarded.Post("/auth/password/reset", wrap(resetPassword))
+	guarded.Post("/auth/workspace-deletion/cancel", wrap(cancelWorkspaceDeletion))
 	r.Get("/auth/token", wrap(issueToken))
 }
 

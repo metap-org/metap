@@ -525,6 +525,19 @@ type SupportSessionToken struct {
 	GrantId   string `json:"grantId" required:"false"`
 }
 
+type RequestWorkspaceDeletionRequest struct {
+	// Must equal the workspace's name: a deliberate act, not a stray click.
+	ConfirmName string `json:"confirmName" required:"false"`
+}
+
+type WorkspaceDeletion struct {
+	// When the workspace is deleted for good unless the deletion is cancelled first.
+	EffectiveAt string `json:"effectiveAt" required:"false"`
+	// The link that cancels the deletion, returned only when no email could be sent: otherwise it
+	// exists only in the emails.
+	CancelLink string `json:"cancelLink,omitempty" required:"false"`
+}
+
 type TransferOwnershipRequest struct {
 	MemberId string `json:"memberId" required:"false"`
 }
