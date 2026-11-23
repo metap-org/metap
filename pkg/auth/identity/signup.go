@@ -24,6 +24,11 @@ type Signup struct {
 	TenantName   string
 	DisplayName  string
 	PasswordHash string
+
+	// What RestoreSignup needs to put the row back.
+	tokenHash []byte
+	expiresAt time.Time
+	createdAt time.Time
 }
 
 // CreateSignup records a pending signup and returns the link token. token is "" (no error) when
@@ -64,14 +69,19 @@ func CreateSignup(ctx context.Context, db DBTX, email, tenantName, displayName, 
 	return token, nil
 }
 
-// ConsumeSignup returns the pending signup behind token and removes it (single use). Run inside the
-// transaction that creates the tenant, so a failure leaves the link usable.
+// ConsumeSignup returns the pending signup behind token and removes it (single use), so of two
+// requests with the same link only one gets it. It is its own statement: the caller holds no
+// connection while it creates the tenant, and puts the row back with RestoreSignup when that fails
+// so the link stays usable. (Holding a transaction open around the whole registration took a
+// second pooled connection per request, which deadlocks the pool when that many requests arrive
+// together.)
 func ConsumeSignup(ctx context.Context, db DBTX, token string, now time.Time) (*Signup, error) {
 	var s Signup
 	var display *string
+	s.tokenHash = hashToken(token)
 	err := db.QueryRow(ctx, `DELETE FROM metadata.signups WHERE token_hash = $1 AND expires_at > $2
-		RETURNING email, tenant_name, display_name, password_hash`, hashToken(token), now).
-		Scan(&s.Email, &s.TenantName, &display, &s.PasswordHash)
+		RETURNING email, tenant_name, display_name, password_hash, expires_at, created_at`, s.tokenHash, now).
+		Scan(&s.Email, &s.TenantName, &display, &s.PasswordHash, &s.expiresAt, &s.createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrSignupInvalid
 	}
@@ -82,6 +92,20 @@ func ConsumeSignup(ctx context.Context, db DBTX, token string, now time.Time) (*
 		s.DisplayName = *display
 	}
 	return &s, nil
+}
+
+// RestoreSignup puts a consumed signup back after the registration it was consumed for failed, so
+// the emailed link still works. A signup that was already put back (or a link used twice) is left
+// as it is.
+func RestoreSignup(ctx context.Context, db DBTX, s *Signup) error {
+	var display *string
+	if s.DisplayName != "" {
+		display = &s.DisplayName
+	}
+	_, err := db.Exec(ctx, `INSERT INTO metadata.signups (token_hash, email, tenant_name, display_name, password_hash, expires_at, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (token_hash) DO NOTHING`,
+		s.tokenHash, s.Email, s.TenantName, display, s.PasswordHash, s.expiresAt, s.createdAt)
+	return err
 }
 
 // PurgeSignups drops expired pending signups.

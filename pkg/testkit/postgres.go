@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -192,6 +193,15 @@ func connect(t testing.TB, databaseURL string, opts ...Option) *pgxpool.Pool {
 	}
 	for _, opt := range opts {
 		opt(cfg)
+	}
+	// METAP_TEST_POOL_MAX caps every test pool. With 1, a code path that holds a connection (an open
+	// transaction) while asking for another cannot be served and hangs at once, with no concurrency
+	// needed: run the integration suite that way to find such paths (they deadlock a real pool when
+	// as many requests as connections arrive together).
+	if raw := os.Getenv("METAP_TEST_POOL_MAX"); raw != "" {
+		if n, err := strconv.ParseInt(raw, 10, 32); err == nil && n > 0 {
+			cfg.MaxConns = int32(n)
+		}
 	}
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {

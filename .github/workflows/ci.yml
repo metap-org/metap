@@ -47,6 +47,73 @@ jobs:
             exit 1
           fi
 
+  # The integration suite (`//go:build integration`, real Postgres/RabbitMQ/Redis/OpenBao) runs on
+  # every push and pull request: the regression tests for authentication, tenancy, permissions and
+  # connection-pool behaviour live there, and a green `go` job above does not run them. Same
+  # services as e2e-manual.yml, which stays for a run on demand.
+  integration:
+    name: Go — integration tests (Postgres, RabbitMQ, Redis, OpenBao)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: metap
+          POSTGRES_PASSWORD: metap
+          POSTGRES_DB: metap
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U metap"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: metap
+          RABBITMQ_DEFAULT_PASS: metap
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      openbao:
+        image: openbao/openbao:2.4.3
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: metap-dev-root-token
+          BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports: ["8200:8200"]
+        options: >-
+          --cap-add IPC_LOCK
+          --health-cmd "wget -q -O /dev/null http://127.0.0.1:8200/v1/sys/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://metap:metap@localhost:5432/metap
+      RABBITMQ_URL: amqp://metap:metap@localhost:5672
+      REDIS_URL: redis://127.0.0.1:6379
+      VAULT_ADDR: http://127.0.0.1:8200
+      VAULT_TOKEN: metap-dev-root-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # pkg/testkit migrates a template database itself and clones a fresh one per test; it fails
+      # (never skips) when a service is unreachable, so green means the tests ran.
+      - run: go test -tags integration ./... -timeout 10m
+
   security:
     name: Go — dependency vulnerability audit
     runs-on: ubuntu-latest
