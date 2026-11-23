@@ -1,33 +1,25 @@
 //go:build integration
 
-package infra
+package outbox
 
 import (
 	"context"
 	"testing"
 
-	"github.com/metap-org/metap/pkg/testkit"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/testkit"
 )
 
-func TestConnectAndHealthCheckAgainstRealPostgres(t *testing.T) {
-	ctx := context.Background()
-	pool, err := Connect(ctx, testkit.NewDatabaseURL(t))
-	require.NoError(t, err)
-	defer pool.Close()
-	require.True(t, HealthCheck(ctx, pool), "expected health check to pass against a real Postgres")
-}
-
-func TestEnqueueOutboxEventWritesARealRow(t *testing.T) {
+func TestEnqueueWritesARealRow(t *testing.T) {
 	ctx := context.Background()
 	// outbox_events is a "metadata"-schema table referenced bare — search_path is set on every
 	// pooled connection the same way Router.Begin does in the real deployment.
 	pool := testkit.NewPostgres(t, testkit.WithSearchPath("metadata", "public"))
 
 	aggregateID := uuid.New()
-	err := EnqueueOutboxEvent(ctx, pool, &OutboxEvent{
+	err := Enqueue(ctx, pool, &Event{
 		Topic: "test.go.port.wave2", AggregateType: "test.entity", AggregateID: aggregateID,
 		Payload: []byte(`{"hello":"world"}`),
 	})

@@ -7,21 +7,21 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/metap-org/metap/pkg/infra"
-	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/notificationworker"
+	"github.com/metap-org/metap/pkg/messaging/eventbus"
+	"github.com/metap-org/metap/pkg/messaging/notify"
 )
 
 func main() {
-	infra.InitTracing()
-	config, err := infra.LoadConfig()
+	config.InitLogging()
+	config, err := config.LoadApp()
 	if err != nil {
 		slog.Error("loading config", standard.LogError, err)
 		os.Exit(1)
 	}
 
-	slog.Info("ready, listening", standard.LogQueue, notificationworker.Queue, standard.LogRoutingKey, notificationworker.RoutingKey)
+	slog.Info("ready, listening", standard.LogQueue, notify.Queue, standard.LogRoutingKey, notify.RoutingKey)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -31,7 +31,7 @@ func main() {
 	defer cancel()
 
 	connect := func() (eventbus.EventBus, error) { return eventbus.ConnectRabbitEventBus(config.RabbitMQURL) }
-	if err := notificationworker.Run(ctx, connect); err != nil {
+	if err := notify.Run(ctx, connect); err != nil {
 		slog.Error("notification worker exited with an error", standard.LogError, err)
 		os.Exit(1)
 	}

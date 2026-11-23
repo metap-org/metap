@@ -8,16 +8,16 @@ import (
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/metap-org/metap/pkg/infra"
-	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/outboxpublisher"
+	"github.com/metap-org/metap/pkg/messaging/eventbus"
+	"github.com/metap-org/metap/pkg/messaging/outbox"
 )
 
 func main() {
-	infra.InitTracing()
-	config, err := infra.LoadConfig()
+	config.InitLogging()
+	config, err := config.LoadApp()
 	if err != nil {
 		slog.Error("loading config", standard.LogError, err)
 		os.Exit(1)
@@ -40,7 +40,7 @@ func main() {
 	slog.Info("ready, polling", "poll_ms", pollMs, "batch_size", batchSize)
 
 	connect := func() (eventbus.EventBus, error) { return eventbus.ConnectRabbitEventBus(config.RabbitMQURL) }
-	if err := outboxpublisher.Run(ctx, pool, connect, pollMs, batchSize); err != nil {
+	if err := outbox.Run(ctx, pool, connect, pollMs, batchSize); err != nil {
 		slog.Error("outbox publisher exited with an error", standard.LogError, err)
 		os.Exit(1)
 	}

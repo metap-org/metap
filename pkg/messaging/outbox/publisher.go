@@ -1,8 +1,8 @@
-// Package outboxpublisher is the outbox pattern's read side. metap-infra's EnqueueOutboxEvent (the
+// Package outbox is the outbox pattern's read side. metap-infra's EnqueueOutboxEvent (the
 // write side) writes a row into outbox_events inside the same transaction as a business write; this
 // loop drains that table and publishes each row to an EventBus, so RabbitMQ downtime can't lose an
 // event.
-package outboxpublisher
+package outbox
 
 import (
 	"context"
@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/metap-org/metap/pkg/infra/eventbus"
 	"github.com/metap-org/metap/pkg/kit/standard"
+	"github.com/metap-org/metap/pkg/messaging/eventbus"
 )
 
 type outboxRow struct {

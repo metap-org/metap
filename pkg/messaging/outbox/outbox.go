@@ -1,4 +1,4 @@
-package infra
+package outbox
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-type OutboxEvent struct {
+type Event struct {
 	Topic         string
 	AggregateType string
 	AggregateID   uuid.UUID
@@ -20,9 +20,9 @@ type outboxExecutor interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// EnqueueOutboxEvent writes one outbox row in the same transaction as the business write — the
+// Enqueue writes one outbox row in the same transaction as the business write — the
 // write half of the outbox pattern. The drain/publish half is a separate worker.
-func EnqueueOutboxEvent(ctx context.Context, executor outboxExecutor, event *OutboxEvent) error {
+func Enqueue(ctx context.Context, executor outboxExecutor, event *Event) error {
 	// Bare table name, deliberately not schema-qualified — relies on the caller's connection
 	// search_path already including "metadata" (Router.Begin's convention).
 	_, err := executor.Exec(ctx,

@@ -2,7 +2,7 @@
 
 // Applying every real migration from scratch needs a database nothing else uses — testkit
 // creates a fresh, empty one per test, so this never touches a developer's own database.
-package dbmigrate_test
+package migrate_test
 
 import (
 	"context"
@@ -11,11 +11,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/dbmigrate"
+	"github.com/metap-org/metap/pkg/db/migrate"
 	"github.com/metap-org/metap/pkg/testkit"
 )
 
-const realMigrationsDir = "../../migrations"
+const realMigrationsDir = "../../../migrations"
 
 func emptyDatabase(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -31,15 +31,15 @@ func TestRunAppliesEveryMigrationFromScratchAndIsIdempotent(t *testing.T) {
 
 	// Clean slate: drop everything so this test is repeatable across runs.
 
-	migrations, err := dbmigrate.LoadMigrations(realMigrationsDir)
+	migrations, err := migrate.LoadMigrations(realMigrationsDir)
 	require.NoError(t, err)
 
-	result, err := dbmigrate.Run(ctx, pool, realMigrationsDir)
+	result, err := migrate.Run(ctx, pool, realMigrationsDir)
 	require.NoError(t, err, "first run failed")
 	require.Len(t, result.Applied, len(migrations), "expected all %d migrations applied, got %d", len(migrations), len(result.Applied))
 
 	// Idempotency: a second run against the now-fully-migrated database must apply nothing.
-	result2, err := dbmigrate.Run(ctx, pool, realMigrationsDir)
+	result2, err := migrate.Run(ctx, pool, realMigrationsDir)
 	require.NoError(t, err, "second run failed")
 	require.Len(t, result2.Applied, 0, "expected a no-op second run, got %d newly applied", len(result2.Applied))
 
@@ -57,9 +57,9 @@ func TestRunDetectsAnEditedAlreadyAppliedMigration(t *testing.T) {
 	pool := emptyDatabase(t)
 	ctx := context.Background()
 
-	migrations, err := dbmigrate.LoadMigrations(realMigrationsDir)
+	migrations, err := migrate.LoadMigrations(realMigrationsDir)
 	require.NoError(t, err)
-	_, err = dbmigrate.Run(ctx, pool, realMigrationsDir)
+	_, err = migrate.Run(ctx, pool, realMigrationsDir)
 	require.NoError(t, err, "priming run failed")
 
 	correctChecksum := migrations[0].Checksum
@@ -71,6 +71,6 @@ func TestRunDetectsAnEditedAlreadyAppliedMigration(t *testing.T) {
 			correctChecksum[:], migrations[0].Version)
 	})
 
-	_, err = dbmigrate.Run(ctx, pool, realMigrationsDir)
+	_, err = migrate.Run(ctx, pool, realMigrationsDir)
 	require.Error(t, err, "expected a checksum-mismatch error")
 }

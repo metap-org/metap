@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/messaging/outbox"
 )
 
 // Tx is what an emit needs: the business transaction (or any executor that shares its
@@ -30,7 +30,7 @@ type Event struct {
 
 // Emit validates and enqueues a custom event in tx. It is the supported way for a service's own
 // handler to publish: never publish to RabbitMQ directly from a service (a crash after the
-// business commit would lose the event), and never build an infra.OutboxEvent by hand.
+// business commit would lose the event), and never build an outbox.Event by hand.
 func Emit(ctx context.Context, tx Tx, event Event) error {
 	if err := ValidateTopic(event.Topic); err != nil {
 		return err
@@ -47,7 +47,7 @@ func enqueue(ctx context.Context, tx Tx, topic, aggregateType string, aggregateI
 	if err != nil {
 		return fmt.Errorf("marshaling %s payload: %w", topic, err)
 	}
-	return infra.EnqueueOutboxEvent(ctx, tx, &infra.OutboxEvent{
+	return outbox.Enqueue(ctx, tx, &outbox.Event{
 		Topic: topic, AggregateType: aggregateType, AggregateID: aggregateID, Payload: raw,
 	})
 }

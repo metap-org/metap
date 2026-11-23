@@ -1,4 +1,4 @@
-package infra
+package config
 
 import (
 	"log/slog"
@@ -9,9 +9,9 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// InitTracing sets up the default slog logger for every binary in this module — call this before
+// InitLogging sets up the default slog logger for every binary in this module — call this before
 // anything else in main(), ahead of LoadConfig.
-func InitTracing() {
+func InitLogging() {
 	_ = godotenv.Load()
 
 	level := slog.LevelInfo

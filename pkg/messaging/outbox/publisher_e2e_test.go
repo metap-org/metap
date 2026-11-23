@@ -1,6 +1,6 @@
 //go:build integration
 
-package outboxpublisher
+package outbox
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/messaging/eventbus"
 )
 
 func testPool(t *testing.T) *pgxpool.Pool {

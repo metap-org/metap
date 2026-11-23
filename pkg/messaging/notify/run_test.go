@@ -1,12 +1,12 @@
-package notificationworker
+package notify
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/events"
-	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/messaging/eventbus"
+	"github.com/metap-org/metap/pkg/messaging/events"
 )
 
 // Run's handler decodes through the shared payload type; a payload it cannot read must not

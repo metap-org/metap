@@ -9,13 +9,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metap-org/metap/migrations"
-	"github.com/metap-org/metap/pkg/dbmigrate"
-	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/config"
+	"github.com/metap-org/metap/pkg/db/migrate"
 	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 func main() {
-	infra.InitTracing()
+	config.InitLogging()
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
@@ -34,13 +34,13 @@ func main() {
 
 	// Default: the migrations embedded into this binary (repo-root migrations package).
 	// MIGRATIONS_DIR overrides with an on-disk directory.
-	var result *dbmigrate.Result
+	var result *migrate.Result
 	if dir := os.Getenv("MIGRATIONS_DIR"); dir != "" {
 		slog.Info("applying migrations", "dir", dir)
-		result, err = dbmigrate.Run(ctx, pool, dir)
+		result, err = migrate.Run(ctx, pool, dir)
 	} else {
 		slog.Info("applying embedded migrations")
-		result, err = dbmigrate.RunFS(ctx, pool, migrations.FS)
+		result, err = migrate.RunFS(ctx, pool, migrations.FS)
 	}
 	if err != nil {
 		slog.Error("migration failed", standard.LogError, err)

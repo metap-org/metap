@@ -5,7 +5,7 @@
 // sqlx itself would compute would make a later real `db-migrate` run against the same database fail
 // its own checksum check. Tracking state lives in a separate table, metadata.metap_go_migrations,
 // so the two tools can never collide. Only run this against a database this tool owns.
-package dbmigrate
+package migrate
 
 import (
 	"context"

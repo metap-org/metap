@@ -1,12 +1,10 @@
-// Package infra holds the lowest-level plumbing every metap-go binary needs.
-package infra
+package config
 
 import (
 	"errors"
 	"strings"
 
 	"github.com/joho/godotenv"
-	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/env"
 )
 
@@ -18,7 +16,7 @@ const (
 	NodeEnvProduction
 )
 
-type AppConfig struct {
+type App struct {
 	NodeEnv           NodeEnv
 	Host              string
 	Port              int
@@ -68,7 +66,7 @@ type AppConfig struct {
 
 // OutboxDatabaseURLOrDefault is the URL a worker's outbox/event-publishing DB connection should
 // use — OutboxDatabaseURL if set, otherwise DatabaseURL.
-func (c *AppConfig) OutboxDatabaseURLOrDefault() string {
+func (c *App) OutboxDatabaseURLOrDefault() string {
 	if c.OutboxDatabaseURL != "" {
 		return c.OutboxDatabaseURL
 	}
@@ -79,11 +77,11 @@ func isURLLike(s string) bool {
 	return strings.Contains(s, "://") && strings.TrimSpace(s) != ""
 }
 
-// LoadConfig loads .env (if present), then the YAML file CONFIG_FILE names (pkg/config, file.go), then
+// LoadApp loads .env (if present), then the YAML file CONFIG_FILE names (pkg/config, file.go), then
 // reads every setting: from the environment first, the file second, the default last.
-func LoadConfig() (*AppConfig, error) {
+func LoadApp() (*App, error) {
 	_ = godotenv.Load()
-	if err := config.LoadFileFromEnv(); err != nil {
+	if err := LoadFileFromEnv(); err != nil {
 		return nil, err
 	}
 
@@ -169,7 +167,7 @@ func LoadConfig() (*AppConfig, error) {
 	smtpFrom, _ := env.Lookup("SMTP_FROM")
 	publicAppURL, _ := env.Lookup("PUBLIC_APP_URL")
 
-	return &AppConfig{
+	return &App{
 		NodeEnv: nodeEnv, Host: hostStr, Port: port,
 		DatabaseURL: databaseURL, OutboxDatabaseURL: outboxDatabaseURL, RabbitMQURL: rabbitmqURL,
 		CORSOrigins: corsOrigins, TrustedProxies: trustedProxies,

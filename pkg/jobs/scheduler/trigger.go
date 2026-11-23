@@ -7,16 +7,16 @@ package scheduler
 
 import (
 	"context"
-	"github.com/metap-org/metap/pkg/events"
+	"github.com/metap-org/metap/pkg/messaging/events"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/metap-org/metap/pkg/infra/eventbus"
 	"github.com/metap-org/metap/pkg/jobs/cron"
 	"github.com/metap-org/metap/pkg/kit/standard"
+	"github.com/metap-org/metap/pkg/messaging/eventbus"
 )
 
 const (

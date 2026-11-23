@@ -33,13 +33,14 @@ import (
 	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/db"
 	"github.com/metap-org/metap/pkg/httpserver"
 	"github.com/metap-org/metap/pkg/httpserver/attachmentroutes"
 	"github.com/metap-org/metap/pkg/httpserver/cronroutes"
 	"github.com/metap-org/metap/pkg/httpserver/dashboardroutes"
 	"github.com/metap-org/metap/pkg/httpserver/oauth2routes"
-	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/jobs/scheduler"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/httpx"
@@ -114,26 +115,26 @@ type ExternalEntity struct {
 
 // Run boots the service and serves until ctx is cancelled, SIGINT/SIGTERM, or a listener failure.
 func Run(ctx context.Context, opts Options) error {
-	infra.InitTracing()
-	config, err := infra.LoadConfig()
+	config.InitLogging()
+	appCfg, err := config.LoadApp()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	pool, err := infra.Connect(ctx, config.DatabaseURL)
+	pool, err := db.Connect(ctx, appCfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("connecting to postgres: %w", err)
 	}
 	defer pool.Close()
 
-	secretManager, err := backend.NewManager(ctx, backend.ConfigFromAppConfig(config), pool)
+	secretManager, err := backend.NewManager(ctx, backend.ConfigFromAppConfig(appCfg), pool)
 	if err != nil {
 		return fmt.Errorf("building secret store: %w", err)
 	}
 	router := tenancy.NewRouter(pool, tenancy.NewRegistryCache(tenancy.NewPostgresTenantRegistry(pool)), secretManager)
 	permissions := permission.NewPermissionService(policypg.NewPostgresPolicyStore(router))
 
-	tokens, err := BuildTokenAuth(ctx, config)
+	tokens, err := BuildTokenAuth(ctx, appCfg)
 	if err != nil {
 		return fmt.Errorf("configuring token auth: %w", err)
 	}
@@ -179,7 +180,7 @@ func Run(ctx context.Context, opts Options) error {
 		if err != nil {
 			return fmt.Errorf("bootstrap on boot: %w", err)
 		}
-		if err := ApplyBootstrap(ctx, registry, permissions, router, tenants, decl, config.NodeEnv == infra.NodeEnvProduction, opts.Name+" bootstrap"); err != nil {
+		if err := ApplyBootstrap(ctx, registry, permissions, router, tenants, decl, appCfg.NodeEnv == config.NodeEnvProduction, opts.Name+" bootstrap"); err != nil {
 			return fmt.Errorf("bootstrap on boot: %w", err)
 		}
 	}
@@ -195,12 +196,12 @@ func Run(ctx context.Context, opts Options) error {
 	state.TokenSigner, state.TokenVerifier, state.JwksKeys = tokens.Signer, tokens.Verifier, tokens.Keys
 	auditStore := audit.NewPostgresStore(state.Pool)
 	state.Audit = auditStore
-	state.PublicAppURL = config.PublicAppURL
+	state.PublicAppURL = appCfg.PublicAppURL
 	state.Crud = crud.WithAudit(state.Router, state.Metadata, state.Permissions, auditStore)
 	state.CookieSecure = false
 	state.Mailer = accountmail.New(accountmail.Config{
-		Host: config.SMTPHost, Port: config.SMTPPort, User: config.SMTPUser, Password: config.SMTPPassword,
-		From: config.SMTPFrom, PublicURL: config.PublicAppURL,
+		Host: appCfg.SMTPHost, Port: appCfg.SMTPPort, User: appCfg.SMTPUser, Password: appCfg.SMTPPassword,
+		From: appCfg.SMTPFrom, PublicURL: appCfg.PublicAppURL,
 	})
 	if state.Captcha, err = captcha.Build(env.String("CAPTCHA_PROVIDER", ""), env.String("CAPTCHA_SECRET", "")); err != nil {
 		return err
@@ -250,14 +251,14 @@ func Run(ctx context.Context, opts Options) error {
 	if modules == nil {
 		modules = DefaultModules()
 	}
-	trusted, err := httpx.ParseTrustedProxies(config.TrustedProxies)
+	trusted, err := httpx.ParseTrustedProxies(appCfg.TrustedProxies)
 	if err != nil {
 		return fmt.Errorf("TRUSTED_PROXIES: %w", err)
 	}
 	state.TrustedProxies = trusted
 	state.Identity = identityConfig(state, auditStore, secretManager)
-	handler := httpserver.BuildRouter(state, config.CORSOrigins, append(modules, opts.Routes)...)
-	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	handler := httpserver.BuildRouter(state, appCfg.CORSOrigins, append(modules, opts.Routes)...)
+	addr := fmt.Sprintf("%s:%d", appCfg.Host, appCfg.Port)
 	slog.Info(opts.Name+" listening", "addr", addr)
 	serveCtx, stop := shutdown.Context(ctx)
 	defer stop()

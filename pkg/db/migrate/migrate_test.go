@@ -1,4 +1,4 @@
-package dbmigrate
+package migrate
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const realMigrationsDir = "../../migrations"
+const realMigrationsDir = "../../../migrations"
 
 func TestLoadMigrationsParsesEveryRealMigrationFileInOrder(t *testing.T) {
 	migrations, err := LoadMigrations(realMigrationsDir)

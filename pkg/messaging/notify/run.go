@@ -2,15 +2,15 @@
 // transition event. The first real consumer of EventBus.Subscribe. Deliberately minimal (stdout
 // logging, not email/SMS/webhook) — the point of this package is the consume-loop plumbing, which
 // any real notification channel would reuse.
-package notificationworker
+package notify
 
 import (
 	"context"
-	"github.com/metap-org/metap/pkg/events"
+	"github.com/metap-org/metap/pkg/messaging/events"
 	"log/slog"
 
-	"github.com/metap-org/metap/pkg/infra/eventbus"
 	"github.com/metap-org/metap/pkg/kit/standard"
+	"github.com/metap-org/metap/pkg/messaging/eventbus"
 )
 
 const Queue = "notification.workflow-transitioned"

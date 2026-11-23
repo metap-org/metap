@@ -15,7 +15,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/bootstrap"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/db"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
@@ -51,7 +51,7 @@ func BootstrapMain(opts BootstrapOptions) {
 // NODE_ENV=production makes a missing password for a new user fatal.
 //
 // It reads only what it uses (DATABASE_URL, NODE_ENV and the secret-store variables), not
-// infra.LoadConfig: a one-shot that only writes grants and users needs no RabbitMQ or token keys.
+// config.LoadApp: a one-shot that only writes grants and users needs no RabbitMQ or token keys.
 func RunBootstrap(ctx context.Context, opts BootstrapOptions) error {
 	_ = godotenv.Load()
 	if err := config.LoadFileFromEnv(); err != nil {
@@ -61,7 +61,7 @@ func RunBootstrap(ctx context.Context, opts BootstrapOptions) error {
 	if err != nil {
 		return err
 	}
-	pool, err := infra.Connect(ctx, databaseURL)
+	pool, err := db.Connect(ctx, databaseURL)
 	if err != nil {
 		return fmt.Errorf("connecting to postgres: %w", err)
 	}

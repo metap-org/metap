@@ -18,18 +18,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/crud"
-	"github.com/metap-org/metap/pkg/infra"
-	"github.com/metap-org/metap/pkg/infra/eventbus"
 	"github.com/metap-org/metap/pkg/jobs/scheduler"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/standard"
+	"github.com/metap-org/metap/pkg/messaging/eventbus"
 	"github.com/metap-org/metap/pkg/secrets/backend"
 )
 
 func main() {
-	infra.InitTracing()
-	config, err := infra.LoadConfig()
+	config.InitLogging()
+	config, err := config.LoadApp()
 	if err != nil {
 		slog.Error("loading config", standard.LogError, err)
 		os.Exit(1)

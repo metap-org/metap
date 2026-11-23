@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/metap-org/metap/pkg/dbmigrate"
-	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/db"
+	"github.com/metap-org/metap/pkg/db/migrate"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -89,13 +89,13 @@ func ProvisionSchemaTenant(ctx context.Context, sharedPool *pgxpool.Pool, regist
 // (EnvStore reads it as an env var name) before this tenant is actually routed to — this
 // function only writes the registry row, it doesn't touch the running process's environment.
 func ProvisionDedicatedDbTenant(ctx context.Context, registry *PostgresTenantRegistry, tenantID uuid.UUID, dsnSecretRef, dedicatedDatabaseURL, migrationsDir, adminEmail, adminPassword string) (*ProvisionedTenant, error) {
-	dedicatedPool, err := infra.ConnectForMigrate(ctx, dedicatedDatabaseURL)
+	dedicatedPool, err := db.ConnectForMigrate(ctx, dedicatedDatabaseURL)
 	if err != nil {
 		return nil, err
 	}
 	defer dedicatedPool.Close()
 
-	if _, err := dbmigrate.Run(ctx, dedicatedPool, migrationsDir); err != nil {
+	if _, err := migrate.Run(ctx, dedicatedPool, migrationsDir); err != nil {
 		return nil, err
 	}
 	// control.tenants is genuinely global platform data — the one registry every tenant is
