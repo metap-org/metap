@@ -16,8 +16,8 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/danielgtaylor/huma/v2/adapters/humachi"
-	"github.com/go-chi/chi/v5"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/adminapi"
 	"github.com/metap-org/metap/pkg/crud"
@@ -127,7 +127,7 @@ func callerOf(ctx context.Context) *permission.RequestContext {
 // hand-written routes do, refusing in the standard envelope, the caller then in the context.
 func authed(state *AppState) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		r, w := humachi.Unwrap(ctx)
+		r, w := humago.Unwrap(ctx)
 		rc, authErr := authenticate(r.Context(), state, r)
 		if authErr != nil {
 			authErr.respond(w)
@@ -139,21 +139,21 @@ func authed(state *AppState) func(huma.Context, func(huma.Context)) {
 
 // newAPI is the typed-operations API on r: OpenAPI at APIDocPath(.json), no docs UI, no
 // "$schema" link injected into response bodies.
-func newAPI(r chi.Router) huma.API {
+func newAPI(r *router.Router) huma.API {
 	config := huma.DefaultConfig("metap", "1")
 	config.OpenAPIPath = APIDocPath
 	config.DocsPath = ""
 	config.SchemasPath = ""
 	config.CreateHooks = nil
-	return humachi.New(r, config)
+	return humago.New(r, config)
 }
 
 // mountTypedAPI registers every typed operation.
-func mountTypedAPI(r chi.Router, state *AppState) {
+func mountTypedAPI(r *router.Router, state *AppState) {
 	api := newAPI(r)
 	registerSessionOperations(api, state)
 	registerAdminOperations(api, state)
 	if state.Identity != nil {
-		r.Mount("/scim/v2", http.StripPrefix("/scim/v2", adminapi.SCIMHandler(adminapi.NewUserAdminService(*state.Identity), scimAuthenticate(state))))
+		r.Mount("/scim/v2", adminapi.SCIMHandler(adminapi.NewUserAdminService(*state.Identity), scimAuthenticate(state)))
 	}
 }

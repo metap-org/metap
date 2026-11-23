@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -46,10 +46,9 @@ func NewMetricsRegistry() *MetricsRegistry {
 }
 
 // Middleware records request count/duration per (method, matched route pattern, status) plus a
-// single in-flight gauge. Must run after chi's routing has matched a pattern — reads
-// chi.RouteContext(r.Context()).RoutePattern() back off the request once next.ServeHTTP returns,
-// the same "read state chi populated during the call" trick runtime.RequestContext's own doc
-// comment would recognize. Falls back to the raw path (never empty, unlike a pattern on a 404) when
+// single in-flight gauge. Must sit inside the router (router.Router.Use) — reads
+// router.Pattern(r) back off the request once next.ServeHTTP returns, the pattern the router stored
+// in a holder shared by every copy of the request. Falls back to the raw path (never empty, unlike a pattern on a 404) when
 // nothing matched.
 func (m *MetricsRegistry) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,10 +61,8 @@ func (m *MetricsRegistry) Middleware(next http.Handler) http.Handler {
 		next.ServeHTTP(sw, r)
 
 		route := r.URL.Path
-		if rctx := chi.RouteContext(r.Context()); rctx != nil {
-			if pattern := rctx.RoutePattern(); pattern != "" {
-				route = pattern
-			}
+		if pattern := router.Pattern(r); pattern != "" {
+			route = pattern
 		}
 		status := strconv.Itoa(sw.status)
 		m.requestsTotal.WithLabelValues(r.Method, route, status).Inc()

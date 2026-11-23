@@ -6,10 +6,10 @@ package httpserver
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 )
 
-func mountMetrics(r chi.Router, state *AppState) {
+func mountMetrics(r *router.Router, state *AppState) {
 	r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		state.Metrics.Handler().ServeHTTP(w, r)
 	})

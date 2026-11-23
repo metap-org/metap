@@ -33,8 +33,8 @@ import (
 
 	"github.com/metap-org/metap/pkg/httpserver"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
@@ -718,7 +718,7 @@ func revokeOAuthClientAdmin(w http.ResponseWriter, r *http.Request, state *https
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.NotFound, "No such client in your tenant.", nil)
 		return
@@ -740,7 +740,7 @@ func revokeOAuthClientAdmin(w http.ResponseWriter, r *http.Request, state *https
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func Mount(r chi.Router, state *httpserver.AppState) {
+func Mount(r *router.Router, state *httpserver.AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *httpserver.AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}

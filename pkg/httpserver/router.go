@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/jwks"
@@ -18,7 +18,7 @@ import (
 // workflow and audit events), then each of mounts in order — the optional groups
 // (oauth2routes/cronroutes/dashboardroutes/attachmentroutes) and the service's own routes.
 func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Handler {
-	r := chi.NewRouter()
+	r := router.New()
 
 	cfg := state.Config.Current()
 	rateLimit := runtime.RateLimitBehind(

@@ -3,13 +3,13 @@ package httpserver
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
-func mountHealth(r chi.Router) {
+func mountHealth(r *router.Router) {
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(standard.HeaderContentType, standard.MediaTypeJSON)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))

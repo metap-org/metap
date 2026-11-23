@@ -6,8 +6,8 @@ package httpserver
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
@@ -19,8 +19,8 @@ func listWorkflowEvents(w http.ResponseWriter, r *http.Request, state *AppState)
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
-	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
+	entity := r.PathValue("entity")
+	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
 		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
@@ -52,7 +52,7 @@ func listWorkflowEvents(w http.ResponseWriter, r *http.Request, state *AppState)
 	writeJSON(w, http.StatusOK, map[string]any{"data": events})
 }
 
-func mountWorkflowEvents(r chi.Router, state *AppState) {
+func mountWorkflowEvents(r *router.Router, state *AppState) {
 	r.Get("/api/{entity}/{recordId}/workflow-events", func(w http.ResponseWriter, r *http.Request) {
 		listWorkflowEvents(w, r, state)
 	})

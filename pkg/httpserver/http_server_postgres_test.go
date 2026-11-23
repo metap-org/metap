@@ -13,7 +13,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"github.com/go-chi/chi/v5"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -321,7 +321,7 @@ func ensureTestOrdersTable(t *testing.T, pool *pgxpool.Pool) {
 func TestAPanickingRouteIsAnEnvelopedInternalErrorThroughBuildRouter(t *testing.T) {
 	pool := httpTestPool(t)
 	state, _ := newTestAppState(t, pool, httpTestEntity())
-	boom := func(r chi.Router, _ *httpserver.AppState) {
+	boom := func(r *router.Router, _ *httpserver.AppState) {
 		r.Get("/boom", func(http.ResponseWriter, *http.Request) { panic("boom") })
 	}
 	srv := httptest.NewServer(httpserver.BuildRouter(state, nil, boom))

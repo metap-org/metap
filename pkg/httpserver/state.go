@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"github.com/metap-org/metap/pkg/captcha"
+	"net/http"
 	"net/netip"
 	"sync/atomic"
 	"time"
@@ -32,6 +33,9 @@ import (
 // Optional features (TokenSigner/TokenVerifier/JwksKeys for the JWKS trust root, MetadataResolver,
 // AttachmentTables, ObjectStore) start unset.
 type AppState struct {
+	// recordPosts are the POST /api/{entity}/{recordId}/{sub} handlers route modules registered (HandleRecordPost).
+	recordPosts map[string]http.HandlerFunc
+
 	Pool *pgxpool.Pool
 	// Router is the multi-tenant seam — every tenant-scoped query goes through
 	// Router.Begin(ctx, tenantID), never Pool directly.

@@ -6,8 +6,8 @@ package httpserver
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/peripherals"
@@ -85,7 +85,7 @@ func updatePreferences(w http.ResponseWriter, r *http.Request, state *AppState) 
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"locale": body.Locale}})
 }
 
-func mountPreferences(r chi.Router, state *AppState) {
+func mountPreferences(r *router.Router, state *AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
