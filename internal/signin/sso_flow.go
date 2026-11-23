@@ -87,7 +87,7 @@ func (s *Service) oidcRedirectURI() string {
 }
 
 func (s *Service) oidcSecret(ctx context.Context, cfg *tenantauth.OidcConfig) (string, error) {
-	return s.d.Secrets.GetSecret(ctx, cfg.ClientSecretRef)
+	return s.d.Router.Secrets().GetSecret(ctx, cfg.ClientSecretRef)
 }
 
 // SSOStart is where to send the browser to sign in at the tenant's OIDC provider, and the state it

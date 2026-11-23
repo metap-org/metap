@@ -42,8 +42,8 @@ type Deps struct {
 	// PublicURL is the origin people reach this service at (the SSO callback is PublicURL + /auth/sso/callback);
 	// "" turns SSO off.
 	PublicURL string
-	// Secrets resolves a tenant's stored credentials (the OIDC client secret).
-	Secrets control.SecretStore
+	// Router opens tenant-scoped transactions and resolves a tenant's stored credentials (the OIDC client secret).
+	Router *control.Router
 	// Mailer sends the account emails; its methods are safe on a nil Mailer (they send none).
 	Mailer *accountmail.Mailer
 	// Captcha, when set, must pass for a signup.
@@ -305,3 +305,5 @@ func IdentityError(err error) error {
 
 // Pool is the database the service reads and writes, for tests and tools that set people up.
 func (s *Service) Pool() *pgxpool.Pool { return s.d.Pool }
+
+func isNotIssuer(err error) bool { return errors.Is(err, ErrNotTokenIssuer) }
