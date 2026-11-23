@@ -1,7 +1,7 @@
 // Never lets a DB hiccup at boot become a crash — drift detection is best-effort visibility, not
 // a startup precondition, so Check logs and returns nothing; every error path is caught
 // internally.
-package peripherals
+package metadata
 
 import (
 	"context"
@@ -10,16 +10,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/metadata"
 )
 
-func Check(ctx context.Context, pool *pgxpool.Pool, entities []metadata.EntitySummary) {
+func CheckDrift(ctx context.Context, pool *pgxpool.Pool, entities []EntitySummary) {
 	if err := checkInner(ctx, pool, entities); err != nil {
 		slog.Warn("metadata drift check skipped, could not reach the database", standard.LogError, err)
 	}
 }
 
-func checkInner(ctx context.Context, pool *pgxpool.Pool, entities []metadata.EntitySummary) error {
+func checkInner(ctx context.Context, pool *pgxpool.Pool, entities []EntitySummary) error {
 	for _, entity := range entities {
 		var existing *string
 		row := pool.QueryRow(ctx, "SELECT hash FROM metadata_versions WHERE entity_name = $1", entity.Name)

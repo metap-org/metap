@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/pkg/jwks"
 	"net/http"
 	"testing"
 	"time"
@@ -13,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/metap-org/metap/pkg/identity"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 func TestSessionListAndRevocation(t *testing.T) {
@@ -27,7 +27,7 @@ func TestSessionListAndRevocation(t *testing.T) {
 	signIn := func(m *identity.Member, ua string) (uuid.UUID, context.Context) {
 		sid, err := identity.CreateSession(context.Background(), h.pool, m.IdentityID, m.ID, tenant, time.Hour, "203.0.113.7", ua, now)
 		require.NoError(t, err)
-		tok, err := peripherals.MintSessionJWT(h.privPEM, tenant, m.ID, 3600, sid.String())
+		tok, err := jwks.MintRSASessionJWT(h.privPEM, tenant, m.ID, 3600, sid.String())
 		require.NoError(t, err)
 		return sid, CallContext(context.Background(), tok)
 	}
@@ -81,7 +81,7 @@ func TestSessionListAndRevocation(t *testing.T) {
 	require.NoError(t, err)
 
 	// A token whose session row is gone is refused, not trusted.
-	ghost, err := peripherals.MintSessionJWT(h.privPEM, tenant, bob.ID, 3600, uuid.NewString())
+	ghost, err := jwks.MintRSASessionJWT(h.privPEM, tenant, bob.ID, 3600, uuid.NewString())
 	require.NoError(t, err)
 	_, err = h.client.Account.GetMe(CallContext(context.Background(), ghost), &Empty{})
 	assert.Error(t, err)

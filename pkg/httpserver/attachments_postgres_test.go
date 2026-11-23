@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/jwks"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -20,7 +21,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/storage"
 )
 
@@ -108,7 +108,7 @@ func TestAttachmentsUploadListDownloadAndDelete(t *testing.T) {
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
 	store := newFakeObjectStore()
 	state.ObjectStore = store
-	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
@@ -169,7 +169,7 @@ func TestAttachmentsReturn503WhenObjectStoreIsNotConfigured(t *testing.T) {
 	})
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
-	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
@@ -195,7 +195,7 @@ func TestWorkflowEventsAndAuditEventsForARecord(t *testing.T) {
 	})
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
-	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
@@ -278,7 +278,7 @@ func TestAttachmentUploadOverTheLimitIsRefusedWith413(t *testing.T) {
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
 	store := newFakeObjectStore()
 	state.ObjectStore = store
-	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 

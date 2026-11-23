@@ -5,6 +5,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -19,7 +20,6 @@ import (
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -196,10 +196,10 @@ func (s *TenantAdminService) CreateTenant(ctx context.Context, req *CreateTenant
 	if err != nil {
 		return nil, fail(identityErr(ctx, err))
 	}
-	if err := peripherals.EnsureBuiltinRoles(ctx, pool, id); err != nil {
+	if err := rolestore.EnsureBuiltinRoles(ctx, pool, id); err != nil {
 		return nil, fail(rpcError(ctx, err))
 	}
-	if err := peripherals.AssignRole(ctx, pool, id, m.ID, permission.RoleAdmin, invitedBy); err != nil {
+	if err := rolestore.AssignRole(ctx, pool, id, m.ID, permission.RoleAdmin, invitedBy); err != nil {
 		return nil, fail(rpcError(ctx, err))
 	}
 	newAccount, err := identity.CanSetPasswordOnAccept(ctx, pool, m.IdentityID, m.ID)

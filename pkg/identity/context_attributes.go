@@ -3,7 +3,7 @@
 // run the *target's own* permission check against the very context being built, which is
 // circular; this is a raw, unauthenticated read of the caller's own identity data, same trust
 // level as GetRolesForUser.
-package peripherals
+package identity
 
 import (
 	"context"

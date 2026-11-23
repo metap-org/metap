@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/pkg/jwks"
 	"testing"
 
 	"github.com/google/uuid"
@@ -15,7 +16,6 @@ import (
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/metadata"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
 	"github.com/metap-org/metap/pkg/recordclient"
@@ -45,7 +45,7 @@ func TestRecordClientOverREST(t *testing.T) {
 	}))
 	state.Actions = reg
 	base := startTestServer(t, state, nil)
-	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 
 	rc := &permission.RequestContext{TenantID: tenantID.String(), UserID: userID.String(), ForwardedBearerToken: token}

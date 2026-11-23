@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"github.com/metap-org/metap/pkg/jwks"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -20,8 +21,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 func mustParseQueryParam(t *testing.T, rawURL, key string) string {
@@ -92,7 +91,7 @@ func oauthSetup(t *testing.T) (*httpserver.AppState, string, string, uuid.UUID, 
 	})
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
-	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 	return state, base, token, tenantID, userID

@@ -1,5 +1,5 @@
 // Mints a JWT signed by a JwksKeyPair — the JWKS-trust-root counterpart to
-// peripherals.MintJWT (RS256, single static per-app key). Deliberately reuses that module's
+// MintRSAJWT (RS256, single static per-app key). Deliberately reuses that module's
 // claim shape (sub/tenantId/functionId/exp/iss/aud, same JWTIssuer/JWTAudience constants) so a
 // token minted here and one minted by MintJWT are semantically interchangeable claims-wise —
 // only the signing key/algorithm and the presence of a kid header differ.
@@ -10,7 +10,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 type jwksClaims struct {
@@ -48,8 +47,8 @@ func mintJwksClaims(key *JwksKeyPair, tenantID, userID uuid.UUID, functionID *st
 			Subject:   userID.String(),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(ttlSeconds) * time.Second)),
-			Issuer:    peripherals.JWTIssuer,
-			Audience:  jwt.ClaimStrings{peripherals.JWTAudience},
+			Issuer:    JWTIssuer,
+			Audience:  jwt.ClaimStrings{JWTAudience},
 		},
 		TenantID:   tenantID.String(),
 		FunctionID: functionID,

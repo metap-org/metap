@@ -1,10 +1,9 @@
 // The mint-side counterpart to TokenVerifier — the same "which trust root" choice, made explicit
-// for a login handler instead of every minting call site hardcoding peripherals.MintJWT.
+// for a login handler instead of every minting call site hardcoding MintRSAJWT.
 package jwks
 
 import (
 	"github.com/google/uuid"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 type TokenSignerKind int
@@ -20,7 +19,7 @@ const (
 type TokenSigner struct {
 	Kind TokenSignerKind
 
-	// Static: raw PEM, matching peripherals.MintJWT's own signature.
+	// Static: raw PEM, matching MintRSAJWT's own signature.
 	PrivateKeyPEM string
 
 	// Jwks
@@ -41,7 +40,7 @@ func (s *TokenSigner) jwksKey() *JwksKeyPair {
 func MintWithSigner(signer *TokenSigner, tenantID, userID uuid.UUID, functionID *string, ttlSeconds uint64) (string, error) {
 	switch signer.Kind {
 	case SignerStatic:
-		return peripherals.MintJWT(signer.PrivateKeyPEM, tenantID, userID, ttlSeconds)
+		return MintRSAJWT(signer.PrivateKeyPEM, tenantID, userID, ttlSeconds)
 	default:
 		return MintServiceOrUserJWT(signer.jwksKey(), tenantID, userID, functionID, ttlSeconds)
 	}
@@ -52,7 +51,7 @@ func MintWithSigner(signer *TokenSigner, tenantID, userID uuid.UUID, functionID 
 func MintSessionWithSigner(signer *TokenSigner, tenantID, userID uuid.UUID, ttlSeconds uint64, sessionID string) (string, error) {
 	switch signer.Kind {
 	case SignerStatic:
-		return peripherals.MintSessionJWT(signer.PrivateKeyPEM, tenantID, userID, ttlSeconds, sessionID)
+		return MintRSASessionJWT(signer.PrivateKeyPEM, tenantID, userID, ttlSeconds, sessionID)
 	default:
 		return MintSessionJWT(signer.jwksKey(), tenantID, userID, ttlSeconds, sessionID)
 	}
@@ -62,7 +61,7 @@ func MintSessionWithSigner(signer *TokenSigner, tenantID, userID uuid.UUID, ttlS
 func MintOAuthTokenWithSigner(signer *TokenSigner, tenantID, userID uuid.UUID, ttlSeconds uint64, scope, clientID string) (string, error) {
 	switch signer.Kind {
 	case SignerStatic:
-		return peripherals.MintOAuthAccessToken(signer.PrivateKeyPEM, tenantID, userID, ttlSeconds, scope, clientID)
+		return MintRSAOAuthAccessToken(signer.PrivateKeyPEM, tenantID, userID, ttlSeconds, scope, clientID)
 	default:
 		return MintScopedServiceOrUserJWT(signer.jwksKey(), tenantID, userID, ttlSeconds, scope, clientID)
 	}

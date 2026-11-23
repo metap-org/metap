@@ -10,6 +10,8 @@ package httpserver_test
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/jwks"
 	"net/http"
 	"testing"
 
@@ -17,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/metap-org/metap/pkg/control"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 func TestAdminUsersRolesAndPoliciesLifecycle(t *testing.T) {
@@ -36,12 +37,12 @@ func TestAdminUsersRolesAndPoliciesLifecycle(t *testing.T) {
 	})
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
-	adminToken, err := peripherals.MintJWT(privPEM, tenantID, adminUserID, 3600)
+	adminToken, err := jwks.MintRSAJWT(privPEM, tenantID, adminUserID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
 	// Users and roles are typed operations (ops_admin.go, adminapi); this route is a plain handler.
-	newUser, err := peripherals.CreateUser(ctx, pool, tenantID, "new-user@example.com", "hunter2")
+	newUser, err := identity.CreateUser(ctx, pool, tenantID, "new-user@example.com", "hunter2")
 	require.NoError(t, err)
 	newUserID := newUser.ID.String()
 	for _, gone := range []string{"/admin/users", "/users"} {
@@ -120,7 +121,7 @@ func TestAdminUsersRolesAndPoliciesLifecycle(t *testing.T) {
 
 	// a non-admin (no role at all) is forbidden from every admin route
 	plainUserID := uuid.New()
-	plainToken, err := peripherals.MintJWT(privPEM, tenantID, plainUserID, 3600)
+	plainToken, err := jwks.MintRSAJWT(privPEM, tenantID, plainUserID, 3600)
 	require.NoError(t, err)
 	forbiddenRes := doRequest(t, "GET", base+"/admin/policies", plainToken, nil)
 	require.Equal(t, 403, forbiddenRes.StatusCode, "got %d", forbiddenRes.StatusCode)
@@ -142,7 +143,7 @@ func TestCronJobLifecycleAndValidation(t *testing.T) {
 	})
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
-	adminToken, err := peripherals.MintJWT(privPEM, tenantID, adminUserID, 3600)
+	adminToken, err := jwks.MintRSAJWT(privPEM, tenantID, adminUserID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
@@ -212,7 +213,7 @@ func TestDashboardsPersonalAndTenantDefault(t *testing.T) {
 	})
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
-	adminToken, err := peripherals.MintJWT(privPEM, tenantID, adminUserID, 3600)
+	adminToken, err := jwks.MintRSAJWT(privPEM, tenantID, adminUserID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
@@ -243,7 +244,7 @@ func TestDashboardsPersonalAndTenantDefault(t *testing.T) {
 
 	// a non-admin cannot write the tenant default
 	plainUserID := uuid.New()
-	plainToken, err := peripherals.MintJWT(privPEM, tenantID, plainUserID, 3600)
+	plainToken, err := jwks.MintRSAJWT(privPEM, tenantID, plainUserID, 3600)
 	require.NoError(t, err)
 	forbiddenRes := doRequest(t, "PUT", base+"/dashboards/tenant-default", plainToken, map[string]any{
 		"layout": map[string]any{},
@@ -266,7 +267,7 @@ func TestPreferencesGetAndPut(t *testing.T) {
 	})
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
-	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
@@ -310,9 +311,9 @@ func TestPlatformConfigListSetAndReset(t *testing.T) {
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
 	require.NoError(t, state.Config.Reload(ctx))
-	platformAdminToken, err := peripherals.MintJWT(privPEM, control.PlatformTenantID, platformAdminUserID, 3600)
+	platformAdminToken, err := jwks.MintRSAJWT(privPEM, control.PlatformTenantID, platformAdminUserID, 3600)
 	require.NoError(t, err)
-	tenantAdminToken, err := peripherals.MintJWT(privPEM, tenantAdminTenantID, tenantAdminUserID, 3600)
+	tenantAdminToken, err := jwks.MintRSAJWT(privPEM, tenantAdminTenantID, tenantAdminUserID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
@@ -395,7 +396,7 @@ func TestTenantConfigListSetResetAndPublicConfig(t *testing.T) {
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
 	require.NoError(t, state.Config.Reload(ctx))
-	adminToken, err := peripherals.MintJWT(privPEM, tenantID, adminUserID, 3600)
+	adminToken, err := jwks.MintRSAJWT(privPEM, tenantID, adminUserID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
@@ -497,9 +498,9 @@ func TestPlatformAdminContextGatesBySentinelTenantAndRole(t *testing.T) {
 	require.NoError(t, state.Config.Reload(ctx))
 	base := startTestServer(t, state, nil)
 
-	tenantAdminToken, _ := peripherals.MintJWT(privPEM, tenantID, tenantAdminUserID, 3600)
-	sentinelToken, _ := peripherals.MintJWT(privPEM, control.PlatformTenantID, sentinelUserID, 3600)
-	platformAdminToken, _ := peripherals.MintJWT(privPEM, control.PlatformTenantID, platformAdminUserID, 3600)
+	tenantAdminToken, _ := jwks.MintRSAJWT(privPEM, tenantID, tenantAdminUserID, 3600)
+	sentinelToken, _ := jwks.MintRSAJWT(privPEM, control.PlatformTenantID, sentinelUserID, 3600)
+	platformAdminToken, _ := jwks.MintRSAJWT(privPEM, control.PlatformTenantID, platformAdminUserID, 3600)
 
 	res := doRequest(t, "GET", base+"/platform/config", tenantAdminToken, nil)
 	require.Equal(t, 403, res.StatusCode, "a normal tenant admin must not pass, got %d", res.StatusCode)

@@ -1,4 +1,4 @@
-package peripherals
+package jwks
 
 import (
 	"crypto/rand"
@@ -25,7 +25,7 @@ func TestMintJWTAndDecodeAccessTokenRoundTrip(t *testing.T) {
 	tenantID := uuid.New()
 	userID := uuid.New()
 
-	token, err := MintJWT(privatePEM, tenantID, userID, 3600)
+	token, err := MintRSAJWT(privatePEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 
 	claims, err := DecodeAccessToken(token, publicKey, 0)
@@ -42,7 +42,7 @@ func TestMintOAuthAccessTokenCarriesScopeAndClientID(t *testing.T) {
 	tenantID := uuid.New()
 	userID := uuid.New()
 
-	token, err := MintOAuthAccessToken(privatePEM, tenantID, userID, 3600, "read:zones", "mcl_abc123")
+	token, err := MintRSAOAuthAccessToken(privatePEM, tenantID, userID, 3600, "read:zones", "mcl_abc123")
 	require.NoError(t, err)
 
 	claims, err := DecodeAccessToken(token, publicKey, 0)
@@ -58,7 +58,7 @@ func TestDecodeAccessTokenRejectsATokenSignedByADifferentKey(t *testing.T) {
 
 	// A token signed with a *different* key must fail verification outright.
 	otherPrivatePEM, _ := generateTestRSAKeyPair(t)
-	token, err := MintJWT(otherPrivatePEM, uuid.New(), uuid.New(), 3600)
+	token, err := MintRSAJWT(otherPrivatePEM, uuid.New(), uuid.New(), 3600)
 	require.NoError(t, err)
 	_, err = DecodeAccessToken(token, publicKey, 0)
 	require.Error(t, err, "expected a token signed by a different key to fail verification")
@@ -67,7 +67,7 @@ func TestDecodeAccessTokenRejectsATokenSignedByADifferentKey(t *testing.T) {
 func TestDecodeAccessTokenRejectsAnExpiredToken(t *testing.T) {
 	privatePEM, publicKey := generateTestRSAKeyPair(t)
 	// A zero/negative TTL mints an already-expired token.
-	token, err := MintJWT(privatePEM, uuid.New(), uuid.New(), 0)
+	token, err := MintRSAJWT(privatePEM, uuid.New(), uuid.New(), 0)
 	require.NoError(t, err)
 	time.Sleep(1100 * time.Millisecond)
 	_, err = DecodeAccessToken(token, publicKey, 0)

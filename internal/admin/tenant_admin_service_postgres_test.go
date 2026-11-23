@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
 	"regexp"
 	"testing"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/identity"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 func TestTenantAdminService(t *testing.T) {
@@ -60,7 +60,7 @@ func TestTenantAdminService(t *testing.T) {
 	m, err := identity.GetMember(ctx, h.pool, tid, uuid.MustParse(created.GetAdminMemberId()))
 	require.NoError(t, err)
 	assert.Equal(t, identity.StatusInvited, m.Status)
-	roles, err := peripherals.GetRolesForUser(ctx, h.pool, tid, m.ID)
+	roles, err := rolestore.GetRolesForUser(ctx, h.pool, tid, m.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"admin"}, roles)
 

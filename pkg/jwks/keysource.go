@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // KeySource resolves a token's kid to the Ed25519 public key that must have signed it. The
@@ -36,7 +34,7 @@ func HasKid(token string) bool {
 
 // DecodeEdDSA verifies token's signature with the key its kid names in src, plus the standard
 // audience/issuer/expiry checks, and returns its claims.
-func DecodeEdDSA(ctx context.Context, tokenString string, src KeySource, leeway time.Duration) (*peripherals.AccessClaims, error) {
+func DecodeEdDSA(ctx context.Context, tokenString string, src KeySource, leeway time.Duration) (*AccessClaims, error) {
 	unverified, _, err := jwt.NewParser().ParseUnverified(tokenString, jwt.MapClaims{})
 	if err != nil {
 		return nil, err
@@ -52,8 +50,8 @@ func DecodeEdDSA(ctx context.Context, tokenString string, src KeySource, leeway 
 	var wire jwksClaims
 	_, err = jwt.ParseWithClaims(tokenString, &wire, func(t *jwt.Token) (any, error) { return key, nil },
 		jwt.WithValidMethods([]string{"EdDSA"}),
-		jwt.WithAudience(peripherals.JWTAudience),
-		jwt.WithIssuer(peripherals.JWTIssuer),
+		jwt.WithAudience(JWTAudience),
+		jwt.WithIssuer(JWTIssuer),
 		jwt.WithLeeway(leeway),
 		jwt.WithExpirationRequired(),
 	)
@@ -64,7 +62,7 @@ func DecodeEdDSA(ctx context.Context, tokenString string, src KeySource, leeway 
 	if wire.ID != "" {
 		jti = &wire.ID
 	}
-	return &peripherals.AccessClaims{
+	return &AccessClaims{
 		Subject:    wire.Subject,
 		TenantID:   wire.TenantID,
 		FunctionID: wire.FunctionID,
@@ -72,6 +70,6 @@ func DecodeEdDSA(ctx context.Context, tokenString string, src KeySource, leeway 
 		Scope:      wire.Scope,
 		ClientID:   wire.ClientID,
 		SessionID:  wire.SessionID,
-		IssuedAt:   peripherals.IssuedAt(wire.IssuedAt),
+		IssuedAt:   IssuedAt(wire.IssuedAt),
 	}, nil
 }

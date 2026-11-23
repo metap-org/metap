@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"github.com/metap-org/metap/pkg/jwks"
 	"io"
 	"testing"
 	"time"
@@ -15,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // Roadmap 115 M9: the tenant's audit trail exports as CSV or JSON, filtered, admins only, never
@@ -36,9 +36,9 @@ func TestAuditExportCSVAndJSON(t *testing.T) {
 	store := audit.NewPostgresStore(pool)
 	state.Audit = store
 	base := startTestServer(t, state, nil)
-	adminToken, err := peripherals.MintJWT(privPEM, tenant, adminID, 3600)
+	adminToken, err := jwks.MintRSAJWT(privPEM, tenant, adminID, 3600)
 	require.NoError(t, err)
-	analystToken, err := peripherals.MintJWT(privPEM, tenant, analystID, 3600)
+	analystToken, err := jwks.MintRSAJWT(privPEM, tenant, analystID, 3600)
 	require.NoError(t, err)
 
 	now := time.Now()

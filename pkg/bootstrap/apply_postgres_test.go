@@ -4,6 +4,8 @@ package bootstrap
 
 import (
 	"context"
+	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"testing"
 
 	"github.com/google/uuid"
@@ -11,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/metap-org/metap/pkg/control"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/testkit"
 )
@@ -31,10 +32,10 @@ func TestApplyUsersAgainstPostgres(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Soc@Example.io"}, res.UsersCreated)
 
-	user, err := peripherals.VerifyCredentials(ctx, pool, "Soc@Example.io", "correct horse battery staple", nil)
+	user, err := identity.VerifyCredentials(ctx, pool, "Soc@Example.io", "correct horse battery staple", nil)
 	require.NoError(t, err)
 	require.NotNil(t, user)
-	roles, err := peripherals.GetRolesForUser(ctx, pool, tenant, user.ID)
+	roles, err := rolestore.GetRolesForUser(ctx, pool, tenant, user.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"analyst"}, roles)
 

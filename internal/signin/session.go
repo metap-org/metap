@@ -10,7 +10,6 @@ import (
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -84,7 +83,7 @@ func (s *Service) OwnEmail(ctx context.Context, rc *permission.RequestContext) s
 		return ""
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	user, err := peripherals.FindUserByID(ctx, tx, tenantID, userID)
+	user, err := identity.FindUserByID(ctx, tx, tenantID, userID)
 	if err != nil || user == nil {
 		return ""
 	}

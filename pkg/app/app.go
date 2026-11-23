@@ -46,7 +46,6 @@ import (
 	"github.com/metap-org/metap/pkg/kit/shutdown"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/reconciler"
 	"github.com/metap-org/metap/pkg/secrets"
@@ -160,7 +159,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	// Indexes for dedicated tables are built by the reconcile above; peripherals' old
 	// records-table index reconciler was removed (that table was dropped in migration 0033).
-	peripherals.Check(ctx, pool, registry.ListEntities())
+	metadata.CheckDrift(ctx, pool, registry.ListEntities())
 	for _, ext := range opts.ExternalEntities {
 		if err := registry.Register(ext.Definition); err != nil {
 			return fmt.Errorf("registering external entity %s: %w", ext.Definition.Name, err)

@@ -3,14 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"os"
 
 	"github.com/metap-org/metap/pkg/control"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
-// seedAdmin mirrors seed-admin.mjs, via peripherals.AssignRole (the same function the
+// seedAdmin mirrors seed-admin.mjs, via rolestore.AssignRole (the same function the
 // peripherals package's own e2e tests already verify against the real dev Postgres) instead of
 // a hand-rolled query.
 func seedAdmin(args []string) error {
@@ -40,7 +41,7 @@ func seedAdmin(args []string) error {
 		return fmt.Errorf("failed to resolve tenant %s's database: %w", tenantID, err)
 	}
 	defer tx.Rollback(ctx)
-	if err := peripherals.AssignRole(ctx, tx, tenantID, userID, permission.RoleAdmin, nil); err != nil {
+	if err := rolestore.AssignRole(ctx, tx, tenantID, userID, permission.RoleAdmin, nil); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -73,7 +74,7 @@ func createUser(args []string) error {
 	email, password := args[3], args[4]
 
 	// Members live in the shared database for every tenant (pkg/identity), so no tenant routing.
-	user, err := peripherals.CreateUser(ctx, pool, tenantID, email, password)
+	user, err := identity.CreateUser(ctx, pool, tenantID, email, password)
 	if err != nil {
 		return err
 	}
@@ -167,11 +168,11 @@ func bootstrapPlatformAdmin(args []string) error {
 	email, password := args[2], args[3]
 	tenantID := control.PlatformTenantID
 
-	user, err := peripherals.CreateUser(ctx, pool, tenantID, email, password)
+	user, err := identity.CreateUser(ctx, pool, tenantID, email, password)
 	if err != nil {
 		return err
 	}
-	if err := peripherals.AssignRole(ctx, pool, tenantID, user.ID, "platform_admin", nil); err != nil {
+	if err := rolestore.AssignRole(ctx, pool, tenantID, user.ID, "platform_admin", nil); err != nil {
 		return err
 	}
 

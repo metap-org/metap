@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/pkg/jwks"
 	"net/http"
 	"testing"
 
@@ -15,7 +16,6 @@ import (
 
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/metadata"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // Declared actions over REST (roadmap 116): record- and entity-scoped, only what the entity
@@ -48,7 +48,7 @@ func TestDeclaredActionsOverREST(t *testing.T) {
 		return crud.JsonObject{"swept": json.RawMessage("3")}, nil
 	}))
 	state.Actions = reg
-	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 
@@ -99,13 +99,13 @@ func TestDeclaredActionRequiresEntityPermission(t *testing.T) {
 	state.Actions = reg
 	base := startTestServer(t, state, nil)
 
-	viewer, err := peripherals.MintJWT(privPEM, tenantID, viewerID, 3600)
+	viewer, err := jwks.MintRSAJWT(privPEM, tenantID, viewerID, 3600)
 	require.NoError(t, err)
 	res := doRequest(t, "POST", base+"/api/test.orders/actions/probe", viewer, nil)
 	assert.Equal(t, 403, res.StatusCode)
 	assert.Zero(t, calls, "the handler must not run for a caller without the permission")
 
-	admin, err := peripherals.MintJWT(privPEM, tenantID, adminID, 3600)
+	admin, err := jwks.MintRSAJWT(privPEM, tenantID, adminID, 3600)
 	require.NoError(t, err)
 	res = doRequest(t, "POST", base+"/api/test.orders/actions/probe", admin, nil)
 	assert.Equal(t, 200, res.StatusCode)

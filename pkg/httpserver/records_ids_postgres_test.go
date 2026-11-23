@@ -5,13 +5,12 @@ package httpserver_test
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/jwks"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // GET /api/{entity}?ids=: the records that exist and the caller may read, in one call (what the
@@ -29,7 +28,7 @@ func TestListByIDs(t *testing.T) {
 	})
 	ensureTestOrdersTable(t, pool)
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
-	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 

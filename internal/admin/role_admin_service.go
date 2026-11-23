@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
 	"regexp"
 	"strings"
@@ -16,7 +17,6 @@ import (
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // AuditEntityRoles is the audit-trail entity name role administration records under.
@@ -44,9 +44,9 @@ func NewRoleAdminService(cfg IdentityConfig) *RoleAdminService {
 
 func roleErr(ctx context.Context, err error, name string) error {
 	switch {
-	case errors.Is(err, peripherals.ErrRoleNotFound):
+	case errors.Is(err, rolestore.ErrRoleNotFound):
 		return svcErr(ctx, http.StatusNotFound, errcode.NotFound, "Role "+name+" not found.")
-	case errors.Is(err, peripherals.ErrRoleExists):
+	case errors.Is(err, rolestore.ErrRoleExists):
 		return sendServiceError(ctx, &crud.ServiceError{Status: http.StatusConflict, Code: errcode.RoleExists,
 			Message: "A role named " + name + " already exists.", FieldErrors: map[string][]string{"name": {"already exists"}}})
 	}
@@ -56,9 +56,9 @@ func roleErr(ctx context.Context, err error, name string) error {
 // activeHolders counts, per role, the active members holding it.
 func (d identityDeps) activeHolders(ctx context.Context, tenant uuid.UUID, roles []string) (map[string]int, error) {
 	holders := map[string][]uuid.UUID{}
-	if err := d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
+	if err := d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
 		for _, r := range roles {
-			ids, err := peripherals.UsersWithRole(ctx, db, tenant, r)
+			ids, err := rolestore.UsersWithRole(ctx, db, tenant, r)
 			if err != nil {
 				return err
 			}
@@ -84,7 +84,7 @@ func (d identityDeps) activeHolders(ctx context.Context, tenant uuid.UUID, roles
 	return out, nil
 }
 
-func toPBRole(r peripherals.Role, users, policies int) *Role {
+func toPBRole(r rolestore.Role, users, policies int) *Role {
 	return &Role{
 		Id: r.ID.String(), Name: r.Name, Label: r.Label, Description: r.Description, Builtin: r.Builtin,
 		UserCount: int32(users), PolicyCount: int32(policies),
@@ -94,17 +94,17 @@ func toPBRole(r peripherals.Role, users, policies int) *Role {
 
 // loadRoles reads the catalog (creating the built-in rows on first use) with each role's usage.
 func (s *RoleAdminService) loadRoles(ctx context.Context, tenant uuid.UUID, search string) ([]*Role, error) {
-	var rows []peripherals.Role
+	var rows []rolestore.Role
 	var policyCounts map[string]int
-	if err := s.d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
-		if err := peripherals.EnsureBuiltinRoles(ctx, db, tenant); err != nil {
+	if err := s.d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
+		if err := rolestore.EnsureBuiltinRoles(ctx, db, tenant); err != nil {
 			return err
 		}
 		var err error
-		if rows, err = peripherals.ListRoleRows(ctx, db, tenant, search); err != nil {
+		if rows, err = rolestore.ListRoleRows(ctx, db, tenant, search); err != nil {
 			return err
 		}
-		policyCounts, err = peripherals.PolicyCountsByRole(ctx, db, tenant)
+		policyCounts, err = rolestore.PolicyCountsByRole(ctx, db, tenant)
 		return err
 	}); err != nil {
 		return nil, err
@@ -137,17 +137,17 @@ func (s *RoleAdminService) ListRoles(ctx context.Context, req *ListRolesRequest)
 }
 
 func (s *RoleAdminService) role(ctx context.Context, tenant uuid.UUID, name string) (*Role, error) {
-	var r peripherals.Role
-	var policies []peripherals.PolicyRef
-	if err := s.d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
-		if err := peripherals.EnsureBuiltinRoles(ctx, db, tenant); err != nil {
+	var r rolestore.Role
+	var policies []rolestore.PolicyRef
+	if err := s.d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
+		if err := rolestore.EnsureBuiltinRoles(ctx, db, tenant); err != nil {
 			return err
 		}
 		var err error
-		if r, err = peripherals.GetRoleByName(ctx, db, tenant, name); err != nil {
+		if r, err = rolestore.GetRoleByName(ctx, db, tenant, name); err != nil {
 			return err
 		}
-		policies, err = peripherals.PoliciesNamingRole(ctx, db, tenant, name)
+		policies, err = rolestore.PoliciesNamingRole(ctx, db, tenant, name)
 		return err
 	}); err != nil {
 		return nil, err
@@ -190,28 +190,28 @@ func (s *RoleAdminService) CreateRole(ctx context.Context, req *CreateRoleReques
 		by = &self
 	}
 	copyFrom := strings.TrimSpace(req.GetCopyFrom())
-	var created peripherals.Role
-	var copied []peripherals.RoleGrant
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
+	var created rolestore.Role
+	var copied []rolestore.RoleGrant
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
 		if copyFrom != "" {
-			if _, err := peripherals.GetRoleByName(ctx, db, c.tenant, copyFrom); err != nil {
+			if _, err := rolestore.GetRoleByName(ctx, db, c.tenant, copyFrom); err != nil {
 				return err
 			}
 			var err error
-			if copied, err = peripherals.RoleBasicGrants(ctx, db, c.tenant, copyFrom); err != nil {
+			if copied, err = rolestore.RoleBasicGrants(ctx, db, c.tenant, copyFrom); err != nil {
 				return err
 			}
 		}
 		var err error
-		if created, err = peripherals.CreateRole(ctx, db, c.tenant, name, label, description, by); err != nil {
+		if created, err = rolestore.CreateRole(ctx, db, c.tenant, name, label, description, by); err != nil {
 			return err
 		}
 		if len(copied) > 0 {
-			_, err = peripherals.ReplaceRoleBasicGrants(ctx, db, c.tenant, name, copied, by)
+			_, err = rolestore.ReplaceRoleBasicGrants(ctx, db, c.tenant, name, copied, by)
 		}
 		return err
 	}); err != nil {
-		if copyFrom != "" && errors.Is(err, peripherals.ErrRoleNotFound) {
+		if copyFrom != "" && errors.Is(err, rolestore.ErrRoleNotFound) {
 			return nil, roleErr(ctx, err, copyFrom)
 		}
 		return nil, roleErr(ctx, err, name)
@@ -231,16 +231,16 @@ func (s *RoleAdminService) UpdateRole(ctx context.Context, req *UpdateRoleReques
 	}
 	name := strings.TrimSpace(req.GetName())
 	label, description := strings.TrimSpace(req.GetLabel()), strings.TrimSpace(req.GetDescription())
-	var before, after peripherals.Role
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
-		if err := peripherals.EnsureBuiltinRoles(ctx, db, c.tenant); err != nil {
+	var before, after rolestore.Role
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+		if err := rolestore.EnsureBuiltinRoles(ctx, db, c.tenant); err != nil {
 			return err
 		}
 		var err error
-		if before, err = peripherals.GetRoleByName(ctx, db, c.tenant, name); err != nil {
+		if before, err = rolestore.GetRoleByName(ctx, db, c.tenant, name); err != nil {
 			return err
 		}
-		after, err = peripherals.UpdateRole(ctx, db, c.tenant, name, label, description)
+		after, err = rolestore.UpdateRole(ctx, db, c.tenant, name, label, description)
 		return err
 	}); err != nil {
 		return nil, roleErr(ctx, err, name)
@@ -270,21 +270,21 @@ func (s *RoleAdminService) DeleteRole(ctx context.Context, req *RoleNameRequest)
 		return nil, err
 	}
 	name := strings.TrimSpace(req.GetName())
-	var r peripherals.Role
+	var r rolestore.Role
 	var holders []uuid.UUID
-	var policies []peripherals.PolicyRef
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
-		if err := peripherals.EnsureBuiltinRoles(ctx, db, c.tenant); err != nil {
+	var policies []rolestore.PolicyRef
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+		if err := rolestore.EnsureBuiltinRoles(ctx, db, c.tenant); err != nil {
 			return err
 		}
 		var err error
-		if r, err = peripherals.GetRoleByName(ctx, db, c.tenant, name); err != nil {
+		if r, err = rolestore.GetRoleByName(ctx, db, c.tenant, name); err != nil {
 			return err
 		}
-		if holders, err = peripherals.UsersWithRole(ctx, db, c.tenant, name); err != nil {
+		if holders, err = rolestore.UsersWithRole(ctx, db, c.tenant, name); err != nil {
 			return err
 		}
-		policies, err = peripherals.PoliciesNamingRole(ctx, db, c.tenant, name)
+		policies, err = rolestore.PoliciesNamingRole(ctx, db, c.tenant, name)
 		return err
 	}); err != nil {
 		return nil, roleErr(ctx, err, name)
@@ -295,8 +295,8 @@ func (s *RoleAdminService) DeleteRole(ctx context.Context, req *RoleNameRequest)
 	if len(holders) > 0 || len(policies) > 0 {
 		return nil, s.inUseError(ctx, c.tenant, name, holders, policies)
 	}
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
-		return peripherals.DeleteRole(ctx, db, c.tenant, name)
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+		return rolestore.DeleteRole(ctx, db, c.tenant, name)
 	}); err != nil {
 		return nil, roleErr(ctx, err, name)
 	}
@@ -308,7 +308,7 @@ func (s *RoleAdminService) DeleteRole(ctx context.Context, req *RoleNameRequest)
 
 // inUseError is role_in_use with what blocks the delete: fieldErrors.members (emails) and
 // fieldErrors.policies ("entity action"), each capped at usageSampleSize plus a "+N more" entry.
-func (s *RoleAdminService) inUseError(ctx context.Context, tenant uuid.UUID, name string, holders []uuid.UUID, policies []peripherals.PolicyRef) error {
+func (s *RoleAdminService) inUseError(ctx context.Context, tenant uuid.UUID, name string, holders []uuid.UUID, policies []rolestore.PolicyRef) error {
 	fields := map[string][]string{}
 	if len(holders) > 0 {
 		sample := holders
@@ -345,10 +345,10 @@ func (s *RoleAdminService) ListRoleAudit(ctx context.Context, req *ListRoleAudit
 		return nil, err
 	}
 	name := strings.TrimSpace(req.GetName())
-	var r peripherals.Role
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
+	var r rolestore.Role
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
 		var err error
-		r, err = peripherals.GetRoleByName(ctx, db, c.tenant, name)
+		r, err = rolestore.GetRoleByName(ctx, db, c.tenant, name)
 		return err
 	}); err != nil {
 		return nil, roleErr(ctx, err, name)

@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -24,7 +25,6 @@ import (
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/metadata"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/testkit"
 )
@@ -108,7 +108,7 @@ func newIdentityHarness(t *testing.T, withMailer ...bool) *identityHarness {
 }
 
 func (h *identityHarness) as(tenant, user uuid.UUID) context.Context {
-	token, err := peripherals.MintJWT(h.privPEM, tenant, user, 3600)
+	token, err := jwks.MintRSAJWT(h.privPEM, tenant, user, 3600)
 	require.NoError(h.t, err)
 	return CallContext(context.Background(), token)
 }
@@ -128,7 +128,7 @@ func (h *identityHarness) policyRole(tenant uuid.UUID, role string) {
 	_, err := h.pool.Exec(context.Background(), `INSERT INTO metadata.policies (tenant_id, entity, action, roles)
 		VALUES ($1, 'test.things', 'read', jsonb_build_array($2::text))`, tenant, role)
 	require.NoError(h.t, err)
-	require.NoError(h.t, peripherals.EnsureRoles(context.Background(), h.pool, tenant, []string{role}, nil))
+	require.NoError(h.t, rolestore.EnsureRoles(context.Background(), h.pool, tenant, []string{role}, nil))
 }
 
 // errCode calls fn with a trailer and returns the ServiceError's code ("" on success).
@@ -258,7 +258,7 @@ func TestUserAdminLifecycle(t *testing.T) {
 		_, err := h.client.Admin.GetUser(ctx, &UserIdRequest{Id: bob.GetId()})
 		return err
 	}))
-	gone, err := peripherals.GetRolesForUser(context.Background(), h.pool, tenant, bobID)
+	gone, err := rolestore.GetRolesForUser(context.Background(), h.pool, tenant, bobID)
 	require.NoError(t, err)
 	assert.Empty(t, gone, "removing a member drops their roles")
 
@@ -377,7 +377,7 @@ func TestRoleAdminLifecycle(t *testing.T) {
 	// A role named only by a write outside the admin API (a policy, an assignment) joins the catalog.
 	_, err = h.client.Admin.AssignRole(ctx, &RoleRequest{Id: bob.GetUser().GetId(), Role: "ghost"})
 	assert.Error(t, err, "the admin API still refuses an unknown role")
-	require.NoError(t, peripherals.AssignRole(bg, h.pool, tenant, uuid.MustParse(bob.GetUser().GetId()), "auditor", nil))
+	require.NoError(t, rolestore.AssignRole(bg, h.pool, tenant, uuid.MustParse(bob.GetUser().GetId()), "auditor", nil))
 	_, err = h.client.Roles.GetRole(ctx, &RoleNameRequest{Name: "auditor"})
 	require.NoError(t, err)
 

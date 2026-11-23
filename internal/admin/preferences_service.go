@@ -3,6 +3,7 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/pkg/identity"
 	"net/http"
 	"slices"
 
@@ -10,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -45,7 +45,7 @@ func (s *PreferencesService) GetPreferences(ctx context.Context, _ *Empty) (*Pre
 	if err != nil {
 		return nil, err
 	}
-	locale, err := peripherals.GetLocale(ctx, s.pool, tenant, user)
+	locale, err := identity.GetLocale(ctx, s.pool, tenant, user)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (s *PreferencesService) UpdatePreferences(ctx context.Context, req *Prefere
 	if !slices.Contains(SupportedLocales, req.Locale) {
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "`locale` must be one of: en, vi.")
 	}
-	if err := peripherals.SetLocale(ctx, s.pool, tenant, user, req.Locale); err != nil {
+	if err := identity.SetLocale(ctx, s.pool, tenant, user, req.Locale); err != nil {
 		return nil, err
 	}
 	return &PreferencesResult{Data: &Preferences{Locale: req.Locale}}, nil

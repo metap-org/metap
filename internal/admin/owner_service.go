@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
 	"slices"
 	"strings"
@@ -16,7 +17,6 @@ import (
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -33,9 +33,9 @@ func NewOwnerService(cfg IdentityConfig) *OwnerService {
 // activeAdmins lists the tenant's active members holding the tenant-wide admin role.
 func (d identityDeps) activeAdmins(ctx context.Context, tenant uuid.UUID) ([]identity.Member, error) {
 	var ids []uuid.UUID
-	if err := d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
+	if err := d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
 		var err error
-		ids, err = peripherals.UsersWithRole(ctx, db, tenant, permission.RoleAdmin)
+		ids, err = rolestore.UsersWithRole(ctx, db, tenant, permission.RoleAdmin)
 		return err
 	}); err != nil {
 		return nil, err
@@ -297,8 +297,8 @@ func (s *OwnerService) CompleteOwnerRecovery(ctx context.Context, req *TenantIdO
 		return nil, svcErr(ctx, http.StatusConflict, errcode.ValidationFailed, "The proposed new owner is no longer an active member.")
 	}
 	// The new owner is an admin: ownership without the role would be a locked-out owner.
-	if err := s.d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
-		return peripherals.AssignRole(ctx, db, tenant, target.ID, permission.RoleAdmin, nil)
+	if err := s.d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
+		return rolestore.AssignRole(ctx, db, tenant, target.ID, permission.RoleAdmin, nil)
 	}); err != nil {
 		return nil, rpcError(ctx, err)
 	}

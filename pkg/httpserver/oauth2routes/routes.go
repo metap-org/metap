@@ -27,6 +27,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/metap-org/metap/pkg/jwks"
 	"html"
 	"net/http"
 	"strings"
@@ -39,7 +40,6 @@ import (
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/oauthserver"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
@@ -604,7 +604,7 @@ func revokeEndpoint(w http.ResponseWriter, r *http.Request, state *httpserver.Ap
 // does in practice.
 func discoveryMetadata(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
 	doc := map[string]any{
-		"issuer":                                peripherals.JWTIssuer,
+		"issuer":                                jwks.JWTIssuer,
 		"authorization_endpoint":                "/oauth/authorize",
 		"token_endpoint":                        "/oauth/token",
 		"revocation_endpoint":                   "/oauth/revoke",

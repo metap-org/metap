@@ -5,6 +5,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"net/http"
 
@@ -15,7 +16,6 @@ import (
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 func (s *UserAdminService) InviteUser(ctx context.Context, req *InviteUserRequest) (*InviteUserResponse, error) {
@@ -36,9 +36,9 @@ func (s *UserAdminService) InviteUser(ctx context.Context, req *InviteUserReques
 		return nil, identityErr(ctx, err)
 	}
 	if len(roles) > 0 {
-		if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
+		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
 			for _, r := range roles {
-				if err := peripherals.AssignRole(ctx, db, c.tenant, m.ID, r, invitedBy); err != nil {
+				if err := rolestore.AssignRole(ctx, db, c.tenant, m.ID, r, invitedBy); err != nil {
 					return err
 				}
 			}
