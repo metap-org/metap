@@ -21,10 +21,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strings"
 
 	"github.com/metap-org/metap/pkg/kit/env"
+	"github.com/metap-org/metap/pkg/kit/safehttp"
 )
 
 // forbiddenHeaders are request headers a tenant may not set as a literal value on a webhook.
@@ -140,48 +142,10 @@ func CheckHeaders(names []string) error {
 	return nil
 }
 
-// IsBlockedIP is every address range that means "inside the deployment" rather than "somewhere
-// on the public internet" — the single place this list lives, so unit tests and the runtime
-// check can't disagree.
+// IsBlockedIP is every address range that means "inside the deployment" rather than "somewhere on
+// the public internet". The list is safehttp's (one list for every outbound client), so this and
+// the customer-origin client cannot disagree.
 func IsBlockedIP(addr net.IP) bool {
-	// net.IP.To4 also unwraps an IPv4-mapped IPv6 address (::ffff:a.b.c.d).
-	if v4 := addr.To4(); v4 != nil {
-		return isBlockedV4(v4)
-	}
-	return isBlockedV6(addr.To16())
-}
-
-func isBlockedV4(ip net.IP) bool {
-	a, b := ip[0], ip[1]
-	switch {
-	case ip.IsPrivate(), ip.IsLoopback(), ip.IsLinkLocalUnicast(), ip.IsUnspecified(), ip.IsMulticast():
-		return true
-	case ip.Equal(net.IPv4bcast):
-		return true
-	case a == 192 && b == 0 && ip[2] == 2:
-		return true
-	case a == 198 && b == 51 && ip[2] == 100:
-		return true
-	case a == 203 && b == 0 && ip[2] == 113:
-		return true
-	// 100.64.0.0/10, carrier-grade NAT: routable inside many cloud VPCs, not on the public
-	// internet.
-	case a == 100 && b >= 64 && b < 128:
-		return true
-	}
-	return false
-}
-
-func isBlockedV6(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() {
-		return true
-	}
-	first := uint16(ip[0])<<8 | uint16(ip[1])
-	if first&0xfe00 == 0xfc00 { // fc00::/7 unique-local
-		return true
-	}
-	if first&0xffc0 == 0xfe80 { // fe80::/10 link-local
-		return true
-	}
-	return false
+	a, ok := netip.AddrFromSlice(addr)
+	return !ok || !safehttp.PublicAddress(a)
 }
