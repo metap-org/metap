@@ -169,33 +169,34 @@ func (s *Service) VerifySignup(ctx context.Context, token string, c Client) (*Ou
 	if !s.SignupEnabled() {
 		return nil, errSignupDisabled()
 	}
-	tx, err := s.d.Pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-	su, err := identity.ConsumeSignup(ctx, tx, token, s.now())
+	// The link is claimed with one statement and no connection is held while the tenant is built:
+	// each step below takes its own pooled connection, so holding one open around them would need
+	// two per request. A failure puts the signup back so the link stays usable.
+	su, err := identity.ConsumeSignup(ctx, s.d.Pool, token, s.now())
 	if err != nil {
 		if errors.Is(err, identity.ErrSignupInvalid) {
 			return nil, serviceErr(http.StatusBadRequest, errcode.SignupInvalid, err.Error(), nil)
 		}
 		return nil, err
 	}
+	restore := func() { _ = identity.RestoreSignup(context.WithoutCancel(ctx), s.d.Pool, su) }
 	// The blocklist may have grown since the link was sent: check again before creating anything.
-	// Returning here rolls the transaction back, so the (useless) link is not consumed.
+	// The signup goes back, so the link is not consumed.
 	if s.tenantNameBlocked(su.TenantName) {
+		restore()
 		return nil, serviceErr(http.StatusBadRequest, errcode.SignupInvalid, "This name is not available.",
 			map[string][]string{"tenantName": {"This name is not available."}})
 	}
 	tenantID := uuid.New()
 	registry := tenancy.NewPostgresTenantRegistry(s.d.Pool)
-	// The tenant is registered outside the signup transaction (the registry owns its writes), so a
-	// failure after this point must undo it by hand.
+	// The registry owns its writes, so a failure after the tenant exists must undo it by hand.
 	if err := registry.RegisterShared(ctx, tenantID, su.TenantName, signupTier, "provisioning"); err != nil {
+		restore()
 		return nil, err
 	}
 	fail := func(cause error) (*Outcome, error) {
 		_, _ = registry.Deprovision(context.WithoutCancel(ctx), tenantID)
+		restore()
 		return nil, cause
 	}
 	m, _, err := identity.AddMember(ctx, s.d.Pool, identity.NewMember{
@@ -213,10 +214,7 @@ func (s *Service) VerifySignup(ctx context.Context, token string, c Client) (*Ou
 	if ok, err := registry.SetStatus(ctx, tenantID, "active"); err != nil || !ok {
 		return fail(errors.Join(err, errors.New("could not activate the tenant")))
 	}
-	// Only now is the link used up: any failure above left it usable for a retry.
-	if err := tx.Commit(ctx); err != nil {
-		return fail(err)
-	}
+	// Only now is the link used up: any failure above put it back for a retry.
 	ident, err := identity.FindIdentityByID(ctx, s.d.Pool, m.IdentityID)
 	if err != nil {
 		return nil, err

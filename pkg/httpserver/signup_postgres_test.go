@@ -291,3 +291,47 @@ func (s *syncBuffer) String() string {
 	defer s.mu.Unlock()
 	return s.b.String()
 }
+
+// Signup verification takes no pooled connection for the whole registration: sixteen links opened at
+// once on a pool of two all finish. (It used to hold a transaction open around steps that each need
+// a connection of their own, so as many requests as connections hung until they timed out.)
+func TestConcurrentSignupVerificationsDoNotExhaustTheConnectionPool(t *testing.T) {
+	t.Setenv("METAP_TEST_POOL_MAX", "2")
+	pool := httpTestPool(t)
+	ctx := context.Background()
+	state, _ := newTestAppState(t, pool, httpTestEntity())
+	base := startTestServer(t, state, nil)
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), "DELETE FROM metadata.platform_configs WHERE key = $1", config.SignupEnabled)
+	})
+	require.NoError(t, state.Config.SetPlatformGlobal(ctx, config.SignupEnabled, json.RawMessage("true")))
+
+	const n = 16
+	statuses := make(chan int, n)
+	start := make(chan struct{}) // every request leaves at the same moment
+	for i := 0; i < n; i++ {
+		email := uuid.NewString() + "@example.com"
+		t.Cleanup(func() {
+			pool.Exec(context.Background(), "DELETE FROM metadata.user_roles WHERE user_id IN (SELECT id FROM metadata.users WHERE lower(email) = lower($1))", email)
+			pool.Exec(context.Background(), "DELETE FROM metadata.users WHERE lower(email) = lower($1)", email)
+			pool.Exec(context.Background(), "DELETE FROM metadata.identities WHERE lower(email) = lower($1)", email)
+		})
+		token, err := identity.CreateSignup(ctx, pool, email, "Tenant "+email[:6], "", "long-enough-pw", time.Now().Add(-2*time.Hour))
+		require.NoError(t, err)
+		go func() {
+			<-start
+			res := doRequest(t, "POST", base+"/auth/signup/verify", "", map[string]any{"token": token})
+			res.Body.Close()
+			statuses <- res.StatusCode
+		}()
+	}
+	close(start)
+	for i := 0; i < n; i++ {
+		select {
+		case code := <-statuses:
+			assert.Equal(t, 200, code)
+		case <-time.After(30 * time.Second):
+			require.FailNow(t, "signup verifications are stuck waiting for connections")
+		}
+	}
+}

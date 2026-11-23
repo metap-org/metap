@@ -57,6 +57,15 @@ func ExecuteWithScope(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUI
 		}
 	}
 
+	// One reconcile holds a connection for its lock and needs a second for the work, so a pool can
+	// serve at most half its size at once: any more and each holds a lock connection and none is
+	// left to do the work (a deadlock until the context ends). Wait for a slot instead.
+	release, err := acquireReconcileSlot(ctx, pool)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	// A dedicated connection held for the lock's entire lifetime — see TryAdvisoryLock's doc
 	// comment for why this must not be a bare pool call. The actual DDL/backfill work below
 	// still goes through pool freely; only the lock itself needs this one pinned connection.
