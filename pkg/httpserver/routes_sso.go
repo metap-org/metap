@@ -22,9 +22,9 @@ import (
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 	saml2 "github.com/russellhaering/gosaml2"
 
+	"github.com/metap-org/metap/internal/signin"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/signin"
 	"github.com/metap-org/metap/pkg/tenantauth"
 )
 

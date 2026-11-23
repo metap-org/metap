@@ -29,8 +29,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/accountmail"
-	"github.com/metap-org/metap/pkg/adminapi"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
@@ -266,11 +266,11 @@ func Run(ctx context.Context, opts Options) error {
 
 // identityConfig serves user administration on the token issuer only (it owns identities); a
 // verify-only service returns nil.
-func identityConfig(state *httpserver.AppState, auditStore audit.Store, manager *secrets.Manager) *adminapi.IdentityConfig {
+func identityConfig(state *httpserver.AppState, auditStore audit.Store, manager *secrets.Manager) *admin.IdentityConfig {
 	if !state.CanIssueTokens() {
 		return nil
 	}
-	return &adminapi.IdentityConfig{Shared: state.Pool, Router: state.Router, Audit: auditStore,
+	return &admin.IdentityConfig{Shared: state.Pool, Router: state.Router, Audit: auditStore,
 		Mailer: state.Mailer, PasswordPolicy: state.PasswordPolicy(), APIKeyMaxDays: state.APIKeyMaxDays, PublicURL: state.PublicAppURL,
 		Credentials: credentialAdapter{manager}, HTTPClient: metadataHTTPClient()}
 }
@@ -318,9 +318,9 @@ func ReadPublicKey(path string) (any, error) {
 // (it links the cloud SDKs).
 type credentialAdapter struct{ m *secrets.Manager }
 
-func (a credentialAdapter) Capabilities() adminapi.CredentialCapabilities {
+func (a credentialAdapter) Capabilities() admin.CredentialCapabilities {
 	c := a.m.Capabilities()
-	return adminapi.CredentialCapabilities{Database: c.Database, External: c.External, ExternalKind: c.Kind}
+	return admin.CredentialCapabilities{Database: c.Database, External: c.External, ExternalKind: c.Kind}
 }
 
 func (a credentialAdapter) Put(ctx context.Context, ref, source, value string) error {
