@@ -2,6 +2,7 @@ package infra
 
 import (
 	"context"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -11,6 +12,12 @@ func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, err
+	}
+	// pool_max_conns in the URL (pgx's own parameter) sizes the pool; without it the default applies.
+	// The default stays small on purpose, but a service that has to carry real load can no longer be
+	// stuck at it: every request costs several short queries, so the pool is the throughput ceiling.
+	if poolSizeSet(databaseURL) {
+		return pgxpool.NewWithConfig(ctx, cfg)
 	}
 	cfg.MaxConns = defaultMaxConns
 	return pgxpool.NewWithConfig(ctx, cfg)
@@ -35,3 +42,8 @@ func HealthCheck(ctx context.Context, pool *pgxpool.Pool) bool {
 
 // defaultMaxConns is the pool size of a service's main Postgres pool.
 const defaultMaxConns = 5
+
+// poolSizeSet reports whether the URL (or DSN) names a pool size itself.
+func poolSizeSet(databaseURL string) bool {
+	return strings.Contains(databaseURL, "pool_max_conns=")
+}
