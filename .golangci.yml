@@ -28,3 +28,38 @@ linters:
             - $gostd
             - github.com/metap-org/metap/pkg/kit
             - github.com/stretchr/testify
+        # One HTTP router (roadmap 118): pkg/kit/httpx/router over the standard ServeMux.
+        one-router:
+          files:
+            - "$all"
+          deny:
+            - pkg: github.com/go-chi
+              desc: use pkg/kit/httpx/router (standard-library ServeMux), not chi
+        # Layers (roadmap 118): transport (pkg/httpserver, huma, the router) calls application
+        # services (adminapi, signin, crud, identity, ...); never the other way round.
+        application-below-transport:
+          files:
+            - "**/pkg/adminapi/**"
+            - "**/pkg/signin/**"
+            - "**/pkg/identity/**"
+            - "**/pkg/permission/**"
+            - "**/pkg/crud/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/metap-org/metap/pkg/httpserver
+              desc: an application service must not import the HTTP transport
+            - pkg: github.com/metap-org/metap/pkg/kit/httpx/router
+              desc: routing belongs to the transport (pkg/httpserver)
+            - pkg: github.com/danielgtaylor/huma
+              desc: typed-operation wiring belongs to the transport (pkg/httpserver)
+        # Handlers do not talk to the database (roadmap 118): pkg/httpserver holds the pgx pool
+        # as a handle (AppState.Pool) and passes it to a service, it never runs a query.
+        transport-no-driver:
+          files:
+            - "**/pkg/httpserver/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/jackc/pgx/v5/pgconn
+              desc: map database errors in a service, not in a handler
+            - pkg: github.com/jackc/pgx/v5/pgtype
+              desc: handlers do not handle database types

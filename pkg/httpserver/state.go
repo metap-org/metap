@@ -236,5 +236,13 @@ func (s *AppState) RecordBackend() crud.RecordBackend {
 func (s *AppState) Signin() *signin.Service {
 	return signin.New(signin.Deps{
 		Pool: s.Pool, Effective: s.EffectiveConfig, MintSession: s.MintSessionToken, PasswordPolicy: s.PasswordPolicy(),
+		Platform: s.platformConfig, Mailer: s.Mailer, Captcha: s.Captcha,
 	})
+}
+
+func (s *AppState) platformConfig() *config.Snapshot {
+	if s.Config == nil {
+		return nil
+	}
+	return s.Config.Current()
 }
