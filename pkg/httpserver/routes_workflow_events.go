@@ -15,10 +15,7 @@ import (
 )
 
 func listWorkflowEvents(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	entity := r.PathValue("entity")
 	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
@@ -53,7 +50,8 @@ func listWorkflowEvents(w http.ResponseWriter, r *http.Request, state *AppState)
 }
 
 func mountWorkflowEvents(r *router.Router, state *AppState) {
-	r.Get("/api/{entity}/{recordId}/workflow-events", func(w http.ResponseWriter, r *http.Request) {
+	acc := AccessGroups(r, state)
+	acc.Authenticated.Get("/api/{entity}/{recordId}/workflow-events", func(w http.ResponseWriter, r *http.Request) {
 		listWorkflowEvents(w, r, state)
 	})
 }

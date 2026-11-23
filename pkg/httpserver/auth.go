@@ -10,7 +10,9 @@ import (
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -152,9 +154,103 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 	return rc, nil
 }
 
-// requireAuth authenticates r and writes the error response itself on failure — the common case
-// every REST entity CRUD handler uses.
+type callerKey struct{}
+
+// RC is the authenticated caller of a request that passed through Authenticated, Admin or
+// PlatformAdmin. Handlers behind those middleware read it instead of authenticating again.
+func RC(r *http.Request) *permission.RequestContext {
+	rc, _ := r.Context().Value(callerKey{}).(*permission.RequestContext)
+	return rc
+}
+
+func withCaller(r *http.Request, rc *permission.RequestContext) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), callerKey{}, rc))
+}
+
+// Access labels of the route groups (router.Route.Labels); every registered route must sit in one.
+const (
+	LabelPublic        = "public"         // no credentials needed (health, login, discovery)
+	LabelAuthenticated = "authenticated"  // any signed-in caller
+	LabelAdmin         = "admin"          // tenant admin
+	LabelPlatformAdmin = "platform-admin" // cross-tenant admin
+	LabelSelfAuth      = "self-auth"      // authenticates inside (a bearer of another kind: SCIM, typed operations, OAuth2 client auth)
+)
+
+// Authenticated refuses a request with no valid session, token or API key and puts the caller in
+// the request (RC).
+func Authenticated(state *AppState) router.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rc, authErr := authenticate(r.Context(), state, r)
+			if authErr != nil {
+				authErr.respond(w)
+				return
+			}
+			next.ServeHTTP(w, withCaller(r, rc))
+		})
+	}
+}
+
+// Admin is Authenticated plus the tenant admin role (and, for an OAuth2 token, the admin scope).
+func Admin(state *AppState) router.Middleware {
+	return func(next http.Handler) http.Handler {
+		return Authenticated(state)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rc := RC(r)
+			if !rc.IsAdmin() {
+				forbidden("This action requires the admin role.").respond(w)
+				return
+			}
+			if !rc.ScopePermitsAdminSurface() {
+				forbidden("This action requires the `admin` OAuth2 scope.").respond(w)
+				return
+			}
+			next.ServeHTTP(w, r)
+		}))
+	}
+}
+
+// PlatformAdmin is the cross-tenant admin gate: the token's tenant is control.PlatformTenantID
+// and the resolved roles include platform_admin.
+func PlatformAdmin(state *AppState) router.Middleware {
+	return func(next http.Handler) http.Handler {
+		return Authenticated(state)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rc := RC(r)
+			if rc.TenantID != control.PlatformTenantID.String() || !slices.Contains(rc.Roles, "platform_admin") {
+				forbidden("This action requires the platform_admin role.").respond(w)
+				return
+			}
+			if !rc.ScopePermitsAdminSurface() {
+				forbidden("This action requires the `admin` OAuth2 scope.").respond(w)
+				return
+			}
+			next.ServeHTTP(w, r)
+		}))
+	}
+}
+
+// Access are the access groups of a router, each labelled so a test can list any route that
+// sits in none.
+type Access struct {
+	Public, Authenticated, Admin, PlatformAdmin, SelfAuth *router.Router
+}
+
+// AccessGroups derives the labelled groups from r.
+func AccessGroups(r *router.Router, state *AppState) Access {
+	return Access{
+		Public:        r.Labelled(LabelPublic),
+		Authenticated: r.Labelled(LabelAuthenticated, Authenticated(state)),
+		Admin:         r.Labelled(LabelAdmin, Admin(state)),
+		PlatformAdmin: r.Labelled(LabelPlatformAdmin, PlatformAdmin(state)),
+		SelfAuth:      r.Labelled(LabelSelfAuth),
+	}
+}
+
+// requireAuth is for a handler that cannot sit behind the middleware: it returns the caller the
+// middleware already resolved, else authenticates and answers the failure itself.
 func requireAuth(w http.ResponseWriter, r *http.Request, state *AppState) (*permission.RequestContext, bool) {
+	if rc := RC(r); rc != nil {
+		return rc, true
+	}
 	rc, authErr := authenticate(r.Context(), state, r)
 	if authErr != nil {
 		authErr.respond(w)
@@ -163,8 +259,6 @@ func requireAuth(w http.ResponseWriter, r *http.Request, state *AppState) (*perm
 	return rc, true
 }
 
-// requireAdmin is the extractor every future /admin/* route uses instead of requireAuth, so the
-// gate can't be forgotten on a future handler the way a per-handler check could be.
 func requireAdmin(w http.ResponseWriter, r *http.Request, state *AppState) (*permission.RequestContext, bool) {
 	rc, ok := requireAuth(w, r, state)
 	if !ok {
@@ -181,22 +275,12 @@ func requireAdmin(w http.ResponseWriter, r *http.Request, state *AppState) (*per
 	return rc, true
 }
 
-// requirePlatformAdmin is the cross-tenant admin gate — a request passes when its token's
-// tenantId is control.PlatformTenantID and the resolved roles include "platform_admin".
 func requirePlatformAdmin(w http.ResponseWriter, r *http.Request, state *AppState) (*permission.RequestContext, bool) {
 	rc, ok := requireAuth(w, r, state)
 	if !ok {
 		return nil, false
 	}
-	isPlatformTenant := rc.TenantID == control.PlatformTenantID.String()
-	hasPlatformAdminRole := false
-	for _, role := range rc.Roles {
-		if role == "platform_admin" {
-			hasPlatformAdminRole = true
-			break
-		}
-	}
-	if !isPlatformTenant || !hasPlatformAdminRole {
+	if rc.TenantID != control.PlatformTenantID.String() || !slices.Contains(rc.Roles, "platform_admin") {
 		forbidden("This action requires the platform_admin role.").respond(w)
 		return nil, false
 	}

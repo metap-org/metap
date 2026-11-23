@@ -36,17 +36,32 @@ func TestRouteInventory(t *testing.T) {
 
 	r, ok := handler.(*router.Router)
 	require.True(t, ok)
+	access := map[string]bool{
+		httpserver.LabelPublic: true, httpserver.LabelAuthenticated: true, httpserver.LabelAdmin: true,
+		httpserver.LabelPlatformAdmin: true, httpserver.LabelSelfAuth: true,
+	}
 	var lines []string
 	for _, route := range r.Routes() {
+		// Every route declares who may call it: it sits in a group labelled with one access rule.
+		// A route with none was registered on the bare router, which is how an unguarded handler
+		// gets added by accident.
+		var rule []string
+		for _, l := range route.Labels {
+			if access[l] {
+				rule = append(rule, l)
+			}
+		}
+		require.Len(t, rule, 1, "route %q must sit in exactly one access group, has labels %v", route.Pattern, route.Labels)
+		suffix := "  [" + rule[0] + "]"
 		method, path, hasMethod := strings.Cut(route.Pattern, " ")
 		if !hasMethod {
 			// A pattern with no method serves every method (a Mount): list one line per method.
 			for _, m := range []string{"CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "QUERY", "TRACE"} {
-				lines = append(lines, m+" "+route.Pattern)
+				lines = append(lines, m+" "+route.Pattern+suffix)
 			}
 			continue
 		}
-		lines = append(lines, method+" "+path)
+		lines = append(lines, method+" "+path+suffix)
 	}
 	sort.Strings(lines)
 	golden(t, "routes.golden", []byte(strings.Join(lines, "\n")+"\n"))

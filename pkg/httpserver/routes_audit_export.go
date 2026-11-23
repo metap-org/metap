@@ -24,10 +24,7 @@ var auditExportCSVHeader = []string{"seq", "occurredAt", "entity", "recordId", "
 	"actorUserId", "reason", "diff", "hash"}
 
 func exportAudit(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	if state.Audit == nil {
 		writeServiceError(w, http.StatusServiceUnavailable, "audit_unavailable", "The audit trail is not configured.", nil)
 		return
@@ -119,5 +116,6 @@ func exportAudit(w http.ResponseWriter, r *http.Request, state *AppState) {
 }
 
 func mountAuditExport(r *router.Router, state *AppState) {
-	r.Get("/admin/audit/export", func(w http.ResponseWriter, r *http.Request) { exportAudit(w, r, state) })
+	acc := AccessGroups(r, state)
+	acc.Admin.Get("/admin/audit/export", func(w http.ResponseWriter, r *http.Request) { exportAudit(w, r, state) })
 }

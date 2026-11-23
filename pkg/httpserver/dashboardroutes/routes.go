@@ -39,10 +39,7 @@ type saveLayoutBody struct {
 }
 
 func getMyDashboard(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	tenantID, err := state.Permissions.ScopedTenant(rc)
 	if err != nil {
 		httpserver.WriteInternalError(w, err)
@@ -69,10 +66,7 @@ func getMyDashboard(w http.ResponseWriter, r *http.Request, state *httpserver.Ap
 }
 
 func saveMyDashboard(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	var body saveLayoutBody
 	if !httpserver.DecodeJSONBody(w, r, &body) {
 		return
@@ -106,10 +100,7 @@ func saveMyDashboard(w http.ResponseWriter, r *http.Request, state *httpserver.A
 }
 
 func getTenantDefaultDashboard(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	tenantID, err := state.Permissions.ScopedTenant(rc)
 	if err != nil {
 		httpserver.WriteInternalError(w, err)
@@ -131,10 +122,7 @@ func getTenantDefaultDashboard(w http.ResponseWriter, r *http.Request, state *ht
 }
 
 func saveTenantDefaultDashboard(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	var body saveLayoutBody
 	if !httpserver.DecodeJSONBody(w, r, &body) {
 		return
@@ -168,11 +156,12 @@ func saveTenantDefaultDashboard(w http.ResponseWriter, r *http.Request, state *h
 }
 
 func Mount(r *router.Router, state *httpserver.AppState) {
+	acc := httpserver.AccessGroups(r, state)
 	wrap := func(h func(http.ResponseWriter, *http.Request, *httpserver.AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	r.Get("/dashboards/me", wrap(getMyDashboard))
-	r.Put("/dashboards/me", wrap(saveMyDashboard))
-	r.Get("/dashboards/tenant-default", wrap(getTenantDefaultDashboard))
-	r.Put("/dashboards/tenant-default", wrap(saveTenantDefaultDashboard))
+	acc.Authenticated.Get("/dashboards/me", wrap(getMyDashboard))
+	acc.Authenticated.Put("/dashboards/me", wrap(saveMyDashboard))
+	acc.Authenticated.Get("/dashboards/tenant-default", wrap(getTenantDefaultDashboard))
+	acc.Admin.Put("/dashboards/tenant-default", wrap(saveTenantDefaultDashboard))
 }

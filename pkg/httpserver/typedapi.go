@@ -150,10 +150,13 @@ func newAPI(r *router.Router) huma.API {
 
 // mountTypedAPI registers every typed operation.
 func mountTypedAPI(r *router.Router, state *AppState) {
-	api := newAPI(r)
+	// Each typed operation authenticates through authed() itself, and SCIM through its own
+	// bearer; both sit in the self-auth group.
+	self := r.Labelled(LabelSelfAuth)
+	api := newAPI(self)
 	registerSessionOperations(api, state)
 	registerAdminOperations(api, state)
 	if state.Identity != nil {
-		r.Mount("/scim/v2", adminapi.SCIMHandler(adminapi.NewUserAdminService(*state.Identity), scimAuthenticate(state)))
+		self.Mount("/scim/v2", adminapi.SCIMHandler(adminapi.NewUserAdminService(*state.Identity), scimAuthenticate(state)))
 	}
 }

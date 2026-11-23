@@ -189,10 +189,7 @@ func validateTargetConfig(targetType string, targetConfig json.RawMessage) (stri
 }
 
 func createCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	var body createCronJobBody
 	if !httpserver.DecodeJSONBody(w, r, &body) {
 		return
@@ -251,10 +248,7 @@ func createCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.App
 }
 
 func listCronJobs(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	tenantID, err := state.Permissions.ScopedTenant(rc)
 	if err != nil {
 		httpserver.WriteInternalError(w, err)
@@ -269,10 +263,7 @@ func listCronJobs(w http.ResponseWriter, r *http.Request, state *httpserver.AppS
 }
 
 func getCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		cronNotFound(w)
@@ -310,10 +301,7 @@ type updateCronJobBody struct {
 }
 
 func updateCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		cronNotFound(w)
@@ -445,10 +433,7 @@ func updateCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.App
 }
 
 func deleteCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		cronNotFound(w)
@@ -467,10 +452,7 @@ func deleteCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.App
 }
 
 func listCronJobRuns(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		cronNotFound(w)
@@ -499,10 +481,7 @@ func listCronJobRuns(w http.ResponseWriter, r *http.Request, state *httpserver.A
 // counterpart to listCronJobRuns's plain CronJobRun row. 404 both when the job isn't a "steps"
 // job and when the cron_job_runs row belongs to a different job than jobId names in the path.
 func getWorkflowRun(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	jobID, err := uuid.Parse(r.PathValue("jobId"))
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusNotFound, "workflow_run_not_found", "Workflow run not found.", nil)
@@ -531,14 +510,15 @@ func getWorkflowRun(w http.ResponseWriter, r *http.Request, state *httpserver.Ap
 }
 
 func Mount(r *router.Router, state *httpserver.AppState) {
+	acc := httpserver.AccessGroups(r, state)
 	wrap := func(h func(http.ResponseWriter, *http.Request, *httpserver.AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	r.Get("/admin/cron-jobs", wrap(listCronJobs))
-	r.Post("/admin/cron-jobs", wrap(createCronJob))
-	r.Get("/admin/cron-jobs/{id}", wrap(getCronJob))
-	r.Patch("/admin/cron-jobs/{id}", wrap(updateCronJob))
-	r.Delete("/admin/cron-jobs/{id}", wrap(deleteCronJob))
-	r.Get("/admin/cron-jobs/{id}/runs", wrap(listCronJobRuns))
-	r.Get("/admin/cron-jobs/{jobId}/runs/{runId}/workflow-run", wrap(getWorkflowRun))
+	acc.Admin.Get("/admin/cron-jobs", wrap(listCronJobs))
+	acc.Admin.Post("/admin/cron-jobs", wrap(createCronJob))
+	acc.Admin.Get("/admin/cron-jobs/{id}", wrap(getCronJob))
+	acc.Admin.Patch("/admin/cron-jobs/{id}", wrap(updateCronJob))
+	acc.Admin.Delete("/admin/cron-jobs/{id}", wrap(deleteCronJob))
+	acc.Admin.Get("/admin/cron-jobs/{id}/runs", wrap(listCronJobRuns))
+	acc.Admin.Get("/admin/cron-jobs/{jobId}/runs/{runId}/workflow-run", wrap(getWorkflowRun))
 }

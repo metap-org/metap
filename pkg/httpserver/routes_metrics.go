@@ -10,7 +10,8 @@ import (
 )
 
 func mountMetrics(r *router.Router, state *AppState) {
-	r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
+	acc := AccessGroups(r, state)
+	acc.Public.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		state.Metrics.Handler().ServeHTTP(w, r)
 	})
 }

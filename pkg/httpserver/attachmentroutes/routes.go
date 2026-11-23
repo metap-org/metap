@@ -65,10 +65,7 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 		httpserver.WriteServiceError(w, http.StatusServiceUnavailable, "storage_not_configured", "Object storage is not configured.", nil)
 		return
 	}
-	rc, ok := httpserver.RequireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	entity := r.PathValue("entity")
 	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
@@ -155,10 +152,7 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 }
 
 func listAttachments(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	entity := r.PathValue("entity")
 	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
@@ -224,10 +218,7 @@ func downloadAttachment(w http.ResponseWriter, r *http.Request, state *httpserve
 		httpserver.WriteServiceError(w, http.StatusServiceUnavailable, "storage_not_configured", "Object storage is not configured.", nil)
 		return
 	}
-	rc, ok := httpserver.RequireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	entity := r.PathValue("entity")
 	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
@@ -280,10 +271,7 @@ func deleteAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 		httpserver.WriteServiceError(w, http.StatusServiceUnavailable, "storage_not_configured", "Object storage is not configured.", nil)
 		return
 	}
-	rc, ok := httpserver.RequireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	entity := r.PathValue("entity")
 	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
@@ -350,11 +338,12 @@ func maxUploadBytes() int64 {
 }
 
 func Mount(r *router.Router, state *httpserver.AppState) {
+	acc := httpserver.AccessGroups(r, state)
 	wrap := func(h func(http.ResponseWriter, *http.Request, *httpserver.AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
 	state.HandleRecordPost("attachments", wrap(uploadAttachment))
-	r.Get("/api/{entity}/{recordId}/attachments", wrap(listAttachments))
-	r.Get("/api/{entity}/{recordId}/attachments/{attachmentId}/download", wrap(downloadAttachment))
-	r.Delete("/api/{entity}/{recordId}/attachments/{attachmentId}", wrap(deleteAttachment))
+	acc.Authenticated.Get("/api/{entity}/{recordId}/attachments", wrap(listAttachments))
+	acc.Authenticated.Get("/api/{entity}/{recordId}/attachments/{attachmentId}/download", wrap(downloadAttachment))
+	acc.Authenticated.Delete("/api/{entity}/{recordId}/attachments/{attachmentId}", wrap(deleteAttachment))
 }

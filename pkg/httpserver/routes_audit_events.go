@@ -19,10 +19,7 @@ import (
 )
 
 func listRecordAuditEvents(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	entity := r.PathValue("entity")
 	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
@@ -103,7 +100,8 @@ func auditQueryFrom(w http.ResponseWriter, r *http.Request) (crud.AuditQuery, bo
 }
 
 func mountAuditEvents(r *router.Router, state *AppState) {
-	r.Get("/api/{entity}/{recordId}/audit-events", func(w http.ResponseWriter, r *http.Request) {
+	acc := AccessGroups(r, state)
+	acc.Authenticated.Get("/api/{entity}/{recordId}/audit-events", func(w http.ResponseWriter, r *http.Request) {
 		listRecordAuditEvents(w, r, state)
 	})
 }

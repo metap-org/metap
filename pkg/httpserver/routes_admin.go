@@ -37,10 +37,7 @@ func policyToJSON(row permission.PolicyRow) map[string]any {
 }
 
 func invalidateContextAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	userID, err := uuid.Parse(r.PathValue("userId"))
 	if err != nil {
 		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`userId` must be a UUID.", nil)
@@ -56,10 +53,7 @@ func invalidateContextAdmin(w http.ResponseWriter, r *http.Request, state *AppSt
 }
 
 func listPoliciesAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	tenantID, err := state.Permissions.ScopedTenant(rc)
 	if err != nil {
 		writeInternalError(w, err)
@@ -89,10 +83,7 @@ type createPolicyBody struct {
 }
 
 func createPolicyAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	var body createPolicyBody
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -153,10 +144,7 @@ type seedDefaultPoliciesBody struct {
 // action for roles on entity — the ergonomic counterpart to createPolicyAdmin now that
 // PermissionService denies by default when an entity/action has no policy at all.
 func seedDefaultPoliciesAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	var body seedDefaultPoliciesBody
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -198,10 +186,7 @@ func seedDefaultPoliciesAdmin(w http.ResponseWriter, r *http.Request, state *App
 }
 
 func deletePolicyAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`id` must be a UUID.", nil)
@@ -234,10 +219,7 @@ type syncMatrixBody struct {
 // of the matrix firing one POST/DELETE per checkbox click. Never touches an Advanced-tab policy
 // (condition/field/record-subject/deny).
 func syncMatrixPoliciesAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	var body syncMatrixBody
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -283,10 +265,7 @@ type explainBody struct {
 }
 
 func explainPolicyAdmin(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	var body explainBody
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -328,14 +307,15 @@ func joinQuoted(items []string) string {
 }
 
 func mountAdmin(r *router.Router, state *AppState) {
+	acc := AccessGroups(r, state)
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	r.Post("/admin/users/{userId}/context/invalidate", wrap(invalidateContextAdmin))
-	r.Get("/admin/policies", wrap(listPoliciesAdmin))
-	r.Post("/admin/policies", wrap(createPolicyAdmin))
-	r.Post("/admin/policies/seed-defaults", wrap(seedDefaultPoliciesAdmin))
-	r.Put("/admin/policies/matrix", wrap(syncMatrixPoliciesAdmin))
-	r.Post("/admin/policies/explain", wrap(explainPolicyAdmin))
-	r.Delete("/admin/policies/{id}", wrap(deletePolicyAdmin))
+	acc.Admin.Post("/admin/users/{userId}/context/invalidate", wrap(invalidateContextAdmin))
+	acc.Admin.Get("/admin/policies", wrap(listPoliciesAdmin))
+	acc.Admin.Post("/admin/policies", wrap(createPolicyAdmin))
+	acc.Admin.Post("/admin/policies/seed-defaults", wrap(seedDefaultPoliciesAdmin))
+	acc.Admin.Put("/admin/policies/matrix", wrap(syncMatrixPoliciesAdmin))
+	acc.Admin.Post("/admin/policies/explain", wrap(explainPolicyAdmin))
+	acc.Admin.Delete("/admin/policies/{id}", wrap(deletePolicyAdmin))
 }

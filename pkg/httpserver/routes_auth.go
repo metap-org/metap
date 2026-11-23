@@ -177,10 +177,7 @@ func switchTenant(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
 		return
 	}
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	var body switchTenantBody
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -238,10 +235,7 @@ func changePassword(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
 		return
 	}
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	var body changePasswordBody
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -294,10 +288,7 @@ func logout(w http.ResponseWriter, r *http.Request, state *AppState) {
 // session forward (see tryRefreshSession) — the frontend's only way to know "am I an admin" for
 // UI gating, since roles are never encoded on the JWT itself.
 func me(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	email := resolveOwnEmail(r, state, rc)
 	tryRefreshSession(w, r, state, rc)
 
@@ -382,10 +373,7 @@ func issueToken(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
 		return
 	}
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	if !credentialIssuingRequestAllowed(r) {
 		writeServiceError(w, http.StatusUnauthorized, errcode.Unauthorized, "Missing or invalid CSRF token.", nil)
 		return
@@ -442,28 +430,29 @@ func mountAuth(r *router.Router, state *AppState) {
 	// account lockout counts per identity; this counts per source, so one address cannot walk
 	// through many identities or many reset tokens either.
 	cfg := state.Config.Current()
-	guarded := r.Group(runtime.RateLimitBehind(
+	acc := AccessGroups(r, state)
+	guarded := r.Labelled(LabelPublic, runtime.RateLimitBehind(
 		time.Duration(cfg.GetU64(config.HTTPAuthRateLimitPerMs))*time.Millisecond,
 		int(cfg.GetU64(config.HTTPAuthRateLimitBurst)),
 		state.TrustedProxies,
 	))
 	guarded.Post("/auth/login", wrap(login))
-	r.Get("/auth/signup/status", wrap(signupStatus))
+	acc.Public.Get("/auth/signup/status", wrap(signupStatus))
 	guarded.Post("/auth/signup", wrap(signup))
 	guarded.Post("/auth/signup/verify", wrap(signupVerify))
 	guarded.Post("/auth/login/mfa", wrap(loginMFA))
-	r.Post("/auth/mfa/setup", wrap(mfaSetup))
-	r.Post("/auth/mfa/setup/confirm", wrap(mfaSetupConfirm))
-	r.Post("/auth/logout", wrap(logout))
-	r.Post("/auth/switch-tenant", wrap(switchTenant))
-	r.Post("/auth/password", wrap(changePassword))
-	r.Get("/auth/me", wrap(me))
+	acc.Public.Post("/auth/mfa/setup", wrap(mfaSetup))
+	acc.Public.Post("/auth/mfa/setup/confirm", wrap(mfaSetupConfirm))
+	acc.Public.Post("/auth/logout", wrap(logout))
+	acc.Authenticated.Post("/auth/switch-tenant", wrap(switchTenant))
+	acc.Authenticated.Post("/auth/password", wrap(changePassword))
+	acc.Authenticated.Get("/auth/me", wrap(me))
 	guarded.Post("/auth/invitations/lookup", wrap(lookupInvitation))
 	guarded.Post("/auth/invitations/accept", wrap(acceptInvitation))
 	guarded.Post("/auth/password/forgot", wrap(forgotPassword))
 	guarded.Post("/auth/password/reset", wrap(resetPassword))
 	guarded.Post("/auth/workspace-deletion/cancel", wrap(cancelWorkspaceDeletion))
-	r.Get("/auth/token", wrap(issueToken))
+	acc.Authenticated.Get("/auth/token", wrap(issueToken))
 }
 
 func uuidOf(s string) uuid.UUID {
