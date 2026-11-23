@@ -18,6 +18,7 @@ import (
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/messaging/events"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/query"
 )
 
 // Sink keeps in memory what an action emitted and audited. Set EmitErr to make Emit fail, to see
@@ -68,14 +69,18 @@ type Write struct {
 
 // Records is an in-memory crud.RecordBackend: it serves the records put into Stored and keeps the
 // writes an action makes. A read of a record that is not stored is a 404, like the real service.
-// List, GetMany and Aggregate are not implemented; an action that calls them needs a fuller fake.
+// GetMany and Aggregate are not implemented; an action that calls them needs a fuller fake.
 type Records struct {
 	crud.RecordBackend
 	mu     sync.Mutex
 	Stored map[uuid.UUID]crud.RecordDto
+	// Listed is what List returns for an entity (every filter is ignored).
+	Listed map[string][]crud.RecordDto
 	Writes []Write
 	// WriteErr, when set, is returned by every write.
 	WriteErr error
+	// FailWrite, when set, is asked about each write and may return an error to fail just that one.
+	FailWrite func(Write) error
 }
 
 func (r *Records) Get(_ context.Context, entity string, id uuid.UUID, _ *permission.RequestContext) (crud.GetResult, error) {
@@ -88,11 +93,22 @@ func (r *Records) Get(_ context.Context, entity string, id uuid.UUID, _ *permiss
 	return crud.GetResult{Record: rec}, nil
 }
 
+func (r *Records) List(_ context.Context, entity string, _ query.ListInput, _ *permission.RequestContext) (crud.ListResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return crud.ListResult{Data: append([]crud.RecordDto(nil), r.Listed[entity]...)}, nil
+}
+
 func (r *Records) write(w Write) (crud.RecordDto, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.WriteErr != nil {
 		return crud.RecordDto{}, r.WriteErr
+	}
+	if r.FailWrite != nil {
+		if err := r.FailWrite(w); err != nil {
+			return crud.RecordDto{}, err
+		}
 	}
 	r.Writes = append(r.Writes, w)
 	return crud.RecordDto{ID: w.ID, Entity: w.Entity, Data: w.Data, Version: 1}, nil
