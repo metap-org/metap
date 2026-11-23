@@ -12,7 +12,6 @@ package httpserver
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -25,7 +24,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/peripherals"
+	"github.com/metap-org/metap/pkg/signin"
 	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
@@ -175,53 +174,21 @@ func ssoCallback(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed, "The identity provider's answer could not be verified.", nil)
 		return
 	}
-	finishSSO(w, r, state, st.Tenant, ssoPolicy{provider: ssoProvider, defaultRole: cfg.DefaultRole, mapping: cfg.Mapping(),
-		postLoginRedirect: cfg.PostLoginRedirect, allowed: cfg.EmailAllowed}, who)
+	finishSSO(w, r, state, st.Tenant, ssoPolicy{SSOPolicy: signin.SSOPolicy{Provider: ssoProvider, DefaultRole: cfg.DefaultRole,
+		Mapping: cfg.Mapping(), Allowed: cfg.EmailAllowed}, postLoginRedirect: cfg.PostLoginRedirect}, who)
 }
 
 // ssoPolicy is what a tenant's provider settings decide once somebody has been verified, whichever
-// protocol verified them.
+// protocol verified them: signin.SSOPolicy plus where the browser lands afterwards.
 type ssoPolicy struct {
-	provider          string // the external-subject namespace: "oidc" or "saml"
-	defaultRole       string
-	mapping           tenantauth.RoleMapping
+	signin.SSOPolicy
 	postLoginRedirect string
-	allowed           func(address string) bool
 }
 
-// finishSSO turns a verified identity into a session: domain restriction, member lookup or
-// creation, role sync, then the session cookie and the redirect into the app.
+// finishSSO turns a verified identity into a session (signin.Service.FinishSSO), sets the session
+// cookies and redirects into the app.
 func finishSSO(w http.ResponseWriter, r *http.Request, state *AppState, tenant uuid.UUID, p ssoPolicy, who *tenantauth.VerifiedIdentity) {
-	if !p.allowed(who.Email) {
-		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed, "This email address is not allowed to sign in to this workspace.", nil)
-		return
-	}
-	member, err := ssoMember(r.Context(), state, tenant, p, who)
-	if errors.Is(err, errSSOEmailUnverified) {
-		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed,
-			"The identity provider has not verified this email address, so it cannot be used to sign in.", nil)
-		return
-	}
-	if errors.Is(err, errSSODomainUnverified) {
-		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed,
-			"This workspace has not verified that it owns the domain of your email address.", nil)
-		return
-	}
-	if err != nil {
-		writeIdentityError(w, err)
-		return
-	}
-	if member.Status != identity.StatusActive {
-		writeServiceError(w, http.StatusForbidden, errcode.AccountDisabled, "This account is disabled.", nil)
-		return
-	}
-	if err := syncSSORoles(r.Context(), state, tenant, member, p.mapping, who.Roles); err != nil {
-		slog.Error("sso: syncing roles from the identity provider", "tenant_id", tenant, "error", err)
-		writeServiceError(w, http.StatusInternalServerError, errcode.SSOFailed, "Your roles could not be applied. Try again.", nil)
-		return
-	}
-	grant, err := state.Signin().Issue(r.Context(), member.IdentityID,
-		identity.Membership{MemberID: member.ID, TenantID: tenant}, clientOf(r, state))
+	grant, err := state.Signin().FinishSSO(r.Context(), tenant, p.SSOPolicy, who, clientOf(r, state))
 	if err != nil {
 		writeCrudError(w, err)
 		return
@@ -232,89 +199,6 @@ func finishSSO(w http.ResponseWriter, r *http.Request, state *AppState, tenant u
 		dest = p.postLoginRedirect
 	}
 	redirectTo(w, dest)
-}
-
-// errSSOEmailUnverified: the provider did not vouch for the address, so it may not be used to find,
-// link or create a member.
-var errSSOEmailUnverified = errors.New("the identity provider has not verified the email address")
-
-// errSSODomainUnverified: the workspace has not proved it owns the address's domain, so the
-// provider's say-so is not enough to find, link or create a member with that address.
-var errSSODomainUnverified = errors.New("the workspace has not verified the email domain")
-
-// syncSSORoles brings the roles the provider's claim decides (cfg.RoleMap's values) in line with
-// the claim, at every sign-in. Roles outside the map are left alone, and the owner keeps theirs:
-// the provider cannot lock the person who is the way back in out of their own workspace.
-func syncSSORoles(ctx context.Context, state *AppState, tenant uuid.UUID, member *identity.Member, mapping tenantauth.RoleMapping, claimValues []string) error {
-	managed := mapping.ManagedRoles()
-	if mapping.Claim == "" || len(managed) == 0 {
-		return nil
-	}
-	want := mapping.MappedRoles(claimValues)
-	have, err := peripherals.GetRolesForUser(ctx, state.Pool, tenant, member.ID)
-	if err != nil {
-		return err
-	}
-	held := map[string]bool{}
-	for _, role := range have {
-		held[role] = true
-	}
-	owner, err := identity.OwnerID(ctx, state.Pool, tenant)
-	if err != nil {
-		return err
-	}
-	for _, role := range managed {
-		switch {
-		case want[role] && !held[role]:
-			if err := peripherals.AssignRole(ctx, state.Pool, tenant, member.ID, role, nil); err != nil {
-				return err
-			}
-		case !want[role] && held[role] && owner != member.ID:
-			if err := peripherals.RevokeRole(ctx, state.Pool, tenant, member.ID, role); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// ssoMember finds the member an IdP identity signs in as: the one already tied to this subject, an
-// existing member with that address (tied now), or a new one provisioned with the default role.
-func ssoMember(ctx context.Context, state *AppState, tenant uuid.UUID, p ssoPolicy, who *tenantauth.VerifiedIdentity) (*identity.Member, error) {
-	if m, err := identity.FindExternalMember(ctx, state.Pool, tenant, p.provider, who.ExternalSubject); err != nil || m != nil {
-		return m, err
-	}
-	// From here on the address is what identifies the person, so the provider must vouch for it.
-	if !who.EmailVerified {
-		return nil, errSSOEmailUnverified
-	}
-	if ok, err := tenantauth.DomainVerifiedFor(ctx, state.Pool, tenant, who.Email); err != nil {
-		return nil, err
-	} else if !ok {
-		return nil, errSSODomainUnverified
-	}
-	if m, err := identity.MemberByEmail(ctx, state.Pool, tenant, who.Email); err == nil {
-		if m.AuthProvider == identity.ServiceAccountProvider {
-			return nil, errors.New("not a person")
-		}
-		if err := identity.LinkExternalSubject(ctx, state.Pool, tenant, m.ID, p.provider, who.ExternalSubject); err != nil {
-			return nil, err
-		}
-		return m, nil
-	} else if !errors.Is(err, identity.ErrNotFound) {
-		return nil, err
-	}
-	m, _, err := identity.AddMember(ctx, state.Pool, identity.NewMember{TenantID: tenant, Email: who.Email,
-		AuthProvider: p.provider, ExternalSubject: who.ExternalSubject})
-	if err != nil {
-		return nil, err
-	}
-	if p.defaultRole != "" {
-		if err := peripherals.AssignRole(ctx, state.Pool, tenant, m.ID, p.defaultRole, nil); err != nil {
-			return nil, err
-		}
-	}
-	return m, nil
 }
 
 func mountSSO(r *router.Router, state *AppState) {
@@ -417,6 +301,6 @@ func samlACS(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed, "The identity provider's answer could not be verified.", nil)
 		return
 	}
-	finishSSO(w, r, state, tenant, ssoPolicy{provider: tenantauth.ProviderSAML, defaultRole: cfg.DefaultRole, mapping: cfg.Mapping(),
-		postLoginRedirect: cfg.PostLoginRedirect, allowed: cfg.EmailAllowed}, who)
+	finishSSO(w, r, state, tenant, ssoPolicy{SSOPolicy: signin.SSOPolicy{Provider: tenantauth.ProviderSAML, DefaultRole: cfg.DefaultRole,
+		Mapping: cfg.Mapping(), Allowed: cfg.EmailAllowed}, postLoginRedirect: cfg.PostLoginRedirect}, who)
 }
