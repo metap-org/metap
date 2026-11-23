@@ -341,3 +341,36 @@ func TestSAMLDomainProofAndDiscoveryAndEnforcement(t *testing.T) {
 	require.NotNil(t, linked)
 	assert.Equal(t, other.ID, linked.ID)
 }
+
+// With a persistent NameID the opaque identifier is the person's identity (audit 07 #6): the
+// address comes from an attribute, and when it changes at the provider the same member signs in.
+func TestSAMLPersistentNameIDKeepsTheAccountWhenTheAddressChanges(t *testing.T) {
+	idp := startSAMLIdP(t, "")
+	base, tenant, _, pool := setupSAMLTenant(t, idp, func(c *sso.SamlConfig) {
+		c.DefaultRole = "viewer"
+		c.NameIDFormat = sso.NameIDPersistent
+		c.EmailAttribute = "mail"
+	})
+	ctx := context.Background()
+	signInAs := func(email string) {
+		idp.signIn(email)
+		idp.session.NameID = "opaque-7f3a"
+		idp.session.NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+		idp.session.CustomAttributes = []saml.Attribute{{Name: "mail", NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
+			Values: []saml.AttributeValue{{Type: "xs:string", Value: email}}}}
+		acs, form := samlRound(t, base, tenant, idp)
+		cb := postACS(t, acs, form)
+		cb.Body.Close()
+		require.Equal(t, 302, cb.StatusCode)
+	}
+
+	signInAs("ada@acme.io")
+	ada, err := identity.FindExternalMember(ctx, pool, tenant, "saml", "opaque-7f3a")
+	require.NoError(t, err)
+	require.NotNil(t, ada, "the member is found by the opaque identifier, not by the address")
+
+	signInAs("ada.lovelace@acme.io")
+	again, err := identity.FindExternalMember(ctx, pool, tenant, "saml", "opaque-7f3a")
+	require.NoError(t, err)
+	assert.Equal(t, ada.ID, again.ID, "an address change at the provider does not make a second account")
+}

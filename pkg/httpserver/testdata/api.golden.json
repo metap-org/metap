@@ -1313,6 +1313,9 @@
           "metadataUrl": {
             "type": "string"
           },
+          "nameIdFormat": {
+            "type": "string"
+          },
           "postLoginRedirect": {
             "type": "string"
           },
@@ -1484,6 +1487,9 @@
             "type": "string"
           },
           "idpMetadataXml": {
+            "type": "string"
+          },
+          "nameIdFormat": {
             "type": "string"
           },
           "postLoginRedirect": {
