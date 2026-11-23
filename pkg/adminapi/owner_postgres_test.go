@@ -140,7 +140,28 @@ func TestOwnerDeletesTheWorkspaceAndTheLinkCancelsIt(t *testing.T) {
 	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "acme"})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err))
 
-	out, err := h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd"})
+	// The name alone is not enough: the owner's password is asked for again, and a wrong one counts
+	// toward the sign-in lockout (audit 07 #5).
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd"})
+	assert.Equal(t, http.StatusBadRequest, statusOf(err), "no password")
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "not-it"})
+	assert.Equal(t, http.StatusBadRequest, statusOf(err), "wrong password")
+
+	// With a second factor set up, a code is asked for too.
+	secret, _, err := identity.BeginMFAEnrollment(ctx, h.pool, owner.IdentityID, "owner@acme.io", time.Now())
+	require.NoError(t, err)
+	code, err := identity.TOTPAt(secret, time.Now())
+	require.NoError(t, err)
+	_, err = identity.ConfirmMFAEnrollment(ctx, h.pool, owner.IdentityID, code, time.Now())
+	require.NoError(t, err)
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1"})
+	assert.Equal(t, http.StatusBadRequest, statusOf(err), "no second-factor code")
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1", MfaCode: "000000"})
+	assert.Equal(t, http.StatusUnauthorized, statusOf(err), "wrong second-factor code")
+	// A TOTP step is single use, so the next valid code is a later one.
+	code, err = identity.TOTPAt(secret, time.Now().Add(30*time.Second))
+	require.NoError(t, err)
+	out, err := h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1", MfaCode: code})
 	require.NoError(t, err)
 	assert.NotEmpty(t, out.EffectiveAt)
 	assert.Empty(t, out.CancelLink, "the link is in the emails when mail works")
@@ -152,7 +173,7 @@ func TestOwnerDeletesTheWorkspaceAndTheLinkCancelsIt(t *testing.T) {
 	token := cancelTokenFrom(t, h.mail.last(t, "owner@acme.io"))
 	assert.Equal(t, token, cancelTokenFrom(t, h.mail.last(t, "admin2@acme.io")))
 
-	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd"})
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1"})
 	assert.Error(t, err, "already scheduled")
 
 	// The link reopens the workspace once; a second use, or a wrong token, does nothing.

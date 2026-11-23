@@ -528,6 +528,10 @@ type SupportSessionToken struct {
 type RequestWorkspaceDeletionRequest struct {
 	// Must equal the workspace's name: a deliberate act, not a stray click.
 	ConfirmName string `json:"confirmName" required:"false"`
+	// The owner's current password: deleting a workspace cannot be undone from a stolen session.
+	Password string `json:"password" required:"false"`
+	// A second-factor (or recovery) code, required when the owner has one set up.
+	MfaCode string `json:"mfaCode" required:"false"`
 }
 
 type WorkspaceDeletion struct {
