@@ -347,6 +347,8 @@ func TestValidateActions(t *testing.T) {
 	assert.ErrorContains(t, Validate(base(EntityAction{Name: "Bad", Scope: ActionScopeRecord})), "must match")
 	assert.ErrorContains(t, Validate(base(EntityAction{Name: "x", Scope: "weird"})), "scope")
 	assert.ErrorContains(t, Validate(base(EntityAction{Name: "x", Scope: ActionScopeRecord}, EntityAction{Name: "x", Scope: ActionScopeEntity})), "duplicate action")
+	assert.NoError(t, Validate(base(EntityAction{Name: "probe", Scope: ActionScopeEntity, Requires: "create"})))
+	assert.ErrorContains(t, Validate(base(EntityAction{Name: "probe", Scope: ActionScopeEntity, Requires: "execute"})), "requires")
 }
 
 func TestScopesValidation(t *testing.T) {

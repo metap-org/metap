@@ -318,10 +318,20 @@ const (
 
 // EntityAction declares one action. Permissions are not declared here: a handler reads and writes
 // through the same RecordBackend with the caller's own RequestContext, so an action can never do
-// more than the caller could do with plain CRUD.
+// more than the caller could do with plain CRUD — as far as records go. What an action does outside
+// records (a network call, a probe) is not covered by that, which is what Requires is for.
 type EntityAction struct {
 	Name        string `json:"name"` // camelCase, e.g. "verifyDns"
 	Label       string `json:"label,omitempty"`
 	Description string `json:"description,omitempty"`
 	Scope       string `json:"scope"` // ActionScopeRecord or ActionScopeEntity
+	// Requires names the entity-level policy action ("read", "create", "update", "delete" or
+	// "transition") the caller must hold on this entity before the handler runs. Reading and writing
+	// records already checks permission, but an action that does something else — probes an address,
+	// calls a service — touches no record, so without this nothing but being signed in stands between
+	// anyone and it. Empty keeps the old behavior: the handler authorizes whatever it does itself.
+	Requires string `json:"requires,omitempty"`
 }
+
+// ActionRequirements are the values EntityAction.Requires accepts.
+var ActionRequirements = []string{"read", "create", "update", "delete", "transition"}

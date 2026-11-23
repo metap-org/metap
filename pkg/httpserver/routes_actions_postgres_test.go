@@ -72,3 +72,42 @@ func TestDeclaredActionsOverREST(t *testing.T) {
 	}
 	assert.Equal(t, 401, doRequest(t, "POST", base+"/api/test.orders/actions/sweep", "", nil).StatusCode)
 }
+
+// An action that declares Requires is refused before its handler runs unless the caller holds that
+// permission on the entity — the handler of an action that touches no record has no other gate.
+func TestDeclaredActionRequiresEntityPermission(t *testing.T) {
+	pool := httpTestPool(t)
+	ctx := context.Background()
+	tenantID, adminID, viewerID := uuid.New(), uuid.New(), uuid.New()
+	for user, role := range map[uuid.UUID]string{adminID: "admin", viewerID: "viewer"} {
+		_, err := pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, $3)", tenantID, user, role)
+		require.NoError(t, err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), "DELETE FROM metadata.user_roles WHERE tenant_id = $1", tenantID)
+	})
+
+	entity := httpTestEntity()
+	entity.Actions = []metadata.EntityAction{{Name: "probe", Scope: metadata.ActionScopeEntity, Requires: "create"}}
+	state, privPEM := newTestAppState(t, pool, entity)
+	calls := 0
+	reg := crud.NewActionRegistry()
+	require.NoError(t, reg.Register("test.orders", "probe", func(context.Context, crud.ActionCall) (crud.JsonObject, error) {
+		calls++
+		return crud.JsonObject{"ok": json.RawMessage("true")}, nil
+	}))
+	state.Actions = reg
+	base := startTestServer(t, state, nil)
+
+	viewer, err := peripherals.MintJWT(privPEM, tenantID, viewerID, 3600)
+	require.NoError(t, err)
+	res := doRequest(t, "POST", base+"/api/test.orders/actions/probe", viewer, nil)
+	assert.Equal(t, 403, res.StatusCode)
+	assert.Zero(t, calls, "the handler must not run for a caller without the permission")
+
+	admin, err := peripherals.MintJWT(privPEM, tenantID, adminID, 3600)
+	require.NoError(t, err)
+	res = doRequest(t, "POST", base+"/api/test.orders/actions/probe", admin, nil)
+	assert.Equal(t, 200, res.StatusCode)
+	assert.Equal(t, 1, calls)
+}

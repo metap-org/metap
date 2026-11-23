@@ -5,6 +5,7 @@
 package httpserver
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -13,6 +14,7 @@ import (
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/metadata"
+	"github.com/metap-org/metap/pkg/permission"
 )
 
 type actionBody struct {
@@ -37,15 +39,18 @@ func invokeDeclaredAction(w http.ResponseWriter, r *http.Request, state *AppStat
 		notFound()
 		return
 	}
-	declared := false
-	for _, a := range def.Actions {
+	var declared *metadata.EntityAction
+	for i, a := range def.Actions {
 		if a.Name == action && a.Scope == scope {
-			declared = true
+			declared = &def.Actions[i]
 			break
 		}
 	}
-	if !declared {
+	if declared == nil {
 		notFound()
+		return
+	}
+	if !actionRequirementMet(w, r, state, rc, entity, declared.Requires) {
 		return
 	}
 	call := crud.ActionCall{Entity: entity, Name: action, Input: crud.JsonObject{}, RC: rc}
@@ -84,4 +89,37 @@ func mountActions(r chi.Router, state *AppState) {
 	r.Post("/api/{entity}/{id}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
 		invokeDeclaredAction(w, r, state, metadata.ActionScopeRecord)
 	})
+}
+
+// actionRequirementMet enforces EntityAction.Requires: the entity-level permission the action's
+// declaration names, checked before the handler (and so before anything it does outside records).
+func actionRequirementMet(w http.ResponseWriter, r *http.Request, state *AppState, rc *permission.RequestContext, entity, requires string) bool {
+	if requires == "" {
+		return true
+	}
+	var d permission.PermissionDecision
+	var err error
+	switch requires {
+	case permission.PolicyActionRead:
+		d, err = state.Permissions.CanReadEntity(r.Context(), rc, entity)
+	case permission.PolicyActionCreate:
+		d, err = state.Permissions.CanCreateEntity(r.Context(), rc, entity)
+	case permission.PolicyActionUpdate:
+		d, err = state.Permissions.CanUpdateEntity(r.Context(), rc, entity)
+	case permission.PolicyActionDelete:
+		d, err = state.Permissions.CanDeleteEntity(r.Context(), rc, entity)
+	case permission.PolicyActionTransition:
+		d, err = state.Permissions.CanTransitionEntity(r.Context(), rc, entity)
+	default:
+		err = fmt.Errorf("action requires unknown permission %q", requires)
+	}
+	if err != nil {
+		writeInternalError(w, err)
+		return false
+	}
+	if !d.Allowed {
+		writeServiceError(w, http.StatusForbidden, errcode.Forbidden, "You may not run this action.", nil)
+		return false
+	}
+	return true
 }
