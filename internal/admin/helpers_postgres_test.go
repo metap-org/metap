@@ -10,7 +10,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"net/http"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -125,12 +124,6 @@ func CallContext(ctx context.Context, token string) context.Context {
 	return WithAuthenticator(ctx, func(ctx context.Context) (*permission.RequestContext, error) {
 		return authenticateToken(ctx, auth, token)
 	})
-}
-
-// scimAuth authenticates a SCIM request's bearer token.
-func (h *identityHarness) scimAuth(r *http.Request) (*permission.RequestContext, error) {
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	return authenticateToken(r.Context(), h.auth, token)
 }
 
 // statusOf is the HTTP status a failed call answers with (0 on success, 500 for a non-service error).

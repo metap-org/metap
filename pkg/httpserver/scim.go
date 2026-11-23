@@ -1,6 +1,6 @@
 // SCIM 2.0 user provisioning (roadmap 115 M12, RFC 7643/7644): an identity provider (Entra ID,
 // Okta, ...) keeps a tenant's members in step with its own directory — create on join, deactivate
-// on leave, update the display name. It is a thin REST skin over UserAdminService: every call runs
+// on leave, update the display name. It is a thin REST skin over admin.UserAdminService: every call runs
 // that service in-process with the caller's own bearer token, so authentication (an API key of an
 // admin service account, or an admin token), the admin check, the last-admin guards, password and
 // invitation handling and the audit trail are exactly those of the admin API, with no second copy
@@ -10,7 +10,7 @@
 // ServiceProviderConfig, ResourceTypes, Schemas. A created user is invited by email (SCIM carries
 // no password a tenant could accept). Not supported: Groups, roles, bulk, sort, etags, other
 // filters.
-package admin
+package httpserver
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -44,7 +45,7 @@ var scimFilter = regexp.MustCompile(`(?i)^\s*(?:userName|emails\.value)\s+eq\s+"
 // SCIMAuthenticator authenticates a SCIM request's bearer token; a failure is a *crud.ServiceError.
 type SCIMAuthenticator func(r *http.Request) (*permission.RequestContext, error)
 
-func SCIMHandler(users *UserAdminService, auth SCIMAuthenticator) http.Handler {
+func SCIMHandler(users *admin.UserAdminService, auth SCIMAuthenticator) http.Handler {
 	h := &scim{users: users, auth: auth}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ServiceProviderConfig", h.serviceProviderConfig)
@@ -60,7 +61,7 @@ func SCIMHandler(users *UserAdminService, auth SCIMAuthenticator) http.Handler {
 }
 
 type scim struct {
-	users *UserAdminService
+	users *admin.UserAdminService
 	auth  SCIMAuthenticator
 }
 
@@ -102,7 +103,7 @@ func scimFromErr(w http.ResponseWriter, err error) {
 }
 
 // ctx authenticates the caller's bearer token (an API key of an admin service account) the way
-// the rest of the HTTP API does, and carries it as the caller UserAdminService acts as.
+// the rest of the HTTP API does, and carries it as the caller admin.UserAdminService acts as.
 func (h *scim) ctx(w http.ResponseWriter, r *http.Request) (context.Context, bool) {
 	if _, ok := httpx.BearerToken(r.Header.Get(standard.HeaderAuthorization)); !ok {
 		w.Header().Set("WWW-Authenticate", "Bearer")
@@ -114,10 +115,10 @@ func (h *scim) ctx(w http.ResponseWriter, r *http.Request) (context.Context, boo
 		scimFromErr(w, err)
 		return nil, false
 	}
-	return WithCaller(r.Context(), rc), true
+	return admin.WithCaller(r.Context(), rc), true
 }
 
-func scimUser(u *User) map[string]any {
+func scimUser(u *admin.User) map[string]any {
 	out := map[string]any{
 		"schemas":     []string{scimUserSchema},
 		"id":          u.GetId(),
@@ -226,7 +227,7 @@ func (h *scim) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	req := &ListUsersRequest{Limit: 50}
+	req := &admin.ListUsersRequest{Limit: 50}
 	if raw := q.Get("count"); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil || n < 0 {
@@ -283,7 +284,7 @@ func (h *scim) get(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	u, err := h.users.GetUser(ctx, &UserIdRequest{Id: r.PathValue("id")})
+	u, err := h.users.GetUser(ctx, &admin.UserIdRequest{Id: r.PathValue("id")})
 	if err != nil {
 		scimFromErr(w, err)
 		return
@@ -313,14 +314,14 @@ func (h *scim) create(w http.ResponseWriter, r *http.Request) {
 		scimFail(w, http.StatusBadRequest, "invalidValue", "`userName` is required.")
 		return
 	}
-	res, err := h.users.InviteUser(ctx, &InviteUserRequest{Email: email, DisplayName: body.display()})
+	res, err := h.users.InviteUser(ctx, &admin.InviteUserRequest{Email: email, DisplayName: body.display()})
 	if err != nil {
 		scimFromErr(w, err)
 		return
 	}
 	u := res.GetUser()
 	if body.Active != nil && !bool(*body.Active) {
-		if u, err = h.users.DisableUser(ctx, &UserIdRequest{Id: u.GetId()}); err != nil {
+		if u, err = h.users.DisableUser(ctx, &admin.UserIdRequest{Id: u.GetId()}); err != nil {
 			scimFromErr(w, err)
 			return
 		}
@@ -331,26 +332,26 @@ func (h *scim) create(w http.ResponseWriter, r *http.Request) {
 
 // apply sets the display name and the active flag, the two attributes a member has that SCIM can
 // change.
-func (h *scim) apply(ctx context.Context, id string, display *string, active *bool) (*User, error) {
-	var u *User
+func (h *scim) apply(ctx context.Context, id string, display *string, active *bool) (*admin.User, error) {
+	var u *admin.User
 	var err error
 	if display != nil {
-		if u, err = h.users.UpdateUser(ctx, &UpdateUserRequest{Id: id, DisplayName: *display}); err != nil {
+		if u, err = h.users.UpdateUser(ctx, &admin.UpdateUserRequest{Id: id, DisplayName: *display}); err != nil {
 			return nil, err
 		}
 	}
 	if active != nil {
 		if *active {
-			u, err = h.users.EnableUser(ctx, &UserIdRequest{Id: id})
+			u, err = h.users.EnableUser(ctx, &admin.UserIdRequest{Id: id})
 		} else {
-			u, err = h.users.DisableUser(ctx, &UserIdRequest{Id: id})
+			u, err = h.users.DisableUser(ctx, &admin.UserIdRequest{Id: id})
 		}
 		if err != nil {
 			return nil, err
 		}
 	}
 	if u == nil {
-		return h.users.GetUser(ctx, &UserIdRequest{Id: id})
+		return h.users.GetUser(ctx, &admin.UserIdRequest{Id: id})
 	}
 	return u, nil
 }
@@ -365,7 +366,7 @@ func (h *scim) replace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	cur, err := h.users.GetUser(ctx, &UserIdRequest{Id: id})
+	cur, err := h.users.GetUser(ctx, &admin.UserIdRequest{Id: id})
 	if err != nil {
 		scimFromErr(w, err)
 		return
@@ -434,7 +435,7 @@ func (h *scim) patch(w http.ResponseWriter, r *http.Request) {
 			}
 			display = &s
 		case "username":
-			cur, err := h.users.GetUser(ctx, &UserIdRequest{Id: id})
+			cur, err := h.users.GetUser(ctx, &admin.UserIdRequest{Id: id})
 			var s string
 			if err != nil {
 				scimFromErr(w, err)
@@ -488,7 +489,7 @@ func (h *scim) remove(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := h.users.RemoveUser(ctx, &UserIdRequest{Id: r.PathValue("id")}); err != nil {
+	if _, err := h.users.RemoveUser(ctx, &admin.UserIdRequest{Id: r.PathValue("id")}); err != nil {
 		scimFromErr(w, err)
 		return
 	}
