@@ -2,6 +2,7 @@ package permission
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -193,4 +194,18 @@ func (a EntityAction) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+// EntityActionNames are the names of AllEntityActions, in order: what a policy's action may be.
+func EntityActionNames() []string {
+	out := make([]string, len(AllEntityActions))
+	for i, a := range AllEntityActions {
+		out[i] = a.String()
+	}
+	return out
+}
+
+// IsEntityAction reports whether name is one of AllEntityActions.
+func IsEntityAction(name string) bool {
+	return slices.Contains(EntityActionNames(), name)
 }

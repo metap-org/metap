@@ -47,7 +47,7 @@ func mountMetadata(r *router.Router, state *AppState) {
 		if _, ok := requireAuth(w, r, state); !ok {
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": knownActions()})
+		writeJSON(w, http.StatusOK, map[string]any{"data": permission.EntityActionNames()})
 	})
 }
 

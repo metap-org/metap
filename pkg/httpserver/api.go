@@ -61,6 +61,14 @@ func WriteCrudError(w http.ResponseWriter, err error) { writeCrudError(w, err) }
 // ParseOptionalUUID is the exported form of parseOptionalUUID: nil for "" or a malformed id.
 func ParseOptionalUUID(s string) *uuid.UUID { return parseOptionalUUID(s) }
 
+func parseOptionalUUID(s string) *uuid.UUID {
+	id, err := uuid.Parse(s)
+	if s == "" || err != nil {
+		return nil
+	}
+	return &id
+}
+
 // HandleRecordPost registers h as the handler of POST /api/{entity}/{recordId}/{sub} (the record's id
 // is available as r.PathValue("recordId")). A route module uses this instead of registering the
 // pattern itself: it overlaps POST /api/{entity}/actions/{action}, and one ServeMux cannot hold both,

@@ -2762,3 +2762,140 @@ func (x *SetSamlConfigRequest) GetEnabled() bool {
 	}
 	return false
 }
+
+// A policy, as the permission matrix and the advanced policy editor see it.
+type Policy struct {
+	ID       string `json:"id"`
+	TenantID string `json:"tenantId"`
+	Entity   string `json:"entity" required:"false"`
+	Action   string `json:"action" required:"false"`
+	// Nil when the policy covers the whole record, not one field.
+	Field *string `json:"field"`
+	// "context" (about the caller) or "record" (about the record).
+	Subject string `json:"subject"`
+	// Nil when the policy applies to every role.
+	Roles     []string        `json:"roles" required:"false"`
+	Condition json.RawMessage `json:"condition" required:"false"`
+	CreatedBy *string         `json:"createdBy"`
+	// "allow" or "deny".
+	Effect string `json:"effect"`
+}
+
+type PolicyList struct {
+	Data []*Policy `json:"data"`
+}
+
+type PolicyOne struct {
+	Data *Policy `json:"data"`
+}
+
+type ListPoliciesRequest struct {
+	Entity string
+}
+
+type CreatePolicyRequest struct {
+	Entity    string          `json:"entity" required:"false"`
+	Action    string          `json:"action" required:"false"`
+	Roles     []string        `json:"roles,omitempty"`
+	Condition json.RawMessage `json:"condition,omitempty"`
+	Field     *string         `json:"field,omitempty"`
+	Subject   *string         `json:"subject,omitempty"`
+	Effect    *string         `json:"effect,omitempty"`
+}
+
+type SeedDefaultPoliciesRequest struct {
+	Entity  string   `json:"entity" required:"false"`
+	Roles   []string `json:"roles" required:"false"`
+	Actions []string `json:"actions,omitempty"`
+}
+
+type MatrixGrant struct {
+	// Nil grants the action to everyone.
+	Role   *string `json:"role"`
+	Action string  `json:"action" required:"false"`
+}
+
+type SyncMatrixRequest struct {
+	Entity string        `json:"entity" required:"false"`
+	Grants []MatrixGrant `json:"grants" required:"false"`
+}
+
+type PolicyIDRequest struct {
+	ID string
+}
+
+type UserIDRequest struct {
+	UserID string
+}
+
+type ExplainPolicyRequest struct {
+	Entity string                     `json:"entity" required:"false"`
+	Action string                     `json:"action" required:"false"`
+	Field  *string                    `json:"field,omitempty"`
+	Record map[string]json.RawMessage `json:"record,omitempty"`
+}
+
+type ExplainResponse struct {
+	Data json.RawMessage `json:"data"`
+}
+
+type SetConfigRequest struct {
+	Key   string          `json:"-"`
+	Value json.RawMessage `json:"value" required:"false"`
+}
+
+type ConfigKeyRequest struct {
+	Key string
+}
+
+type PlatformConfigItem struct {
+	Key               string          `json:"key"`
+	Value             json.RawMessage `json:"value"`
+	Level             string          `json:"level"`
+	TenantOverridable bool            `json:"tenantOverridable"`
+}
+
+type PlatformConfigList struct {
+	Data []*PlatformConfigItem `json:"data"`
+}
+
+type PlatformConfigSet struct {
+	Key                string          `json:"key"`
+	Value              json.RawMessage `json:"value"`
+	AppliesImmediately bool            `json:"appliesImmediately"`
+}
+
+type PlatformConfigResult struct {
+	Data *PlatformConfigSet `json:"data"`
+}
+
+type TenantConfigItem struct {
+	Key        string          `json:"key"`
+	Value      json.RawMessage `json:"value"`
+	Level      string          `json:"level"`
+	Overridden bool            `json:"overridden"`
+	Public     bool            `json:"public"`
+	Secret     bool            `json:"secret"`
+}
+
+type TenantConfigList struct {
+	Data []*TenantConfigItem `json:"data"`
+}
+
+type TenantConfigSet struct {
+	Key        string          `json:"key"`
+	Value      json.RawMessage `json:"value"`
+	Overridden bool            `json:"overridden"`
+}
+
+type TenantConfigResult struct {
+	Data *TenantConfigSet `json:"data"`
+}
+
+type Preferences struct {
+	Locale string `json:"locale" required:"false"`
+}
+
+type PreferencesResult struct {
+	Data *Preferences `json:"data"`
+}

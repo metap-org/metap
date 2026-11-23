@@ -20,6 +20,7 @@ import (
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/adminapi"
+	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
@@ -106,6 +107,17 @@ func apiErr(err error) error {
 	if errors.As(err, &ae) {
 		return ae
 	}
+	var routerErr *control.RouterError
+	if errors.As(err, &routerErr) {
+		switch routerErr.Kind {
+		case control.ErrTenantSuspended, control.ErrTenantExpired:
+			return newAPIError(http.StatusForbidden, "tenant_unavailable", "", nil)
+		case control.ErrTenantMigrating, control.ErrTenantProvisioning:
+			return newAPIError(http.StatusServiceUnavailable, "tenant_unavailable", "", nil)
+		case control.ErrTenantDeleted:
+			return newAPIError(http.StatusNotFound, "tenant_not_found", "", nil)
+		}
+	}
 	if se, ok := crud.AsServiceError(err); ok {
 		body := httpx.BuildServiceError(int(se.Status), se.Code, se.Message, se.FieldErrors)
 		body.Details = se.Details
@@ -155,6 +167,8 @@ func mountTypedAPI(r *router.Router, state *AppState) {
 	self := r.Labelled(LabelSelfAuth)
 	api := newAPI(self)
 	registerSessionOperations(api, state)
+	registerPolicyOperations(api, state)
+	registerConfigOperations(api, state)
 	registerAdminOperations(api, state)
 	if state.Identity != nil {
 		self.Mount("/scim/v2", adminapi.SCIMHandler(adminapi.NewUserAdminService(*state.Identity), scimAuthenticate(state)))
