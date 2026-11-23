@@ -29,7 +29,7 @@ func (s *CrudService) Get(ctx context.Context, entityName string, id uuid.UUID, 
 		return GetResult{}, NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
 	}
 
-	decision, err := s.permissions.CanReadEntity(ctx, rc, entity.Name)
+	decision, err := s.access.CanReadEntity(ctx, rc, entity.Name)
 	if err != nil {
 		return GetResult{}, err
 	}

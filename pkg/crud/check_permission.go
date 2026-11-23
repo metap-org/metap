@@ -30,11 +30,11 @@ func (s *CrudService) CheckRecordPermission(ctx context.Context, entityName stri
 	var decision permission.PermissionDecision
 	switch action {
 	case permission.ActionRead:
-		decision, err = s.permissions.CanReadEntity(ctx, rc, entity.Name)
+		decision, err = s.access.CanReadEntity(ctx, rc, entity.Name)
 	case permission.ActionUpdate:
-		decision, err = s.permissions.CanUpdateEntity(ctx, rc, entity.Name)
+		decision, err = s.access.CanUpdateEntity(ctx, rc, entity.Name)
 	case permission.ActionDelete:
-		decision, err = s.permissions.CanDeleteEntity(ctx, rc, entity.Name)
+		decision, err = s.access.CanDeleteEntity(ctx, rc, entity.Name)
 	default:
 		panic("CheckRecordPermission only supports Read/Update/Delete")
 	}

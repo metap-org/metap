@@ -19,14 +19,22 @@ type TxBeginner interface {
 	Begin(ctx context.Context, tenantID uuid.UUID) (pgx.Tx, error)
 }
 
-// PermissionChecker is the slice of *permission.PermissionService CrudService depends on.
-type PermissionChecker interface {
-	ScopedTenant(rc *permission.RequestContext) (uuid.UUID, error)
+// EntityAccess answers the entity-level question: may this caller's roles do this to this entity
+// at all (the tenant's policies, with no record in view). *permission.PermissionService is the
+// production implementation; with a MatrixStore behind it the answer comes from memory.
+type EntityAccess interface {
 	CanReadEntity(ctx context.Context, rc *permission.RequestContext, entity string) (permission.PermissionDecision, error)
 	CanCreateEntity(ctx context.Context, rc *permission.RequestContext, entity string) (permission.PermissionDecision, error)
 	CanUpdateEntity(ctx context.Context, rc *permission.RequestContext, entity string) (permission.PermissionDecision, error)
 	CanDeleteEntity(ctx context.Context, rc *permission.RequestContext, entity string) (permission.PermissionDecision, error)
 	CanTransitionAction(ctx context.Context, rc *permission.RequestContext, entity, action string) (permission.PermissionDecision, error)
+}
+
+// PermissionChecker is the slice of *permission.PermissionService CrudService depends on: the
+// entity-level question (EntityAccess) plus what record-level decisions need.
+type PermissionChecker interface {
+	EntityAccess
+	ScopedTenant(rc *permission.RequestContext) (uuid.UUID, error)
 	LoadSnapshot(ctx context.Context, tenantID uuid.UUID, entity string) (*permission.PermissionSnapshot, error)
 }
 

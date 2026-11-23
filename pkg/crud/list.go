@@ -25,7 +25,7 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 		return ListResult{}, NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
 	}
 
-	decision, err := s.permissions.CanReadEntity(ctx, rc, entity.Name)
+	decision, err := s.access.CanReadEntity(ctx, rc, entity.Name)
 	if err != nil {
 		return ListResult{}, err
 	}

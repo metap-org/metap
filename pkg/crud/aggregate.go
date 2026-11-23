@@ -27,7 +27,7 @@ func (s *CrudService) AggregateWithInput(ctx context.Context, entityName string,
 		return nil, NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
 	}
 
-	decision, err := s.permissions.CanReadEntity(ctx, rc, entity.Name)
+	decision, err := s.access.CanReadEntity(ctx, rc, entity.Name)
 	if err != nil {
 		return nil, err
 	}

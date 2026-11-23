@@ -64,13 +64,13 @@ func (s *CrudService) authorizeEntity(ctx context.Context, c call, verb permissi
 	var err error
 	switch verb {
 	case permission.ActionCreate:
-		d, err = s.permissions.CanCreateEntity(ctx, c.rc, c.entity.Name)
+		d, err = s.access.CanCreateEntity(ctx, c.rc, c.entity.Name)
 	case permission.ActionUpdate:
-		d, err = s.permissions.CanUpdateEntity(ctx, c.rc, c.entity.Name)
+		d, err = s.access.CanUpdateEntity(ctx, c.rc, c.entity.Name)
 	case permission.ActionDelete:
-		d, err = s.permissions.CanDeleteEntity(ctx, c.rc, c.entity.Name)
+		d, err = s.access.CanDeleteEntity(ctx, c.rc, c.entity.Name)
 	case permission.ActionTransition:
-		d, err = s.permissions.CanTransitionAction(ctx, c.rc, c.entity.Name, workflowAction)
+		d, err = s.access.CanTransitionAction(ctx, c.rc, c.entity.Name, workflowAction)
 	default:
 		panic("authorizeEntity: unsupported verb " + verb.String())
 	}
