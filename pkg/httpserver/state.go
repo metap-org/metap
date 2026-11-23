@@ -23,9 +23,9 @@ import (
 	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/httpmw"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/runtime"
 	"github.com/metap-org/metap/pkg/storage"
 	"github.com/metap-org/metap/pkg/tenancy"
 )
@@ -104,7 +104,7 @@ type AppState struct {
 	// absent from this map uses the shared default table ("attachments").
 	AttachmentTables map[string]string
 
-	Metrics *runtime.MetricsRegistry
+	Metrics *httpmw.MetricsRegistry
 }
 
 func NewAppState(pool *pgxpool.Pool, metadataBase *metadata.MetadataRegistry, md *atomic.Pointer[metadata.MetadataRegistry],
@@ -116,7 +116,7 @@ func NewAppState(pool *pgxpool.Pool, metadataBase *metadata.MetadataRegistry, md
 		ContextAttributesCache: authctx.NewContextAttributesCache(contextAttributesCacheTTL),
 		Config:                 config.Unloaded(pool),
 		CookieSecure:           true,
-		Metrics:                runtime.NewMetricsRegistry(),
+		Metrics:                httpmw.NewMetricsRegistry(),
 	}
 }
 

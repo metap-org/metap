@@ -1,4 +1,4 @@
-package runtime
+package httpmw
 
 import (
 	"github.com/metap-org/metap/pkg/kit/httpx"

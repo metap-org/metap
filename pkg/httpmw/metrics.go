@@ -1,6 +1,6 @@
 // GET /metrics — Prometheus text exposition.
 // Public (no auth), same convention as /health.
-package runtime
+package httpmw
 
 import (
 	"net/http"

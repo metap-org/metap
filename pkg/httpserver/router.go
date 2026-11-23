@@ -9,8 +9,8 @@ import (
 
 	"github.com/metap-org/metap/pkg/auth/jwks"
 	"github.com/metap-org/metap/pkg/config"
+	"github.com/metap-org/metap/pkg/httpmw"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 // BuildRouter builds the HTTP handler: middleware, then the core route groups every service has
@@ -21,7 +21,7 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 	r := router.New()
 
 	cfg := state.Config.Current()
-	rateLimit := runtime.RateLimitBehind(
+	rateLimit := httpmw.RateLimitBehind(
 		time.Duration(cfg.GetU64(config.HTTPRateLimitPerMs))*time.Millisecond,
 		int(cfg.GetU64(config.HTTPRateLimitBurst)),
 		state.TrustedProxies,

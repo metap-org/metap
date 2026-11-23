@@ -7,8 +7,8 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
-	mcache "github.com/metap-org/metap/pkg/cache"
 	"github.com/metap-org/metap/pkg/kit/standard"
+	mcache "github.com/metap-org/metap/pkg/permission/cache"
 )
 
 type PermissionService struct {
