@@ -233,3 +233,17 @@ func TestARecordWithFieldsTheActionDoesNotDeclareStillReachesIt(t *testing.T) {
 	require.NoError(t, res.Err)
 	require.JSONEq(t, `"example.com"`, string(res.Out["hostname"]))
 }
+
+func TestARecordActionSeesTheRecordItWasCalledFor(t *testing.T) {
+	id := uuid.New()
+	var seen crud.RecordDto
+	a := action.Record("waf.zones", "peek", func(_ context.Context, a *action.Ctx, _ zone, _ action.None) (action.None, error) {
+		seen = a.Current
+		return action.None{}, nil
+	})
+	res := actiontest.Run(a, actiontest.Call("waf.zones", "peek", id, nil, actiontest.Caller()), seeded(id))
+	require.NoError(t, res.Err)
+	require.Equal(t, id, seen.ID)
+	require.EqualValues(t, 1, seen.Version, "the version an update of it needs")
+	require.Contains(t, seen.Data, "hostname")
+}

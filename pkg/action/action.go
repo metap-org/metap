@@ -76,6 +76,9 @@ type Ctx struct {
 	Tenant uuid.UUID
 	// Records reads and writes entity records as the caller.
 	Records crud.RecordBackend
+	// Current is the record an action on one record was called for, as it was read before the
+	// handler ran (its Version is what an update of it expects). Zero for an action on the entity.
+	Current crud.RecordDto
 
 	sink    Sink
 	events  []events.Event
@@ -219,6 +222,7 @@ func Record[Rec, In, Out any](entity, name string, fn func(ctx context.Context, 
 		if err != nil {
 			return nil, err
 		}
+		a.Current = got.Record
 		rec, err := decode[Rec](got.Record.Data, false)
 		if err != nil {
 			return nil, crud.NewServiceErrorMsg(http.StatusInternalServerError, errcode.InternalError, "the record does not fit the action's type: "+err.Error())
