@@ -134,6 +134,7 @@ func ssoStart(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeInternalError(w, err)
 		return
 	}
+	http.SetCookie(w, ssoBindCookie(csrf, state.CookieSecure))
 	redirectTo(w, authURL)
 }
 
@@ -151,6 +152,12 @@ func ssoCallback(w http.ResponseWriter, r *http.Request, state *AppState) {
 	st, err := tenantauth.ConsumeSSOState(r.Context(), state.Pool, q.Get("state"), now)
 	if err != nil {
 		writeServiceError(w, http.StatusBadRequest, errcode.SSOFailed, "The sign-in link is unknown, used or expired. Start again.", nil)
+		return
+	}
+	// The state is spent either way. It only counts from the browser that started the sign-in.
+	http.SetCookie(w, clearSSOBindCookie(state.CookieSecure))
+	if !ssoBoundToBrowser(r, q.Get("state")) {
+		writeServiceError(w, http.StatusBadRequest, errcode.SSOFailed, "This sign-in was started in another browser. Start again here.", nil)
 		return
 	}
 	cfg, err := tenantauth.OidcConfigFor(r.Context(), state.Pool, st.Tenant)

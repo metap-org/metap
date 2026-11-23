@@ -143,7 +143,33 @@ func ssoLogin(t *testing.T, base string, tenant uuid.UUID) (callback *http.Respo
 	require.Equal(t, 302, authz.StatusCode)
 	authz.Body.Close()
 	callbackURL = authz.Header.Get("Location")
-	return get(t, callbackURL), callbackURL
+	// The browser that started the sign-in carries its binding cookie back to the callback.
+	return get(t, callbackURL, start.Cookies()...), callbackURL
+}
+
+// A callback URL opened by a browser that did not start the sign-in is refused (login CSRF): the
+// state is valid and unused, but it belongs to another browser (audit 07 #2).
+func TestSSOCallbackNeedsTheBrowserThatStarted(t *testing.T) {
+	idp := startMockIdP(t)
+	_, base, tenant, _, _ := setupSSOTenant(t, idp, nil)
+	idp.signIn("victim@acme.io", "sub-victim")
+
+	start := get(t, base+"/auth/sso/start?tenant="+tenant.String())
+	require.Equal(t, 302, start.StatusCode)
+	start.Body.Close()
+	require.NotEmpty(t, start.Cookies(), "the start sets a binding cookie")
+	authz := get(t, start.Header.Get("Location"))
+	authz.Body.Close()
+	callbackURL := authz.Header.Get("Location")
+
+	// Another browser (no cookie, or somebody else's) opens the attacker's callback URL.
+	other := get(t, callbackURL)
+	assert.Equal(t, 400, other.StatusCode)
+	other.Body.Close()
+	// The state is spent either way, so even the right browser cannot use it afterwards.
+	again := get(t, callbackURL, start.Cookies()...)
+	assert.Equal(t, 400, again.StatusCode)
+	again.Body.Close()
 }
 
 // Roadmap 115 M7: sign in through the tenant's OIDC provider; domain restriction, first-time

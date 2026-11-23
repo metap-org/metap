@@ -6,6 +6,9 @@
 package httpserver
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"net/http"
@@ -78,4 +81,38 @@ func credentialIssuingRequestAllowed(r *http.Request) bool {
 	}
 	header := r.Header.Get(httpx.CSRFHeaderName)
 	return httpx.CSRFMatches(csrfValue, header, csrfOK, header != "")
+}
+
+// ssoBindCookieName binds an OIDC sign-in to the browser that started it: ssoStart sets it to a hash of
+// the single-use state, and the callback accepts the state only from a browser that presents the
+// same hash. Without it a callback URL obtained at the identity provider by one person could be
+// opened by another browser and sign that browser in as the first person (login CSRF).
+const ssoBindCookieName = "metap_sso_bind"
+
+const ssoBindTTLSeconds = 600
+
+func ssoBindValue(state string) string {
+	sum := sha256.Sum256([]byte(state))
+	return hex.EncodeToString(sum[:])
+}
+
+// ssoBindCookie is the cookie ssoStart sets (SameSite=Lax is enough: the callback is a top-level GET
+// navigation, which Lax sends).
+func ssoBindCookie(state string, secure bool) *http.Cookie {
+	c := baseCookie(ssoBindCookieName, ssoBindValue(state), true, secure, ssoBindTTLSeconds)
+	c.Path = "/auth/sso"
+	return c
+}
+
+// clearSSOBindCookie removes it once the callback has used it.
+func clearSSOBindCookie(secure bool) *http.Cookie {
+	c := baseCookie(ssoBindCookieName, "", true, secure, -1)
+	c.Path = "/auth/sso"
+	return c
+}
+
+// ssoBoundToBrowser reports whether the request carries the binding cookie for state.
+func ssoBoundToBrowser(r *http.Request, state string) bool {
+	c, err := r.Cookie(ssoBindCookieName)
+	return err == nil && subtle.ConstantTimeCompare([]byte(c.Value), []byte(ssoBindValue(state))) == 1
 }

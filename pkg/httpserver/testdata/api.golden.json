@@ -1097,6 +1097,12 @@
         "properties": {
           "confirmName": {
             "type": "string"
+          },
+          "mfaCode": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
           }
         },
         "type": "object"

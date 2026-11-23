@@ -13,6 +13,7 @@ import (
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/peripherals"
@@ -321,7 +322,8 @@ const AuditEntityOwner = "metadata.tenant_owner"
 
 // RequestWorkspaceDeletion lets the owner (and only the owner) delete the workspace (UC-81): it is
 // suspended for the retention period, then deleted unless someone cancels with the link every
-// admin is emailed. The caller must type the workspace's name.
+// admin is emailed. The caller must type the workspace's name and prove it is them: the password,
+// and a second-factor code when they have one.
 func (s *OwnerService) RequestWorkspaceDeletion(ctx context.Context, req *RequestWorkspaceDeletionRequest) (*WorkspaceDeletion, error) {
 	c, err := s.d.admin(ctx)
 	if err != nil {
@@ -337,6 +339,11 @@ func (s *OwnerService) RequestWorkspaceDeletion(ctx context.Context, req *Reques
 	name := s.tenantName(ctx, c.tenant)
 	if strings.TrimSpace(req.ConfirmName) != name || name == "" {
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "Type the workspace's name to confirm.")
+	}
+	// Typing the name stops a stray click; it does not stop somebody who holds the owner's session.
+	// Deleting the workspace needs the owner's password (and a second-factor code, when they have one).
+	if err := s.d.stepUp(ctx, c, req.Password, req.MfaCode); err != nil {
+		return nil, err
 	}
 	now := s.d.now()
 	registry := control.NewPostgresTenantRegistry(s.d.cfg.Shared)
@@ -373,4 +380,45 @@ func (s *OwnerService) RequestWorkspaceDeletion(ctx context.Context, req *Reques
 	}
 	s.d.recordFor(ctx, c, AuditEntityOwner, c.tenant, audit.ActionUpdate, map[string][2]any{"deletionRequested": {false, true}})
 	return out, nil
+}
+
+// stepUp asks the caller who is already signed in to prove it is them again before something
+// that cannot be undone: the current password (a wrong one counts toward the sign-in lockout),
+// and a second-factor code when the person has one.
+func (d identityDeps) stepUp(ctx context.Context, c caller, password, mfaCode string) error {
+	id, err := identity.IdentityOf(ctx, d.cfg.Shared, c.tenant, c.self)
+	if err != nil {
+		return identityErr(ctx, err)
+	}
+	if password == "" {
+		return sendServiceError(ctx, &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed,
+			Message: "Enter your password to confirm.", FieldErrors: map[string][]string{"password": {"required"}}})
+	}
+	switch err := identity.VerifyCurrentPassword(ctx, d.cfg.Shared, id, password, d.now()); {
+	case errors.Is(err, identity.ErrInvalidCredentials):
+		return svcErr(ctx, http.StatusBadRequest, errcode.WrongPassword, "The password is wrong.")
+	case err != nil:
+		return identityErr(ctx, err)
+	}
+	enabled, err := identity.MFAEnabled(ctx, d.cfg.Shared, id)
+	if err != nil {
+		return rpcError(ctx, err)
+	}
+	if !enabled {
+		return nil
+	}
+	if mfaCode == "" {
+		return sendServiceError(ctx, &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed,
+			Message: "Enter your authentication code to confirm.", FieldErrors: map[string][]string{"mfaCode": {"required"}}})
+	}
+	tx, err := d.cfg.Shared.Begin(ctx)
+	if err != nil {
+		return rpcError(ctx, err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if err := identity.VerifyMFA(ctx, tx, id, mfaCode, d.now()); err != nil {
+		_ = tx.Rollback(ctx)
+		return identityErr(ctx, err)
+	}
+	return rpcError(ctx, tx.Commit(ctx))
 }
