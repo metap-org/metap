@@ -235,6 +235,49 @@ func findField(entity metadata.EntityDefinition, name string) *metadata.EntityFi
 	return nil
 }
 
+// displayReferenceFields are the Reference fields of entity a list view displays (they name a
+// RefDisplayField).
+func displayReferenceFields(entity metadata.EntityDefinition) []metadata.EntityField {
+	var out []metadata.EntityField
+	for _, f := range entity.Fields {
+		if f.Kind == metadata.KindReference && f.RefDisplayField != nil {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// relatedAccess holds, for each related entity a list displays, the permission snapshot of the
+// ones the caller may read at all (an entity the caller cannot read is absent).
+type relatedAccess map[string]*permission.PermissionSnapshot
+
+// loadRelatedAccess reads the related entities' permissions. It runs before the list opens its
+// transaction: a snapshot is a database read of its own, and asking for one while a transaction
+// holds a connection takes a second connection per request, which with enough concurrent lists
+// leaves every pooled connection waiting for another.
+func (s *CrudService) loadRelatedAccess(ctx context.Context, entity metadata.EntityDefinition, rc *permission.RequestContext, tenantID uuid.UUID) (relatedAccess, error) {
+	out := relatedAccess{}
+	for _, f := range displayReferenceFields(entity) {
+		ref := *f.RefEntity
+		if _, done := out[ref]; done {
+			continue
+		}
+		decision, err := s.permissions.CanReadEntity(ctx, rc, ref)
+		if err != nil {
+			return nil, err
+		}
+		if !decision.Allowed {
+			continue
+		}
+		snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, ref)
+		if err != nil {
+			return nil, err
+		}
+		out[ref] = snapshot
+	}
+	return out, nil
+}
+
 // hydrateRelatedDisplay is the "Mode 2" batch display hydration — the list-only counterpart to
 // enrichRecordForActions, but for a different purpose: that method resolves relations
 // *permission conditions* need, invisibly; this resolves relations a *list view* wants to
@@ -248,13 +291,8 @@ func findField(entity metadata.EntityDefinition, name string) *metadata.EntityFi
 // display value: a display convenience must not leak a value the caller would get a 403 for
 // reading directly.
 func (s *CrudService) hydrateRelatedDisplay(ctx context.Context, entity metadata.EntityDefinition, rc *permission.RequestContext,
-	tenantID uuid.UUID, registry *metadata.MetadataRegistry, tx pgx.Tx, records []RecordDto) ([]RecordDto, error) {
-	var displayFields []metadata.EntityField
-	for _, f := range entity.Fields {
-		if f.Kind == metadata.KindReference && f.RefDisplayField != nil {
-			displayFields = append(displayFields, f)
-		}
-	}
+	tenantID uuid.UUID, registry *metadata.MetadataRegistry, tx pgx.Tx, records []RecordDto, access relatedAccess) ([]RecordDto, error) {
+	displayFields := displayReferenceFields(entity)
 	if len(displayFields) == 0 {
 		return records, nil
 	}
@@ -264,12 +302,8 @@ func (s *CrudService) hydrateRelatedDisplay(ctx context.Context, entity metadata
 		refEntity := *field.RefEntity
 		displayField := *field.RefDisplayField
 
-		decision, err := s.permissions.CanReadEntity(ctx, rc, refEntity)
-		if err != nil {
-			return nil, err
-		}
-		if !decision.Allowed {
-			continue
+		if _, ok := access[refEntity]; !ok {
+			continue // the caller cannot read the related entity at all
 		}
 
 		idSet := map[uuid.UUID]bool{}
@@ -309,10 +343,7 @@ func (s *CrudService) hydrateRelatedDisplay(ctx context.Context, entity metadata
 			continue
 		}
 
-		relatedSnapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, refEntity)
-		if err != nil {
-			return nil, err
-		}
+		relatedSnapshot := access[refEntity]
 		values := map[uuid.UUID]string{}
 		for id, relatedData := range related {
 			recordDecision := relatedSnapshot.CanAccessRecord(rc, refEntity, refEntityDef.Scopes, id.String(), permission.JsonObject(relatedData), permission.ActionRead, "")
