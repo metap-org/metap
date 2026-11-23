@@ -4,95 +4,91 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/kit/errcode"
+	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
 )
 
+// Create writes a new record: resolve, authorize the entity, prepare the data, persist.
 func (s *CrudService) Create(ctx context.Context, entityName string, rawData JsonObject, rc *permission.RequestContext, reason *string) (RecordDto, error) {
-	tenantID, err := s.permissions.ScopedTenant(rc)
+	c, err := s.resolve(ctx, rc, entityName)
 	if err != nil {
 		return RecordDto{}, err
 	}
-	registry, err := s.registryFor(ctx, tenantID)
+	if err := s.authorizeEntity(ctx, c, permission.ActionCreate, ""); err != nil {
+		return RecordDto{}, err
+	}
+	snapshot, err := s.permissions.LoadSnapshot(ctx, c.tenantID, c.entity.Name)
 	if err != nil {
 		return RecordDto{}, err
 	}
-	entity, ok := registry.GetEntity(entityName)
-	if !ok {
-		return RecordDto{}, NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
-	}
-
-	decision, err := s.permissions.CanCreateEntity(ctx, rc, entity.Name)
+	p, err := prepareCreate(c.entity, snapshot, rc, rawData)
 	if err != nil {
 		return RecordDto{}, err
 	}
-	if !decision.Allowed {
-		return RecordDto{}, forbidden(decision)
-	}
-
-	snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, entity.Name)
+	userID, err := parseUserID(rc)
 	if err != nil {
 		return RecordDto{}, err
 	}
+	return s.persist(ctx, c, snapshot, write{
+		userID: userID, reason: reason,
+		sql:    buildInsertSQL(c.entity),
+		args:   []any{c.tenantID, p.code, p.status, userID, userID, json.RawMessage(p.dataJSON)},
+		unique: true,
+		emit: func(ctx context.Context, tx pgx.Tx, record RecordDto) error {
+			return workflow.EmitCreated(ctx, tx, c.entity, c.tenantID, record.ID, p.data)
+		},
+		auditAction: audit.ActionCreate,
+		// No real "before" state for a create: diffed against an empty object so every field
+		// reads as {"before": null, "after": value}.
+		diff: func(RecordDto) audit.JsonObject {
+			return audit.DiffJSONObjects(audit.JsonObject{}, audit.JsonObject(p.data))
+		},
+	})
+}
 
-	keys := make([]string, 0, len(rawData))
-	for k := range rawData {
-		keys = append(keys, k)
-	}
-	writeDecision := snapshot.AssertWritableFields(rc, keys, nil, false)
-	if !writeDecision.Allowed {
-		return RecordDto{}, forbiddenWithField(writeDecision)
-	}
+// created is what prepareCreate decides to write.
+type created struct {
+	data     JsonObject
+	dataJSON []byte
+	status   *string // the status column: the workflow's initial state, or a plain status value
+	code     *string
+}
 
-	if fe := rejectSystemFields(entity, rawData); fe != nil {
-		return RecordDto{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fe)
+// prepareCreate turns the caller's payload into the row to insert, or says why it cannot. No I/O.
+func prepareCreate(entity metadata.EntityDefinition, snapshot *permission.PermissionSnapshot, rc *permission.RequestContext, raw JsonObject) (created, error) {
+	if d := snapshot.AssertWritableFields(rc, keysOf(raw), nil, false); !d.Allowed {
+		return created{}, forbiddenWithField(d)
 	}
-	data, fieldErrors := ValidatePayload(entity, rawData)
+	if fe := rejectSystemFields(entity, raw); fe != nil {
+		return created{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fe)
+	}
+	data, fieldErrors := ValidatePayload(entity, raw)
 	if fieldErrors != nil {
-		return RecordDto{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fieldErrors)
+		return created{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fieldErrors)
 	}
-
 	recomputeFields(entity, data)
 
 	// A caller whose role is scoped may create only inside their scopes (roadmap 115 M1).
 	if d := snapshot.CanCreateInScope(rc, entity.Name, entity.Scopes, permission.JsonObject(data)); !d.Allowed {
-		return RecordDto{}, forbidden(d)
+		return created{}, forbidden(d)
 	}
 
 	status, hasStatus := workflow.GetInitialStatus(entity, data)
-	// The state field has to be written into data explicitly here — otherwise the top-level
-	// status column and the data blob disagree the moment a caller omits it, which
-	// maskRecordForRead's masking check would then read as "absent".
+	// The state field has to be written into data explicitly here: otherwise the top-level status
+	// column and the data blob disagree the moment a caller omits it, which maskRecordForRead's
+	// masking check would then read as "absent".
 	if entity.Workflow != nil && hasStatus {
 		if _, ok := data[entity.Workflow.StateField]; !ok {
 			b, _ := json.Marshal(status)
 			data[entity.Workflow.StateField] = b
 		}
 	}
-	var code *string
-	if raw, ok := data["code"]; ok {
-		var s string
-		if json.Unmarshal(raw, &s) == nil {
-			code = &s
-		}
-	}
-	userID, err := parseUserID(rc)
-	if err != nil {
-		return RecordDto{}, err
-	}
-
-	tx, err := s.router.Begin(ctx, tenantID)
-	if err != nil {
-		if r, ok := routerUnavailable(err); ok {
-			return RecordDto{}, r
-		}
-		return RecordDto{}, err
-	}
-
 	var statusArg *string
 	if hasStatus {
 		statusArg = &status
@@ -101,42 +97,27 @@ func (s *CrudService) Create(ctx context.Context, entityName string, rawData Jso
 	}
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
-		tx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, err
+		return created{}, err
 	}
-	row := tx.QueryRow(ctx, buildInsertSQL(entity), tenantID, code, statusArg, userID, userID, json.RawMessage(dataJSON))
-	record, err := scanRecordRow(row, entity.Name)
-	if err != nil {
-		if r, ok := uniqueViolation(entity, err); ok {
-			tx.Rollback(ctx) //nolint:errcheck
-			return RecordDto{}, r
+	return created{data: data, dataJSON: dataJSON, status: statusArg, code: codeOf(data)}, nil
+}
+
+// keysOf lists a payload's field names.
+func keysOf(data JsonObject) []string {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// codeOf reads the record's "code" from its data, when it is a string.
+func codeOf(data JsonObject) *string {
+	if raw, ok := data["code"]; ok {
+		var s string
+		if json.Unmarshal(raw, &s) == nil {
+			return &s
 		}
-		tx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, err
 	}
-
-	if err := workflow.EmitCreated(ctx, tx, entity, tenantID, record.ID, data); err != nil {
-		tx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return RecordDto{}, err
-	}
-
-	versionAfter := record.Version
-	s.recordAudit(ctx, entity, record.Data, audit.Entry{
-		TenantID:    tenantID,
-		Entity:      entity.Name,
-		RecordID:    record.ID,
-		Action:      audit.ActionCreate,
-		ActorUserID: userID,
-		Reason:      reason,
-		// No real "before" state for a create — diffed against an empty object so every field
-		// reads as {"before": null, "after": value}.
-		Diff:         audit.DiffJSONObjects(audit.JsonObject{}, audit.JsonObject(data)),
-		VersionAfter: &versionAfter,
-		OccurredAt:   time.Now().UTC(),
-	})
-
-	return maskRecordForRead(entity, rc, snapshot, record), nil
+	return nil
 }
