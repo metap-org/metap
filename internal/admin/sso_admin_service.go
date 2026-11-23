@@ -328,6 +328,10 @@ func (s *SsoAdminService) samlView(ctx context.Context, tenant uuid.UUID) (*Saml
 	if cfg != nil {
 		out.Configured, out.Enabled = true, enabled
 		out.IdpMetadataUrl, out.EmailAttribute, out.RoleAttribute = cfg.IdpMetadataURL, cfg.EmailAttribute, cfg.RoleAttribute
+		out.NameIdFormat = cfg.NameIDFormat
+		if out.NameIdFormat == "" {
+			out.NameIdFormat = sso.NameIDEmail
+		}
 		if cfg.RoleMap != nil {
 			out.RoleMap = cfg.RoleMap
 		}
@@ -378,7 +382,14 @@ func (s *SsoAdminService) SetSamlConfig(ctx context.Context, req *SetSamlConfigR
 	}
 
 	before, _, _ := sso.StoredSamlConfig(ctx, s.d.cfg.Shared, c.tenant)
-	cfg := &sso.SamlConfig{EmailAttribute: strings.TrimSpace(req.EmailAttribute), RoleAttribute: access.roleClaim, RoleMap: access.roleMap,
+	format := strings.TrimSpace(req.NameIdFormat)
+	if !sso.ValidNameIDFormat(format) {
+		return bad("`nameIdFormat` is `emailAddress` or `persistent`.")
+	}
+	if format == sso.NameIDPersistent && strings.TrimSpace(req.EmailAttribute) == "" {
+		return bad("With `persistent` NameIDs the address is not in the NameID: name the attribute that carries it in `emailAttribute`.")
+	}
+	cfg := &sso.SamlConfig{NameIDFormat: format, EmailAttribute: strings.TrimSpace(req.EmailAttribute), RoleAttribute: access.roleClaim, RoleMap: access.roleMap,
 		EmailDomains: access.domains, DefaultRole: access.defaultRole, Enforced: req.Enforced, PostLoginRedirect: access.postLoginRedirect}
 	switch {
 	case strings.TrimSpace(req.IdpMetadataXml) != "":

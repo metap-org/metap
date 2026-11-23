@@ -200,10 +200,11 @@ func (s *Service) samlProvider(ctx context.Context, tenant uuid.UUID) (*sso.Saml
 // SAMLMetadata is what an admin registers at the identity provider: this service's entity ID and
 // assertion consumer URL for the tenant.
 func (s *Service) SAMLMetadata(ctx context.Context, tenant uuid.UUID) ([]byte, error) {
-	if _, _, err := s.samlProvider(ctx, tenant); err != nil {
+	cfg, _, err := s.samlProvider(ctx, tenant)
+	if err != nil {
 		return nil, err
 	}
-	return sso.ServiceProviderMetadata(sso.SamlURLsFor(s.d.PublicURL, tenant))
+	return sso.ServiceProviderMetadata(sso.SamlURLsFor(s.d.PublicURL, tenant), cfg)
 }
 
 // SAMLStart begins a SAML sign-in and returns where to send the browser. The relay state is our own

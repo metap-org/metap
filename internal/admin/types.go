@@ -646,6 +646,10 @@ type SetSamlConfigRequest struct {
 	IdpMetadataXml string `json:"idpMetadataXml" required:"false"`
 	// The attribute that carries the address; empty uses the NameID when it is an address.
 	EmailAttribute string `json:"emailAttribute" required:"false"`
+	// "emailAddress" (default) or "persistent". With persistent the provider's opaque identifier is
+	// the person's identity, so a changed or reused address does not move the account; the address
+	// then has to come from an attribute.
+	NameIdFormat string `json:"nameIdFormat" required:"false"`
 	// The attribute that lists groups or roles, and which tenant role each value means. Never admin.
 	RoleAttribute     string            `json:"roleAttribute" required:"false"`
 	RoleMap           map[string]string `json:"roleMap" required:"false"`
@@ -664,6 +668,7 @@ type SamlConfig struct {
 	// The provider's sign-in endpoint taken from its metadata.
 	IdpSsoUrl         string            `json:"idpSsoUrl" required:"false"`
 	EmailAttribute    string            `json:"emailAttribute" required:"false"`
+	NameIdFormat      string            `json:"nameIdFormat" required:"false"`
 	RoleAttribute     string            `json:"roleAttribute" required:"false"`
 	RoleMap           map[string]string `json:"roleMap" required:"false"`
 	EmailDomains      []string          `json:"emailDomains" required:"false"`

@@ -38,6 +38,10 @@ type SamlConfig struct {
 	IdpMetadataURL string `json:"idpMetadataUrl,omitempty"`
 	// IdpMetadataXML is the metadata the provider's endpoints and signing keys are taken from.
 	IdpMetadataXML string `json:"idpMetadataXml"`
+	// NameIDFormat is the NameID format asked of the provider: NameIDEmail (the default) or
+	// NameIDPersistent. With persistent, the NameID is an opaque identifier the provider keeps stable
+	// for a person, so it is the subject but never the address: the address comes from an attribute.
+	NameIDFormat string `json:"nameIdFormat,omitempty"`
 	// EmailAttribute names the attribute that carries the address. Empty: the NameID when it is an
 	// address, else the first of the usual attribute names.
 	EmailAttribute string `json:"emailAttribute,omitempty"`
@@ -49,6 +53,27 @@ type SamlConfig struct {
 	Enforced      bool              `json:"enforced,omitempty"`
 	// PostLoginRedirect: where the browser lands after a successful sign-in (same origin as the app).
 	PostLoginRedirect string `json:"postLoginRedirect,omitempty"`
+}
+
+// The NameID formats a tenant can choose. Email keeps working with providers that cannot send a
+// persistent identifier; persistent survives an address change and is not reused for someone else.
+const (
+	NameIDEmail      = "emailAddress"
+	NameIDPersistent = "persistent"
+
+	nameIDEmailURN      = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+	nameIDPersistentURN = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+)
+
+// ValidNameIDFormat reports whether f is a format a tenant may choose; empty means the default.
+func ValidNameIDFormat(f string) bool { return f == "" || f == NameIDEmail || f == NameIDPersistent }
+
+// nameIDURN is the format URN the service provider asks for.
+func (c *SamlConfig) nameIDURN() string {
+	if c.NameIDFormat == NameIDPersistent {
+		return nameIDPersistentURN
+	}
+	return nameIDEmailURN
 }
 
 // Mapping is the settings' group-to-role mapping.
@@ -209,7 +234,7 @@ func (c *SamlConfig) ServiceProvider(urls SamlURLs) (*saml2.SAMLServiceProvider,
 		AssertionConsumerServiceURL: urls.ACS,
 		// Exactly the provider's own signing certificates are trusted.
 		IDPCertificateStore:    &dsig.MemoryX509CertificateStore{Roots: md.Certs},
-		NameIdFormat:           "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+		NameIdFormat:           c.nameIDURN(),
 		AllowMissingAttributes: true,
 		Clock:                  dsig.NewRealClock(),
 	}, nil
@@ -237,14 +262,14 @@ func StartRedirect(sp *saml2.SAMLServiceProvider, relayState string) (redirectUR
 // ServiceProviderMetadata is what an admin registers at the identity provider: this service's
 // entity ID and assertion consumer URL for the tenant. It asks for signed assertions and signs
 // nothing itself, so it carries no keys.
-func ServiceProviderMetadata(urls SamlURLs) ([]byte, error) {
+func ServiceProviderMetadata(urls SamlURLs, cfg *SamlConfig) ([]byte, error) {
 	md := types.EntityDescriptor{
 		EntityID: urls.EntityID,
 		SPSSODescriptor: &types.SPSSODescriptor{
 			AuthnRequestsSigned:        false,
 			WantAssertionsSigned:       true,
 			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
-			NameIDFormats:              []string{"urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"},
+			NameIDFormats:              []string{cfg.nameIDURN()},
 			AssertionConsumerServices:  []types.IndexedEndpoint{{Binding: saml2.BindingHttpPost, Location: urls.ACS, Index: 1}},
 		},
 	}
@@ -334,7 +359,7 @@ func (c *SamlConfig) identityFromAssertion(a *types.Assertion) (*VerifiedIdentit
 		if v := attrs[strings.ToLower(c.EmailAttribute)]; len(v) > 0 {
 			email = v[0]
 		}
-	case strings.Contains(nameID, "@"):
+	case c.NameIDFormat != NameIDPersistent && strings.Contains(nameID, "@"):
 		email = nameID
 	default:
 		for _, name := range emailAttributeNames {
