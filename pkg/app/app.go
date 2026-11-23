@@ -133,7 +133,12 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("building secret store: %w", err)
 	}
 	router := tenancy.NewRouter(pool, tenancy.NewRegistryCache(tenancy.NewPostgresTenantRegistry(pool)), secretManager)
-	permissions := permission.NewPermissionService(policypg.NewPostgresPolicyStore(router))
+	policies := policypg.NewPostgresPolicyStore(router)
+	// The entity-level checks read a tenant's policies from memory for POLICY_CACHE_TTL_SECONDS
+	// (default 45, 0 turns it off); a policy changed through this process applies at once, any
+	// other change within the TTL (roadmap 120).
+	permissions := permission.NewPermissionService(
+		permission.NewMatrixStore(policies, policies.LoadContextPolicies, env.Seconds("POLICY_CACHE_TTL_SECONDS", 45*time.Second)))
 
 	tokens, err := BuildTokenAuth(ctx, appCfg)
 	if err != nil {

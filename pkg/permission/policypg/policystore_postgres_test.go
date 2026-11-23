@@ -82,3 +82,45 @@ func TestCreatePolicyWithConditionRoundTripsJsonb(t *testing.T) {
 
 	require.NoError(t, store.DeletePolicy(ctx, tenantID, created.ID))
 }
+
+// LoadContextPolicies is what MatrixStore holds in memory: it must return exactly the rows
+// FindContextPolicies returns, entity by entity and action by action, and nothing else (no
+// field-level or record-level policy, nobody else's tenant).
+func TestLoadContextPoliciesMatchesFindContextPolicies(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	store := NewPostgresPolicyStore(testRouter(pool))
+	tenantID, otherTenant := uuid.New(), uuid.New()
+
+	contextSubject, recordSubject := permission.SubjectContext, permission.SubjectRecord
+	create := func(tenant uuid.UUID, entity, action string, roles []string, field string, subject *permission.PolicySubject, effect permission.PolicyEffect) {
+		t.Helper()
+		_, err := store.CreatePolicy(ctx, tenant, entity, action, roles, roles != nil, nil, nil, field, subject, effect)
+		require.NoError(t, err)
+	}
+	create(tenantID, "waf.zones", "read", []string{"viewer"}, "", &contextSubject, permission.EffectAllow)
+	create(tenantID, "waf.zones", "update", []string{"analyst"}, "", &contextSubject, permission.EffectAllow)
+	create(tenantID, "waf.zones", "update", []string{"intern"}, "", &contextSubject, permission.EffectDeny)
+	create(tenantID, permission.ResourceKey("waf.requests"), "view", []string{"analyst"}, "", &contextSubject, permission.EffectAllow)
+	create(tenantID, "waf.zones", "read", []string{"viewer"}, "secret", &contextSubject, permission.EffectDeny) // field-level: not entity-level
+	create(tenantID, "waf.zones", "update", []string{"viewer"}, "", &recordSubject, permission.EffectAllow)     // record subject: not entity-level
+	create(otherTenant, "waf.zones", "read", []string{"stranger"}, "", &contextSubject, permission.EffectAllow) // another tenant
+
+	loaded, err := store.LoadContextPolicies(ctx, tenantID)
+	require.NoError(t, err)
+	require.Len(t, loaded, 4, "got %+v", loaded)
+
+	byKey := map[[2]string][]uuid.UUID{}
+	for _, r := range loaded {
+		k := [2]string{r.Entity, r.Action}
+		byKey[k] = append(byKey[k], r.ID)
+	}
+	for k, ids := range byKey {
+		found, err := store.FindContextPolicies(ctx, tenantID, k[0], k[1])
+		require.NoError(t, err)
+		require.Len(t, found, len(ids), "%v: the matrix and the per-key query disagree", k)
+		for _, f := range found {
+			require.Contains(t, ids, f.ID)
+		}
+	}
+}

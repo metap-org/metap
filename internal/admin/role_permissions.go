@@ -1,9 +1,9 @@
 // A role's permissions across every entity (roadmap 114, P3): the role-first editor reads and
 // replaces the role's basic grants in one call instead of one entity at a time.
 //
-// No policy cache to invalidate: every PermissionService metap builds reads the policy store
-// fresh (NewPermissionService, no cache), so a saved grant applies on the next request in every
-// service sharing the tenant's policies.
+// A saved grant is written straight to the policy table, not through PermissionService, so a
+// service that holds its policies in memory (permission.MatrixStore, roadmap 120) sees it within
+// POLICY_CACHE_TTL_SECONDS (default 45), not on the next request.
 package admin
 
 import (
