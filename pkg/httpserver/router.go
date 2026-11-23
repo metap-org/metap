@@ -47,7 +47,7 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 
 	mountHealth(r)
 	if state.JwksKeys != nil {
-		r.Get("/.well-known/jwks.json", jwks.Handler(state.JwksKeys))
+		r.Labelled(LabelPublic).Get("/.well-known/jwks.json", jwks.Handler(state.JwksKeys))
 	}
 	mountMetrics(r, state)
 	mountMetadata(r, state)

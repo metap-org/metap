@@ -26,10 +26,7 @@ import (
 // looks like or how long a session lasts for the user reading it, so an ordinary member seeing
 // the effective values is expected. Writing is admin-gated below.
 func listTenantConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	tenantID, err := state.Permissions.ScopedTenant(rc)
 	if err != nil {
 		writeInternalError(w, err)
@@ -53,10 +50,7 @@ func listTenantConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
 }
 
 func setTenantConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	key := r.PathValue("key")
 	var body setConfigBody
 	if !decodeJSONBody(w, r, &body) {
@@ -89,10 +83,7 @@ func setTenantConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
 // resetTenantConfig clears this tenant's override. The key then reads back the fleet default a
 // platform admin set, or the value declared in Go if there is none — never null.
 func resetTenantConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	key := r.PathValue("key")
 	tenantID, err := state.Permissions.ScopedTenant(rc)
 	if err != nil {
@@ -154,11 +145,12 @@ func publicConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
 }
 
 func mountTenantConfig(r *router.Router, state *AppState) {
+	acc := AccessGroups(r, state)
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	r.Get("/admin/config", wrap(listTenantConfig))
-	r.Put("/admin/config/{key}", wrap(setTenantConfig))
-	r.Delete("/admin/config/{key}", wrap(resetTenantConfig))
-	r.Get("/public/config", wrap(publicConfig))
+	acc.Authenticated.Get("/admin/config", wrap(listTenantConfig))
+	acc.Admin.Put("/admin/config/{key}", wrap(setTenantConfig))
+	acc.Admin.Delete("/admin/config/{key}", wrap(resetTenantConfig))
+	acc.Public.Get("/public/config", wrap(publicConfig))
 }

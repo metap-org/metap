@@ -22,10 +22,7 @@ type actionBody struct {
 }
 
 func invokeDeclaredAction(w http.ResponseWriter, r *http.Request, state *AppState, scope string) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	entity, action := r.PathValue("entity"), r.PathValue("action")
 	notFound := func() {
 		writeServiceError(w, http.StatusNotFound, errcode.ActionNotFound, "No action "+action+" on entity "+entity+".", nil)
@@ -83,11 +80,12 @@ func invokeDeclaredAction(w http.ResponseWriter, r *http.Request, state *AppStat
 }
 
 func mountActions(r *router.Router, state *AppState) {
+	acc := AccessGroups(r, state)
 	// POST /api/{entity}/{first}/{second} is two things a ServeMux cannot hold as two patterns
 	// (they overlap whenever {first} could be the word "actions"): an action on the entity
 	// (first == "actions") and a sub-resource of a record that a route module registered with
 	// AppState.HandleRecordPost (first is the record id, second the sub-resource: "attachments").
-	r.Post("/api/{entity}/{first}/{second}", func(w http.ResponseWriter, req *http.Request) {
+	acc.Authenticated.Post("/api/{entity}/{first}/{second}", func(w http.ResponseWriter, req *http.Request) {
 		first, second := req.PathValue("first"), req.PathValue("second")
 		if first == "actions" {
 			req.SetPathValue("action", second)
@@ -101,7 +99,7 @@ func mountActions(r *router.Router, state *AppState) {
 		}
 		writeServiceError(w, http.StatusNotFound, errcode.NotFound, "No such route.", nil)
 	})
-	r.Post("/api/{entity}/{id}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
+	acc.Authenticated.Post("/api/{entity}/{id}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
 		invokeDeclaredAction(w, r, state, metadata.ActionScopeRecord)
 	})
 }

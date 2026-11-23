@@ -120,10 +120,7 @@ func firstValue(values map[string][]string, key string) string {
 }
 
 func listRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	entity := r.PathValue("entity")
 	if raw := r.URL.Query().Get("ids"); raw != "" {
 		listRecordsByID(w, r, state, rc, entity, raw)
@@ -152,10 +149,7 @@ func listRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 }
 
 func getRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	entity := r.PathValue("entity")
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -195,10 +189,7 @@ type recordBody struct {
 }
 
 func createRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	entity := r.PathValue("entity")
 	var body recordBody
 	if !decodeJSONBody(w, r, &body) {
@@ -220,10 +211,7 @@ type updateBody struct {
 }
 
 func updateRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	entity := r.PathValue("entity")
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -249,10 +237,7 @@ type deleteBody struct {
 }
 
 func deleteRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	entity := r.PathValue("entity")
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -279,10 +264,7 @@ type transitionBody struct {
 }
 
 func transitionRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	entity := r.PathValue("entity")
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -307,10 +289,7 @@ func transitionRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 // same raw wire shape every other transport would parse too. A POST rather than query params
 // because the metric/filter set is a structured object, not a flat string map.
 func aggregateRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	entity := r.PathValue("entity")
 	var spec query.AggregateSpec
 	if err := httpx.DecodeJSON(w, r, &spec, 0); err != nil {
@@ -331,14 +310,15 @@ func aggregateRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 }
 
 func mountRecords(r *router.Router, state *AppState) {
+	acc := AccessGroups(r, state)
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	r.Get("/api/{entity}", wrap(listRecords))
-	r.Post("/api/{entity}", wrap(createRecord))
-	r.Post("/api/{entity}/aggregate", wrap(aggregateRecords))
-	r.Get("/api/{entity}/{id}", wrap(getRecord))
-	r.Patch("/api/{entity}/{id}", wrap(updateRecord))
-	r.Delete("/api/{entity}/{id}", wrap(deleteRecord))
-	r.Post("/api/{entity}/{id}/transitions/{action}", wrap(transitionRecord))
+	acc.Authenticated.Get("/api/{entity}", wrap(listRecords))
+	acc.Authenticated.Post("/api/{entity}", wrap(createRecord))
+	acc.Authenticated.Post("/api/{entity}/aggregate", wrap(aggregateRecords))
+	acc.Authenticated.Get("/api/{entity}/{id}", wrap(getRecord))
+	acc.Authenticated.Patch("/api/{entity}/{id}", wrap(updateRecord))
+	acc.Authenticated.Delete("/api/{entity}/{id}", wrap(deleteRecord))
+	acc.Authenticated.Post("/api/{entity}/{id}/transitions/{action}", wrap(transitionRecord))
 }

@@ -173,10 +173,7 @@ func nilIfEmpty(s string) *string {
 }
 
 func authorizeOAuth2(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	q := r.URL.Query()
 	if q.Get("response_type") != "code" {
 		httpserver.WriteServiceError(w, http.StatusBadRequest, errcode.OAuthUnsupportedResponseType, "Only response_type=code is supported.", nil)
@@ -294,10 +291,7 @@ type oauthDecisionBody struct {
 // query, so a pending authorization created for one user can't be decided by another, even
 // within the same tenant.
 func authorizeDecision(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	var body oauthDecisionBody
 	if !httpserver.DecodeJSONBody(w, r, &body) {
 		return
@@ -655,10 +649,7 @@ func oauthClientToJSON(client *oauthserver.OAuthClient) map[string]any {
 // disagree — the synthetic external_subject/email are pure uniqueness keys, never shown to
 // anyone or used to authenticate.
 func createOAuthClientAdmin(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	var body createOAuthClientBody
 	if !httpserver.DecodeJSONBody(w, r, &body) {
 		return
@@ -692,10 +683,7 @@ func createOAuthClientAdmin(w http.ResponseWriter, r *http.Request, state *https
 }
 
 func listOAuthClientsAdmin(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	tenantID, err := state.Permissions.ScopedTenant(rc)
 	if err != nil {
 		httpserver.WriteInternalError(w, err)
@@ -714,10 +702,7 @@ func listOAuthClientsAdmin(w http.ResponseWriter, r *http.Request, state *httpse
 }
 
 func revokeOAuthClientAdmin(w http.ResponseWriter, r *http.Request, state *httpserver.AppState) {
-	rc, ok := httpserver.RequireAdmin(w, r, state)
-	if !ok {
-		return
-	}
+	rc := httpserver.RC(r)
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.NotFound, "No such client in your tenant.", nil)
@@ -741,15 +726,16 @@ func revokeOAuthClientAdmin(w http.ResponseWriter, r *http.Request, state *https
 }
 
 func Mount(r *router.Router, state *httpserver.AppState) {
+	acc := httpserver.AccessGroups(r, state)
 	wrap := func(h func(http.ResponseWriter, *http.Request, *httpserver.AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	r.Get("/oauth/authorize", wrap(authorizeOAuth2))
-	r.Post("/oauth/authorize/decision", wrap(authorizeDecision))
-	r.Post("/oauth/token", wrap(tokenEndpoint))
-	r.Post("/oauth/revoke", wrap(revokeEndpoint))
-	r.Get("/.well-known/oauth-authorization-server", wrap(discoveryMetadata))
-	r.Post("/admin/oauth/clients", wrap(createOAuthClientAdmin))
-	r.Get("/admin/oauth/clients", wrap(listOAuthClientsAdmin))
-	r.Delete("/admin/oauth/clients/{id}", wrap(revokeOAuthClientAdmin))
+	acc.Authenticated.Get("/oauth/authorize", wrap(authorizeOAuth2))
+	acc.Authenticated.Post("/oauth/authorize/decision", wrap(authorizeDecision))
+	acc.SelfAuth.Post("/oauth/token", wrap(tokenEndpoint))
+	acc.SelfAuth.Post("/oauth/revoke", wrap(revokeEndpoint))
+	acc.Public.Get("/.well-known/oauth-authorization-server", wrap(discoveryMetadata))
+	acc.Admin.Post("/admin/oauth/clients", wrap(createOAuthClientAdmin))
+	acc.Admin.Get("/admin/oauth/clients", wrap(listOAuthClientsAdmin))
+	acc.Admin.Delete("/admin/oauth/clients/{id}", wrap(revokeOAuthClientAdmin))
 }

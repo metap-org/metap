@@ -28,10 +28,7 @@ func isSupportedLocale(locale string) bool {
 }
 
 func getPreferences(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	tenantID, err := state.Permissions.ScopedTenant(rc)
 	if err != nil {
 		writeInternalError(w, err)
@@ -55,10 +52,7 @@ type updatePreferencesBody struct {
 }
 
 func updatePreferences(w http.ResponseWriter, r *http.Request, state *AppState) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return
-	}
+	rc := RC(r)
 	var body updatePreferencesBody
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -86,9 +80,10 @@ func updatePreferences(w http.ResponseWriter, r *http.Request, state *AppState) 
 }
 
 func mountPreferences(r *router.Router, state *AppState) {
+	acc := AccessGroups(r, state)
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	r.Get("/preferences", wrap(getPreferences))
-	r.Put("/preferences", wrap(updatePreferences))
+	acc.Authenticated.Get("/preferences", wrap(getPreferences))
+	acc.Authenticated.Put("/preferences", wrap(updatePreferences))
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func mountHealth(r *router.Router) {
-	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
+	r.Labelled(LabelPublic).Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(standard.HeaderContentType, standard.MediaTypeJSON)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})

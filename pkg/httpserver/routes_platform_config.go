@@ -53,9 +53,6 @@ func configErrorResponse(w http.ResponseWriter, err error) {
 }
 
 func listPlatformConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
-	if _, ok := requirePlatformAdmin(w, r, state); !ok {
-		return
-	}
 	snapshot := state.Config.Current()
 	view := snapshot.PlatformWritableView()
 	items := make([]map[string]any, len(view))
@@ -85,9 +82,6 @@ type setConfigBody struct {
 }
 
 func setPlatformConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
-	if _, ok := requirePlatformAdmin(w, r, state); !ok {
-		return
-	}
 	key := r.PathValue("key")
 	var body setConfigBody
 	if !decodeJSONBody(w, r, &body) {
@@ -106,9 +100,6 @@ func setPlatformConfig(w http.ResponseWriter, r *http.Request, state *AppState) 
 // distinct from setting it to the default's current value, which would pin it against a future
 // change to that default.
 func resetPlatformConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
-	if _, ok := requirePlatformAdmin(w, r, state); !ok {
-		return
-	}
 	key := r.PathValue("key")
 	if err := state.Config.ResetPlatformGlobal(r.Context(), key); err != nil {
 		configErrorResponse(w, err)
@@ -121,10 +112,11 @@ func resetPlatformConfig(w http.ResponseWriter, r *http.Request, state *AppState
 }
 
 func mountPlatformConfig(r *router.Router, state *AppState) {
+	acc := AccessGroups(r, state)
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	r.Get("/platform/config", wrap(listPlatformConfig))
-	r.Put("/platform/config/{key}", wrap(setPlatformConfig))
-	r.Delete("/platform/config/{key}", wrap(resetPlatformConfig))
+	acc.PlatformAdmin.Get("/platform/config", wrap(listPlatformConfig))
+	acc.PlatformAdmin.Put("/platform/config/{key}", wrap(setPlatformConfig))
+	acc.PlatformAdmin.Delete("/platform/config/{key}", wrap(resetPlatformConfig))
 }

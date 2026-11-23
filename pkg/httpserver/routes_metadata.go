@@ -17,17 +17,18 @@ import (
 // what @metap/platform-ui's useEntities/useEntity/graphqlRecords and the permission matrix read, so
 // a service without them renders no entity screen at all.
 func mountMetadata(r *router.Router, state *AppState) {
-	r.Get("/metadata/openapi.json", func(w http.ResponseWriter, _ *http.Request) {
+	acc := AccessGroups(r, state)
+	acc.Public.Get("/metadata/openapi.json", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, metadata.GenerateOpenAPIDocument())
 	})
-	r.Get("/metadata/entities", func(w http.ResponseWriter, r *http.Request) {
+	acc.Authenticated.Get("/metadata/entities", func(w http.ResponseWriter, r *http.Request) {
 		registry, ok := tenantMetadata(w, r, state)
 		if !ok {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": registry.ListEntities()})
 	})
-	r.Get("/metadata/entities/{entity}", func(w http.ResponseWriter, r *http.Request) {
+	acc.Authenticated.Get("/metadata/entities/{entity}", func(w http.ResponseWriter, r *http.Request) {
 		registry, ok := tenantMetadata(w, r, state)
 		if !ok {
 			return
@@ -39,10 +40,10 @@ func mountMetadata(r *router.Router, state *AppState) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": summary})
 	})
-	r.Get("/metadata/entity-access", func(w http.ResponseWriter, r *http.Request) {
+	acc.Authenticated.Get("/metadata/entity-access", func(w http.ResponseWriter, r *http.Request) {
 		entityAccess(w, r, state)
 	})
-	r.Get("/metadata/actions", func(w http.ResponseWriter, r *http.Request) {
+	acc.Authenticated.Get("/metadata/actions", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requireAuth(w, r, state); !ok {
 			return
 		}
