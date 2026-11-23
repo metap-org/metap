@@ -121,6 +121,13 @@
         },
         "type": "object"
       },
+      "ConfigKeyBodyInBody": {
+        "additionalProperties": false,
+        "properties": {
+          "value": {}
+        },
+        "type": "object"
+      },
       "CreateApiKeyRequest": {
         "additionalProperties": false,
         "properties": {
@@ -895,6 +902,76 @@
         },
         "type": "object"
       },
+      "PlatformConfigItem": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          },
+          "tenantOverridable": {
+            "type": "boolean"
+          },
+          "value": {}
+        },
+        "required": [
+          "key",
+          "value",
+          "level",
+          "tenantOverridable"
+        ],
+        "type": "object"
+      },
+      "PlatformConfigList": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PlatformConfigItem"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "PlatformConfigResult": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PlatformConfigSet"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "PlatformConfigSet": {
+        "additionalProperties": false,
+        "properties": {
+          "appliesImmediately": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "value": {}
+        },
+        "required": [
+          "key",
+          "value",
+          "appliesImmediately"
+        ],
+        "type": "object"
+      },
       "Policy": {
         "additionalProperties": false,
         "properties": {
@@ -972,6 +1049,27 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/Policy"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "Preferences": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PreferencesResult": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Preferences"
           }
         },
         "required": [
@@ -1683,6 +1781,84 @@
         },
         "type": "object"
       },
+      "TenantConfigItem": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          },
+          "overridden": {
+            "type": "boolean"
+          },
+          "public": {
+            "type": "boolean"
+          },
+          "secret": {
+            "type": "boolean"
+          },
+          "value": {}
+        },
+        "required": [
+          "key",
+          "value",
+          "level",
+          "overridden",
+          "public",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "TenantConfigList": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/TenantConfigItem"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "TenantConfigResult": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TenantConfigSet"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "TenantConfigSet": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "overridden": {
+            "type": "boolean"
+          },
+          "value": {}
+        },
+        "required": [
+          "key",
+          "value",
+          "overridden"
+        ],
+        "type": "object"
+      },
       "TenantIDBody": {
         "additionalProperties": false,
         "properties": {
@@ -2065,6 +2241,127 @@
         "summary": "Check the audit trail's hash chain",
         "tags": [
           "Audit"
+        ]
+      }
+    },
+    "/admin/config": {
+      "get": {
+        "operationId": "listTenantConfig",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantConfigList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The tenant's effective configuration",
+        "tags": [
+          "Configuration"
+        ]
+      }
+    },
+    "/admin/config/{key}": {
+      "delete": {
+        "operationId": "resetTenantConfig",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantConfigResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Clear the tenant's own value",
+        "tags": [
+          "Configuration"
+        ]
+      },
+      "put": {
+        "operationId": "setTenantConfig",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigKeyBodyInBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantConfigResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set the tenant's own value",
+        "tags": [
+          "Configuration"
         ]
       }
     },
@@ -4565,6 +4862,127 @@
         ]
       }
     },
+    "/platform/config": {
+      "get": {
+        "operationId": "listPlatformConfig",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformConfigList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The platform-writable configuration keys",
+        "tags": [
+          "Configuration"
+        ]
+      }
+    },
+    "/platform/config/{key}": {
+      "delete": {
+        "operationId": "resetPlatformConfig",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformConfigResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Fall back to the declared default",
+        "tags": [
+          "Configuration"
+        ]
+      },
+      "put": {
+        "operationId": "setPlatformConfig",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigKeyBodyInBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformConfigResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set a platform-wide value",
+        "tags": [
+          "Configuration"
+        ]
+      }
+    },
     "/platform/owner-recovery": {
       "post": {
         "operationId": "requestOwnerRecovery",
@@ -5102,6 +5520,76 @@
         "summary": "Suspend a tenant",
         "tags": [
           "Tenants"
+        ]
+      }
+    },
+    "/preferences": {
+      "get": {
+        "operationId": "getPreferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreferencesResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The caller's preferences",
+        "tags": [
+          "Preferences"
+        ]
+      },
+      "put": {
+        "operationId": "updatePreferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Preferences"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreferencesResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Change the caller's preferences",
+        "tags": [
+          "Preferences"
         ]
       }
     },

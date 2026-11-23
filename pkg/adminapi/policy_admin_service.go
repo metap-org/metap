@@ -31,24 +31,6 @@ func NewPolicyAdminService(perms *permission.PermissionService, cache ContextInv
 	return &PolicyAdminService{perms: perms, cache: cache}
 }
 
-// adminCaller is the caller in ctx, who must hold the admin role (and the admin OAuth2 scope).
-func adminCaller(ctx context.Context) (*permission.RequestContext, error) {
-	rc, err := resolveCaller(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if rc == nil {
-		return nil, svcErr(ctx, http.StatusUnauthorized, errcode.Unauthorized, "Missing or invalid authorization header.")
-	}
-	if !rc.IsAdmin() {
-		return nil, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, "this action requires the admin role")
-	}
-	if !rc.ScopePermitsAdminSurface() {
-		return nil, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, "this action requires the `admin` OAuth2 scope")
-	}
-	return rc, nil
-}
-
 func policyView(row permission.PolicyRow) *Policy {
 	p := &Policy{ID: row.ID.String(), TenantID: row.TenantID.String(), Entity: row.Entity, Action: row.Action,
 		Subject: row.Subject, Effect: row.Effect.String(), Condition: jsonOr(nil, "null")}

@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"reflect"
 
@@ -158,6 +159,59 @@ func registerPolicyOperations(api huma.API, state *AppState) {
 	adminNoContent(api, state, opOf("invalidateUserContext", http.MethodPost, "/admin/users/{userId}/context/invalidate", "Drop a member's cached context attributes", tag),
 		func(ctx context.Context, in *userIDPath) (*adminapi.Empty, error) {
 			return s.InvalidateContext(ctx, &adminapi.UserIDRequest{UserID: in.UserID})
+		})
+}
+
+type configKeyPath struct {
+	Key string `path:"key"`
+}
+
+type configKeyBodyIn struct {
+	Key  string `path:"key"`
+	Body struct {
+		Value json.RawMessage `json:"value" required:"false"`
+	}
+}
+
+// registerConfigOperations: the tiered configuration (platform admin, tenant admin) and the
+// caller's own preferences. None needs the identity database.
+func registerConfigOperations(api huma.API, state *AppState) {
+	const tag = "Configuration"
+	s := adminapi.NewConfigAdminService(state.Config, state.Router, state.Permissions, state.EffectiveConfig)
+
+	adminOp(api, state, opOf("listPlatformConfig", http.MethodGet, "/platform/config", "The platform-writable configuration keys", tag),
+		func(ctx context.Context, _ *struct{}) (*adminapi.PlatformConfigList, error) {
+			return s.ListPlatformConfig(ctx, &adminapi.Empty{})
+		})
+	adminOp(api, state, opOf("setPlatformConfig", http.MethodPut, "/platform/config/{key}", "Set a platform-wide value", tag),
+		func(ctx context.Context, in *configKeyBodyIn) (*adminapi.PlatformConfigResult, error) {
+			return s.SetPlatformConfig(ctx, &adminapi.SetConfigRequest{Key: in.Key, Value: in.Body.Value})
+		})
+	adminOp(api, state, opOf("resetPlatformConfig", http.MethodDelete, "/platform/config/{key}", "Fall back to the declared default", tag),
+		func(ctx context.Context, in *configKeyPath) (*adminapi.PlatformConfigResult, error) {
+			return s.ResetPlatformConfig(ctx, &adminapi.ConfigKeyRequest{Key: in.Key})
+		})
+	adminOp(api, state, opOf("listTenantConfig", http.MethodGet, "/admin/config", "The tenant's effective configuration", tag),
+		func(ctx context.Context, _ *struct{}) (*adminapi.TenantConfigList, error) {
+			return s.ListTenantConfig(ctx, &adminapi.Empty{})
+		})
+	adminOp(api, state, opOf("setTenantConfig", http.MethodPut, "/admin/config/{key}", "Set the tenant's own value", tag),
+		func(ctx context.Context, in *configKeyBodyIn) (*adminapi.TenantConfigResult, error) {
+			return s.SetTenantConfig(ctx, &adminapi.SetConfigRequest{Key: in.Key, Value: in.Body.Value})
+		})
+	adminOp(api, state, opOf("resetTenantConfig", http.MethodDelete, "/admin/config/{key}", "Clear the tenant's own value", tag),
+		func(ctx context.Context, in *configKeyPath) (*adminapi.TenantConfigResult, error) {
+			return s.ResetTenantConfig(ctx, &adminapi.ConfigKeyRequest{Key: in.Key})
+		})
+
+	prefs := adminapi.NewPreferencesService(state.Pool, state.Permissions)
+	adminOp(api, state, opOf("getPreferences", http.MethodGet, "/preferences", "The caller's preferences", "Preferences"),
+		func(ctx context.Context, _ *struct{}) (*adminapi.PreferencesResult, error) {
+			return prefs.GetPreferences(ctx, &adminapi.Empty{})
+		})
+	adminOp(api, state, opOf("updatePreferences", http.MethodPut, "/preferences", "Change the caller's preferences", "Preferences"),
+		func(ctx context.Context, in *bodyIn[adminapi.Preferences]) (*adminapi.PreferencesResult, error) {
+			return prefs.UpdatePreferences(ctx, &in.Body)
 		})
 }
 
