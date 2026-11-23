@@ -5,6 +5,7 @@ package httpserver_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/metap-org/metap/pkg/auth/jwks"
 	"io"
 	"net/http"
@@ -92,6 +93,18 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 	assert.EqualValues(t, 0, found["totalResults"])
 	code, _ = call("GET", `/Users?filter=displayName%20co%20%22x%22`, token, "")
 	assert.Equal(t, 400, code)
+
+	// The exact address is found even when more than a page of other addresses contain it: the
+	// identity provider that does not find its user creates it again.
+	for i := 0; i < 120; i++ {
+		_, _, err := identity.AddMember(context.Background(), pool, identity.NewMember{TenantID: tenant, Email: fmt.Sprintf("a%03d.ann@acme.io", i)})
+		require.NoError(t, err)
+	}
+	_, _, err = identity.AddMember(context.Background(), pool, identity.NewMember{TenantID: tenant, Email: "ann@acme.io"})
+	require.NoError(t, err)
+	code, found = call("GET", `/Users?filter=userName%20eq%20%22ann@acme.io%22`, token, "")
+	assert.Equal(t, 200, code)
+	assert.EqualValues(t, 1, found["totalResults"], "found beyond the first page of matches")
 
 	// Deactivate (Entra sends "False" as a string), rename, reactivate.
 	code, patched := call("PATCH", "/Users/"+id, token,

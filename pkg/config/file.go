@@ -28,6 +28,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -79,7 +80,55 @@ func LoadFile(path string) error {
 	}
 	sort.Strings(names)
 	slog.Info("config file loaded", "path", path, "keys", len(names))
+	warnAboutSecrets(path, values)
 	return nil
+}
+
+// secretNameParts mark a setting that holds a credential. A database URL is one when it carries a
+// password.
+var secretNameParts = []string{"PASSWORD", "SECRET", "TOKEN", "PRIVATE_KEY", "ENCRYPTION_KEYS", "API_KEY", "CREDENTIAL"}
+
+// SecretKeys returns the names in values that look like credentials (names only: a value is never
+// returned or logged).
+func SecretKeys(values map[string]string) []string {
+	var out []string
+	for name, value := range values {
+		hit := false
+		for _, part := range secretNameParts {
+			if strings.Contains(name, part) {
+				hit = true
+				break
+			}
+		}
+		if !hit && strings.HasSuffix(name, "_URL") {
+			if u, err := url.Parse(value); err == nil && u.User != nil {
+				if _, has := u.User.Password(); has {
+					hit = true
+				}
+			}
+		}
+		if hit {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// warnAboutSecrets says so when the file holds credentials: they belong in the environment (or in
+// a file only the service can read), where a copy of the repository or a shared volume does not
+// leak them. A file readable by everyone makes it worse.
+func warnAboutSecrets(path string, values map[string]string) {
+	keys := SecretKeys(values)
+	if len(keys) == 0 {
+		return
+	}
+	worldReadable := false
+	if info, err := os.Stat(path); err == nil {
+		worldReadable = info.Mode().Perm()&0o004 != 0
+	}
+	slog.Warn("config file holds credentials: keep them in the environment or a file only the service can read",
+		"path", path, "keys", keys, "world_readable", worldReadable)
 }
 
 // ParseFile flattens a YAML document into environment-variable names and string values.

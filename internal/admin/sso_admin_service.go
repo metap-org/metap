@@ -84,7 +84,7 @@ func sameOrigin(raw, base string) bool {
 }
 
 func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *SetSsoConfigRequest) (*SsoConfig, error) {
-	c, err := s.d.admin(ctx)
+	c, err := adminDurable(s.d, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +265,7 @@ func (s *SsoAdminService) DeleteSsoConfig(ctx context.Context, _ *Empty) (*Empty
 // VerifySsoDomain looks for the ownership record and, if it is there, marks the domain verified.
 // A record that is not there yet answers 409 so the page can say "not found yet, try again".
 func (s *SsoAdminService) VerifySsoDomain(ctx context.Context, req *VerifySsoDomainRequest) (*SsoConfig, error) {
-	c, err := s.d.admin(ctx)
+	c, err := adminDurable(s.d, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +359,7 @@ func (s *SsoAdminService) GetSamlConfig(ctx context.Context, _ *Empty) (*SamlCon
 }
 
 func (s *SsoAdminService) SetSamlConfig(ctx context.Context, req *SetSamlConfigRequest) (*SamlConfig, error) {
-	c, err := s.d.admin(ctx)
+	c, err := adminDurable(s.d, ctx)
 	if err != nil {
 		return nil, err
 	}

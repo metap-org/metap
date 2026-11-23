@@ -135,13 +135,16 @@ func (s *AccountService) inSharedTx(ctx context.Context, fn func(db identity.DBT
 	}
 	defer tx.Rollback(ctx)
 	if err := fn(tx); err != nil {
+		if identity.MFAAttemptCounts(err) {
+			_ = tx.Commit(ctx) // keep the wrong-code count: it is what stops guessing
+		}
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
 func (s *UserAdminService) ResetMfa(ctx context.Context, req *UserIdRequest) (*Empty, error) {
-	c, err := s.admin(ctx)
+	c, err := adminDurable(s.d, ctx)
 	if err != nil {
 		return nil, err
 	}

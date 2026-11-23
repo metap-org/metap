@@ -37,6 +37,8 @@ const (
 	scimPatchSchema = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 	scimMediaType   = "application/scim+json"
 	scimMaxCount    = 200
+	// scimExactPage is the page size when walking the matches of an exact-address filter.
+	scimExactPage = 100
 )
 
 var scimFilter = regexp.MustCompile(`(?i)^\s*(?:userName|emails\.value)\s+eq\s+"([^"]*)"\s*$`)
@@ -259,21 +261,40 @@ func (h *scim) list(w http.ResponseWriter, r *http.Request) {
 		// count=0 asks for the total only.
 		req.Limit = 1
 	}
-	res, err := h.users.ListUsers(ctx, req)
-	if err != nil {
-		scimFromErr(w, err)
-		return
-	}
 	resources := []map[string]any{}
-	for _, u := range res.GetUsers() {
-		if exact != "" && !strings.EqualFold(u.GetEmail(), exact) {
-			continue
-		}
-		resources = append(resources, scimUser(u))
-	}
-	total := int(res.GetTotal())
+	total := 0
 	if exact != "" {
+		// The search is a substring match, so the exact address can sit beyond the first page when
+		// many addresses contain it; an identity provider that does not find its user creates it again.
+		// Walk the matches until the address is found or they run out.
+		req.Limit = scimExactPage
+		for {
+			res, err := h.users.ListUsers(ctx, req)
+			if err != nil {
+				scimFromErr(w, err)
+				return
+			}
+			for _, u := range res.GetUsers() {
+				if strings.EqualFold(u.GetEmail(), exact) {
+					resources = append(resources, scimUser(u))
+				}
+			}
+			req.Offset += int32(len(res.GetUsers()))
+			if len(resources) > 0 || len(res.GetUsers()) == 0 || req.Offset >= res.GetTotal() {
+				break
+			}
+		}
 		total = len(resources)
+	} else {
+		res, err := h.users.ListUsers(ctx, req)
+		if err != nil {
+			scimFromErr(w, err)
+			return
+		}
+		for _, u := range res.GetUsers() {
+			resources = append(resources, scimUser(u))
+		}
+		total = int(res.GetTotal())
 	}
 	scimWrite(w, http.StatusOK, map[string]any{"schemas": []string{scimListSchema}, "totalResults": total,
 		"startIndex": start, "itemsPerPage": len(resources), "Resources": resources})

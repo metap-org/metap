@@ -417,7 +417,11 @@ func (d identityDeps) stepUp(ctx context.Context, c caller, password, mfaCode st
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	if err := identity.VerifyMFA(ctx, tx, id, mfaCode, d.now()); err != nil {
-		_ = tx.Rollback(ctx)
+		if identity.MFAAttemptCounts(err) {
+			_ = tx.Commit(ctx) // keep the wrong-code count
+		} else {
+			_ = tx.Rollback(ctx)
+		}
 		return identityErr(ctx, err)
 	}
 	return rpcError(ctx, tx.Commit(ctx))

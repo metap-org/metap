@@ -73,7 +73,11 @@ func TestServiceAccountAndAPIKeyLifecycle(t *testing.T) {
 	_, err = h.client.Admin.CreateApiKey(h.as(tenant, bob.ID), &CreateApiKeyRequest{UserId: bob.ID.String(), Name: "mine"})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 
-	// Disabling the account stops its keys at once; enabling brings them back.
+	// Disabling the account stops its keys at once, and enabling it again does not bring them back:
+	// a key issued before the disable stays dead (the comparison is to the second, so the key is
+	// backdated to keep the test off a second boundary). A key made afterwards works.
+	_, err = h.pool.Exec(context.Background(), `UPDATE metadata.api_keys SET created_at = now() - interval '1 hour' WHERE id = $1`, created.GetApiKey().GetId())
+	require.NoError(t, err)
 	_, err = h.client.Admin.DisableUser(asAdmin, &UserIdRequest{Id: sa.GetId()})
 	require.NoError(t, err)
 	_, err = h.client.Account.GetMe(asKey, &Empty{})
@@ -81,6 +85,10 @@ func TestServiceAccountAndAPIKeyLifecycle(t *testing.T) {
 	_, err = h.client.Admin.EnableUser(asAdmin, &UserIdRequest{Id: sa.GetId()})
 	require.NoError(t, err)
 	_, err = h.client.Account.GetMe(asKey, &Empty{})
+	assert.Error(t, err, "a key issued before the disable stays revoked after the account is enabled again")
+	fresh, err := h.client.Admin.CreateApiKey(asAdmin, &CreateApiKeyRequest{UserId: sa.GetId(), Name: "after"})
+	require.NoError(t, err)
+	_, err = h.client.Account.GetMe(CallContext(context.Background(), fresh.GetToken()), &Empty{})
 	require.NoError(t, err)
 
 	// Revoking kills it, idempotently.
