@@ -21,6 +21,7 @@
 package router
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -99,11 +100,33 @@ func (r *Router) Use(mw ...Middleware) {
 }
 
 // ServeHTTP implements http.Handler.
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) { r.s.root.ServeHTTP(w, req) }
+func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	holder := &patternHolder{}
+	r.s.root.ServeHTTP(w, req.WithContext(context.WithValue(req.Context(), patternKey{}, holder)))
+}
+
+type patternKey struct{}
+
+type patternHolder struct{ pattern string }
+
+// Pattern is the ServeMux pattern the request matched ("GET /api/{entity}/{id}"), or "" when none
+// matched. Unlike http.Request.Pattern it can be read by a middleware after next.ServeHTTP returns
+// even if a later middleware replaced the request (WithContext), because the pattern is stored in a
+// holder every copy of the request shares; that is what a metrics label needs (a route pattern, never
+// the raw path).
+func Pattern(r *http.Request) string {
+	if h, ok := r.Context().Value(patternKey{}).(*patternHolder); ok {
+		return h.pattern
+	}
+	return ""
+}
 
 // dispatch routes through the mux and answers an unmatched request in the standard envelope.
 func (s *shared) dispatch(w http.ResponseWriter, req *http.Request) {
 	h, pattern := s.mux.Handler(req)
+	if holder, ok := req.Context().Value(patternKey{}).(*patternHolder); ok {
+		holder.pattern = pattern
+	}
 	if pattern != "" {
 		// Serve through the mux itself so r.PathValue is set and its own redirects (a missing
 		// trailing slash, a cleaned path) still happen.
@@ -189,8 +212,11 @@ func (r *Router) Handle(pattern string, h http.Handler) {
 	r.s.routes = append(r.s.routes, Route{Pattern: full, Labels: append([]string{}, r.labels...)})
 }
 
-// HandleFunc is Handle for a function.
-func (r *Router) HandleFunc(pattern string, f http.HandlerFunc) { r.Handle(pattern, f) }
+// HandleFunc is Handle for a function. Its signature is ServeMux's own, so a Router can stand in for
+// a *http.ServeMux where an adapter (huma's humago) asks for one.
+func (r *Router) HandleFunc(pattern string, f func(http.ResponseWriter, *http.Request)) {
+	r.Handle(pattern, http.HandlerFunc(f))
+}
 
 func (r *Router) fullPattern(pattern string) string {
 	method, path, hasMethod := strings.Cut(pattern, " ")

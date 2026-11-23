@@ -134,3 +134,34 @@ func TestConflictingPatternsPanicAtRegistration(t *testing.T) {
 	assert.Panics(t, func() { r.Route("/bad/", func(*router.Router) {}) })
 	assert.Panics(t, func() { r.Handle("GET nope", http.HandlerFunc(ok)) })
 }
+
+func TestPatternIsReadableByAnOuterMiddlewareAfterTheRequestWasCloned(t *testing.T) {
+	var seen string
+	outer := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r)
+			seen = router.Pattern(r)
+		})
+	}
+	cloner := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(r.Context()))
+		})
+	}
+	r := router.New()
+	r.Use(outer, cloner)
+	r.Get("/api/{entity}/{id}", ok)
+	do(r, "GET", "/api/waf.zones/1")
+	assert.Equal(t, "GET /api/{entity}/{id}", seen)
+
+	do(r, "GET", "/nope")
+	assert.Equal(t, "", seen, "an unmatched request has no pattern")
+}
+
+func TestARouterCanStandInForAServeMux(t *testing.T) {
+	var mux interface {
+		HandleFunc(string, func(http.ResponseWriter, *http.Request))
+		ServeHTTP(http.ResponseWriter, *http.Request)
+	} = router.New()
+	_ = mux
+}
