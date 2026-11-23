@@ -314,11 +314,14 @@ func mountRecords(r *router.Router, state *AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	acc.Authenticated.Get("/api/{entity}", wrap(listRecords))
-	acc.Authenticated.Post("/api/{entity}", wrap(createRecord))
-	acc.Authenticated.Post("/api/{entity}/aggregate", wrap(aggregateRecords))
-	acc.Authenticated.Get("/api/{entity}/{id}", wrap(getRecord))
-	acc.Authenticated.Patch("/api/{entity}/{id}", wrap(updateRecord))
-	acc.Authenticated.Delete("/api/{entity}/{id}", wrap(deleteRecord))
-	acc.Authenticated.Post("/api/{entity}/{id}/transitions/{action}", wrap(transitionRecord))
+	// Each route is gated on the entity-level policy for its verb before its handler runs.
+	read, create := gateEntity(state, permission.ActionRead), gateEntity(state, permission.ActionCreate)
+	update, del := gateEntity(state, permission.ActionUpdate), gateEntity(state, permission.ActionDelete)
+	acc.Authenticated.Handle("GET /api/{entity}", read(wrap(listRecords)))
+	acc.Authenticated.Handle("POST /api/{entity}", create(wrap(createRecord)))
+	acc.Authenticated.Handle("POST /api/{entity}/aggregate", read(wrap(aggregateRecords)))
+	acc.Authenticated.Handle("GET /api/{entity}/{id}", read(wrap(getRecord)))
+	acc.Authenticated.Handle("PATCH /api/{entity}/{id}", update(wrap(updateRecord)))
+	acc.Authenticated.Handle("DELETE /api/{entity}/{id}", del(wrap(deleteRecord)))
+	acc.Authenticated.Handle("POST /api/{entity}/{id}/transitions/{action}", gateTransition(state)(wrap(transitionRecord)))
 }
