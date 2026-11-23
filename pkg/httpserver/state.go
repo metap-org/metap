@@ -5,7 +5,6 @@ package httpserver
 
 import (
 	"context"
-	"errors"
 	"github.com/metap-org/metap/pkg/captcha"
 	"net/http"
 	"net/netip"
@@ -27,6 +26,7 @@ import (
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/runtime"
+	"github.com/metap-org/metap/pkg/signin"
 	"github.com/metap-org/metap/pkg/storage"
 )
 
@@ -122,7 +122,7 @@ func NewAppState(pool *pgxpool.Pool, metadataBase *metadata.MetadataRegistry, md
 
 // ErrNotTokenIssuer: this service verifies tokens but does not issue them (single-issuer JWKS
 // deployments) — log in at the issuer instead.
-var ErrNotTokenIssuer = errors.New("this service does not issue tokens; log in at the token issuer")
+var ErrNotTokenIssuer = signin.ErrNotTokenIssuer
 
 // VerifyToken verifies a Bearer/session token — the one place AuthContext decodes a token.
 func (s *AppState) VerifyToken(ctx context.Context, token string, leeway time.Duration) (*peripherals.AccessClaims, error) {
@@ -230,4 +230,11 @@ func (s *AppState) RecordBackend() crud.RecordBackend {
 		return s.Records
 	}
 	return s.Crud
+}
+
+// Signin is the sign-in service on this state's database, configuration and signing key.
+func (s *AppState) Signin() *signin.Service {
+	return signin.New(signin.Deps{
+		Pool: s.Pool, Effective: s.EffectiveConfig, MintSession: s.MintSessionToken, PasswordPolicy: s.PasswordPolicy(),
+	})
 }

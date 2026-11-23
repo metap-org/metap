@@ -21,6 +21,7 @@ import (
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/runtime"
+	"github.com/metap-org/metap/pkg/signin"
 )
 
 func sessionTTLSeconds(ctx *http.Request, state *AppState, tenantID uuid.UUID) uint64 {
@@ -35,55 +36,56 @@ type loginBody struct {
 	TenantID *uuid.UUID `json:"tenantId,omitempty"`
 }
 
-// login signs a person in (roadmap 113). The password is checked against the identity; the
-// session then lands in one tenant: the one asked for (tenantId), else the person's only or last
-// used tenant. A person in several tenants with none of those gets the list back instead of a
-// session ({selectTenant: true, tenants}) and posts again with tenantId.
+// clientOf is where the request came from, for the session row.
+func clientOf(r *http.Request, state *AppState) signin.Client {
+	return signin.Client{IP: clientIP(r, state), UserAgent: r.UserAgent()}
+}
+
+// requireIssuer answers 501 and returns false on a service that holds no signing key.
+func requireIssuer(w http.ResponseWriter, state *AppState) bool {
+	if state.CanIssueTokens() {
+		return true
+	}
+	writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
+	return false
+}
+
+// login signs a person in (roadmap 113): see signin.Service.Login. A person in several tenants with
+// none asked for gets the list back instead of a session ({selectTenant: true, tenants}) and posts
+// again with tenantId.
 func login(w http.ResponseWriter, r *http.Request, state *AppState) {
 	// Checked before the credentials, so a non-issuer never acts as a password oracle.
-	if !state.CanIssueTokens() {
-		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
+	if !requireIssuer(w, state) {
 		return
 	}
 	var body loginBody
 	if !decodeJSONBody(w, r, &body) {
 		return
 	}
-	now := time.Now()
-	ident, err := identity.Authenticate(r.Context(), state.Pool, body.Email, body.Password, now)
+	out, err := state.Signin().Login(r.Context(), signin.LoginRequest{Email: body.Email, Password: body.Password, TenantID: body.TenantID}, clientOf(r, state))
 	if err != nil {
-		writeIdentityError(w, err)
+		writeCrudError(w, err)
 		return
 	}
-	memberships, err := identity.Memberships(r.Context(), state.Pool, ident.ID)
-	if err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	m, ok := identity.PickMembership(memberships, body.TenantID, ident.LastTenantID)
-	if !ok {
-		if len(memberships) == 0 {
-			writeServiceError(w, http.StatusForbidden, errcode.NoTenantAccess,
-				"This account has no access to any active tenant.", nil)
-			return
-		}
-		if body.TenantID != nil {
-			writeServiceError(w, http.StatusForbidden, errcode.NoTenantAccess,
-				"This account has no access to that tenant.", nil)
-			return
-		}
+	writeOutcome(w, state, out)
+}
+
+// writeOutcome answers a sign-in: the session (cookies and token), or the step it still needs.
+func writeOutcome(w http.ResponseWriter, state *AppState, out *signin.Outcome) {
+	switch {
+	case out.Session != nil:
+		writeGrant(w, state, out.Session)
+	case out.MFARequired != nil:
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-			"selectTenant": true, "tenants": membershipsJSON(memberships),
+			"mfaRequired": true, "mfaToken": out.MFARequired.Token, "tenantId": out.MFARequired.TenantID}})
+	case out.MFASetupRequired != nil:
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+			"mfaSetupRequired": true, "mfaToken": out.MFASetupRequired.Token, "tenantId": out.MFASetupRequired.TenantID}})
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+			"selectTenant": true, "tenants": membershipsJSON(out.SelectTenant),
 		}})
-		return
 	}
-	if ssoRequired(w, r, state, m) {
-		return
-	}
-	if mfaGate(w, r, state, ident, m, now) {
-		return
-	}
-	startSession(w, r, state, ident.ID, m, now)
 }
 
 func membershipsJSON(ms []identity.Membership) []map[string]any {
@@ -94,76 +96,39 @@ func membershipsJSON(ms []identity.Membership) []map[string]any {
 	return out
 }
 
-// startSession mints the session for membership m and sets the cookies — a fresh login session
-// (its absolute-lifetime clock starts now), used by login and by switching tenant.
-func startSession(w http.ResponseWriter, r *http.Request, state *AppState, identityID uuid.UUID, m identity.Membership, now time.Time) {
-	startSessionWith(w, r, state, identityID, m, now, nil)
+// setSessionCookies sets the session, CSRF and started-at cookies that carry a Grant.
+func setSessionCookies(w http.ResponseWriter, state *AppState, g *signin.Grant) {
+	sessionCookie, csrfCookie := sessionCookies(g.Token, uuid.New().String(), int(g.TTLSeconds), state.CookieSecure)
+	http.SetCookie(w, sessionCookie)
+	http.SetCookie(w, csrfCookie)
+	http.SetCookie(w, sessionStartedAtCookie(g.StartedAt.Unix(), int64(g.AbsoluteMaxSeconds), state.CookieSecure))
 }
 
-// startSessionWith is startSession plus extra fields in the response (the recovery codes shown
-// once when a required-MFA setup finishes the sign-in).
-func startSessionWith(w http.ResponseWriter, r *http.Request, state *AppState, identityID uuid.UUID, m identity.Membership, now time.Time, extra map[string]any) {
-	token, ok := issueSession(w, r, state, identityID, m, now)
-	if !ok {
-		return
-	}
-	data := map[string]any{"token": token, "tenantId": m.TenantID}
-	for k, v := range extra {
-		data[k] = v
+// writeGrant sets the cookies and answers {token, tenantId} (plus the recovery codes shown once when
+// a required-MFA setup finishes the sign-in).
+func writeGrant(w http.ResponseWriter, state *AppState, g *signin.Grant) {
+	setSessionCookies(w, state, g)
+	data := map[string]any{"token": g.Token, "tenantId": g.TenantID}
+	if g.RecoveryCodes != nil {
+		data["recoveryCodes"] = g.RecoveryCodes
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
-// issueSession creates the session row, mints its token and sets the session cookies, writing the
-// error response itself (and returning false) when that fails. The caller writes the body: JSON for
-// a password sign-in, a redirect for SSO.
-func issueSession(w http.ResponseWriter, r *http.Request, state *AppState, identityID uuid.UUID, m identity.Membership, now time.Time) (string, bool) {
-	_ = identity.PurgeSessions(r.Context(), state.Pool, now)
-	ttl := sessionTTLSeconds(r, state, m.TenantID)
-	sessionID, err := identity.CreateSession(r.Context(), state.Pool, identityID, m.MemberID, m.TenantID,
-		time.Duration(ttl)*time.Second, clientIP(r, state), r.UserAgent(), now)
+// startSession signs the person into membership m (a fresh login session) and answers with it; used
+// by the paths that prove who someone is some other way (invitation, signup verification).
+func startSession(w http.ResponseWriter, r *http.Request, state *AppState, identityID uuid.UUID, m identity.Membership) {
+	g, err := state.Signin().Issue(r.Context(), identityID, m, clientOf(r, state))
 	if err != nil {
-		writeInternalError(w, err)
-		return "", false
+		writeCrudError(w, err)
+		return
 	}
-	token, err := state.MintSessionToken(m.TenantID, m.MemberID, ttl, sessionID.String())
-	if err != nil {
-		if errors.Is(err, ErrNotTokenIssuer) {
-			writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, err.Error(), nil)
-			return "", false
-		}
-		writeInternalError(w, err)
-		return "", false
-	}
-	if err := identity.RecordSignIn(r.Context(), state.Pool, identityID, m.MemberID, m.TenantID, now); err != nil {
-		writeInternalError(w, err)
-		return "", false
-	}
-	csrfValue := uuid.New().String()
-	sessionCookie, csrfCookie := sessionCookies(token, csrfValue, int(ttl), state.CookieSecure)
-	absoluteMax := state.EffectiveConfig(r.Context(), m.TenantID).GetU64(config.AuthSessionAbsoluteMaxSeconds)
-	startedAtCookie := sessionStartedAtCookie(now.Unix(), int64(absoluteMax), state.CookieSecure)
-	http.SetCookie(w, sessionCookie)
-	http.SetCookie(w, csrfCookie)
-	http.SetCookie(w, startedAtCookie)
-	return token, true
+	writeGrant(w, state, g)
 }
 
 // writeIdentityError maps pkg/identity's sign-in and password errors onto the error envelope.
 func writeIdentityError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, identity.ErrInvalidCredentials):
-		writeServiceError(w, http.StatusUnauthorized, errcode.InvalidCredentials, "Invalid email or password.", nil)
-	case errors.Is(err, identity.ErrLocked):
-		writeServiceError(w, http.StatusTooManyRequests, errcode.AccountLocked, err.Error(), nil)
-	case errors.Is(err, identity.ErrDisabled):
-		writeServiceError(w, http.StatusForbidden, errcode.AccountDisabled, err.Error(), nil)
-	case errors.Is(err, identity.ErrWeakPassword):
-		writeServiceError(w, http.StatusBadRequest, errcode.WeakPassword, err.Error(),
-			map[string][]string{"password": {err.Error()}})
-	default:
-		writeInternalError(w, err)
-	}
+	writeCrudError(w, signin.IdentityError(err))
 }
 
 type switchTenantBody struct {
@@ -173,54 +138,19 @@ type switchTenantBody struct {
 // switchTenant moves the caller's session to another tenant they are a member of, without
 // asking for the password again. REST because it sets the session cookie.
 func switchTenant(w http.ResponseWriter, r *http.Request, state *AppState) {
-	if !state.CanIssueTokens() {
-		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
+	if !requireIssuer(w, state) {
 		return
 	}
-	rc := RC(r)
 	var body switchTenantBody
 	if !decodeJSONBody(w, r, &body) {
 		return
 	}
-	identityID, ok := callerIdentity(w, r, state, rc)
-	if !ok {
-		return
-	}
-	memberships, err := identity.Memberships(r.Context(), state.Pool, identityID)
+	g, err := state.Signin().SwitchTenant(r.Context(), RC(r), body.TenantID, clientOf(r, state))
 	if err != nil {
-		writeInternalError(w, err)
+		writeCrudError(w, err)
 		return
 	}
-	m, found := identity.PickMembership(memberships, &body.TenantID, nil)
-	if !found {
-		writeServiceError(w, http.StatusForbidden, errcode.NoTenantAccess, "You are not a member of that tenant.", nil)
-		return
-	}
-	if ssoRequired(w, r, state, m) {
-		return
-	}
-	startSession(w, r, state, identityID, m, time.Now())
-}
-
-// callerIdentity resolves the identity behind the caller's token; a token whose subject is not a
-// person (a service principal) gets 403.
-func callerIdentity(w http.ResponseWriter, r *http.Request, state *AppState, rc *permission.RequestContext) (uuid.UUID, bool) {
-	tenantID, err1 := uuid.Parse(rc.TenantID)
-	userID, err2 := uuid.Parse(rc.UserID)
-	if err1 != nil || err2 != nil {
-		writeServiceError(w, http.StatusForbidden, errcode.Forbidden, "This token does not belong to a person.", nil)
-		return uuid.Nil, false
-	}
-	id, err := identity.IdentityOf(r.Context(), state.Pool, tenantID, userID)
-	if errors.Is(err, identity.ErrNotFound) {
-		writeServiceError(w, http.StatusForbidden, errcode.Forbidden, "This token does not belong to a person.", nil)
-		return uuid.Nil, false
-	}
-	if err != nil {
-		writeInternalError(w, err)
-		return uuid.Nil, false
-	}
-	return id, true
+	writeGrant(w, state, g)
 }
 
 type changePasswordBody struct {
@@ -231,51 +161,26 @@ type changePasswordBody struct {
 // changePassword sets the caller's own password. It revokes every session of the person
 // (all tenants, all devices) and hands this one a fresh session — REST because of that cookie.
 func changePassword(w http.ResponseWriter, r *http.Request, state *AppState) {
-	if !state.CanIssueTokens() {
-		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
+	if !requireIssuer(w, state) {
 		return
 	}
-	rc := RC(r)
 	var body changePasswordBody
 	if !decodeJSONBody(w, r, &body) {
 		return
 	}
-	identityID, ok := callerIdentity(w, r, state, rc)
-	if !ok {
-		return
-	}
-	current, err := identity.CheckPassword(r.Context(), state.Pool, identityID, body.CurrentPassword)
+	g, err := state.Signin().ChangePassword(r.Context(), RC(r), body.CurrentPassword, body.NewPassword, clientOf(r, state))
 	if err != nil {
-		writeInternalError(w, err)
+		writeCrudError(w, err)
 		return
 	}
-	if !current {
-		writeServiceError(w, http.StatusBadRequest, errcode.WrongPassword, "The current password is wrong.", nil)
-		return
-	}
-	if err := identity.CheckPasswordPolicy(r.Context(), state.Pool, identityID, body.NewPassword, state.PasswordPolicy()); err != nil {
-		writeIdentityError(w, err)
-		return
-	}
-	now := time.Now()
-	if err := identity.SetPassword(r.Context(), state.Pool, identityID, body.NewPassword, now); err != nil {
-		writeIdentityError(w, err)
-		return
-	}
-	tenantID, _ := uuid.Parse(rc.TenantID)
-	userID, _ := uuid.Parse(rc.UserID)
-	startSession(w, r, state, identityID, identity.Membership{MemberID: userID, TenantID: tenantID}, now)
+	writeGrant(w, state, g)
 }
 
 func logout(w http.ResponseWriter, r *http.Request, state *AppState) {
 	// Ending the browser's session on the server too (not just dropping the cookie) means a copied
 	// token stops working. Best effort: with no valid session there is nothing to end.
-	if rc, aerr := authenticate(r.Context(), state, r); aerr == nil && rc.SessionID != "" {
-		if sid, err := uuid.Parse(rc.SessionID); err == nil {
-			if ident, err := identity.IdentityOf(r.Context(), state.Pool, uuidOf(rc.TenantID), uuidOf(rc.UserID)); err == nil {
-				_ = identity.RevokeSession(r.Context(), state.Pool, ident, sid, time.Now())
-			}
-		}
+	if rc, aerr := authenticate(r.Context(), state, r); aerr == nil {
+		state.Signin().EndSession(r.Context(), rc)
 	}
 	session, csrf, startedAt := clearSessionCookies(state.CookieSecure)
 	http.SetCookie(w, session)

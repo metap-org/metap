@@ -172,7 +172,7 @@ func acceptInvitation(w http.ResponseWriter, r *http.Request, state *AppState) {
 				return
 			}
 			// SetPassword revoked earlier sessions; this one is minted after, so it survives.
-			startSession(w, r, state, inv.IdentityID, m, time.Now())
+			startSession(w, r, state, inv.IdentityID, m)
 			return
 		}
 	}

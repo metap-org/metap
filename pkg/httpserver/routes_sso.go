@@ -37,25 +37,11 @@ const ssoProvider = "oidc"
 // ssoRequired refuses a password sign-in (or tenant switch) into a tenant that enforces SSO, unless
 // the member is the tenant's owner — the way back in when the IdP is broken.
 func ssoRequired(w http.ResponseWriter, r *http.Request, state *AppState, m identity.Membership) bool {
-	enforced, err := tenantauth.SSOEnforced(r.Context(), state.Pool, m.TenantID)
-	if err != nil {
-		writeInternalError(w, err)
+	if err := state.Signin().RequirePasswordAllowed(r.Context(), m); err != nil {
+		writeCrudError(w, err)
 		return true
 	}
-	if !enforced {
-		return false
-	}
-	owner, err := identity.OwnerID(r.Context(), state.Pool, m.TenantID)
-	if err != nil {
-		writeInternalError(w, err)
-		return true
-	}
-	if owner == m.MemberID {
-		return false
-	}
-	writeServiceError(w, http.StatusForbidden, errcode.SSORequired,
-		"This workspace signs in through its identity provider.", nil)
-	return true
+	return false
 }
 
 // redirectTo sends the browser to target. Neither caller passes anything taken from the request:
@@ -206,7 +192,6 @@ type ssoPolicy struct {
 // finishSSO turns a verified identity into a session: domain restriction, member lookup or
 // creation, role sync, then the session cookie and the redirect into the app.
 func finishSSO(w http.ResponseWriter, r *http.Request, state *AppState, tenant uuid.UUID, p ssoPolicy, who *tenantauth.VerifiedIdentity) {
-	now := time.Now()
 	if !p.allowed(who.Email) {
 		writeServiceError(w, http.StatusForbidden, errcode.SSOFailed, "This email address is not allowed to sign in to this workspace.", nil)
 		return
@@ -235,12 +220,13 @@ func finishSSO(w http.ResponseWriter, r *http.Request, state *AppState, tenant u
 		writeServiceError(w, http.StatusInternalServerError, errcode.SSOFailed, "Your roles could not be applied. Try again.", nil)
 		return
 	}
-	token, ok := issueSession(w, r, state, member.IdentityID,
-		identity.Membership{MemberID: member.ID, TenantID: tenant}, now)
-	if !ok {
+	grant, err := state.Signin().Issue(r.Context(), member.IdentityID,
+		identity.Membership{MemberID: member.ID, TenantID: tenant}, clientOf(r, state))
+	if err != nil {
+		writeCrudError(w, err)
 		return
 	}
-	_ = token
+	setSessionCookies(w, state, grant)
 	dest := strings.TrimRight(state.PublicAppURL, "/") + "/"
 	if SameOrigin(p.postLoginRedirect, state.PublicAppURL) {
 		dest = p.postLoginRedirect
