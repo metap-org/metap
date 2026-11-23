@@ -29,7 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metap-org/metap/migrations"
-	"github.com/metap-org/metap/pkg/dbmigrate"
+	"github.com/metap-org/metap/pkg/db/migrate"
 )
 
 // DefaultDatabaseURL matches the repo's docker-compose.yml postgres service (host port 5433).
@@ -211,7 +211,7 @@ func connect(t testing.TB, databaseURL string, opts ...Option) *pgxpool.Pool {
 // a migration yields a new template automatically. It is built under a scratch name and renamed
 // only once fully migrated, so a crashed run never leaves a half-migrated template behind.
 func ensureTemplate(ctx context.Context) (string, error) {
-	all, err := dbmigrate.LoadMigrationsFS(migrations.FS)
+	all, err := migrate.LoadMigrationsFS(migrations.FS)
 	if err != nil {
 		return "", err
 	}
@@ -254,7 +254,7 @@ func ensureTemplate(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, migrateErr := dbmigrate.RunFS(ctx, pool, migrations.FS)
+	_, migrateErr := migrate.RunFS(ctx, pool, migrations.FS)
 	pool.Close()
 	if migrateErr != nil {
 		admin.Exec(ctx, `DROP DATABASE IF EXISTS `+scratch+` WITH (FORCE)`) //nolint:errcheck

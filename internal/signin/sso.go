@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
+	"github.com/metap-org/metap/pkg/auth/sso"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
 // SSOPolicy is what a tenant's provider settings decide once somebody has been verified, whichever
@@ -19,7 +19,7 @@ import (
 type SSOPolicy struct {
 	Provider    string // the external-subject namespace: "oidc" or "saml"
 	DefaultRole string
-	Mapping     tenantauth.RoleMapping
+	Mapping     sso.RoleMapping
 	// Allowed says whether an email address may sign in to the tenant (its domain restriction).
 	Allowed func(address string) bool
 }
@@ -34,7 +34,7 @@ var errSSODomainUnverified = errors.New("the workspace has not verified the emai
 
 // FinishSSO turns a verified identity into a session: domain restriction, member lookup or
 // creation, role sync, then the session. No second factor follows: the identity provider is it.
-func (s *Service) FinishSSO(ctx context.Context, tenant uuid.UUID, p SSOPolicy, who *tenantauth.VerifiedIdentity, c Client) (*Grant, error) {
+func (s *Service) FinishSSO(ctx context.Context, tenant uuid.UUID, p SSOPolicy, who *sso.VerifiedIdentity, c Client) (*Grant, error) {
 	if !p.Allowed(who.Email) {
 		return nil, serviceErr(http.StatusForbidden, errcode.SSOFailed, "This email address is not allowed to sign in to this workspace.", nil)
 	}
@@ -62,7 +62,7 @@ func (s *Service) FinishSSO(ctx context.Context, tenant uuid.UUID, p SSOPolicy, 
 // syncSSORoles brings the roles the provider's claim decides (the mapping's values) in line with
 // the claim, at every sign-in. Roles outside the map are left alone, and the owner keeps theirs:
 // the provider cannot lock the person who is the way back in out of their own workspace.
-func (s *Service) syncSSORoles(ctx context.Context, tenant uuid.UUID, member *identity.Member, mapping tenantauth.RoleMapping, claimValues []string) error {
+func (s *Service) syncSSORoles(ctx context.Context, tenant uuid.UUID, member *identity.Member, mapping sso.RoleMapping, claimValues []string) error {
 	managed := mapping.ManagedRoles()
 	if mapping.Claim == "" || len(managed) == 0 {
 		return nil
@@ -97,7 +97,7 @@ func (s *Service) syncSSORoles(ctx context.Context, tenant uuid.UUID, member *id
 
 // ssoMember finds the member an IdP identity signs in as: the one already tied to this subject, an
 // existing member with that address (tied now), or a new one provisioned with the default role.
-func (s *Service) ssoMember(ctx context.Context, tenant uuid.UUID, p SSOPolicy, who *tenantauth.VerifiedIdentity) (*identity.Member, error) {
+func (s *Service) ssoMember(ctx context.Context, tenant uuid.UUID, p SSOPolicy, who *sso.VerifiedIdentity) (*identity.Member, error) {
 	if m, err := identity.FindExternalMember(ctx, s.d.Pool, tenant, p.Provider, who.ExternalSubject); err != nil || m != nil {
 		return m, err
 	}
@@ -105,7 +105,7 @@ func (s *Service) ssoMember(ctx context.Context, tenant uuid.UUID, p SSOPolicy, 
 	if !who.EmailVerified {
 		return nil, errSSOEmailUnverified
 	}
-	if ok, err := tenantauth.DomainVerifiedFor(ctx, s.d.Pool, tenant, who.Email); err != nil {
+	if ok, err := sso.DomainVerifiedFor(ctx, s.d.Pool, tenant, who.Email); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, errSSODomainUnverified

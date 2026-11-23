@@ -4,7 +4,7 @@ package bootstrap
 
 import (
 	"context"
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/permission/policypg"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"github.com/metap-org/metap/pkg/secrets"

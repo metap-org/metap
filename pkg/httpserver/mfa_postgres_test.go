@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/identity"
 )
 
 // Roadmap 115 M3: a person with a second factor signs in in two steps, a code works once, a wrong

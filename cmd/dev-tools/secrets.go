@@ -8,7 +8,7 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/secrets/backend"
 )
@@ -137,7 +137,7 @@ func putTenantSecret(args []string) error {
 	secretRef := secrets.TenantSecretRef(tenantID, key)
 
 	ctx := context.Background()
-	config, err := infra.LoadConfig()
+	config, err := config.LoadApp()
 	if err != nil {
 		return err
 	}

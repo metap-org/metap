@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/metap-org/metap/pkg/accountmail"
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
+	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/tenancy"
@@ -171,7 +171,7 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) {
 		slog.Warn("password reset: hourly limit reached", "identity_id", ident.ID)
 		return
 	}
-	if err := s.d.Mailer.SendPasswordReset(ctx, accountmail.PasswordReset{
+	if err := s.d.Mailer.SendPasswordReset(ctx, mail.PasswordReset{
 		To: ident.Email, Link: s.d.Mailer.Link("/reset-password", token), ExpiresAt: now.Add(identity.PasswordResetTTL),
 	}); err != nil {
 		slog.Error("password reset: sending email", "identity_id", ident.ID, standard.LogError, err)

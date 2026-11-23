@@ -12,12 +12,12 @@ import (
 	"fmt"
 	"github.com/metap-org/metap/pkg/secrets"
 
-	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/env"
 )
 
 // SecretStoreConfig: just the env-derived fields BuildSecretStore actually reads — split out
-// from infra.AppConfig so a binary with no Postgres/RabbitMQ pool of its own can build a
+// from config.App so a binary with no Postgres/RabbitMQ pool of its own can build a
 // SecretStore without also satisfying that config's unrelated requirements.
 type Config struct {
 	VaultAddr         string
@@ -38,7 +38,7 @@ type Config struct {
 	EncryptionKeys string
 }
 
-func ConfigFromAppConfig(config *infra.AppConfig) Config {
+func ConfigFromAppConfig(config *config.App) Config {
 	return Config{
 		VaultAddr:             config.VaultAddr,
 		VaultToken:            config.VaultToken,
@@ -54,7 +54,7 @@ func ConfigFromAppConfig(config *infra.AppConfig) Config {
 	}
 }
 
-// SecretStoreConfigFromEnv reads the same env vars infra.LoadConfig does, directly — for a
+// SecretStoreConfigFromEnv reads the same env vars config.LoadApp does, directly — for a
 // binary that has no AppConfig/Postgres pool at all. Same names, so an operator's existing
 // VAULT_ADDR/AWS_SECRETS_REGION/... deployment config works unchanged regardless of which binary
 // reads it.

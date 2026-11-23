@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/infra"
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/auth/jwks"
+	"github.com/metap-org/metap/pkg/config"
 )
 
 func rsaFiles(t *testing.T) (privPath, pubPath string) {
@@ -32,14 +32,14 @@ func rsaFiles(t *testing.T) (privPath, pubPath string) {
 
 func TestBuildTokenAuthStaticRSAModeNeedsBothKeys(t *testing.T) {
 	priv, pub := rsaFiles(t)
-	auth, err := BuildTokenAuth(context.Background(), &infra.AppConfig{AuthJWTPrivateKeyPath: priv, AuthJWTPublicKeyPath: pub})
+	auth, err := BuildTokenAuth(context.Background(), &config.App{AuthJWTPrivateKeyPath: priv, AuthJWTPublicKeyPath: pub})
 	require.NoError(t, err)
 	assert.Equal(t, "static-rsa", auth.Mode())
 	assert.NotEmpty(t, auth.PrivateKeyPEM)
 	assert.Nil(t, auth.Signer)
 	assert.Nil(t, auth.Verifier)
 
-	_, err = BuildTokenAuth(context.Background(), &infra.AppConfig{AuthJWTPrivateKeyPath: priv})
+	_, err = BuildTokenAuth(context.Background(), &config.App{AuthJWTPrivateKeyPath: priv})
 	require.Error(t, err)
 }
 
@@ -51,7 +51,7 @@ func TestBuildTokenAuthIssuerSignsWithTheKeyDirAndNeverWithRSA(t *testing.T) {
 	require.NoError(t, err)
 	priv, pub := rsaFiles(t)
 
-	auth, err := BuildTokenAuth(ctx, &infra.AppConfig{JWKSKeysDir: dir, AuthJWTPrivateKeyPath: priv, AuthJWTPublicKeyPath: pub})
+	auth, err := BuildTokenAuth(ctx, &config.App{JWKSKeysDir: dir, AuthJWTPrivateKeyPath: priv, AuthJWTPublicKeyPath: pub})
 	require.NoError(t, err)
 	assert.Equal(t, "jwks-issuer", auth.Mode())
 	assert.Empty(t, auth.PrivateKeyPEM, "the issuer never signs RS256")
@@ -64,7 +64,7 @@ func TestBuildTokenAuthIssuerSignsWithTheKeyDirAndNeverWithRSA(t *testing.T) {
 func TestBuildTokenAuthVerifierNeverSigns(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	auth, err := BuildTokenAuth(ctx, &infra.AppConfig{JWKSURL: "http://issuer.invalid/.well-known/jwks.json"})
+	auth, err := BuildTokenAuth(ctx, &config.App{JWKSURL: "http://issuer.invalid/.well-known/jwks.json"})
 	require.NoError(t, err)
 	assert.Equal(t, "jwks-verifier", auth.Mode())
 	assert.Nil(t, auth.Signer)
@@ -73,6 +73,6 @@ func TestBuildTokenAuthVerifierNeverSigns(t *testing.T) {
 }
 
 func TestBuildTokenAuthRejectsABrokenKeyDir(t *testing.T) {
-	_, err := BuildTokenAuth(context.Background(), &infra.AppConfig{JWKSKeysDir: t.TempDir()})
+	_, err := BuildTokenAuth(context.Background(), &config.App{JWKSKeysDir: t.TempDir()})
 	require.Error(t, err)
 }

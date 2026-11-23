@@ -6,7 +6,7 @@ package httpserver
 import (
 	"context"
 	"github.com/metap-org/metap/internal/authctx"
-	"github.com/metap-org/metap/pkg/captcha"
+	"github.com/metap-org/metap/pkg/auth/captcha"
 	"net/http"
 	"net/netip"
 	"sync/atomic"
@@ -17,15 +17,15 @@ import (
 
 	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/internal/signin"
-	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/auth/identity"
+	"github.com/metap-org/metap/pkg/auth/jwks"
+	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/crud"
-	"github.com/metap-org/metap/pkg/identity"
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/httpmw"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/runtime"
 	"github.com/metap-org/metap/pkg/storage"
 	"github.com/metap-org/metap/pkg/tenancy"
 )
@@ -83,7 +83,7 @@ type AppState struct {
 
 	Config *config.Store
 	// Mailer sends invitation and password-reset emails (roadmap 113 P2); nil sends none.
-	Mailer *accountmail.Mailer
+	Mailer *mail.Mailer
 	// Captcha, when set, must pass for POST /auth/signup (CAPTCHA_PROVIDER + CAPTCHA_SECRET); nil = off.
 	Captcha captcha.Verifier
 	// TrustedProxies are the proxies whose X-Forwarded-For is believed when working out the caller's
@@ -104,7 +104,7 @@ type AppState struct {
 	// absent from this map uses the shared default table ("attachments").
 	AttachmentTables map[string]string
 
-	Metrics *runtime.MetricsRegistry
+	Metrics *httpmw.MetricsRegistry
 }
 
 func NewAppState(pool *pgxpool.Pool, metadataBase *metadata.MetadataRegistry, md *atomic.Pointer[metadata.MetadataRegistry],
@@ -116,7 +116,7 @@ func NewAppState(pool *pgxpool.Pool, metadataBase *metadata.MetadataRegistry, md
 		ContextAttributesCache: authctx.NewContextAttributesCache(contextAttributesCacheTTL),
 		Config:                 config.Unloaded(pool),
 		CookieSecure:           true,
-		Metrics:                runtime.NewMetricsRegistry(),
+		Metrics:                httpmw.NewMetricsRegistry(),
 	}
 }
 

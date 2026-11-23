@@ -16,10 +16,10 @@ import (
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/internal/signin"
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/httpmw"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 func sessionTTLSeconds(ctx *http.Request, state *AppState, tenantID uuid.UUID) uint64 {
@@ -276,7 +276,7 @@ func issueToken(w http.ResponseWriter, r *http.Request, state *AppState) {
 // identities or many reset tokens either. One instance, so every route that uses it shares it.
 func authGuard(state *AppState) router.Middleware {
 	cfg := state.Config.Current()
-	return runtime.RateLimitBehind(
+	return httpmw.RateLimitBehind(
 		time.Duration(cfg.GetU64(config.HTTPAuthRateLimitPerMs))*time.Millisecond,
 		int(cfg.GetU64(config.HTTPAuthRateLimitBurst)),
 		state.TrustedProxies,

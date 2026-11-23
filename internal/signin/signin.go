@@ -14,15 +14,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/metap-org/metap/pkg/accountmail"
-	"github.com/metap-org/metap/pkg/captcha"
+	"github.com/metap-org/metap/pkg/auth/captcha"
+	"github.com/metap-org/metap/pkg/auth/identity"
+	"github.com/metap-org/metap/pkg/auth/mail"
+	"github.com/metap-org/metap/pkg/auth/sso"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/crud"
-	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/tenancy"
-	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
 // ErrNotTokenIssuer: this service verifies tokens but holds no signing key.
@@ -45,7 +45,7 @@ type Deps struct {
 	// Router opens tenant-scoped transactions and resolves a tenant's stored credentials (the OIDC client secret).
 	Router *tenancy.Router
 	// Mailer sends the account emails; its methods are safe on a nil Mailer (they send none).
-	Mailer *accountmail.Mailer
+	Mailer *mail.Mailer
 	// Captcha, when set, must pass for a signup.
 	Captcha captcha.Verifier
 	// Now is the clock; nil means time.Now.
@@ -186,7 +186,7 @@ func (s *Service) LoginAfterPassword(ctx context.Context, ident *identity.Identi
 // RequirePasswordAllowed refuses a password sign-in (or tenant switch) into a tenant that enforces
 // SSO, unless the member is the tenant's owner: the way back in when the identity provider is broken.
 func (s *Service) RequirePasswordAllowed(ctx context.Context, m identity.Membership) error {
-	enforced, err := tenantauth.SSOEnforced(ctx, s.d.Pool, m.TenantID)
+	enforced, err := sso.SSOEnforced(ctx, s.d.Pool, m.TenantID)
 	if err != nil {
 		return err
 	}

@@ -9,8 +9,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/metap-org/metap/pkg/infra"
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/auth/jwks"
+	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/env"
 )
 
@@ -50,7 +50,7 @@ const tokenLeeway = jwks.DefaultLeeway
 
 // BuildTokenAuth resolves cfg into a TokenAuth. Background work (key-dir reload, JWKS refresh)
 // runs until ctx is done.
-func BuildTokenAuth(ctx context.Context, cfg *infra.AppConfig) (*TokenAuth, error) {
+func BuildTokenAuth(ctx context.Context, cfg *config.App) (*TokenAuth, error) {
 	auth := &TokenAuth{}
 	if cfg.AuthJWTPublicKeyPath != "" {
 		key, err := ReadPublicKey(cfg.AuthJWTPublicKeyPath)

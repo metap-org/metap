@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/metap-org/metap/pkg/config"
+	"github.com/metap-org/metap/pkg/httpmw"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/runtime"
 )
 
 // Main runs the gateway as a process, configured from the environment (a product's own gateway
@@ -47,7 +47,7 @@ func Main() {
 	slog.Info("api-gateway listening", "addr", addr)
 	// The gateway is where callers are told apart, so it is where they are rate limited: the
 	// services behind it (which trust it via TRUSTED_PROXIES) apply the same per-caller limit.
-	limit := runtime.RateLimitBehind(
+	limit := httpmw.RateLimitBehind(
 		time.Duration(env.Int("RATE_LIMIT_PER_MS", 200))*time.Millisecond, env.Int("RATE_LIMIT_BURST", 300), trusted)
 	if err := httpx.Serve(addr, httpx.Recover(limit(gw))); err != nil {
 		slog.Error("serving", standard.LogError, err)

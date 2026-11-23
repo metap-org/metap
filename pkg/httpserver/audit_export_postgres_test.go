@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"io"
 	"testing"
 	"time"

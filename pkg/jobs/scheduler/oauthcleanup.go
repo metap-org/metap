@@ -15,8 +15,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/metap-org/metap/pkg/auth/oauthserver"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/oauthserver"
 )
 
 // RunOAuthCleanup probes for the OAuth tables first: the oauth2 route group is toggleable and

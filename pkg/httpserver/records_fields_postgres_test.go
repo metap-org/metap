@@ -5,7 +5,7 @@ package httpserver_test
 import (
 	"context"
 	"fmt"
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"testing"
 
 	"github.com/google/uuid"

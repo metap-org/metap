@@ -41,7 +41,7 @@ linters:
           files:
             - "**/internal/admin/**"
             - "**/internal/signin/**"
-            - "**/pkg/identity/**"
+            - "**/pkg/auth/identity/**"
             - "**/pkg/permission/**"
             - "**/pkg/crud/**"
             - "!$test"
