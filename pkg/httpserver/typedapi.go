@@ -155,6 +155,7 @@ func mountTypedAPI(r *router.Router, state *AppState) {
 	self := r.Labelled(LabelSelfAuth)
 	api := newAPI(self)
 	registerSessionOperations(api, state)
+	registerPolicyOperations(api, state)
 	registerAdminOperations(api, state)
 	if state.Identity != nil {
 		self.Mount("/scim/v2", adminapi.SCIMHandler(adminapi.NewUserAdminService(*state.Identity), scimAuthenticate(state)))

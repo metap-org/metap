@@ -115,6 +115,52 @@ func registerAdminOperations(api huma.API, state *AppState) {
 
 // registerCredentialOperations: the Credentials tab (named tenant credentials, stored encrypted in
 // the database or in the deployment's secret manager). Values are write-only.
+type policiesIn struct {
+	Entity string `query:"entity"`
+}
+
+type userIDPath struct {
+	UserID string `path:"userId"`
+}
+
+// registerPolicyOperations: the permission matrix and the advanced policy editor. They need no
+// identity database (PermissionService only), so a verify-only service serves them too.
+func registerPolicyOperations(api huma.API, state *AppState) {
+	const tag = "Policies"
+	s := adminapi.NewPolicyAdminService(state.Permissions, state.ContextAttributesCache)
+
+	adminOp(api, state, opOf("listPolicies", http.MethodGet, "/admin/policies", "The tenant's policies", tag),
+		func(ctx context.Context, in *policiesIn) (*adminapi.PolicyList, error) {
+			return s.ListPolicies(ctx, &adminapi.ListPoliciesRequest{Entity: in.Entity})
+		})
+	create := opOf("createPolicy", http.MethodPost, "/admin/policies", "Add a policy", tag)
+	create.DefaultStatus = http.StatusCreated
+	adminOp(api, state, create, func(ctx context.Context, in *bodyIn[adminapi.CreatePolicyRequest]) (*adminapi.PolicyOne, error) {
+		return s.CreatePolicy(ctx, &in.Body)
+	})
+	seed := opOf("seedDefaultPolicies", http.MethodPost, "/admin/policies/seed-defaults", "Grant roles every action on an entity", tag)
+	seed.DefaultStatus = http.StatusCreated
+	adminOp(api, state, seed, func(ctx context.Context, in *bodyIn[adminapi.SeedDefaultPoliciesRequest]) (*adminapi.PolicyList, error) {
+		return s.SeedDefaultPolicies(ctx, &in.Body)
+	})
+	adminOp(api, state, opOf("syncMatrixPolicies", http.MethodPut, "/admin/policies/matrix", "Replace an entity's basic policies with the matrix", tag),
+		func(ctx context.Context, in *bodyIn[adminapi.SyncMatrixRequest]) (*adminapi.PolicyList, error) {
+			return s.SyncMatrixPolicies(ctx, &in.Body)
+		})
+	adminOp(api, state, opOf("explainPolicy", http.MethodPost, "/admin/policies/explain", "Which policies decide an action for the caller", tag),
+		func(ctx context.Context, in *bodyIn[adminapi.ExplainPolicyRequest]) (*adminapi.ExplainResponse, error) {
+			return s.ExplainPolicy(ctx, &in.Body)
+		})
+	adminNoContent(api, state, opOf("deletePolicy", http.MethodDelete, "/admin/policies/{id}", "Delete a policy", tag),
+		func(ctx context.Context, in *idPath) (*adminapi.Empty, error) {
+			return s.DeletePolicy(ctx, &adminapi.PolicyIDRequest{ID: in.ID})
+		})
+	adminNoContent(api, state, opOf("invalidateUserContext", http.MethodPost, "/admin/users/{userId}/context/invalidate", "Drop a member's cached context attributes", tag),
+		func(ctx context.Context, in *userIDPath) (*adminapi.Empty, error) {
+			return s.InvalidateContext(ctx, &adminapi.UserIDRequest{UserID: in.UserID})
+		})
+}
+
 func registerCredentialOperations(api huma.API, state *AppState, s *adminapi.CredentialsService) {
 	const tag = "Credentials"
 	adminOp(api, state, opOf("listCredentials", http.MethodGet, "/admin/credentials", "The tenant's credentials, where they are used, and where this deployment can store them", tag),

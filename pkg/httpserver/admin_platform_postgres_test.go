@@ -59,7 +59,18 @@ func TestAdminUsersRolesAndPoliciesLifecycle(t *testing.T) {
 	})
 	require.Equal(t, 201, createPolicyRes.StatusCode, "got %d", createPolicyRes.StatusCode)
 	policyCreated := decodeJSON(t, createPolicyRes)
-	policyID := policyCreated["data"].(map[string]any)["id"].(string)
+	policyData := policyCreated["data"].(map[string]any)
+	policyID := policyData["id"].(string)
+	// The shape the portal reads: a nullable field/condition stay present as null, roles list, effect and
+	// subject are words.
+	for _, k := range []string{"id", "tenantId", "entity", "action", "field", "subject", "roles", "condition", "createdBy", "effect"} {
+		require.Contains(t, policyData, k)
+	}
+	require.Nil(t, policyData["field"])
+	require.Nil(t, policyData["condition"])
+	require.Equal(t, []any{"viewer"}, policyData["roles"])
+	require.Equal(t, "allow", policyData["effect"])
+	require.Equal(t, "context", policyData["subject"])
 
 	// seed-defaults bulk-creates one policy per known action
 	seedRes := doRequest(t, "POST", base+"/admin/policies/seed-defaults", adminToken, map[string]any{
