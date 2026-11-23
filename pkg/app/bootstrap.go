@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/permission/policypg"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"os"
@@ -14,13 +15,13 @@ import (
 
 	"github.com/metap-org/metap/pkg/bootstrap"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/secrets/backend"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // BootstrapOptions configure RunBootstrap.
@@ -69,8 +70,8 @@ func RunBootstrap(ctx context.Context, opts BootstrapOptions) error {
 	if err != nil {
 		return fmt.Errorf("building secret store: %w", err)
 	}
-	router := control.NewRouter(pool, control.NewRegistryCache(control.NewPostgresTenantRegistry(pool)), secretManager)
-	permissions := permission.NewPermissionService(control.NewPostgresPolicyStore(router))
+	router := tenancy.NewRouter(pool, tenancy.NewRegistryCache(tenancy.NewPostgresTenantRegistry(pool)), secretManager)
+	permissions := permission.NewPermissionService(policypg.NewPostgresPolicyStore(router))
 
 	registry := metadata.NewMetadataRegistry()
 	if err := registry.RegisterAllSubmitted(); err != nil {
@@ -107,7 +108,7 @@ func declaration(extra *bootstrap.Bootstrap) (bootstrap.Bootstrap, error) {
 
 // ApplyBootstrap applies decl to each tenant, stopping at the first error.
 func ApplyBootstrap(ctx context.Context, registry *metadata.MetadataRegistry, permissions *permission.PermissionService,
-	router *control.Router, tenants []uuid.UUID, decl bootstrap.Bootstrap, production bool, name string) error {
+	router *tenancy.Router, tenants []uuid.UUID, decl bootstrap.Bootstrap, production bool, name string) error {
 	deps := bootstrap.Deps{
 		Registry: registry,
 		Policies: permissions,
@@ -140,13 +141,13 @@ func bootstrapTargets(ctx context.Context, pool *pgxpool.Pool, raw string) ([]uu
 		}
 		return out, nil
 	}
-	summaries, err := control.NewPostgresTenantRegistry(pool).List(ctx)
+	summaries, err := tenancy.NewPostgresTenantRegistry(pool).List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing tenants: %w", err)
 	}
 	var out []uuid.UUID
 	for _, s := range summaries {
-		if s.Status == control.StatusActive {
+		if s.Status == tenancy.StatusActive {
 			out = append(out, s.ID)
 		}
 	}

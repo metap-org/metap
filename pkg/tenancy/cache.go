@@ -2,7 +2,7 @@
 // request) doesn't hit control.tenants per request — control.tenants changes rarely
 // (provisioning, suspend/promote), so a 30s staleness window is an acceptable tradeoff against
 // DB load.
-package control
+package tenancy
 
 import (
 	"context"

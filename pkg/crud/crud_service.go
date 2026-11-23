@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
@@ -46,7 +45,7 @@ type contextInvalidationConfig struct {
 	// entityName is the entity AUTH_CONTEXT_ENTITY resolves to — only an Update on *this* entity
 	// triggers invalidation.
 	entityName string
-	cache      *control.ContextAttributesCache
+	cache      ContextInvalidator
 }
 
 func NewCrudService(router TxBeginner, md *atomic.Pointer[metadata.MetadataRegistry], permissions PermissionChecker) *CrudService {
@@ -64,7 +63,13 @@ func WithAudit(router TxBeginner, md *atomic.Pointer[metadata.MetadataRegistry],
 // the result of NewCrudService or WithAudit. cache should be the *same* ContextAttributesCache
 // instance ResolveRequestContext reads from — a separate instance would invalidate a cache
 // nothing actually reads.
-func (s *CrudService) WithContextInvalidation(entityName string, cache *control.ContextAttributesCache) *CrudService {
+// ContextInvalidator drops what is cached about a caller's context attributes (httpserver's
+// ContextAttributesCache is the one implementation).
+type ContextInvalidator interface {
+	Invalidate(tenantID, userID uuid.UUID)
+}
+
+func (s *CrudService) WithContextInvalidation(entityName string, cache ContextInvalidator) *CrudService {
 	s.contextInvalidation = &contextInvalidationConfig{entityName: entityName, cache: cache}
 	return s
 }

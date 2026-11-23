@@ -14,11 +14,11 @@ import (
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/captcha"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 const (
@@ -188,7 +188,7 @@ func (s *Service) VerifySignup(ctx context.Context, token string, c Client) (*Ou
 			map[string][]string{"tenantName": {"This name is not available."}})
 	}
 	tenantID := uuid.New()
-	registry := control.NewPostgresTenantRegistry(s.d.Pool)
+	registry := tenancy.NewPostgresTenantRegistry(s.d.Pool)
 	// The tenant is registered outside the signup transaction (the registry owns its writes), so a
 	// failure after this point must undo it by hand.
 	if err := registry.RegisterShared(ctx, tenantID, su.TenantName, signupTier, "provisioning"); err != nil {

@@ -2,7 +2,7 @@
 // `SET LOCAL search_path TO {schema_name}, metadata, control` already fully supports a genuine
 // per-tenant schema_name — this file is the write side: creating the physical schema and
 // cloning the per-tenant tables into it.
-package control
+package tenancy
 
 import (
 	"context"

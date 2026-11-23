@@ -1,6 +1,6 @@
 // dev-tools is a small CLI of dev/ops subcommands. Every subcommand delegates to the exact same
 // library functions a real HTTP path uses (peripherals.CreateUser/AssignRole,
-// control.ProvisionSchemaTenant/ProvisionDedicatedDbTenant, peripherals.MintJWT, ...) so a
+// tenancy.ProvisionSchemaTenant/ProvisionDedicatedDbTenant, peripherals.MintJWT, ...) so a
 // CLI-seeded user/tenant/token can never diverge from what a real login/admin-provisioned one looks
 // like.
 package main
@@ -15,8 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/kit/env"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 func usage() {
@@ -142,9 +142,9 @@ func connectShared(ctx context.Context, maxConns int32) (*pgxpool.Pool, error) {
 // tenant's database any differently than a real request would. EnvStore only (not the AppRole/
 // Vault branching a real app's main.go has) — a Vault-backed dedicated tenant's DSN can still be
 // seeded by hand via vault-put-dsn first, same as it always could.
-func routerFor(sharedPool *pgxpool.Pool) *control.Router {
-	tenantRegistry := control.NewPostgresTenantRegistry(sharedPool)
-	return control.NewRouter(sharedPool, control.NewRegistryCache(tenantRegistry), secrets.EnvStore{})
+func routerFor(sharedPool *pgxpool.Pool) *tenancy.Router {
+	tenantRegistry := tenancy.NewPostgresTenantRegistry(sharedPool)
+	return tenancy.NewRouter(sharedPool, tenancy.NewRegistryCache(tenantRegistry), secrets.EnvStore{})
 }
 
 func parseUUID(s string) (uuid.UUID, error) {

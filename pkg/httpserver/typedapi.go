@@ -20,12 +20,12 @@ import (
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/internal/admin"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // APIDocPath is where the typed operations' OpenAPI document is served (".json" is appended).
@@ -107,14 +107,14 @@ func apiErr(err error) error {
 	if errors.As(err, &ae) {
 		return ae
 	}
-	var routerErr *control.RouterError
+	var routerErr *tenancy.RouterError
 	if errors.As(err, &routerErr) {
 		switch routerErr.Kind {
-		case control.ErrTenantSuspended, control.ErrTenantExpired:
+		case tenancy.ErrTenantSuspended, tenancy.ErrTenantExpired:
 			return newAPIError(http.StatusForbidden, "tenant_unavailable", "", nil)
-		case control.ErrTenantMigrating, control.ErrTenantProvisioning:
+		case tenancy.ErrTenantMigrating, tenancy.ErrTenantProvisioning:
 			return newAPIError(http.StatusServiceUnavailable, "tenant_unavailable", "", nil)
-		case control.ErrTenantDeleted:
+		case tenancy.ErrTenantDeleted:
 			return newAPIError(http.StatusNotFound, "tenant_not_found", "", nil)
 		}
 	}

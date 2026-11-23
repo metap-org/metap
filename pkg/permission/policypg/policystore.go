@@ -2,12 +2,13 @@
 // package purely to avoid a dependency cycle.
 // Routes every query through Router.Begin(tenantID) instead of a fixed pool — a DedicatedDb-
 // strategy tenant's policies table lives only in that tenant's own database.
-package control
+package policypg
 
 import (
 	"context"
 	"encoding/json"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
+	"github.com/metap-org/metap/pkg/tenancy"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -17,10 +18,10 @@ import (
 const policyColumns = `id, tenant_id, entity, action, field, subject, roles, condition, created_by, effect`
 
 type PostgresPolicyStore struct {
-	router *Router
+	router *tenancy.Router
 }
 
-func NewPostgresPolicyStore(router *Router) *PostgresPolicyStore {
+func NewPostgresPolicyStore(router *tenancy.Router) *PostgresPolicyStore {
 	return &PostgresPolicyStore{router: router}
 }
 

@@ -4,10 +4,10 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // writeServiceError and writeInternalError are thin call-site conveniences over
@@ -20,21 +20,21 @@ func writeInternalError(w http.ResponseWriter, err error) {
 	httpx.InternalErrorResponse(w, err)
 }
 
-// writeRouterUnavailable maps a control.Router.Begin failure to an HTTP response — same mapping
+// writeRouterUnavailable maps a tenancy.Router.Begin failure to an HTTP response — same mapping
 // crud's own routerUnavailable helper uses internally for CrudService's own calls; this is for
 // a route handler that calls Router.Begin directly (login, admin routes, a later wave).
 func writeRouterUnavailable(w http.ResponseWriter, err error) {
-	var routerErr *control.RouterError
+	var routerErr *tenancy.RouterError
 	if !errors.As(err, &routerErr) {
 		writeInternalError(w, err)
 		return
 	}
 	switch routerErr.Kind {
-	case control.ErrTenantSuspended, control.ErrTenantExpired:
+	case tenancy.ErrTenantSuspended, tenancy.ErrTenantExpired:
 		writeServiceError(w, http.StatusForbidden, "tenant_unavailable", "", nil)
-	case control.ErrTenantMigrating, control.ErrTenantProvisioning:
+	case tenancy.ErrTenantMigrating, tenancy.ErrTenantProvisioning:
 		writeServiceError(w, http.StatusServiceUnavailable, "tenant_unavailable", "", nil)
-	case control.ErrTenantDeleted:
+	case tenancy.ErrTenantDeleted:
 		writeServiceError(w, http.StatusNotFound, "tenant_not_found", "", nil)
 	default:
 		writeInternalError(w, err)

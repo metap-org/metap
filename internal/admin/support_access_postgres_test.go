@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // Roadmap 115 M10: support staff act in a tenant only under a time-boxed, reasoned, revocable
@@ -23,8 +23,8 @@ func TestSupportAccessLifecycle(t *testing.T) {
 	bob := h.member(tenant, "bob@acme.io", "viewer")
 	h.policyRole(tenant, "support-readonly")
 	asAdmin := h.as(tenant, admin.ID)
-	vendor := h.member(control.PlatformTenantID, "agent@vendor.io", RolePlatformAdmin)
-	asVendor := h.as(control.PlatformTenantID, vendor.ID)
+	vendor := h.member(tenancy.PlatformTenantID, "agent@vendor.io", RolePlatformAdmin)
+	asVendor := h.as(tenancy.PlatformTenantID, vendor.ID)
 
 	// No grant yet: support cannot start a session.
 	_, err := h.client.Support.StartSupportSession(asVendor, &StartSupportSessionRequest{TenantId: tenant.String()})
@@ -90,8 +90,8 @@ func TestSupportGrantExpires(t *testing.T) {
 	tenant := uuid.New()
 	admin := h.member(tenant, "admin@acme.io", "admin")
 	asAdmin := h.as(tenant, admin.ID)
-	vendor := h.member(control.PlatformTenantID, "agent@vendor.io", RolePlatformAdmin)
-	asVendor := h.as(control.PlatformTenantID, vendor.ID)
+	vendor := h.member(tenancy.PlatformTenantID, "agent@vendor.io", RolePlatformAdmin)
+	asVendor := h.as(tenancy.PlatformTenantID, vendor.ID)
 	grant, err := h.client.Support.GrantSupportAccess(asAdmin, &GrantSupportAccessRequest{Reason: "r", Role: "admin", Hours: 1})
 	require.NoError(t, err)
 	_, err = h.pool.Exec(context.Background(), `UPDATE metadata.support_grants SET expires_at = now() - interval '1 minute' WHERE id = $1`, grant.GetId())

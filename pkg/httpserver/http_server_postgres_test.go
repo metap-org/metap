@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
+	"github.com/metap-org/metap/pkg/permission/policypg"
 	"github.com/metap-org/metap/pkg/secrets"
 	"net"
 	"net/http"
@@ -36,10 +37,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/reconciler"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 func httpTestPool(t *testing.T) *pgxpool.Pool {
@@ -59,9 +60,9 @@ func genRSAKeyPair(t *testing.T) (privatePEM, publicPEM string, publicKey *rsa.P
 	return string(privPEM), string(pubPEM), &key.PublicKey
 }
 
-func testRouterFor(pool *pgxpool.Pool) *control.Router {
-	registry := control.NewPostgresTenantRegistry(pool)
-	return control.NewRouter(pool, control.NewRegistryCache(registry), secrets.NewMemoryStore())
+func testRouterFor(pool *pgxpool.Pool) *tenancy.Router {
+	registry := tenancy.NewPostgresTenantRegistry(pool)
+	return tenancy.NewRouter(pool, tenancy.NewRegistryCache(registry), secrets.NewMemoryStore())
 }
 
 const testOrdersTable = "entities.test_orders"
@@ -87,7 +88,7 @@ func newTestAppState(t *testing.T, pool *pgxpool.Pool, entity metadata.EntityDef
 	require.NoError(t, reg.Register(entity))
 	var mdPtr atomic.Pointer[metadata.MetadataRegistry]
 	mdPtr.Store(reg)
-	permissions := permission.NewPermissionService(control.NewPostgresPolicyStore(testRouterFor(pool)))
+	permissions := permission.NewPermissionService(policypg.NewPostgresPolicyStore(testRouterFor(pool)))
 	state := httpserver.NewAppState(pool, reg, &mdPtr, permissions, privPEM, pubKey, testRouterFor(pool))
 	return state, privPEM
 }

@@ -1,7 +1,7 @@
 // Tenant administration on top of the registry: search, rename, and the delete-with-retention
 // lifecycle. The state machine lives in SQL guards, not in callers, so two admins racing can't
 // both win.
-package control
+package tenancy
 
 import (
 	"context"

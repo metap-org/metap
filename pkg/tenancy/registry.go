@@ -1,6 +1,6 @@
 // TenantRegistry is an interface, not a concrete type, for the same reason PolicyStore is —
 // swapping storage without touching Router/RegistryCache.
-package control
+package tenancy
 
 import (
 	"context"

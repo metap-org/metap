@@ -3,7 +3,7 @@
 // has logged in, with a Host header as all it has to go on. A Host header is attacker-
 // controlled, so a caller must treat the resolved tenant as a presentation hint and never as an
 // authorization fact.
-package control
+package tenancy
 
 import (
 	"context"

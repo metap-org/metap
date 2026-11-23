@@ -1,16 +1,28 @@
 //go:build integration
 
-package control
+package policypg
 
 import (
 	"context"
 	"encoding/json"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/metap-org/metap/pkg/secrets"
+	"github.com/metap-org/metap/pkg/tenancy"
+	"github.com/metap-org/metap/pkg/testkit"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/stretchr/testify/require"
 )
+
+func testPool(t *testing.T) *pgxpool.Pool {
+	return testkit.NewPostgres(t, testkit.WithSearchPath("metadata", "public"))
+}
+
+func testRouter(pool *pgxpool.Pool) *tenancy.Router {
+	return tenancy.NewRouter(pool, tenancy.NewRegistryCache(tenancy.NewPostgresTenantRegistry(pool)), secrets.EnvStore{})
+}
 
 func TestCreateListAndDeleteRoundTripAgainstRealPostgres(t *testing.T) {
 	pool := testPool(t)

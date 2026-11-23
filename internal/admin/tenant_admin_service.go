@@ -15,12 +15,12 @@ import (
 
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // AuditEntityTenants is the audit-trail entity name tenant administration records under.
@@ -34,11 +34,11 @@ const (
 
 type TenantAdminService struct {
 	d        identityDeps
-	registry *control.PostgresTenantRegistry
+	registry *tenancy.PostgresTenantRegistry
 }
 
 func NewTenantAdminService(cfg IdentityConfig) *TenantAdminService {
-	return &TenantAdminService{d: identityDeps{cfg: cfg}, registry: control.NewPostgresTenantRegistry(cfg.Shared)}
+	return &TenantAdminService{d: identityDeps{cfg: cfg}, registry: tenancy.NewPostgresTenantRegistry(cfg.Shared)}
 }
 
 // platformAdmin authenticates a caller that must be a platform_admin of the platform tenant (and
@@ -52,7 +52,7 @@ func (d identityDeps) platformAdmin(ctx context.Context) (caller, error) {
 	if err != nil {
 		return caller{}, err
 	}
-	if c.tenant != control.PlatformTenantID || !hasRole(c.rc, RolePlatformAdmin) {
+	if c.tenant != tenancy.PlatformTenantID || !hasRole(c.rc, RolePlatformAdmin) {
 		return caller{}, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, "This action requires the platform_admin role.")
 	}
 	if !c.rc.ScopePermitsAdminSurface() {
@@ -72,15 +72,15 @@ func hasRole(rc *permission.RequestContext, role string) bool {
 
 func tenantErr(ctx context.Context, err error) error {
 	switch {
-	case errors.Is(err, control.ErrTenantNotFound):
+	case errors.Is(err, tenancy.ErrTenantNotFound):
 		return svcErr(ctx, http.StatusNotFound, errcode.NotFound, "Tenant not found.")
-	case errors.Is(err, control.ErrTenantState):
+	case errors.Is(err, tenancy.ErrTenantState):
 		return svcErr(ctx, http.StatusConflict, errcode.TenantInvalidState, "The tenant is not in a state that allows this.")
 	}
 	return identityErr(ctx, err)
 }
 
-func (s *TenantAdminService) toTenant(ctx context.Context, d control.TenantDetail) (*Tenant, error) {
+func (s *TenantAdminService) toTenant(ctx context.Context, d tenancy.TenantDetail) (*Tenant, error) {
 	var members int32
 	if err := s.d.cfg.Shared.QueryRow(ctx,
 		`SELECT count(*) FROM metadata.users WHERE tenant_id = $1 AND deleted_at IS NULL`, d.ID).Scan(&members); err != nil {
@@ -91,7 +91,7 @@ func (s *TenantAdminService) toTenant(ctx context.Context, d control.TenantDetai
 		TrialExpiresAt: formatTime(d.TrialExpiresAt), DeletionRequestedAt: formatTime(d.DeletionRequestedAt),
 		DeletionEffectiveAt: formatTime(d.DeletionEffectiveAt), MemberCount: members,
 	}
-	if d.Strategy.Kind == control.StrategyDedicatedDb {
+	if d.Strategy.Kind == tenancy.StrategyDedicatedDb {
 		t.Strategy = "dedicated_db"
 	} else {
 		t.Strategy = "schema"
@@ -122,7 +122,7 @@ func (s *TenantAdminService) ListTenants(ctx context.Context, req *ListTenantsRe
 	if _, err := s.platformAdmin(ctx); err != nil {
 		return nil, err
 	}
-	rows, total, err := s.registry.Search(ctx, control.TenantFilter{
+	rows, total, err := s.registry.Search(ctx, tenancy.TenantFilter{
 		Query: req.GetQuery(), Status: req.GetStatus(), Tier: req.GetTier(), Limit: int(req.GetLimit()), Offset: int(req.GetOffset()),
 	})
 	if err != nil {

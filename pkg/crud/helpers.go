@@ -16,11 +16,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 	"github.com/metap-org/metap/pkg/workflow"
 )
 
@@ -158,20 +158,20 @@ func unnamedUniqueViolation(entity metadata.EntityDefinition) *ServiceError {
 	return NewServiceErrorMsg(http.StatusConflict, errcode.UniqueViolation, fmt.Sprintf("A unique constraint was violated on %q.", entity.Name))
 }
 
-// routerUnavailable maps a control.RouterError (an expected part of the tenant lifecycle) to a
+// routerUnavailable maps a tenancy.RouterError (an expected part of the tenant lifecycle) to a
 // clean 4xx/5xx. Returns (zero, false) for any other error, so the caller's generic error
 // fallback still applies.
 func routerUnavailable(err error) (*ServiceError, bool) {
-	var routerErr *control.RouterError
+	var routerErr *tenancy.RouterError
 	if !errors.As(err, &routerErr) {
 		return nil, false
 	}
 	switch routerErr.Kind {
-	case control.ErrTenantSuspended, control.ErrTenantExpired:
+	case tenancy.ErrTenantSuspended, tenancy.ErrTenantExpired:
 		return NewServiceError(http.StatusForbidden, "tenant_unavailable"), true
-	case control.ErrTenantMigrating, control.ErrTenantProvisioning:
+	case tenancy.ErrTenantMigrating, tenancy.ErrTenantProvisioning:
 		return NewServiceError(http.StatusServiceUnavailable, "tenant_unavailable"), true
-	case control.ErrTenantDeleted:
+	case tenancy.ErrTenantDeleted:
 		return NewServiceError(http.StatusNotFound, "tenant_not_found"), true
 	default: // ErrInvalidSchemaName: should never occur from real data — fall through as a real error
 		return nil, false

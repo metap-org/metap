@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/tenancy"
 	"github.com/metap-org/metap/pkg/testkit"
 )
 
@@ -20,7 +20,7 @@ import (
 func TestRunTenantPurgeDeletesOnlyDueTenants(t *testing.T) {
 	pool := testkit.NewPostgres(t)
 	ctx := context.Background()
-	reg := control.NewPostgresTenantRegistry(pool)
+	reg := tenancy.NewPostgresTenantRegistry(pool)
 
 	due, kept := uuid.New(), uuid.New()
 	for _, id := range []uuid.UUID{due, kept} {

@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // Unit tests for every decision Create makes before it touches the database, using mockery
@@ -113,21 +113,21 @@ func TestCreateWithAnInvalidPayloadIs400AndNeverOpensATransaction(t *testing.T) 
 
 func TestCreateMapsAnUnavailableTenantToAClientFacingStatus(t *testing.T) {
 	cases := []struct {
-		kind   control.RouterErrorKind
+		kind   tenancy.RouterErrorKind
 		status uint16
 		code   string
 	}{
-		{control.ErrTenantSuspended, 403, "tenant_unavailable"},
-		{control.ErrTenantExpired, 403, "tenant_unavailable"},
-		{control.ErrTenantMigrating, 503, "tenant_unavailable"},
-		{control.ErrTenantProvisioning, 503, "tenant_unavailable"},
-		{control.ErrTenantDeleted, 404, "tenant_not_found"},
+		{tenancy.ErrTenantSuspended, 403, "tenant_unavailable"},
+		{tenancy.ErrTenantExpired, 403, "tenant_unavailable"},
+		{tenancy.ErrTenantMigrating, 503, "tenant_unavailable"},
+		{tenancy.ErrTenantProvisioning, 503, "tenant_unavailable"},
+		{tenancy.ErrTenantDeleted, 404, "tenant_not_found"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
 			f := newCreateFixture(t, widgetEntity())
 			f.allowUpToBegin("test.widgets")
-			f.router.EXPECT().Begin(mock.Anything, f.tenantID).Return(nil, &control.RouterError{Kind: tc.kind})
+			f.router.EXPECT().Begin(mock.Anything, f.tenantID).Return(nil, &tenancy.RouterError{Kind: tc.kind})
 
 			_, err := f.svc.Create(context.Background(), "test.widgets", vobj(map[string]any{"name": "x"}), f.rc, nil)
 			var resErr *ServiceError

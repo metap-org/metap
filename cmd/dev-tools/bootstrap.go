@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/permission/policypg"
 	"os"
 
 	"github.com/google/uuid"
 	"github.com/metap-org/metap/pkg/app"
 	"github.com/metap-org/metap/pkg/bootstrap"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 )
@@ -46,7 +46,7 @@ func applyBootstrap(args []string) error {
 	}
 	defer pool.Close()
 	router := routerFor(pool)
-	permissions := permission.NewPermissionService(control.NewPostgresPolicyStore(router))
+	permissions := permission.NewPermissionService(policypg.NewPostgresPolicyStore(router))
 	production := os.Getenv("NODE_ENV") == "production"
 	return app.ApplyBootstrap(ctx, registry, permissions, router, []uuid.UUID{tenantID}, decl, production, "dev-tools")
 }

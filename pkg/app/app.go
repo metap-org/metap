@@ -19,6 +19,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/metap-org/metap/pkg/captcha"
+	"github.com/metap-org/metap/pkg/permission/policypg"
 	"log/slog"
 	"net"
 	"net/http"
@@ -32,7 +33,6 @@ import (
 	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/httpserver"
 	"github.com/metap-org/metap/pkg/httpserver/attachmentroutes"
@@ -49,6 +49,7 @@ import (
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/reconciler"
 	"github.com/metap-org/metap/pkg/secrets/backend"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // Options describes one service.
@@ -129,8 +130,8 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("building secret store: %w", err)
 	}
-	router := control.NewRouter(pool, control.NewRegistryCache(control.NewPostgresTenantRegistry(pool)), secretManager)
-	permissions := permission.NewPermissionService(control.NewPostgresPolicyStore(router))
+	router := tenancy.NewRouter(pool, tenancy.NewRegistryCache(tenancy.NewPostgresTenantRegistry(pool)), secretManager)
+	permissions := permission.NewPermissionService(policypg.NewPostgresPolicyStore(router))
 
 	tokens, err := BuildTokenAuth(ctx, config)
 	if err != nil {
@@ -150,7 +151,7 @@ func Run(ctx context.Context, opts Options) error {
 		toReconcile = registry.Definitions()
 	}
 	for _, entity := range toReconcile {
-		outcome, err := reconciler.ReconcileWithScope(ctx, pool, control.PlatformTenantID, entity, nil, reconciler.ScopeAllTenants)
+		outcome, err := reconciler.ReconcileWithScope(ctx, pool, tenancy.PlatformTenantID, entity, nil, reconciler.ScopeAllTenants)
 		if err != nil {
 			return fmt.Errorf("reconciling %s: %w", entity.Name, err)
 		}

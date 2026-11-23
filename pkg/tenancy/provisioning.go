@@ -1,6 +1,6 @@
 // Tenant provisioning — the two flows a CLI has always run inline, pulled out here so a future HTTP
 // handler can call the exact same functions instead of a second, hand-copied implementation.
-package control
+package tenancy
 
 import (
 	"context"

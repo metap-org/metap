@@ -2,12 +2,13 @@
 // half of authentication that jwks.DecodeAccessToken (the pure JWT-verify half)
 // deliberately can't do itself, since it needs a tenant-scoped Router to open the transaction
 // GetRolesForUser/FetchContextAttributes run against.
-package control
+package authctx
 
 import (
 	"context"
 	"encoding/json"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
+	"github.com/metap-org/metap/pkg/tenancy"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -79,9 +80,9 @@ func (c *ContextAttributesCache) Invalidate(tenantID, userID uuid.UUID) {
 //
 // issuedAt is the token's iat: a token for a member who was disabled or removed, or issued before
 // their sessions were revoked, fails with identity.ErrDisabled / identity.ErrSessionRevoked.
-func ResolveRequestContext(ctx context.Context, router *Router, tenantID, userID uuid.UUID, functionID string, issuedAt *time.Time,
+func ResolveRequestContext(ctx context.Context, router *tenancy.Router, tenantID, userID uuid.UUID, functionID string, issuedAt *time.Time,
 	authContextEntity string, metadataRegistry *atomic.Pointer[metadata.MetadataRegistry], contextAttributesCache *ContextAttributesCache) (*permission.RequestContext, error) {
-	if err := identity.CheckSession(ctx, router.sharedPool, tenantID, userID, issuedAt); err != nil {
+	if err := identity.CheckSession(ctx, router.SharedPool(), tenantID, userID, issuedAt); err != nil {
 		return nil, err
 	}
 	// Routed through Router, not a bare pool — a DedicatedDb-strategy tenant's user_roles table
@@ -167,9 +168,9 @@ func ResolveRequestContext(ctx context.Context, router *Router, tenantID, userID
 // ResolveAPIKeyContext authenticates a presented API key ("mk_...") and resolves the request
 // context of the member it belongs to. The key counts as a session issued when it was created, so
 // "revoke sessions" on the member kills older keys too, and a disabled member's keys stop working.
-func ResolveAPIKeyContext(ctx context.Context, router *Router, token string, now time.Time,
+func ResolveAPIKeyContext(ctx context.Context, router *tenancy.Router, token string, now time.Time,
 	authContextEntity string, metadataRegistry *atomic.Pointer[metadata.MetadataRegistry], contextAttributesCache *ContextAttributesCache) (*permission.RequestContext, error) {
-	key, err := identity.ResolveAPIKey(ctx, router.sharedPool, token, now)
+	key, err := identity.ResolveAPIKey(ctx, router.SharedPool(), token, now)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +182,7 @@ func ResolveAPIKeyContext(ctx context.Context, router *Router, token string, now
 // ApplySessionClaim checks the login session behind a token's "sid" claim (roadmap 115 M4): a
 // revoked or unknown session fails with identity.ErrSessionRevoked. A token with no "sid" is not a
 // login session and passes untouched.
-func ApplySessionClaim(ctx context.Context, router *Router, rc *permission.RequestContext, sessionID *string, now time.Time) error {
+func ApplySessionClaim(ctx context.Context, router *tenancy.Router, rc *permission.RequestContext, sessionID *string, now time.Time) error {
 	if sessionID == nil {
 		return nil
 	}
@@ -197,7 +198,7 @@ func ApplySessionClaim(ctx context.Context, router *Router, rc *permission.Reque
 	if err != nil {
 		return identity.ErrSessionRevoked
 	}
-	if err := identity.CheckSessionID(ctx, router.sharedPool, tenant, user, sid, now); err != nil {
+	if err := identity.CheckSessionID(ctx, router.SharedPool(), tenant, user, sid, now); err != nil {
 		return err
 	}
 	rc.SessionID = *sessionID

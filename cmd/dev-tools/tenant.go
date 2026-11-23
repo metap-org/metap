@@ -7,8 +7,8 @@ import (
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"os"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // seedAdmin mirrors seed-admin.mjs, via rolestore.AssignRole (the same function the
@@ -94,7 +94,7 @@ func provisionTenant(args []string) error {
 		return err
 	}
 	defer pool.Close()
-	registry := control.NewPostgresTenantRegistry(pool)
+	registry := tenancy.NewPostgresTenantRegistry(pool)
 
 	var strategy string
 	if len(args) > 3 {
@@ -113,7 +113,7 @@ func provisionTenant(args []string) error {
 		}
 		email, password := args[4], args[5]
 
-		provisioned, err := control.ProvisionSchemaTenant(ctx, pool, registry, tenantID, email, password)
+		provisioned, err := tenancy.ProvisionSchemaTenant(ctx, pool, registry, tenantID, email, password)
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,7 @@ func provisionTenant(args []string) error {
 		}
 		dsnSecretRef, dedicatedURL, email, password := args[4], args[5], args[6], args[7]
 
-		provisioned, err := control.ProvisionDedicatedDbTenant(ctx, registry, tenantID, dsnSecretRef, dedicatedURL, migrationsDir(), email, password)
+		provisioned, err := tenancy.ProvisionDedicatedDbTenant(ctx, registry, tenantID, dsnSecretRef, dedicatedURL, migrationsDir(), email, password)
 		if err != nil {
 			return err
 		}
@@ -151,7 +151,7 @@ func provisionTenant(args []string) error {
 
 // bootstrapPlatformAdmin bootstraps the very first platform-superadmin — same con-gà-quả-trứng
 // bootstrap as seedAdmin/createUser above, CLI-only because no platform-admin exists yet to
-// authorize an HTTP call. Creates a user in control.PlatformTenantID (a sentinel tenant, never a
+// authorize an HTTP call. Creates a user in tenancy.PlatformTenantID (a sentinel tenant, never a
 // real control.tenants row) and grants it the "platform_admin" role.
 func bootstrapPlatformAdmin(args []string) error {
 	if len(args) < 4 {
@@ -166,7 +166,7 @@ func bootstrapPlatformAdmin(args []string) error {
 	defer pool.Close()
 
 	email, password := args[2], args[3]
-	tenantID := control.PlatformTenantID
+	tenantID := tenancy.PlatformTenantID
 
 	user, err := identity.CreateUser(ctx, pool, tenantID, email, password)
 	if err != nil {
@@ -206,7 +206,7 @@ func setTenantHostname(args []string) error {
 	}
 	hostname := args[3]
 
-	stored, err := control.SetTenantHostname(ctx, pool, tenantID, hostname)
+	stored, err := tenancy.SetTenantHostname(ctx, pool, tenantID, hostname)
 	if err != nil {
 		return err
 	}

@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // EffectiveConfigFunc is the cache-first read of a tenant's effective configuration.
@@ -23,12 +23,12 @@ type EffectiveConfigFunc func(ctx context.Context, tenant uuid.UUID) *config.Eff
 
 type ConfigAdminService struct {
 	store     *config.Store
-	router    *control.Router
+	router    *tenancy.Router
 	perms     *permission.PermissionService
 	effective EffectiveConfigFunc
 }
 
-func NewConfigAdminService(store *config.Store, router *control.Router, perms *permission.PermissionService, effective EffectiveConfigFunc) *ConfigAdminService {
+func NewConfigAdminService(store *config.Store, router *tenancy.Router, perms *permission.PermissionService, effective EffectiveConfigFunc) *ConfigAdminService {
 	return &ConfigAdminService{store: store, router: router, perms: perms, effective: effective}
 }
 

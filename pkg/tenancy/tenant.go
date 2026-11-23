@@ -3,7 +3,7 @@
 // tenant provisioning, per-tenant schema isolation, and the PolicyStore/RequestContext glue that
 // needs Router to reach a tenant's own database. No HTTP, no business-entity knowledge — a plain
 // library, same shape as permission.
-package control
+package tenancy
 
 import "github.com/google/uuid"
 

@@ -8,11 +8,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
-// TxBeginner opens a transaction routed to a tenant's own database/schema. *control.Router is
+// TxBeginner opens a transaction routed to a tenant's own database/schema. *tenancy.Router is
 // the production implementation; tests substitute a mock (see mocks_test.go) to exercise every
 // decision CrudService makes before it touches the database.
 type TxBeginner interface {
@@ -31,6 +31,6 @@ type PermissionChecker interface {
 }
 
 var (
-	_ TxBeginner        = (*control.Router)(nil)
+	_ TxBeginner        = (*tenancy.Router)(nil)
 	_ PermissionChecker = (*permission.PermissionService)(nil)
 )

@@ -11,10 +11,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/accountmail"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // InvitationError maps pkg/identity's invitation and password-reset errors onto the platform error
@@ -203,7 +203,7 @@ func (s *Service) CancelWorkspaceDeletion(ctx context.Context, token string) err
 		slog.Error("cancel workspace deletion: using token", standard.LogError, err)
 		return serviceErr(http.StatusInternalServerError, errcode.InternalError, "Something went wrong.", nil)
 	}
-	if err := control.NewPostgresTenantRegistry(s.d.Pool).CancelDeletion(ctx, tenant, now); err != nil {
+	if err := tenancy.NewPostgresTenantRegistry(s.d.Pool).CancelDeletion(ctx, tenant, now); err != nil {
 		// Already cancelled by a platform admin, or past the point of no return: the link is spent
 		// either way, and saying "invalid" matches what the person would find.
 		return serviceErr(http.StatusBadRequest, errcode.ValidationFailed, identity.ErrCancelInvalid.Error(), nil)
