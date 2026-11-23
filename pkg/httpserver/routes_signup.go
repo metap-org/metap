@@ -259,8 +259,10 @@ func signupVerify(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	ms := identity.Membership{MemberID: m.ID, TenantID: tenantID, TenantName: su.TenantName}
-	if mfaGate(w, r, state, ident, ms, now) {
+	out, err := state.Signin().LoginAfterPassword(ctx, ident, ms, clientOf(r, state))
+	if err != nil {
+		writeCrudError(w, err)
 		return
 	}
-	startSession(w, r, state, ident.ID, ms, now)
+	writeOutcome(w, state, out)
 }
