@@ -199,7 +199,7 @@ func connect(t testing.TB, databaseURL string, opts ...Option) *pgxpool.Pool {
 	// needed: run the integration suite that way to find such paths (they deadlock a real pool when
 	// as many requests as connections arrive together).
 	if raw := os.Getenv("METAP_TEST_POOL_MAX"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		if n, err := strconv.ParseInt(raw, 10, 32); err == nil && n > 0 {
 			cfg.MaxConns = int32(n)
 		}
 	}
