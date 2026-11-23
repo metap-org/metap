@@ -171,6 +171,6 @@ func mountTypedAPI(r *router.Router, state *AppState) {
 	registerConfigOperations(api, state)
 	registerAdminOperations(api, state)
 	if state.Identity != nil {
-		self.Mount("/scim/v2", admin.SCIMHandler(admin.NewUserAdminService(*state.Identity), scimAuthenticate(state)))
+		self.Mount("/scim/v2", SCIMHandler(admin.NewUserAdminService(*state.Identity), scimAuthenticate(state)))
 	}
 }

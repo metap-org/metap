@@ -237,6 +237,7 @@ func (s *AppState) Signin() *signin.Service {
 	return signin.New(signin.Deps{
 		Pool: s.Pool, Effective: s.EffectiveConfig, MintSession: s.MintSessionToken, PasswordPolicy: s.PasswordPolicy(),
 		Platform: s.platformConfig, Mailer: s.Mailer, Captcha: s.Captcha,
+		PublicURL: s.PublicAppURL, Router: s.Router,
 	})
 }
 

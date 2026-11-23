@@ -5,7 +5,6 @@
 package httpserver
 
 import (
-	"errors"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/standard"
@@ -19,7 +18,6 @@ import (
 	"github.com/metap-org/metap/internal/signin"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/identity"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/runtime"
 )
@@ -194,7 +192,7 @@ func logout(w http.ResponseWriter, r *http.Request, state *AppState) {
 // UI gating, since roles are never encoded on the JWT itself.
 func me(w http.ResponseWriter, r *http.Request, state *AppState) {
 	rc := RC(r)
-	email := resolveOwnEmail(r, state, rc)
+	email := nullableString(state.Signin().OwnEmail(r.Context(), rc))
 	tryRefreshSession(w, r, state, rc)
 
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
@@ -241,30 +239,11 @@ func tryRefreshSession(w http.ResponseWriter, r *http.Request, state *AppState, 
 		return
 	}
 
-	tenantID, err := uuid.Parse(rc.TenantID)
-	if err != nil {
+	renewal, ok := state.Signin().Renew(r.Context(), rc, time.Unix(startedAt, 0))
+	if !ok {
 		return
 	}
-	userID, err := uuid.Parse(rc.UserID)
-	if err != nil {
-		return
-	}
-
-	effective := state.EffectiveConfig(r.Context(), tenantID)
-	absoluteMax := int64(effective.GetU64(config.AuthSessionAbsoluteMaxSeconds))
-	if unixNowSecs()-startedAt >= absoluteMax {
-		return
-	}
-
-	ttl := effective.GetU64(config.AuthSessionTTLSeconds)
-	token, err := state.MintSessionToken(tenantID, userID, ttl, rc.SessionID)
-	if err != nil {
-		return
-	}
-	if sid, err := uuid.Parse(rc.SessionID); err == nil {
-		_ = identity.ExtendSession(r.Context(), state.Pool, sid, time.Duration(ttl)*time.Second, time.Now())
-	}
-	session, csrf := sessionCookies(token, csrfCookie.Value, int(ttl), state.CookieSecure)
+	session, csrf := sessionCookies(renewal.Token, csrfCookie.Value, int(renewal.TTLSeconds), state.CookieSecure)
 	http.SetCookie(w, session)
 	http.SetCookie(w, csrf)
 }
@@ -283,47 +262,12 @@ func issueToken(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeServiceError(w, http.StatusUnauthorized, errcode.Unauthorized, "Missing or invalid CSRF token.", nil)
 		return
 	}
-	tenantID, err := uuid.Parse(rc.TenantID)
+	token, err := state.Signin().IssueToken(r.Context(), rc)
 	if err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	userID, err := uuid.Parse(rc.UserID)
-	if err != nil {
-		writeInternalError(w, err)
-		return
-	}
-	token, err := state.MintSessionToken(tenantID, userID, sessionTTLSeconds(r, state, tenantID), rc.SessionID)
-	if err != nil {
-		if errors.Is(err, ErrNotTokenIssuer) {
-			writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, err.Error(), nil)
-			return
-		}
-		writeInternalError(w, err)
+		writeCrudError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"token": token}})
-}
-
-func resolveOwnEmail(r *http.Request, state *AppState, rc *permission.RequestContext) any {
-	userID, err := uuid.Parse(rc.UserID)
-	if err != nil {
-		return nil
-	}
-	tenantID, err := state.Permissions.ScopedTenant(rc)
-	if err != nil {
-		return nil
-	}
-	tx, err := state.Router.Begin(r.Context(), tenantID)
-	if err != nil {
-		return nil
-	}
-	defer tx.Rollback(r.Context()) //nolint:errcheck
-	user, err := peripherals.FindUserByID(r.Context(), tx, tenantID, userID)
-	if err != nil || user == nil {
-		return nil
-	}
-	return user.Email
 }
 
 // authGuard is the stricter per-IP bucket the routes someone guessing credentials, codes or tokens

@@ -612,7 +612,7 @@ func registerWorkspaceOperations(api huma.API, state *AppState, cfg admin.Identi
 }
 
 // scimAuthenticate is SCIM's bearer-token check: the same authentication every route uses.
-func scimAuthenticate(state *AppState) admin.SCIMAuthenticator {
+func scimAuthenticate(state *AppState) SCIMAuthenticator {
 	return func(r *http.Request) (*permission.RequestContext, error) {
 		rc, authErr := authenticate(r.Context(), state, r)
 		if authErr != nil {

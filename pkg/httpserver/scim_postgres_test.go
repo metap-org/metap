@@ -1,12 +1,12 @@
 //go:build integration
 
-package admin
+package httpserver_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -14,27 +14,40 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/metap-org/metap/internal/admin"
+	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/peripherals"
+	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/testkit"
 )
 
 // Roadmap 115 M12: an identity provider provisions members over SCIM with an admin service
 // account's API key; the admin rules (and the audit trail) still apply.
 func TestSCIMProvisionsUsers(t *testing.T) {
-	h := newIdentityHarness(t)
+	pool := httpTestPool(t)
+	state, privPEM := newTestAppState(t, pool, httpTestEntity())
+	idCfg := admin.IdentityConfig{Shared: pool, Router: state.Router, Audit: audit.NewPostgresStore(pool), PublicURL: "http://portal.test"}
+	state.Identity = &idCfg
+	base := startTestServer(t, state, nil)
+
 	tenant := uuid.New()
-	admin := h.member(tenant, "admin@acme.io", "admin")
-	asAdmin := h.as(tenant, admin.ID)
-	sa, err := h.client.Admin.CreateServiceAccount(asAdmin, &CreateServiceAccountRequest{Name: "entra"})
+	adminMember, _, err := identity.AddMember(context.Background(), pool, identity.NewMember{TenantID: tenant, Email: "admin@acme.io", Password: "password-1"})
 	require.NoError(t, err)
-	_, err = h.client.Admin.AssignRole(asAdmin, &RoleRequest{Id: sa.GetId(), Role: "admin"})
+	testkit.SeedRole(t, pool, tenant, adminMember.ID, "admin")
+	// The admin's own service calls, as the HTTP layer makes them once it has authenticated the caller.
+	users := admin.NewUserAdminService(idCfg)
+	asAdmin := admin.WithCaller(context.Background(), &permission.RequestContext{
+		TenantID: tenant.String(), UserID: adminMember.ID.String(), Roles: []string{"admin"}, HasRoles: true})
+	sa, err := users.CreateServiceAccount(asAdmin, &admin.CreateServiceAccountRequest{Name: "entra"})
 	require.NoError(t, err)
-	key, err := h.client.Admin.CreateApiKey(asAdmin, &CreateApiKeyRequest{UserId: sa.GetId(), Name: "scim", ExpiresInDays: 30})
+	_, err = users.AssignRole(asAdmin, &admin.RoleRequest{Id: sa.GetId(), Role: "admin"})
+	require.NoError(t, err)
+	key, err := users.CreateApiKey(asAdmin, &admin.CreateApiKeyRequest{UserId: sa.GetId(), Name: "scim", ExpiresInDays: 30})
 	require.NoError(t, err)
 
-	srv := httptest.NewServer(http.StripPrefix("/scim/v2", SCIMHandler(NewUserAdminService(h.cfg), h.scimAuth)))
-	t.Cleanup(srv.Close)
 	call := func(method, path, token, body string) (int, map[string]any) {
-		req, err := http.NewRequest(method, srv.URL+"/scim/v2"+path, strings.NewReader(body))
+		req, err := http.NewRequest(method, base+"/scim/v2"+path, strings.NewReader(body))
 		require.NoError(t, err)
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -51,8 +64,12 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 
 	code, _ := call("GET", "/Users", "", "")
 	assert.Equal(t, 401, code, "no token")
-	bob := h.member(tenant, "bob@acme.io", "viewer")
-	code, _ = call("GET", "/Users", h.tokenForUser(tenant, bob.ID), "")
+	bob, _, err := identity.AddMember(context.Background(), pool, identity.NewMember{TenantID: tenant, Email: "bob@acme.io", Password: "password-1"})
+	require.NoError(t, err)
+	testkit.SeedRole(t, pool, tenant, bob.ID, "viewer")
+	bobToken, err := peripherals.MintJWT(privPEM, tenant, bob.ID, 3600)
+	require.NoError(t, err)
+	code, _ = call("GET", "/Users", bobToken, "")
 	assert.Equal(t, 403, code, "a non-admin cannot provision")
 
 	code, cfg := call("GET", "/ServiceProviderConfig", token, "")
@@ -93,7 +110,7 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 	assert.Equal(t, "Carol B", got["displayName"])
 
 	// The change is in the audit trail, attributed to the service account.
-	trail, err := h.client.Audit.SearchAudit(asAdmin, &SearchAuditRequest{ActorUserId: sa.GetId(), RecordId: id})
+	trail, err := admin.NewAuditAdminService(idCfg).SearchAudit(asAdmin, &admin.SearchAuditRequest{ActorUserId: sa.GetId(), RecordId: id})
 	require.NoError(t, err)
 	assert.NotEmpty(t, trail.GetEntries())
 
@@ -101,10 +118,4 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 	assert.Equal(t, 204, code)
 	code, _ = call("GET", "/Users/"+id, token, "")
 	assert.Equal(t, 404, code)
-}
-
-func (h *identityHarness) tokenForUser(tenant, user uuid.UUID) string {
-	token, err := peripherals.MintJWT(h.privPEM, tenant, user, 3600)
-	require.NoError(h.t, err)
-	return token
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/captcha"
 	"github.com/metap-org/metap/pkg/config"
+	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -38,6 +39,11 @@ type Deps struct {
 	// Platform is the platform-tier configuration (the signup switch and name blocklist); nil when
 	// there is none.
 	Platform func() *config.Snapshot
+	// PublicURL is the origin people reach this service at (the SSO callback is PublicURL + /auth/sso/callback);
+	// "" turns SSO off.
+	PublicURL string
+	// Router opens tenant-scoped transactions and resolves a tenant's stored credentials (the OIDC client secret).
+	Router *control.Router
 	// Mailer sends the account emails; its methods are safe on a nil Mailer (they send none).
 	Mailer *accountmail.Mailer
 	// Captcha, when set, must pass for a signup.
@@ -299,3 +305,5 @@ func IdentityError(err error) error {
 
 // Pool is the database the service reads and writes, for tests and tools that set people up.
 func (s *Service) Pool() *pgxpool.Pool { return s.d.Pool }
+
+func isNotIssuer(err error) bool { return errors.Is(err, ErrNotTokenIssuer) }
