@@ -14,7 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/metap-org/metap/pkg/action"
+	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/messaging/events"
 	"github.com/metap-org/metap/pkg/metadata"
 )
 
@@ -110,4 +113,88 @@ func TestDeclaredActionRequiresEntityPermission(t *testing.T) {
 	res = doRequest(t, "POST", base+"/api/test.orders/actions/probe", admin, nil)
 	assert.Equal(t, 200, res.StatusCode)
 	assert.Equal(t, 1, calls)
+}
+
+// A typed action (pkg/action) registered with the state's own dependencies: it reads its record as
+// the caller, writes through the same backend the routes use, and what it audits and emits is
+// written, over a real route and a real database.
+func TestTypedActionOverRESTWritesRecordAuditAndOutboxEvent(t *testing.T) {
+	pool := httpTestPool(t)
+	ctx := context.Background()
+	tenantID, userID := uuid.New(), uuid.New()
+	_, err := pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')", tenantID, userID)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), "DELETE FROM metadata.user_roles WHERE tenant_id = $1", tenantID)
+	})
+
+	ensureTestOrdersTable(t, pool)
+	entity := httpTestEntity()
+	entity.Actions = []metadata.EntityAction{{Name: "rename", Scope: metadata.ActionScopeRecord, Requires: "update"}}
+	state, privPEM := newTestAppState(t, pool, entity)
+	auditStore := audit.NewPostgresStore(pool)
+	state.Audit = auditStore
+
+	type order struct {
+		Name string `json:"name"`
+	}
+	type renameIn struct {
+		Name string `json:"name"`
+	}
+	type renameOut struct {
+		Was string `json:"was"`
+		Now string `json:"now"`
+	}
+	rename := action.Record("test.orders", "rename",
+		func(ctx context.Context, a *action.Ctx, o order, in renameIn) (renameOut, error) {
+			name, _ := json.Marshal(in.Name)
+			if _, err := a.Records.Update(ctx, a.Entity, a.ID, 1, crud.JsonObject{"name": name}, a.RC, nil); err != nil {
+				return renameOut{}, err
+			}
+			out := renameOut{Was: o.Name, Now: in.Name}
+			a.Audit("order.renamed", a.ID, out)
+			a.Emit(events.Event{Topic: "test.order.renamed", AggregateType: a.Entity, AggregateID: a.ID, Payload: out})
+			return out, nil
+		})
+	reg := crud.NewActionRegistry()
+	require.NoError(t, rename.Register(reg, state.ActionDeps()))
+	state.Actions = reg
+
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
+	require.NoError(t, err)
+	base := startTestServer(t, state, nil)
+
+	res := doRequest(t, "POST", base+"/api/test.orders", token, map[string]any{"data": map[string]any{"name": "first"}})
+	require.Equal(t, 201, res.StatusCode)
+	id := decodeJSON(t, res)["data"].(map[string]any)["id"].(string)
+
+	res = doRequest(t, "POST", base+"/api/test.orders/"+id+"/actions/rename", token, map[string]any{"input": map[string]any{"name": "second"}})
+	require.Equal(t, 200, res.StatusCode)
+	out := decodeJSON(t, res)["data"].(map[string]any)
+	assert.Equal(t, "first", out["was"])
+	assert.Equal(t, "second", out["now"])
+
+	res = doRequest(t, "GET", base+"/api/test.orders/"+id, token, nil)
+	require.Equal(t, 200, res.StatusCode)
+	assert.Equal(t, "second", decodeJSON(t, res)["data"].(map[string]any)["data"].(map[string]any)["name"])
+
+	recordID := uuid.MustParse(id)
+	var events int
+	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM metadata.outbox_events WHERE topic = 'test.order.renamed' AND aggregate_id = $1", recordID).Scan(&events))
+	assert.Equal(t, 1, events, "the event the action emitted is in the outbox")
+
+	rows, err := auditStore.Query(ctx, tenantID, audit.Query{Entity: "test.orders", RecordID: recordID})
+	require.NoError(t, err)
+	var named []string
+	for _, r := range rows {
+		if r.Action == "action" && r.TransitionAction != nil {
+			named = append(named, *r.TransitionAction)
+		}
+	}
+	assert.Equal(t, []string{"order.renamed"}, named, "the action's audit entry is in the trail")
+
+	// A field the action does not declare is refused with the standard 400, and nothing is written.
+	res = doRequest(t, "POST", base+"/api/test.orders/"+id+"/actions/rename", token, map[string]any{"input": map[string]any{"nme": "x"}})
+	require.Equal(t, 400, res.StatusCode)
+	assert.Equal(t, "validation_failed", decodeJSON(t, res)["error"].(map[string]any)["code"])
 }

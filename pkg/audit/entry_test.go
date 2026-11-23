@@ -43,3 +43,7 @@ func TestRedactingNothingLeavesTheDiffAlone(t *testing.T) {
 	after, _ := json.Marshal(d)
 	require.Equal(t, string(after), string(before), "diff changed: %s -> %s", before, after)
 }
+
+func TestActionCustomIsNamedAction(t *testing.T) {
+	require.Equal(t, "action", ActionCustom.String())
+}

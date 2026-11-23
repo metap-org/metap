@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// AuditAction is which of CrudService's 4 writes produced an entry.
+// AuditAction is which of CrudService's 4 writes, or which declared action, produced an entry.
 type AuditAction int
 
 const (
@@ -15,6 +15,9 @@ const (
 	ActionUpdate
 	ActionDelete
 	ActionTransition
+	// ActionCustom is a declared entity action run by an application's own handler (pkg/action);
+	// TransitionAction carries the action's name.
+	ActionCustom
 )
 
 func (a AuditAction) String() string {
@@ -27,6 +30,8 @@ func (a AuditAction) String() string {
 		return "delete"
 	case ActionTransition:
 		return "transition"
+	case ActionCustom:
+		return "action"
 	default:
 		return "unknown"
 	}
@@ -45,7 +50,7 @@ type Entry struct {
 	Entity           string
 	RecordID         uuid.UUID
 	Action           AuditAction
-	TransitionAction *string // Some only when Action == ActionTransition
+	TransitionAction *string // Some only when Action == ActionTransition or ActionCustom (the declared action's name)
 	ActorUserID      *uuid.UUID
 	Reason           *string
 	Diff             JsonObject // {field: {"before": ..., "after": ...}}, changed keys only

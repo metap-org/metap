@@ -254,3 +254,32 @@ func TestBackfillParentsFillsFromTheRecordsParentColumn(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 0, again)
 }
+
+// A declared action run by an application's own handler (pkg/action) records as "action", with the
+// action's name in transition_action, and the entry joins the tenant's hash chain like any other.
+func TestACustomActionEntryRoundTripsAndKeepsTheChainValid(t *testing.T) {
+	store := NewPostgresStore(testPool(t))
+	ctx := context.Background()
+	tenant, record, actor := uuid.New(), uuid.New(), uuid.New()
+	name := "zone.dns_verified"
+
+	require.NoError(t, store.Record(ctx, tenant, Entry{
+		TenantID: tenant, Entity: "waf.zones", RecordID: record,
+		Action: ActionCreate, ActorUserID: &actor, Diff: JsonObject{}, OccurredAt: time.Now(),
+	}))
+	require.NoError(t, store.Record(ctx, tenant, Entry{
+		TenantID: tenant, Entity: "waf.zones", RecordID: record,
+		Action: ActionCustom, TransitionAction: &name, ActorUserID: &actor,
+		Diff: JsonObject{"detail": json.RawMessage(`{"verified":true}`)}, OccurredAt: time.Now(),
+	}))
+
+	rows, err := store.Query(ctx, tenant, Query{Entity: "waf.zones", RecordID: record})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	require.Equal(t, "action", rows[0].Action, "newest first: the custom entry")
+	require.Equal(t, name, *rows[0].TransitionAction)
+
+	report, err := store.VerifyChain(ctx, tenant)
+	require.NoError(t, err)
+	require.True(t, report.OK, "the chain must stay valid with a custom entry in it: %+v", report)
+}

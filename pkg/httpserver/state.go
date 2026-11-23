@@ -6,6 +6,7 @@ package httpserver
 import (
 	"context"
 	"github.com/metap-org/metap/internal/authctx"
+	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/auth/captcha"
 	"net/http"
 	"net/netip"
@@ -234,6 +235,13 @@ func (s *AppState) RecordBackend() crud.RecordBackend {
 		return s.Records
 	}
 	return s.Crud
+}
+
+// ActionDeps is what a service builds its typed actions (pkg/action) with: the record backend entity
+// routes use, so an action reads and writes as the caller and through any wrapper the service
+// added, and a sink that enqueues events on the caller's tenant database and records audit entries.
+func (s *AppState) ActionDeps() action.Deps {
+	return action.Deps{Records: s.RecordBackend(), Sink: action.NewSink(s.Router, s.Audit)}
 }
 
 // Signin is the sign-in service on this state's database, configuration and signing key.
