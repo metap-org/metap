@@ -9,8 +9,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/env"
 )
 

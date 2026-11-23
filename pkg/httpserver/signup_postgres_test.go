@@ -17,9 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/captcha"
+	"github.com/metap-org/metap/pkg/auth/captcha"
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/identity"
 )
 
 // Roadmap 115 M2: signup is off by default, validates what is typed, answers the same whatever

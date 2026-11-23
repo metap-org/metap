@@ -5,7 +5,7 @@ package tenancy
 import (
 	"context"
 	"fmt"
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 
 	"github.com/google/uuid"

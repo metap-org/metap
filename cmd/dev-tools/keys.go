@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"github.com/metap-org/metap/pkg/kit/env"
 )
 

@@ -1,4 +1,4 @@
-package tenantauth
+package sso
 
 // A hand-signed RS256 id_token (via golang-jwt/jwt + a freshly generated RSA keypair) stands in for
 // what a real IdP would return.

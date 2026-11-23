@@ -3,7 +3,7 @@ package admin
 
 import (
 	"context"
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"net/http"
 	"slices"
 

@@ -7,7 +7,7 @@
 // (regardless of provider) ends in (jwks.MintRSAJWT), verified per-request by the HTTP auth
 // layer, unchanged by this package.
 // No HTTP, no business-entity knowledge — a plain library, same shape as permission.
-package tenantauth
+package sso
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
 )
 
 // DBTX is satisfied by *pgxpool.Pool and pgx.Tx.

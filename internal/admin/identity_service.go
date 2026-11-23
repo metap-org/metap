@@ -17,14 +17,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/auth/identity"
+	"github.com/metap-org/metap/pkg/auth/mail"
+	"github.com/metap-org/metap/pkg/auth/sso"
 	"github.com/metap-org/metap/pkg/crud"
-	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/tenancy"
-	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
 // AuditEntityUsers is the audit-trail entity name user administration records under.
@@ -42,7 +42,7 @@ type IdentityConfig struct {
 	// PublicURL is the origin people reach the service at; the SSO redirect URI is built from it.
 	PublicURL string
 	// Mailer sends invitation emails; nil sends none (the admin gets the link back instead).
-	Mailer *accountmail.Mailer
+	Mailer *mail.Mailer
 	// PasswordPolicy is each tenant's minimum password length; nil means the platform minimum.
 	PasswordPolicy identity.PasswordPolicy
 	// APIKeyMaxDays is the tenant's cap on an API key's lifetime in days (auth.apiKeyMaxLifetimeDays);
@@ -54,7 +54,7 @@ type IdentityConfig struct {
 	// with a timeout); a deployment can put its outbound-request guard here.
 	HTTPClient *http.Client
 	// TXTLookup resolves the DNS record that proves a domain is owned; nil uses the system resolver.
-	TXTLookup tenantauth.TXTLookup
+	TXTLookup sso.TXTLookup
 }
 
 type identityDeps struct {

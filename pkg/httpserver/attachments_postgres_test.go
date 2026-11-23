@@ -10,7 +10,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"io"
 	"mime/multipart"
 	"net/http"

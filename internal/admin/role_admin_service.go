@@ -14,8 +14,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/crud"
-	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 

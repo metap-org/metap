@@ -1,4 +1,4 @@
-package tenantauth
+package sso
 
 import (
 	"context"

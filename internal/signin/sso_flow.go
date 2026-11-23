@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 	saml2 "github.com/russellhaering/gosaml2"
 
+	"github.com/metap-org/metap/pkg/auth/sso"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
 // SSOProviderOIDC is the external-subject namespace of members provisioned through OIDC.
@@ -64,19 +64,19 @@ func (s *Service) SSODiscover(ctx context.Context, email string) (*SSODiscovery,
 	if at <= 0 || at == len(email)-1 {
 		return nil, serviceErr(http.StatusBadRequest, errcode.ValidationFailed, "`email` must be an email address.", nil)
 	}
-	tenants, err := tenantauth.TenantsForEmailDomain(ctx, s.d.Pool, email[at+1:])
+	tenants, err := sso.TenantsForEmailDomain(ctx, s.d.Pool, email[at+1:])
 	if err != nil {
 		return nil, err
 	}
 	if len(tenants) != 1 || s.d.PublicURL == "" {
 		return &SSODiscovery{}, nil
 	}
-	kind, err := tenantauth.ProviderOf(ctx, s.d.Pool, tenants[0])
+	kind, err := sso.ProviderOf(ctx, s.d.Pool, tenants[0])
 	if err != nil {
 		return nil, err
 	}
 	start := "/auth/sso/start?tenant=" + tenants[0].String()
-	if kind == tenantauth.ProviderSAML {
+	if kind == sso.ProviderSAML {
 		start = "/auth/saml/" + tenants[0].String() + "/start"
 	}
 	return &SSODiscovery{Available: true, TenantID: tenants[0], Protocol: string(kind), StartURL: start}, nil
@@ -86,7 +86,7 @@ func (s *Service) oidcRedirectURI() string {
 	return strings.TrimRight(s.d.PublicURL, "/") + "/auth/sso/callback"
 }
 
-func (s *Service) oidcSecret(ctx context.Context, cfg *tenantauth.OidcConfig) (string, error) {
+func (s *Service) oidcSecret(ctx context.Context, cfg *sso.OidcConfig) (string, error) {
 	return s.d.Router.Secrets().GetSecret(ctx, cfg.ClientSecretRef)
 }
 
@@ -99,7 +99,7 @@ type SSOStart struct {
 
 // OIDCStart begins an OIDC sign-in: PKCE and nonce, kept in a single-use state row.
 func (s *Service) OIDCStart(ctx context.Context, tenant uuid.UUID) (*SSOStart, error) {
-	cfg, err := tenantauth.OidcConfigFor(ctx, s.d.Pool, tenant)
+	cfg, err := sso.OidcConfigFor(ctx, s.d.Pool, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -111,11 +111,11 @@ func (s *Service) OIDCStart(ctx context.Context, tenant uuid.UUID) (*SSOStart, e
 		return nil, errSSOUnavailable()
 	}
 	cfg.RedirectURI = s.oidcRedirectURI()
-	authURL, csrf, nonce, verifier, err := tenantauth.OidcAuthorizeURL(ctx, cfg, secret)
+	authURL, csrf, nonce, verifier, err := sso.OidcAuthorizeURL(ctx, cfg, secret)
 	if err != nil {
 		return nil, errSSOUnreachable()
 	}
-	if err := tenantauth.CreateSSOState(ctx, s.d.Pool, tenant, csrf, nonce, verifier, s.now()); err != nil {
+	if err := sso.CreateSSOState(ctx, s.d.Pool, tenant, csrf, nonce, verifier, s.now()); err != nil {
 		return nil, err
 	}
 	return &SSOStart{RedirectURL: authURL, State: csrf}, nil
@@ -147,7 +147,7 @@ func (s *Service) OIDCCallback(ctx context.Context, req OIDCCallbackRequest, c C
 	if req.IdPError {
 		return nil, serviceErr(http.StatusForbidden, errcode.SSOFailed, "The identity provider refused the sign-in.", nil)
 	}
-	st, err := tenantauth.ConsumeSSOState(ctx, s.d.Pool, req.State, s.now())
+	st, err := sso.ConsumeSSOState(ctx, s.d.Pool, req.State, s.now())
 	if err != nil {
 		return nil, errSSOState()
 	}
@@ -155,7 +155,7 @@ func (s *Service) OIDCCallback(ctx context.Context, req OIDCCallbackRequest, c C
 	if !req.SameBrowser {
 		return nil, serviceErr(http.StatusBadRequest, errcode.SSOFailed, "This sign-in was started in another browser. Start again here.", nil)
 	}
-	cfg, err := tenantauth.OidcConfigFor(ctx, s.d.Pool, st.Tenant)
+	cfg, err := sso.OidcConfigFor(ctx, s.d.Pool, st.Tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +167,7 @@ func (s *Service) OIDCCallback(ctx context.Context, req OIDCCallbackRequest, c C
 		return nil, errSSOUnavailable()
 	}
 	cfg.RedirectURI = s.oidcRedirectURI()
-	who, err := tenantauth.OidcVerifyCallback(ctx, cfg, secret, req.Code, st.Nonce, st.PKCEVerifier)
+	who, err := sso.OidcVerifyCallback(ctx, cfg, secret, req.Code, st.Nonce, st.PKCEVerifier)
 	if err != nil {
 		slog.Warn("sso callback verification failed", "tenant_id", st.Tenant, "error", err)
 		return nil, errSSOUnverified()
@@ -181,15 +181,15 @@ func (s *Service) OIDCCallback(ctx context.Context, req OIDCCallbackRequest, c C
 }
 
 // samlProvider loads the tenant's enabled SAML settings and builds the service provider for them.
-func (s *Service) samlProvider(ctx context.Context, tenant uuid.UUID) (*tenantauth.SamlConfig, *saml2.SAMLServiceProvider, error) {
-	cfg, err := tenantauth.SamlConfigFor(ctx, s.d.Pool, tenant)
+func (s *Service) samlProvider(ctx context.Context, tenant uuid.UUID) (*sso.SamlConfig, *saml2.SAMLServiceProvider, error) {
+	cfg, err := sso.SamlConfigFor(ctx, s.d.Pool, tenant)
 	if err != nil {
 		return nil, nil, err
 	}
 	if cfg == nil || s.d.PublicURL == "" {
 		return nil, nil, errSSONotSetUp()
 	}
-	sp, err := cfg.ServiceProvider(tenantauth.SamlURLsFor(s.d.PublicURL, tenant))
+	sp, err := cfg.ServiceProvider(sso.SamlURLsFor(s.d.PublicURL, tenant))
 	if err != nil {
 		slog.Error("saml: building the service provider", "tenant_id", tenant, "error", err)
 		return nil, nil, errSSOUnavailable()
@@ -203,7 +203,7 @@ func (s *Service) SAMLMetadata(ctx context.Context, tenant uuid.UUID) ([]byte, e
 	if _, _, err := s.samlProvider(ctx, tenant); err != nil {
 		return nil, err
 	}
-	return tenantauth.ServiceProviderMetadata(tenantauth.SamlURLsFor(s.d.PublicURL, tenant))
+	return sso.ServiceProviderMetadata(sso.SamlURLsFor(s.d.PublicURL, tenant))
 }
 
 // SAMLStart begins a SAML sign-in and returns where to send the browser. The relay state is our own
@@ -214,13 +214,13 @@ func (s *Service) SAMLStart(ctx context.Context, tenant uuid.UUID) (string, erro
 	if err != nil {
 		return "", err
 	}
-	relay := tenantauth.NewStateToken()
-	target, requestID, err := tenantauth.StartRedirect(sp, relay)
+	relay := sso.NewStateToken()
+	target, requestID, err := sso.StartRedirect(sp, relay)
 	if err != nil {
 		slog.Error("saml: building the sign-in request", "tenant_id", tenant, "error", err)
 		return "", errSSOUnreachable()
 	}
-	if err := tenantauth.CreateSSOState(ctx, s.d.Pool, tenant, relay, requestID, "", s.now()); err != nil {
+	if err := sso.CreateSSOState(ctx, s.d.Pool, tenant, relay, requestID, "", s.now()); err != nil {
 		return "", err
 	}
 	return target.String(), nil
@@ -233,7 +233,7 @@ func (s *Service) SAMLACS(ctx context.Context, tenant uuid.UUID, relayState, sam
 	if err != nil {
 		return nil, err
 	}
-	st, err := tenantauth.ConsumeSSOState(ctx, s.d.Pool, relayState, time.Now())
+	st, err := sso.ConsumeSSOState(ctx, s.d.Pool, relayState, time.Now())
 	if err != nil || st.Tenant != tenant {
 		return nil, serviceErr(http.StatusBadRequest, errcode.SSOFailed, "The sign-in is unknown, used or expired. Start again.", nil)
 	}
@@ -242,7 +242,7 @@ func (s *Service) SAMLACS(ctx context.Context, tenant uuid.UUID, relayState, sam
 		slog.Warn("saml response verification failed", "tenant_id", tenant, "error", err)
 		return nil, errSSOUnverified()
 	}
-	g, err := s.FinishSSO(ctx, tenant, SSOPolicy{Provider: tenantauth.ProviderSAML, DefaultRole: cfg.DefaultRole,
+	g, err := s.FinishSSO(ctx, tenant, SSOPolicy{Provider: sso.ProviderSAML, DefaultRole: cfg.DefaultRole,
 		Mapping: cfg.Mapping(), Allowed: cfg.EmailAllowed}, who, c)
 	if err != nil {
 		return nil, err

@@ -11,10 +11,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/metap-org/metap/pkg/accountmail"
-	"github.com/metap-org/metap/pkg/captcha"
+	"github.com/metap-org/metap/pkg/auth/captcha"
+	"github.com/metap-org/metap/pkg/auth/identity"
+	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
@@ -153,10 +153,10 @@ func (s *Service) DeliverSignup(ctx context.Context, req SignupRequest) {
 	// Development aid: with LOG_LEVEL=debug the link (and so the token) is in the log, so signup can be
 	// tried without a mail server. Never logged at info level or above.
 	slog.Debug("signup verification link (debug log only)", "email", strings.TrimSpace(req.Email), "link", link, "token", token)
-	if err := s.d.Mailer.SendSignupVerification(ctx, accountmail.SignupVerification{
+	if err := s.d.Mailer.SendSignupVerification(ctx, mail.SignupVerification{
 		To: strings.TrimSpace(req.Email), TenantName: strings.TrimSpace(req.TenantName),
 		Link: link, ExpiresAt: now.Add(identity.SignupTTL),
-	}); err != nil && !errors.Is(err, accountmail.ErrNotConfigured) {
+	}); err != nil && !errors.Is(err, mail.ErrNotConfigured) {
 		slog.Error("signup: sending email", standard.LogError, err)
 	}
 }

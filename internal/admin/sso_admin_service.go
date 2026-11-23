@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/auth/sso"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
 // AuditEntitySSO is the audit-trail entity SSO configuration changes are recorded under (the record is the tenant).
@@ -43,7 +43,7 @@ func (s *SsoAdminService) redirectURI() string {
 }
 
 func (s *SsoAdminService) view(ctx context.Context, tenant uuid.UUID) (*SsoConfig, error) {
-	cfg, enabled, err := tenantauth.StoredOidcConfig(ctx, s.d.cfg.Shared, tenant)
+	cfg, enabled, err := sso.StoredOidcConfig(ctx, s.d.cfg.Shared, tenant)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -110,7 +110,7 @@ func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *SetSsoConfigReq
 		return nil, err
 	}
 	domains, role, roleClaim, roleMap := access.domains, access.defaultRole, access.roleClaim, access.roleMap
-	if other, err := tenantauth.SamlConfigFor(ctx, s.d.cfg.Shared, c.tenant); err != nil {
+	if other, err := sso.SamlConfigFor(ctx, s.d.cfg.Shared, c.tenant); err != nil {
 		return nil, rpcError(ctx, err)
 	} else if other != nil && req.GetEnabled() {
 		return bad("SAML single sign-on is on for this workspace: turn it off before enabling OpenID Connect.")
@@ -130,23 +130,23 @@ func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *SetSsoConfigReq
 	if len(scopes) == 0 {
 		scopes = []string{"openid", "email", "profile"}
 	}
-	cfg := &tenantauth.OidcConfig{IssuerURL: issuer, ClientID: clientID, ClientSecretRef: ref, RedirectURI: s.redirectURI(),
+	cfg := &sso.OidcConfig{IssuerURL: issuer, ClientID: clientID, ClientSecretRef: ref, RedirectURI: s.redirectURI(),
 		Scopes: scopes, PostLoginRedirect: access.postLoginRedirect, EmailDomains: domains,
 		DefaultRole: role, Enforced: req.GetEnforced(), RoleClaim: roleClaim, RoleMap: roleMap}
 	// Catch a wrong issuer now, not at someone's first sign-in.
-	if _, _, _, _, err := tenantauth.OidcAuthorizeURL(ctx, cfg, secret); err != nil {
+	if _, _, _, _, err := sso.OidcAuthorizeURL(ctx, cfg, secret); err != nil {
 		return bad("The identity provider could not be reached or is not an OpenID Connect issuer.")
 	}
-	before, _, _ := tenantauth.StoredOidcConfig(ctx, s.d.cfg.Shared, c.tenant)
+	before, _, _ := sso.StoredOidcConfig(ctx, s.d.cfg.Shared, c.tenant)
 	if req.GetClientSecret() != "" {
 		if err := store.PutSecret(ctx, ref, req.GetClientSecret()); err != nil {
 			return nil, svcErr(ctx, http.StatusConflict, errcode.Forbidden, err.Error())
 		}
 	}
-	if err := tenantauth.SaveOidcConfig(ctx, s.d.cfg.Shared, c.tenant, cfg, req.GetEnabled()); err != nil {
+	if err := sso.SaveOidcConfig(ctx, s.d.cfg.Shared, c.tenant, cfg, req.GetEnabled()); err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	if err := tenantauth.SyncDomains(ctx, s.d.cfg.Shared, c.tenant, domains); err != nil {
+	if err := sso.SyncDomains(ctx, s.d.cfg.Shared, c.tenant, domains); err != nil {
 		return nil, rpcError(ctx, err)
 	}
 	diff := map[string][2]any{"issuerUrl": {nil, issuer}, "enabled": {nil, req.GetEnabled()}, "enforced": {nil, req.GetEnforced()}}
@@ -254,7 +254,7 @@ func (s *SsoAdminService) DeleteSsoConfig(ctx context.Context, _ *Empty) (*Empty
 		return nil, err
 	}
 	// Removing an enforced configuration is how the owner (or an admin) restores password sign-in.
-	if err := tenantauth.DeleteOidcConfig(ctx, s.d.cfg.Shared, c.tenant); err != nil {
+	if err := sso.DeleteOidcConfig(ctx, s.d.cfg.Shared, c.tenant); err != nil {
 		return nil, rpcError(ctx, err)
 	}
 	_ = s.d.cfg.Router.Secrets().DeleteSecret(ctx, secrets.TenantSecretRef(c.tenant, ssoSecretKey))
@@ -270,11 +270,11 @@ func (s *SsoAdminService) VerifySsoDomain(ctx context.Context, req *VerifySsoDom
 		return nil, err
 	}
 	domain := strings.ToLower(strings.TrimSpace(req.GetDomain()))
-	domains, err := tenantauth.Domains(ctx, s.d.cfg.Shared, c.tenant)
+	domains, err := sso.Domains(ctx, s.d.cfg.Shared, c.tenant)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	var found *tenantauth.SSODomain
+	var found *sso.SSODomain
 	for i := range domains {
 		if domains[i].Domain == domain {
 			found = &domains[i]
@@ -287,9 +287,9 @@ func (s *SsoAdminService) VerifySsoDomain(ctx context.Context, req *VerifySsoDom
 	if lookup == nil {
 		lookup = net.DefaultResolver.LookupTXT
 	}
-	ok, err := tenantauth.CheckDomain(ctx, s.d.cfg.Shared, lookup, c.tenant, *found, s.d.now())
+	ok, err := sso.CheckDomain(ctx, s.d.cfg.Shared, lookup, c.tenant, *found, s.d.now())
 	switch {
-	case errors.Is(err, tenantauth.ErrDomainClaimed):
+	case errors.Is(err, sso.ErrDomainClaimed):
 		return nil, svcErr(ctx, http.StatusConflict, errcode.UniqueViolation, "Another workspace has already verified this domain.")
 	case err != nil:
 		return nil, rpcError(ctx, err)
@@ -303,7 +303,7 @@ func (s *SsoAdminService) VerifySsoDomain(ctx context.Context, req *VerifySsoDom
 
 // domainsView lists the tenant's domains with what each still needs (shared by both protocols).
 func (s *SsoAdminService) domainsView(ctx context.Context, tenant uuid.UUID) ([]*SsoDomain, error) {
-	domains, err := tenantauth.Domains(ctx, s.d.cfg.Shared, tenant)
+	domains, err := sso.Domains(ctx, s.d.cfg.Shared, tenant)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -319,9 +319,9 @@ func (s *SsoAdminService) domainsView(ctx context.Context, tenant uuid.UUID) ([]
 }
 
 func (s *SsoAdminService) samlView(ctx context.Context, tenant uuid.UUID) (*SamlConfig, error) {
-	urls := tenantauth.SamlURLsFor(s.d.cfg.PublicURL, tenant)
+	urls := sso.SamlURLsFor(s.d.cfg.PublicURL, tenant)
 	out := &SamlConfig{EntityId: urls.EntityID, AcsUrl: urls.ACS, MetadataUrl: urls.Metadata, RoleMap: map[string]string{}, EmailDomains: []string{}}
-	cfg, enabled, err := tenantauth.StoredSamlConfig(ctx, s.d.cfg.Shared, tenant)
+	cfg, enabled, err := sso.StoredSamlConfig(ctx, s.d.cfg.Shared, tenant)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -335,7 +335,7 @@ func (s *SsoAdminService) samlView(ctx context.Context, tenant uuid.UUID) (*Saml
 			out.EmailDomains = cfg.EmailDomains
 		}
 		out.DefaultRole, out.Enforced, out.PostLoginRedirect = cfg.DefaultRole, cfg.Enforced, cfg.PostLoginRedirect
-		if md, err := tenantauth.ParseIdpMetadata([]byte(cfg.IdpMetadataXML)); err == nil {
+		if md, err := sso.ParseIdpMetadata([]byte(cfg.IdpMetadataXML)); err == nil {
 			out.IdpEntityId = md.EntityID
 			out.IdpSsoUrl = md.RedirectURL
 		}
@@ -371,26 +371,26 @@ func (s *SsoAdminService) SetSamlConfig(ctx context.Context, req *SetSamlConfigR
 	if err != nil {
 		return nil, err
 	}
-	if other, err := tenantauth.OidcConfigFor(ctx, s.d.cfg.Shared, c.tenant); err != nil {
+	if other, err := sso.OidcConfigFor(ctx, s.d.cfg.Shared, c.tenant); err != nil {
 		return nil, rpcError(ctx, err)
 	} else if other != nil && req.Enabled {
 		return bad("OpenID Connect single sign-on is on for this workspace: turn it off before enabling SAML.")
 	}
 
-	before, _, _ := tenantauth.StoredSamlConfig(ctx, s.d.cfg.Shared, c.tenant)
-	cfg := &tenantauth.SamlConfig{EmailAttribute: strings.TrimSpace(req.EmailAttribute), RoleAttribute: access.roleClaim, RoleMap: access.roleMap,
+	before, _, _ := sso.StoredSamlConfig(ctx, s.d.cfg.Shared, c.tenant)
+	cfg := &sso.SamlConfig{EmailAttribute: strings.TrimSpace(req.EmailAttribute), RoleAttribute: access.roleClaim, RoleMap: access.roleMap,
 		EmailDomains: access.domains, DefaultRole: access.defaultRole, Enforced: req.Enforced, PostLoginRedirect: access.postLoginRedirect}
 	switch {
 	case strings.TrimSpace(req.IdpMetadataXml) != "":
 		if len(req.IdpMetadataXml) > 1<<20 {
 			return bad("The metadata is larger than 1 MB.")
 		}
-		if _, err := tenantauth.ParseIdpMetadata([]byte(req.IdpMetadataXml)); err != nil {
+		if _, err := sso.ParseIdpMetadata([]byte(req.IdpMetadataXml)); err != nil {
 			return bad("`idpMetadataXml` is not usable: " + err.Error() + ".")
 		}
 		cfg.IdpMetadataXML = req.IdpMetadataXml
 	case strings.TrimSpace(req.IdpMetadataUrl) != "":
-		xml, err := tenantauth.FetchIdpMetadata(ctx, s.d.cfg.HTTPClient, strings.TrimSpace(req.IdpMetadataUrl))
+		xml, err := sso.FetchIdpMetadata(ctx, s.d.cfg.HTTPClient, strings.TrimSpace(req.IdpMetadataUrl))
 		if err != nil {
 			return bad("The identity provider's metadata could not be used: " + err.Error() + ".")
 		}
@@ -400,10 +400,10 @@ func (s *SsoAdminService) SetSamlConfig(ctx context.Context, req *SetSamlConfigR
 	default:
 		return bad("Give the identity provider's metadata, as a URL or as XML.")
 	}
-	if err := tenantauth.SaveSamlConfig(ctx, s.d.cfg.Shared, c.tenant, cfg, req.Enabled); err != nil {
+	if err := sso.SaveSamlConfig(ctx, s.d.cfg.Shared, c.tenant, cfg, req.Enabled); err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	if err := tenantauth.SyncDomains(ctx, s.d.cfg.Shared, c.tenant, access.domains); err != nil {
+	if err := sso.SyncDomains(ctx, s.d.cfg.Shared, c.tenant, access.domains); err != nil {
 		return nil, rpcError(ctx, err)
 	}
 	diff := map[string][2]any{"saml": {nil, "configured"}, "enabled": {nil, req.Enabled}, "enforced": {nil, req.Enforced}}
@@ -420,7 +420,7 @@ func (s *SsoAdminService) DeleteSamlConfig(ctx context.Context, _ *Empty) (*Empt
 		return nil, err
 	}
 	// Removing an enforced configuration is how the owner (or an admin) restores password sign-in.
-	if err := tenantauth.DeleteSamlConfig(ctx, s.d.cfg.Shared, c.tenant); err != nil {
+	if err := sso.DeleteSamlConfig(ctx, s.d.cfg.Shared, c.tenant); err != nil {
 		return nil, rpcError(ctx, err)
 	}
 	s.d.recordFor(ctx, c, AuditEntitySSO, c.tenant, audit.ActionDelete, map[string][2]any{"saml": {"configured", nil}})

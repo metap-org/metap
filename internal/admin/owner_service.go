@@ -11,10 +11,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/auth/identity"
+	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/crud"
-	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/tenancy"
@@ -227,7 +227,7 @@ func (s *OwnerService) tenantName(ctx context.Context, tenant uuid.UUID) string 
 }
 
 // notifyAdmins emails every active admin of the tenant (best effort: the recovery stands either way).
-func (s *OwnerService) notifyAdmins(ctx context.Context, tenant uuid.UUID, n accountmail.OwnerRecoveryNotice) {
+func (s *OwnerService) notifyAdmins(ctx context.Context, tenant uuid.UUID, n mail.OwnerRecoveryNotice) {
 	if s.d.cfg.Mailer == nil {
 		return
 	}
@@ -270,7 +270,7 @@ func (s *OwnerService) RequestOwnerRecovery(ctx context.Context, req *RequestOwn
 	}
 	s.d.recordFor(ctx, caller{rc: c.rc, tenant: tenant, self: c.self}, AuditEntityOwner, tenant, audit.ActionUpdate,
 		map[string][2]any{"ownerRecovery": {nil, "requested for " + target.Email + " (effective " + r.EffectiveAt.UTC().Format(time.RFC3339) + ")"}})
-	s.notifyAdmins(ctx, tenant, accountmail.OwnerRecoveryNotice{NewOwner: target.Email, RequestedBy: person.Email,
+	s.notifyAdmins(ctx, tenant, mail.OwnerRecoveryNotice{NewOwner: target.Email, RequestedBy: person.Email,
 		Reason: r.Reason, EffectiveAt: r.EffectiveAt})
 	return toPBRecovery(r), nil
 }
@@ -312,7 +312,7 @@ func (s *OwnerService) CompleteOwnerRecovery(ctx context.Context, req *TenantIdO
 	}
 	s.d.recordFor(ctx, caller{rc: c.rc, tenant: tenant, self: c.self}, AuditEntityOwner, tenant, audit.ActionUpdate,
 		map[string][2]any{"owner": {before.String(), target.ID.String()}})
-	s.notifyAdmins(ctx, tenant, accountmail.OwnerRecoveryNotice{NewOwner: target.Email, RequestedBy: done.RequestedByEmail,
+	s.notifyAdmins(ctx, tenant, mail.OwnerRecoveryNotice{NewOwner: target.Email, RequestedBy: done.RequestedByEmail,
 		Reason: done.Reason, EffectiveAt: done.EffectiveAt, Completed: true})
 	return toPBRecovery(done), nil
 }
@@ -367,7 +367,7 @@ func (s *OwnerService) RequestWorkspaceDeletion(ctx context.Context, req *Reques
 		}
 		if admins, err := s.d.activeAdmins(ctx, c.tenant); err == nil {
 			for _, a := range admins {
-				if s.d.cfg.Mailer.SendWorkspaceDeletionNotice(ctx, accountmail.WorkspaceDeletionNotice{
+				if s.d.cfg.Mailer.SendWorkspaceDeletionNotice(ctx, mail.WorkspaceDeletionNotice{
 					To: a.Email, TenantName: name, RequestedBy: requestedBy, EffectiveAt: effective, CancelLink: link,
 				}) == nil {
 					sent++

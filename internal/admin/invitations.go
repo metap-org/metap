@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
+	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
 )
@@ -98,11 +98,11 @@ func (s *UserAdminService) issueInvitation(ctx context.Context, c caller, id uui
 	}
 	mailer := s.d.cfg.Mailer
 	link := mailer.Link("/accept-invite", token)
-	sendErr := mailer.SendInvitation(ctx, accountmail.Invitation{
+	sendErr := mailer.SendInvitation(ctx, mail.Invitation{
 		To: m.Email, TenantName: inv.TenantName, InviterName: s.d.displayNameOf(ctx, c),
 		Link: link, ExpiresAt: inv.ExpiresAt, NewAccount: newAccount,
 	})
-	if sendErr != nil && !errors.Is(sendErr, accountmail.ErrNotConfigured) {
+	if sendErr != nil && !errors.Is(sendErr, mail.ErrNotConfigured) {
 		slog.Warn("invitation email not sent", "member_id", m.ID, standard.LogError, sendErr)
 	}
 	u, err := s.d.user(ctx, c.tenant, m.ID)

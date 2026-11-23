@@ -7,8 +7,8 @@ import (
 
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/runtime"
 )

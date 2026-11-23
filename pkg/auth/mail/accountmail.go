@@ -4,7 +4,7 @@
 // Sent synchronously from the request that triggers it, with a short timeout: an invitation the
 // relay refused is still created, and the inviting admin gets the link back to pass on by hand.
 // Production points SMTP_* at a real relay; dev points it at waap's devtools/mail-mock.
-package accountmail
+package mail
 
 import (
 	"context"

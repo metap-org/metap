@@ -18,7 +18,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"github.com/metap-org/metap/pkg/captcha"
+	"github.com/metap-org/metap/pkg/auth/captcha"
 	"github.com/metap-org/metap/pkg/permission/policypg"
 	"log/slog"
 	"net"
@@ -31,8 +31,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/metap-org/metap/internal/admin"
-	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/db"
@@ -199,7 +199,7 @@ func Run(ctx context.Context, opts Options) error {
 	state.PublicAppURL = appCfg.PublicAppURL
 	state.Crud = crud.WithAudit(state.Router, state.Metadata, state.Permissions, auditStore)
 	state.CookieSecure = false
-	state.Mailer = accountmail.New(accountmail.Config{
+	state.Mailer = mail.New(mail.Config{
 		Host: appCfg.SMTPHost, Port: appCfg.SMTPPort, User: appCfg.SMTPUser, Password: appCfg.SMTPPassword,
 		From: appCfg.SMTPFrom, PublicURL: appCfg.PublicAppURL,
 	})

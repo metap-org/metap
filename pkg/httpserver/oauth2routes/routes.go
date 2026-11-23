@@ -27,7 +27,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"html"
 	"net/http"
 	"strings"
@@ -37,10 +37,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
+	"github.com/metap-org/metap/pkg/auth/oauthserver"
+	"github.com/metap-org/metap/pkg/auth/sso"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/oauthserver"
-	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
 // oauthAccessTokenTTLSeconds: no config key for this yet (oauthserver's own doc comment flags it
@@ -662,7 +662,7 @@ func createOAuthClientAdmin(w http.ResponseWriter, r *http.Request, state *https
 	isConfidential := body.IsConfidential == nil || *body.IsConfidential
 
 	externalSubject := "oauth-client-" + uuid.New().String()
-	serviceUser, err := tenantauth.JitProvisionExternalUser(r.Context(), state.Pool, tenantID, "oauth2_client_credentials",
+	serviceUser, err := sso.JitProvisionExternalUser(r.Context(), state.Pool, tenantID, "oauth2_client_credentials",
 		externalSubject+"@service.internal", externalSubject)
 	if err != nil {
 		httpserver.WriteInternalError(w, err)

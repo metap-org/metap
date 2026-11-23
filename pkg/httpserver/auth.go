@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/metap-org/metap/internal/authctx"
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
@@ -18,7 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/tenancy"

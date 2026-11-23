@@ -5,7 +5,7 @@ package httpserver_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"io"
 	"net/http"
 	"strings"
@@ -17,7 +17,7 @@ import (
 
 	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/testkit"
 )

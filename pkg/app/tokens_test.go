@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/jwks"
 )
 
 func rsaFiles(t *testing.T) (privPath, pubPath string) {

@@ -1,4 +1,4 @@
-package accountmail
+package mail
 
 import (
 	"context"

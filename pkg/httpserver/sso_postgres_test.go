@@ -26,9 +26,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/metap-org/metap/pkg/auth/identity"
+	"github.com/metap-org/metap/pkg/auth/sso"
 	"github.com/metap-org/metap/pkg/httpserver"
-	"github.com/metap-org/metap/pkg/identity"
-	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
 // mockIdP is a minimal OpenID Connect provider: discovery, JWKS, an /authorize that bounces the
@@ -185,10 +185,10 @@ func TestSSOSignInProvisioningAndEnforcement(t *testing.T) {
 	store := state.Router.Secrets()
 	ref := secrets.TenantSecretRef(tenant, "sso.clientSecret")
 	require.NoError(t, store.PutSecret(ctx, ref, "shh"))
-	cfg := &tenantauth.OidcConfig{IssuerURL: idp.srv.URL, ClientID: "client-1", ClientSecretRef: ref, Scopes: []string{"openid", "email"},
+	cfg := &sso.OidcConfig{IssuerURL: idp.srv.URL, ClientID: "client-1", ClientSecretRef: ref, Scopes: []string{"openid", "email"},
 		EmailDomains: []string{"acme.io"}, DefaultRole: "viewer", PostLoginRedirect: "PORTAL/home"}
 	cfg.PostLoginRedirect = base + "/home"
-	require.NoError(t, tenantauth.SaveOidcConfig(ctx, pool, tenant, cfg, true))
+	require.NoError(t, sso.SaveOidcConfig(ctx, pool, tenant, cfg, true))
 	verifyTestDomain(t, pool, tenant, "acme.io")
 
 	// A password member (the owner) and discovery by email domain.
@@ -264,7 +264,7 @@ func TestSSOSignInProvisioningAndEnforcement(t *testing.T) {
 
 	// Enforced: passwords stop working for everyone but the owner.
 	cfg.Enforced = true
-	require.NoError(t, tenantauth.SaveOidcConfig(ctx, pool, tenant, cfg, true))
+	require.NoError(t, sso.SaveOidcConfig(ctx, pool, tenant, cfg, true))
 	login := func(email, password string) *http.Response {
 		return doRequest(t, "POST", base+"/auth/login", "", map[string]any{"email": email, "password": password, "tenantId": tenant.String()})
 	}
@@ -286,7 +286,7 @@ func TestSSOSignInProvisioningAndEnforcement(t *testing.T) {
 	cb.Body.Close()
 
 	// No configuration, no SSO.
-	require.NoError(t, tenantauth.DeleteOidcConfig(ctx, pool, tenant))
+	require.NoError(t, sso.DeleteOidcConfig(ctx, pool, tenant))
 	nope := get(t, base+"/auth/sso/start?tenant="+tenant.String())
 	assert.Equal(t, 404, nope.StatusCode)
 	nope.Body.Close()
@@ -306,7 +306,7 @@ func startTestServerWithPublicURL(t *testing.T, state *httpserver.AppState) stri
 }
 
 // setupSSOTenant registers an OIDC config for a new tenant against idp and returns its pieces.
-func setupSSOTenant(t *testing.T, idp *mockIdP, mutate func(*tenantauth.OidcConfig)) (state *httpserver.AppState, base string, tenant uuid.UUID, cfg *tenantauth.OidcConfig, pool interface {
+func setupSSOTenant(t *testing.T, idp *mockIdP, mutate func(*sso.OidcConfig)) (state *httpserver.AppState, base string, tenant uuid.UUID, cfg *sso.OidcConfig, pool interface {
 	identity.DBTX
 }) {
 	t.Helper()
@@ -316,12 +316,12 @@ func setupSSOTenant(t *testing.T, idp *mockIdP, mutate func(*tenantauth.OidcConf
 	base = startTestServerWithPublicURL(t, state)
 	ref := secrets.TenantSecretRef(tenant, "sso.clientSecret")
 	require.NoError(t, state.Router.Secrets().PutSecret(context.Background(), ref, "shh"))
-	cfg = &tenantauth.OidcConfig{IssuerURL: idp.srv.URL, ClientID: "client-1", ClientSecretRef: ref, Scopes: []string{"openid", "email"},
+	cfg = &sso.OidcConfig{IssuerURL: idp.srv.URL, ClientID: "client-1", ClientSecretRef: ref, Scopes: []string{"openid", "email"},
 		EmailDomains: []string{"acme.io"}, PostLoginRedirect: base + "/home"}
 	if mutate != nil {
 		mutate(cfg)
 	}
-	require.NoError(t, tenantauth.SaveOidcConfig(context.Background(), p, tenant, cfg, true))
+	require.NoError(t, sso.SaveOidcConfig(context.Background(), p, tenant, cfg, true))
 	verifyTestDomain(t, p, tenant, "acme.io")
 	return state, base, tenant, cfg, p
 }
@@ -330,8 +330,8 @@ func setupSSOTenant(t *testing.T, idp *mockIdP, mutate func(*tenantauth.OidcConf
 func verifyTestDomain(t *testing.T, pool identity.DBTX, tenant uuid.UUID, domain string) {
 	t.Helper()
 	ctx := context.Background()
-	require.NoError(t, tenantauth.SyncDomains(ctx, pool, tenant, []string{domain}))
-	ok, err := tenantauth.MarkDomainVerified(ctx, pool, tenant, domain, time.Now())
+	require.NoError(t, sso.SyncDomains(ctx, pool, tenant, []string{domain}))
+	ok, err := sso.MarkDomainVerified(ctx, pool, tenant, domain, time.Now())
 	require.NoError(t, err)
 	require.True(t, ok)
 	t.Cleanup(func() {
@@ -400,7 +400,7 @@ func TestSSORefusesAnAddressTheProviderDidNotVerify(t *testing.T) {
 // The provider's group claim decides the roles named in roleMap at every sign-in, and nothing else.
 func TestSSOMapsGroupsToRoles(t *testing.T) {
 	idp := startMockIdP(t)
-	_, base, tenant, _, pool := setupSSOTenant(t, idp, func(c *tenantauth.OidcConfig) {
+	_, base, tenant, _, pool := setupSSOTenant(t, idp, func(c *sso.OidcConfig) {
 		c.DefaultRole = "viewer"
 		c.RoleClaim = "groups"
 		c.RoleMap = map[string]string{"sec-team": "security_analyst", "ops": "operator"}
@@ -450,7 +450,7 @@ func TestAcceptingAnInvitationDoesNotBypassEnforcedSSO(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, identity.SetOwner(ctx, pool, tenant, owner.ID))
 	cfg.Enforced = true
-	require.NoError(t, tenantauth.SaveOidcConfig(ctx, pool, tenant, cfg, true))
+	require.NoError(t, sso.SaveOidcConfig(ctx, pool, tenant, cfg, true))
 
 	email := uuid.NewString() + "@acme.io"
 	invited, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: email, Status: identity.StatusInvited})
@@ -487,7 +487,7 @@ func TestSSODomainMustBeVerified(t *testing.T) {
 	_, err = identity.MemberByEmail(ctx, pool, tenant, "newbie@acme.io")
 	assert.ErrorIs(t, err, identity.ErrNotFound)
 
-	ok, err := tenantauth.MarkDomainVerified(ctx, pool, tenant, "acme.io", time.Now())
+	ok, err := sso.MarkDomainVerified(ctx, pool, tenant, "acme.io", time.Now())
 	require.NoError(t, err)
 	require.True(t, ok)
 	res = doRequest(t, "GET", base+"/auth/sso/discover?email=someone@acme.io", "", nil)

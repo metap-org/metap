@@ -17,7 +17,7 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 	"golang.org/x/sync/singleflight"
 
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"

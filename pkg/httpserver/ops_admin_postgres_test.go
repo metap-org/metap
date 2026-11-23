@@ -4,7 +4,7 @@ package httpserver_test
 
 import (
 	"context"
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"testing"
 
 	"github.com/google/uuid"
@@ -13,7 +13,7 @@ import (
 
 	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/testkit"
 )
 

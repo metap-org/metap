@@ -4,7 +4,7 @@ package admin
 
 import (
 	"context"
-	"github.com/metap-org/metap/pkg/jwks"
+	"github.com/metap-org/metap/pkg/auth/jwks"
 	"net/http"
 	"testing"
 	"time"
@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
 )
 
 func TestSessionListAndRevocation(t *testing.T) {

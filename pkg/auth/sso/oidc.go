@@ -6,7 +6,7 @@
 // No discovery-result caching yet — every login/callback re-fetches the IdP's provider metadata
 // fresh. Correct first, simpler to test; worth revisiting once there's a real tenant hitting this
 // in practice.
-package tenantauth
+package sso
 
 import (
 	"context"

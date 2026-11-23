@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
-	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"os"

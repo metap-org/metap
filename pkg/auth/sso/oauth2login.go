@@ -7,7 +7,7 @@
 // Reuses the same VerifiedIdentity{Email, ExternalSubject} shape oidc.go produces, so a callback
 // handler and FindExternalUser/JitProvisionExternalUser serve both providers without a second code
 // path.
-package tenantauth
+package sso
 
 import (
 	"context"

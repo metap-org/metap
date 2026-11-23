@@ -13,10 +13,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/auth/identity"
+	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/crud"
-	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
@@ -216,11 +216,11 @@ func (s *TenantAdminService) CreateTenant(ctx context.Context, req *CreateTenant
 
 	mailer := s.d.cfg.Mailer
 	link := mailer.Link("/accept-invite", token)
-	sendErr := mailer.SendInvitation(ctx, accountmail.Invitation{
+	sendErr := mailer.SendInvitation(ctx, mail.Invitation{
 		To: m.Email, TenantName: name, InviterName: s.d.displayNameOf(ctx, c),
 		Link: link, ExpiresAt: inv.ExpiresAt, NewAccount: newAccount,
 	})
-	if sendErr != nil && !errors.Is(sendErr, accountmail.ErrNotConfigured) {
+	if sendErr != nil && !errors.Is(sendErr, mail.ErrNotConfigured) {
 		slog.Warn("tenant admin invitation email not sent", "tenant_id", id, standard.LogError, sendErr)
 	}
 	s.record(ctx, c, id, audit.ActionCreate, map[string][2]any{

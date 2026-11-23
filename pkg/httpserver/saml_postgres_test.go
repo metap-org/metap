@@ -26,8 +26,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/identity"
-	"github.com/metap-org/metap/pkg/tenantauth"
+	"github.com/metap-org/metap/pkg/auth/identity"
+	"github.com/metap-org/metap/pkg/auth/sso"
 )
 
 // testSAMLIdP is a real SAML identity provider (crewjam's), signing real assertions with its own
@@ -167,18 +167,18 @@ func postACS(t *testing.T, acsURL string, form url.Values) *http.Response {
 }
 
 // setupSAMLTenant registers a tenant against idp (which learns the service provider's metadata URL).
-func setupSAMLTenant(t *testing.T, idp *testSAMLIdP, mutate func(*tenantauth.SamlConfig)) (base string, tenant uuid.UUID, cfg *tenantauth.SamlConfig, pool identity.DBTX) {
+func setupSAMLTenant(t *testing.T, idp *testSAMLIdP, mutate func(*sso.SamlConfig)) (base string, tenant uuid.UUID, cfg *sso.SamlConfig, pool identity.DBTX) {
 	t.Helper()
 	p := httpTestPool(t)
 	tenant = uuid.New()
 	state, _ := newTestAppState(t, p, httpTestEntity())
 	base = startTestServerWithPublicURL(t, state)
 	idp.spMetadataURL = base + "/auth/saml/" + tenant.String() + "/metadata"
-	cfg = &tenantauth.SamlConfig{IdpMetadataXML: idp.metadataXML(t), EmailDomains: []string{"acme.io"}, PostLoginRedirect: base + "/home"}
+	cfg = &sso.SamlConfig{IdpMetadataXML: idp.metadataXML(t), EmailDomains: []string{"acme.io"}, PostLoginRedirect: base + "/home"}
 	if mutate != nil {
 		mutate(cfg)
 	}
-	require.NoError(t, tenantauth.SaveSamlConfig(context.Background(), p, tenant, cfg, true))
+	require.NoError(t, sso.SaveSamlConfig(context.Background(), p, tenant, cfg, true))
 	verifyTestDomain(t, p, tenant, "acme.io")
 	t.Cleanup(func() {
 		_, _ = p.Exec(context.Background(), `DELETE FROM metadata.tenant_auth_configs WHERE tenant_id = $1`, tenant)
@@ -199,7 +199,7 @@ func sessionCookie(res *http.Response) *http.Cookie {
 // with the default role plus the roles their groups map to, found by subject afterwards.
 func TestSAMLSignInProvisionsAndMapsRoles(t *testing.T) {
 	idp := startSAMLIdP(t, "")
-	base, tenant, _, pool := setupSAMLTenant(t, idp, func(c *tenantauth.SamlConfig) {
+	base, tenant, _, pool := setupSAMLTenant(t, idp, func(c *sso.SamlConfig) {
 		c.DefaultRole = "viewer"
 		c.RoleAttribute = "groups"
 		c.RoleMap = map[string]string{"sec-team": "security_analyst"}
@@ -302,7 +302,7 @@ func TestSAMLDomainProofAndDiscoveryAndEnforcement(t *testing.T) {
 	assert.Equal(t, 403, cb.StatusCode, "no member is created under an unproved domain")
 	cb.Body.Close()
 
-	ok, err := tenantauth.MarkDomainVerified(ctx, pool, tenant, "acme.io", time.Now())
+	ok, err := sso.MarkDomainVerified(ctx, pool, tenant, "acme.io", time.Now())
 	require.NoError(t, err)
 	require.True(t, ok)
 	res = doRequest(t, "GET", base+"/auth/sso/discover?email=x@acme.io", "", nil)
@@ -319,7 +319,7 @@ func TestSAMLDomainProofAndDiscoveryAndEnforcement(t *testing.T) {
 	require.NoError(t, err)
 	_ = other
 	cfg.Enforced = true
-	require.NoError(t, tenantauth.SaveSamlConfig(ctx, pool, tenant, cfg, true))
+	require.NoError(t, sso.SaveSamlConfig(ctx, pool, tenant, cfg, true))
 	login := func(email, password string) *http.Response {
 		return doRequest(t, "POST", base+"/auth/login", "", map[string]any{"email": email, "password": password, "tenantId": tenant.String()})
 	}
