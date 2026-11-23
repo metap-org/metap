@@ -3,7 +3,7 @@
 // housekeeping process. Rows never fail to insert without it (the default partition catches
 // them); this only keeps each month in its own partition so old months can be detached and
 // archived as a unit. Nothing here deletes audit history.
-package cronscheduler
+package scheduler
 
 import (
 	"context"

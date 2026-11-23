@@ -1,6 +1,6 @@
 // The consume-and-run loop (RunExecutor), one firing's idempotency-checked execution (Execute), and
 // the per-TargetType router (dispatch) that calls into the Run*/RunSteps functions.
-package cronscheduler
+package scheduler
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/metap-org/metap/pkg/cron"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/jobs/cron"
 	"github.com/metap-org/metap/pkg/kit/standard"
 )
 

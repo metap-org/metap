@@ -1,6 +1,6 @@
 //go:build integration
 
-package cronscheduler
+package scheduler
 
 import (
 	"context"

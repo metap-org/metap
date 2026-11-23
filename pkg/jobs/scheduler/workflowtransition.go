@@ -2,7 +2,7 @@
 // CRUD via the configured crud.RecordBackend (normally a recordclient.Client on the owning app), reusing its
 // permission/validation/audit rather than this binary linking metap-crud/metap-metadata directly,
 // which would give an ops binary business-entity knowledge.
-package cronscheduler
+package scheduler
 
 import (
 	"context"

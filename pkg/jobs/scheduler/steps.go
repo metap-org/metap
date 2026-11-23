@@ -1,7 +1,7 @@
 // TargetType "steps" chain execution — running a fresh chain (RunSteps), continuing one that paused
 // at a wait_event step (ResumeSteps, called by trigger.go), and the shared step-range loop
 // (runStepRange) both go through.
-package cronscheduler
+package scheduler
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/metap-org/metap/pkg/cron"
+	"github.com/metap-org/metap/pkg/jobs/cron"
 	"github.com/metap-org/metap/pkg/kit/standard"
 )
 

@@ -3,7 +3,7 @@
 // or "on_record_event" for a <entity>.record.{created,updated,deleted} event. A routing key that
 // matches neither shape (e.g. cron.job.due, meant for RunExecutor's own queue) is acked silently —
 // receiving it is expected under a catch-all subscription, not a data error worth a dead-letter.
-package cronscheduler
+package scheduler
 
 import (
 	"context"
@@ -14,8 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/metap-org/metap/pkg/cron"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/jobs/cron"
 	"github.com/metap-org/metap/pkg/kit/standard"
 )
 

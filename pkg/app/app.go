@@ -33,7 +33,6 @@ import (
 	"github.com/metap-org/metap/pkg/adminapi"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/control"
-	"github.com/metap-org/metap/pkg/cronscheduler"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/httpserver"
 	"github.com/metap-org/metap/pkg/httpserver/attachmentroutes"
@@ -41,6 +40,7 @@ import (
 	"github.com/metap-org/metap/pkg/httpserver/dashboardroutes"
 	"github.com/metap-org/metap/pkg/httpserver/oauth2routes"
 	"github.com/metap-org/metap/pkg/infra"
+	"github.com/metap-org/metap/pkg/jobs/scheduler"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/shutdown"
@@ -289,7 +289,7 @@ func metadataHTTPClient() *http.Client {
 		if err != nil {
 			return err
 		}
-		if ip := net.ParseIP(host); ip == nil || cronscheduler.IsBlockedIP(ip) {
+		if ip := net.ParseIP(host); ip == nil || scheduler.IsBlockedIP(ip) {
 			return fmt.Errorf("metadata fetches may not connect to %s", host)
 		}
 		return nil

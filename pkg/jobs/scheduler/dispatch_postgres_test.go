@@ -1,6 +1,6 @@
 //go:build integration
 
-package cronscheduler
+package scheduler
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/metap-org/metap/pkg/cron"
+	"github.com/metap-org/metap/pkg/jobs/cron"
 )
 
 func testPool(t *testing.T) *pgxpool.Pool {

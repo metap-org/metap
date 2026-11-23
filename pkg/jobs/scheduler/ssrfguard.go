@@ -15,7 +15,7 @@
 //     webhooks an internal service.
 //
 // Known residual limitation — DNS rebinding.
-package cronscheduler
+package scheduler
 
 import (
 	"context"
