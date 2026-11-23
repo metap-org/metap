@@ -326,21 +326,25 @@ func resolveOwnEmail(r *http.Request, state *AppState, rc *permission.RequestCon
 	return user.Email
 }
 
-func mountAuth(r *router.Router, state *AppState) {
-	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
-	}
-	// The routes someone guessing credentials, codes or tokens would hammer share one stricter
-	// per-IP bucket (a guesser cannot multiply the allowance by spreading over routes). The
-	// account lockout counts per identity; this counts per source, so one address cannot walk
-	// through many identities or many reset tokens either.
+// authGuard is the stricter per-IP bucket the routes someone guessing credentials, codes or tokens
+// would hammer share (a guesser cannot multiply the allowance by spreading over routes). The account
+// lockout counts per identity; this counts per source, so one address cannot walk through many
+// identities or many reset tokens either. One instance, so every route that uses it shares it.
+func authGuard(state *AppState) router.Middleware {
 	cfg := state.Config.Current()
-	acc := AccessGroups(r, state)
-	guarded := r.Labelled(LabelPublic, runtime.RateLimitBehind(
+	return runtime.RateLimitBehind(
 		time.Duration(cfg.GetU64(config.HTTPAuthRateLimitPerMs))*time.Millisecond,
 		int(cfg.GetU64(config.HTTPAuthRateLimitBurst)),
 		state.TrustedProxies,
-	))
+	)
+}
+
+func mountAuth(r *router.Router, state *AppState, guard router.Middleware) {
+	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
+	}
+	acc := AccessGroups(r, state)
+	guarded := r.Labelled(LabelPublic, guard)
 	guarded.Post("/auth/login", wrap(login))
 	acc.Public.Get("/auth/signup/status", wrap(signupStatus))
 	guarded.Post("/auth/signup", wrap(signup))

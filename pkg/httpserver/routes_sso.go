@@ -201,13 +201,17 @@ func finishSSO(w http.ResponseWriter, r *http.Request, state *AppState, tenant u
 	redirectTo(w, dest)
 }
 
-func mountSSO(r *router.Router, state *AppState) {
+// mountSSO: the discovery and the two sign-in starts share the credential-guessing bucket (each start
+// writes a state row and, for OIDC, calls the tenant's identity provider); the callbacks and the
+// SAML metadata are answers to a browser or to the IdP and stay on the general bucket.
+func mountSSO(r *router.Router, state *AppState, guard router.Middleware) {
 	acc := AccessGroups(r, state)
+	guarded := r.Labelled(LabelPublic, guard)
 	acc.Public.Get("/auth/saml/{tenant}/metadata", func(w http.ResponseWriter, r *http.Request) { samlMetadata(w, r, state) })
-	acc.Public.Get("/auth/saml/{tenant}/start", func(w http.ResponseWriter, r *http.Request) { samlStart(w, r, state) })
+	guarded.Get("/auth/saml/{tenant}/start", func(w http.ResponseWriter, r *http.Request) { samlStart(w, r, state) })
 	acc.Public.Post("/auth/saml/{tenant}/acs", func(w http.ResponseWriter, r *http.Request) { samlACS(w, r, state) })
-	acc.Public.Get("/auth/sso/discover", func(w http.ResponseWriter, r *http.Request) { ssoDiscover(w, r, state) })
-	acc.Public.Get("/auth/sso/start", func(w http.ResponseWriter, r *http.Request) { ssoStart(w, r, state) })
+	guarded.Get("/auth/sso/discover", func(w http.ResponseWriter, r *http.Request) { ssoDiscover(w, r, state) })
+	guarded.Get("/auth/sso/start", func(w http.ResponseWriter, r *http.Request) { ssoStart(w, r, state) })
 	acc.Public.Get("/auth/sso/callback", func(w http.ResponseWriter, r *http.Request) { ssoCallback(w, r, state) })
 }
 
