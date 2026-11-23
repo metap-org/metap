@@ -365,6 +365,9 @@ func Validate(entity EntityDefinition) error {
 		if action.Scope != ActionScopeRecord && action.Scope != ActionScopeEntity {
 			issues = append(issues, fmt.Sprintf("action %q scope %q must be \"record\" or \"entity\"", action.Name, action.Scope))
 		}
+		if action.Requires != "" && !slices.Contains(ActionRequirements, action.Requires) {
+			issues = append(issues, fmt.Sprintf("action %q requires %q, which is not one of %v", action.Name, action.Requires, ActionRequirements))
+		}
 	}
 
 	seenScopeTypes := map[string]bool{}

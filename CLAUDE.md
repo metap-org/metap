@@ -180,7 +180,7 @@ this file above or below is pre-2026-11-07 history: read `go/<pkg>` as `pkg/<pkg
   `crud.ActionRegistry` through `app.Options.Actions` (boot refuses a declared action with no handler), and served at `POST
   /api/{entity}/{id}/actions/{action}` (record scope) or `POST /api/{entity}/actions/{action}` (entity scope); an undeclared
   action or the wrong scope is 404 `action_not_found`. A handler must read/write through a `RecordBackend` with `call.RC` — it
-  adds no permission of its own, so an action can never do more than the caller could with plain CRUD. `recordclient.Client`
+  adds no permission of its own, so an action can never do more than the caller could with plain CRUD *on records*; an action that does something else (probes an address, calls a service) declares `EntityAction.Requires` (`read|create|update|delete|transition`, checked on the entity before the handler runs) or authorizes itself — signed in is not enough. `recordclient.Client`
   implements `crud.ActionInvoker` for calling a sibling's actions.
 - **Names are declared once (2026-11-14, `docs/roadmap/110-magic-literals-audit.md` in `../metap-docs`).** Error codes come from
   `pkg/kit/errcode` (`errcode.ValidationFailed`, `RecordNotFound`, ...), never a quoted string; `ServiceError` constructors take
