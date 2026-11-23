@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/metap-org/metap/pkg/accountmail"
+	"github.com/metap-org/metap/pkg/captcha"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
@@ -33,6 +35,13 @@ type Deps struct {
 	// MintSession signs a session token (ErrNotTokenIssuer when this service cannot).
 	MintSession    func(tenant, member uuid.UUID, ttlSeconds uint64, sessionID string) (string, error)
 	PasswordPolicy identity.PasswordPolicy
+	// Platform is the platform-tier configuration (the signup switch and name blocklist); nil when
+	// there is none.
+	Platform func() *config.Snapshot
+	// Mailer sends the account emails; its methods are safe on a nil Mailer (they send none).
+	Mailer *accountmail.Mailer
+	// Captcha, when set, must pass for a signup.
+	Captcha captcha.Verifier
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
