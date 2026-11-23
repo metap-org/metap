@@ -4,6 +4,8 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/internal/authctx"
+	"github.com/metap-org/metap/pkg/permission/policypg"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
 	"net/url"
@@ -20,7 +22,6 @@ import (
 
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/jwks"
@@ -77,7 +78,7 @@ func newIdentityHarness(t *testing.T, withMailer ...bool) *identityHarness {
 		Verifier:               &jwks.TokenVerifier{Kind: jwks.VerifierStatic, PublicKey: pubKey, Leeway: 20 * time.Second},
 		Router:                 router,
 		Metadata:               &mdPtr,
-		ContextAttributesCache: control.NewContextAttributesCache(60 * time.Second),
+		ContextAttributesCache: authctx.NewContextAttributesCache(60 * time.Second),
 	}
 	mail := &capturedMail{}
 	cfg := IdentityConfig{Shared: pool, Router: router, Audit: audit.NewPostgresStore(pool), PublicURL: "http://portal.test",
@@ -433,7 +434,7 @@ func TestRolePermissionsReplaceBasicGrantsOnly(t *testing.T) {
 	assert.JSONEq(t, `["viewer"]`, string(shared), "the shared row loses only this role")
 
 	// The saved grants are what the permission engine enforces, right away.
-	perms := permission.NewPermissionService(control.NewPostgresPolicyStore(testRouterFor(h.pool)))
+	perms := permission.NewPermissionService(policypg.NewPostgresPolicyStore(testRouterFor(h.pool)))
 	rc := &permission.RequestContext{TenantID: tenant.String(), UserID: uuid.NewString(), Roles: []string{"analyst"}, HasRoles: true}
 	allowed := func(d permission.PermissionDecision, err error) bool {
 		require.NoError(t, err)
@@ -605,7 +606,7 @@ func TestVirtualResourceGrantsAreValidatedAndEnforced(t *testing.T) {
 	assert.Len(t, set.GetGrants(), 2)
 
 	// The service honours it, for exactly the granted action.
-	perms := permission.NewPermissionService(control.NewPostgresPolicyStore(testRouterFor(h.pool)))
+	perms := permission.NewPermissionService(policypg.NewPostgresPolicyStore(testRouterFor(h.pool)))
 	rc := &permission.RequestContext{TenantID: tenant.String(), UserID: bob.ID.String(), Roles: []string{"reviewer"}, HasRoles: true}
 	d, err := perms.CheckResource(context.Background(), rc, "test.requestdata", "view")
 	require.NoError(t, err)

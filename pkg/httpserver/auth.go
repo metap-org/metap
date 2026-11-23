@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/metap-org/metap/internal/authctx"
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
@@ -17,10 +18,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 type authError struct {
@@ -83,7 +84,7 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 
 	// An API key (roadmap 115 M5) authenticates as its member: no JWT, no OAuth grant.
 	if identity.IsAPIKey(token) {
-		rc, err := control.ResolveAPIKeyContext(ctx, state.Router, token, time.Now(),
+		rc, err := authctx.ResolveAPIKeyContext(ctx, state.Router, token, time.Now(),
 			state.AuthContextEntity, state.Metadata, state.ContextAttributesCache)
 		switch {
 		case errors.Is(err, identity.ErrAPIKeyInvalid):
@@ -119,7 +120,7 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 	if claims.FunctionID != nil {
 		functionID = *claims.FunctionID
 	}
-	rc, err := control.ResolveRequestContext(ctx, state.Router, tenantID, userID, functionID, claims.IssuedAt,
+	rc, err := authctx.ResolveRequestContext(ctx, state.Router, tenantID, userID, functionID, claims.IssuedAt,
 		state.AuthContextEntity, state.Metadata, state.ContextAttributesCache)
 	switch {
 	case errors.Is(err, identity.ErrSessionRevoked):
@@ -129,7 +130,7 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 	case err != nil:
 		return nil, unauthorized("Failed to resolve roles.")
 	}
-	if err := control.ApplySessionClaim(ctx, state.Router, rc, claims.SessionID, time.Now()); err != nil {
+	if err := authctx.ApplySessionClaim(ctx, state.Router, rc, claims.SessionID, time.Now()); err != nil {
 		if errors.Is(err, identity.ErrSessionRevoked) {
 			return nil, &authError{status: http.StatusUnauthorized, code: errcode.SessionRevoked, message: "Your session was ended, sign in again."}
 		}
@@ -209,13 +210,13 @@ func Admin(state *AppState) router.Middleware {
 	}
 }
 
-// PlatformAdmin is the cross-tenant admin gate: the token's tenant is control.PlatformTenantID
+// PlatformAdmin is the cross-tenant admin gate: the token's tenant is tenancy.PlatformTenantID
 // and the resolved roles include platform_admin.
 func PlatformAdmin(state *AppState) router.Middleware {
 	return func(next http.Handler) http.Handler {
 		return Authenticated(state)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rc := RC(r)
-			if rc.TenantID != control.PlatformTenantID.String() || !slices.Contains(rc.Roles, "platform_admin") {
+			if rc.TenantID != tenancy.PlatformTenantID.String() || !slices.Contains(rc.Roles, "platform_admin") {
 				forbidden("This action requires the platform_admin role.").respond(w)
 				return
 			}
@@ -280,7 +281,7 @@ func requirePlatformAdmin(w http.ResponseWriter, r *http.Request, state *AppStat
 	if !ok {
 		return nil, false
 	}
-	if rc.TenantID != control.PlatformTenantID.String() || !slices.Contains(rc.Roles, "platform_admin") {
+	if rc.TenantID != tenancy.PlatformTenantID.String() || !slices.Contains(rc.Roles, "platform_admin") {
 		forbidden("This action requires the platform_admin role.").respond(w)
 		return nil, false
 	}

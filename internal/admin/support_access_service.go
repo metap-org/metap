@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // AuditEntitySupportGrants is the audit-trail entity support grants are recorded under.
@@ -163,10 +163,10 @@ func (s *SupportAccessService) StartSupportSession(ctx context.Context, req *Sta
 		return nil, supportErr(ctx, identity.ErrSupportGrantInactive)
 	}
 	// The tenant must still be reachable (not suspended or gone).
-	if _, err := control.NewPostgresTenantRegistry(s.d.cfg.Shared).Get(ctx, tenant); err != nil {
+	if _, err := tenancy.NewPostgresTenantRegistry(s.d.cfg.Shared).Get(ctx, tenant); err != nil {
 		return nil, tenantErr(ctx, err)
 	}
-	person, err := identity.GetMember(ctx, s.d.cfg.Shared, control.PlatformTenantID, c.self)
+	person, err := identity.GetMember(ctx, s.d.cfg.Shared, tenancy.PlatformTenantID, c.self)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}

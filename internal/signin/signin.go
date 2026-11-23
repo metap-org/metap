@@ -17,11 +17,11 @@ import (
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/captcha"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
@@ -43,7 +43,7 @@ type Deps struct {
 	// "" turns SSO off.
 	PublicURL string
 	// Router opens tenant-scoped transactions and resolves a tenant's stored credentials (the OIDC client secret).
-	Router *control.Router
+	Router *tenancy.Router
 	// Mailer sends the account emails; its methods are safe on a nil Mailer (they send none).
 	Mailer *accountmail.Mailer
 	// Captcha, when set, must pass for a signup.

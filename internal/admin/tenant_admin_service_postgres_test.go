@@ -13,15 +13,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 func TestTenantAdminService(t *testing.T) {
 	h := newIdentityHarness(t)
 	ctx := context.Background()
-	platform := h.member(control.PlatformTenantID, "root@platform.io", RolePlatformAdmin)
-	asPlatform := h.as(control.PlatformTenantID, platform.ID)
+	platform := h.member(tenancy.PlatformTenantID, "root@platform.io", RolePlatformAdmin)
+	asPlatform := h.as(tenancy.PlatformTenantID, platform.ID)
 
 	// A tenant's own admin is not a platform admin.
 	acme := uuid.New()
@@ -129,4 +129,4 @@ func TestTenantAdminService(t *testing.T) {
 }
 
 // router is a fresh Router (so no cached registry entry from an earlier status).
-func (h *identityHarness) router() *control.Router { return testRouterFor(h.pool) }
+func (h *identityHarness) router() *tenancy.Router { return testRouterFor(h.pool) }

@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/pkg/secrets"
 	"net"
 	"net/http"
 	"net/url"
@@ -12,7 +13,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/tenantauth"
@@ -116,7 +116,7 @@ func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *SetSsoConfigReq
 		return bad("SAML single sign-on is on for this workspace: turn it off before enabling OpenID Connect.")
 	}
 
-	ref := control.TenantSecretRef(c.tenant, ssoSecretKey)
+	ref := secrets.TenantSecretRef(c.tenant, ssoSecretKey)
 	secret := req.GetClientSecret()
 	store := s.d.cfg.Router.Secrets()
 	if secret == "" {
@@ -257,7 +257,7 @@ func (s *SsoAdminService) DeleteSsoConfig(ctx context.Context, _ *Empty) (*Empty
 	if err := tenantauth.DeleteOidcConfig(ctx, s.d.cfg.Shared, c.tenant); err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	_ = s.d.cfg.Router.Secrets().DeleteSecret(ctx, control.TenantSecretRef(c.tenant, ssoSecretKey))
+	_ = s.d.cfg.Router.Secrets().DeleteSecret(ctx, secrets.TenantSecretRef(c.tenant, ssoSecretKey))
 	s.d.recordFor(ctx, c, AuditEntitySSO, c.tenant, audit.ActionDelete, map[string][2]any{"sso": {"configured", nil}})
 	return &Empty{}, nil
 }

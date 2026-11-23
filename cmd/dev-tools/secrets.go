@@ -3,14 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/secrets"
 	"os"
 
 	"github.com/joho/godotenv"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/kit/env"
-	"github.com/metap-org/metap/pkg/secrets"
+	"github.com/metap-org/metap/pkg/secrets/backend"
 )
 
 // vaultPutDSN populates Vault for a dedicated_db tenant — the Vault-backed counterpart to "set
@@ -33,7 +33,7 @@ func vaultPutDSN(args []string) error {
 	}
 	dsnSecretRef, dsn := args[2], args[3]
 
-	store, err := secrets.NewVaultStore(vaultAddr, vaultToken)
+	store, err := backend.NewVaultStore(vaultAddr, vaultToken)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func awsSecretsPutDSN(args []string) error {
 	dsnSecretRef, dsn := args[2], args[3]
 
 	ctx := context.Background()
-	store, err := secrets.NewAwsSecretsManagerStore(ctx, secrets.AwsSecretsManagerStoreConfig{
+	store, err := backend.NewAwsSecretsManagerStore(ctx, backend.AwsSecretsManagerStoreConfig{
 		Region: region, AccessKey: accessKey, SecretKey: secretKey, EndpointURL: endpointURL,
 	})
 	if err != nil {
@@ -99,7 +99,7 @@ func gcpSecretsPutDSN(args []string) error {
 	dsnSecretRef, dsn := args[2], args[3]
 
 	ctx := context.Background()
-	store, err := secrets.NewGcpSecretManagerStore(ctx, projectID)
+	store, err := backend.NewGcpSecretManagerStore(ctx, projectID)
 	if err != nil {
 		return err
 	}
@@ -120,7 +120,7 @@ func gcpSecretsPutDSN(args []string) error {
 // it prints the derived reference on failure; and an operator provisioning a credential on a
 // tenant's behalf shouldn't have to hold that tenant's admin session.
 //
-// The reference is derived here exactly as it is everywhere else (control.TenantSecretRef) —
+// The reference is derived here exactly as it is everywhere else (secrets.TenantSecretRef) —
 // this command cannot write to an arbitrary reference any more than an HTTP caller can.
 func putTenantSecret(args []string) error {
 	if len(args) < 5 {
@@ -134,14 +134,14 @@ func putTenantSecret(args []string) error {
 		return err
 	}
 	key, value := args[3], args[4]
-	secretRef := control.TenantSecretRef(tenantID, key)
+	secretRef := secrets.TenantSecretRef(tenantID, key)
 
 	ctx := context.Background()
 	config, err := infra.LoadConfig()
 	if err != nil {
 		return err
 	}
-	store, err := secrets.Build(ctx, secrets.ConfigFromAppConfig(config))
+	store, err := backend.Build(ctx, backend.ConfigFromAppConfig(config))
 	if err != nil {
 		return err
 	}

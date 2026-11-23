@@ -18,7 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 func TestAdminUsersRolesAndPoliciesLifecycle(t *testing.T) {
@@ -296,7 +296,7 @@ func TestPlatformConfigListSetAndReset(t *testing.T) {
 	tenantAdminUserID := uuid.New()
 
 	if _, err := pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'platform_admin')",
-		control.PlatformTenantID, platformAdminUserID); err != nil {
+		tenancy.PlatformTenantID, platformAdminUserID); err != nil {
 		require.FailNow(t, fmt.Sprint(err))
 	}
 	if _, err := pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')",
@@ -311,7 +311,7 @@ func TestPlatformConfigListSetAndReset(t *testing.T) {
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
 	require.NoError(t, state.Config.Reload(ctx))
-	platformAdminToken, err := jwks.MintRSAJWT(privPEM, control.PlatformTenantID, platformAdminUserID, 3600)
+	platformAdminToken, err := jwks.MintRSAJWT(privPEM, tenancy.PlatformTenantID, platformAdminUserID, 3600)
 	require.NoError(t, err)
 	tenantAdminToken, err := jwks.MintRSAJWT(privPEM, tenantAdminTenantID, tenantAdminUserID, 3600)
 	require.NoError(t, err)
@@ -448,7 +448,7 @@ func TestTenantConfigListSetResetAndPublicConfig(t *testing.T) {
 	}
 
 	// register this tenant's hostname, then request with that Host header
-	_, err = control.SetTenantHostname(ctx, pool, tenantID, "tenant.example.test")
+	_, err = tenancy.SetTenantHostname(ctx, pool, tenantID, "tenant.example.test")
 	require.NoError(t, err)
 	req, err := http.NewRequest("GET", base+"/public/config", nil)
 	require.NoError(t, err)
@@ -484,9 +484,9 @@ func TestPlatformAdminContextGatesBySentinelTenantAndRole(t *testing.T) {
 
 	_, err := pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')", tenantID, tenantAdminUserID)
 	require.NoError(t, err)
-	_, err = pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')", control.PlatformTenantID, sentinelUserID)
+	_, err = pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'admin')", tenancy.PlatformTenantID, sentinelUserID)
 	require.NoError(t, err)
-	_, err = pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'platform_admin')", control.PlatformTenantID, platformAdminUserID)
+	_, err = pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, 'platform_admin')", tenancy.PlatformTenantID, platformAdminUserID)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		pool.Exec(context.Background(), "DELETE FROM metadata.user_roles WHERE tenant_id = $1", tenantID)
@@ -499,8 +499,8 @@ func TestPlatformAdminContextGatesBySentinelTenantAndRole(t *testing.T) {
 	base := startTestServer(t, state, nil)
 
 	tenantAdminToken, _ := jwks.MintRSAJWT(privPEM, tenantID, tenantAdminUserID, 3600)
-	sentinelToken, _ := jwks.MintRSAJWT(privPEM, control.PlatformTenantID, sentinelUserID, 3600)
-	platformAdminToken, _ := jwks.MintRSAJWT(privPEM, control.PlatformTenantID, platformAdminUserID, 3600)
+	sentinelToken, _ := jwks.MintRSAJWT(privPEM, tenancy.PlatformTenantID, sentinelUserID, 3600)
+	platformAdminToken, _ := jwks.MintRSAJWT(privPEM, tenancy.PlatformTenantID, platformAdminUserID, 3600)
 
 	res := doRequest(t, "GET", base+"/platform/config", tenantAdminToken, nil)
 	require.Equal(t, 403, res.StatusCode, "a normal tenant admin must not pass, got %d", res.StatusCode)

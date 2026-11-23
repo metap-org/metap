@@ -19,11 +19,11 @@ import (
 
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
@@ -36,7 +36,7 @@ const RolePlatformAdmin = "platform_admin"
 // IdentityConfig turns on UserAdminService and AccountService on a gRPC listener.
 type IdentityConfig struct {
 	Shared *pgxpool.Pool
-	Router *control.Router
+	Router *tenancy.Router
 	// Audit records every administrative change; nil records nothing.
 	Audit audit.Store
 	// PublicURL is the origin people reach the service at; the SSO redirect URI is built from it.

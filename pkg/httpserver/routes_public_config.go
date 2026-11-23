@@ -14,7 +14,7 @@ import (
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // requestHostname is the Host header, or ("", false) when it is absent or unusable.
@@ -24,13 +24,13 @@ func requestHostname(r *http.Request) (string, bool) {
 	if raw == "" {
 		return "", false
 	}
-	return control.NormalizeHostname(raw)
+	return tenancy.NormalizeHostname(raw)
 }
 
 func publicConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
 	var effective *config.EffectiveConfig
 	if host, ok := requestHostname(r); ok {
-		tenantID, found, err := control.TenantIDForHostname(r.Context(), state.Pool, host)
+		tenantID, found, err := tenancy.TenantIDForHostname(r.Context(), state.Pool, host)
 		if err == nil && found {
 			effective = state.EffectiveConfig(r.Context(), tenantID)
 		}

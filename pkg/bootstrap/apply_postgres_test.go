@@ -5,15 +5,17 @@ package bootstrap
 import (
 	"context"
 	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/permission/policypg"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
+	"github.com/metap-org/metap/pkg/secrets"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 	"github.com/metap-org/metap/pkg/testkit"
 )
 
@@ -51,8 +53,8 @@ func TestApplyPoliciesAgainstPostgres(t *testing.T) {
 	pool := testkit.NewPostgres(t, testkit.WithSearchPath("metadata", "public"))
 	ctx := context.Background()
 	tenant := uuid.New()
-	router := control.NewRouter(pool, control.NewRegistryCache(control.NewPostgresTenantRegistry(pool)), control.EnvStore{})
-	perms := permission.NewPermissionService(control.NewPostgresPolicyStore(router))
+	router := tenancy.NewRouter(pool, tenancy.NewRegistryCache(tenancy.NewPostgresTenantRegistry(pool)), secrets.EnvStore{})
+	perms := permission.NewPermissionService(policypg.NewPostgresPolicyStore(router))
 	deps := Deps{Registry: registry(t, "waf.zones", "waf.rules"), Policies: perms, Identity: PgIdentity{DB: pool}}
 	b := Bootstrap{Roles: []string{"analyst"}, Grants: []Grant{{Role: "analyst", Entities: []string{"waf.*"}, Actions: []string{"read", "update"}}}}
 

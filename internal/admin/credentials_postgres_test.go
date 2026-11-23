@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/metap-org/metap/pkg/secrets"
 	"net/http"
 	"testing"
 
@@ -14,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/jobs/cron"
 )
 
@@ -89,7 +89,7 @@ func TestCredentialsAdmin(t *testing.T) {
 	crm := credentialNamed(view, "CRM webhook")
 	require.NotNil(t, crm)
 	crmID := uuid.MustParse(crm.Id)
-	crmRef := control.TenantCredentialRef(tenant, crmID)
+	crmRef := secrets.TenantCredentialRef(tenant, crmID)
 	assert.Equal(t, CredentialSourceDatabase, crm.Source)
 	assert.Equal(t, "Bearer abc", fake.value[crmRef])
 	assert.Equal(t, "database", fake.source[crmRef])
@@ -203,11 +203,11 @@ func TestCredentialsUserPass(t *testing.T) {
 	require.NotNil(t, cred)
 	assert.Equal(t, CredentialKindUserPass, cred.Kind)
 	assert.Equal(t, "svc-user", cred.Username, "the username is shown")
-	ref := control.TenantCredentialRef(tenant, uuid.MustParse(cred.Id))
-	user, pass, ok := control.DecodeUserPass(fake.value[ref])
+	ref := secrets.TenantCredentialRef(tenant, uuid.MustParse(cred.Id))
+	user, pass, ok := secrets.DecodeUserPass(fake.value[ref])
 	require.True(t, ok, "stored as one value")
 	assert.Equal(t, []string{"svc-user", "p@ss:word"}, []string{user, pass})
-	assert.Equal(t, "Basic "+"c3ZjLXVzZXI6cEBzczp3b3Jk", control.AuthorizationFromCredential(fake.value[ref]), "a webhook sends Basic")
+	assert.Equal(t, "Basic "+"c3ZjLXVzZXI6cEBzczp3b3Jk", secrets.AuthorizationFromCredential(fake.value[ref]), "a webhook sends Basic")
 
 	// Input rules.
 	for name, req := range map[string]*CreateCredentialRequest{
@@ -225,12 +225,12 @@ func TestCredentialsUserPass(t *testing.T) {
 	view, err = svc.UpdateCredential(asAdmin, &UpdateCredentialRequest{Id: cred.Id, Username: &rename})
 	require.NoError(t, err)
 	assert.Equal(t, rename, credentialNamed(view, "Partner API").Username)
-	user, pass, _ = control.DecodeUserPass(fake.value[ref])
+	user, pass, _ = secrets.DecodeUserPass(fake.value[ref])
 	assert.Equal(t, []string{rename, "p@ss:word"}, []string{user, pass})
 	newPass := "n3w-pass"
 	_, err = svc.UpdateCredential(asAdmin, &UpdateCredentialRequest{Id: cred.Id, Value: &newPass})
 	require.NoError(t, err)
-	user, pass, _ = control.DecodeUserPass(fake.value[ref])
+	user, pass, _ = secrets.DecodeUserPass(fake.value[ref])
 	assert.Equal(t, []string{rename, "n3w-pass"}, []string{user, pass})
 
 	// A username on another kind is refused.

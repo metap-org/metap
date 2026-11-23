@@ -9,6 +9,8 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"github.com/metap-org/metap/internal/authctx"
+	"github.com/metap-org/metap/pkg/secrets"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -18,13 +20,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // testClient groups the services the way the tests address them (they were gRPC clients).
@@ -50,10 +52,10 @@ func newTestClient(cfg IdentityConfig) *testClient {
 // testAuthConfig is what authenticating a test's bearer token needs.
 type testAuthConfig struct {
 	Verifier               *jwks.TokenVerifier
-	Router                 *control.Router
+	Router                 *tenancy.Router
 	AuthContextEntity      string
 	Metadata               *atomic.Pointer[metadata.MetadataRegistry]
-	ContextAttributesCache *control.ContextAttributesCache
+	ContextAttributesCache *authctx.ContextAttributesCache
 }
 
 // activeAuth is the current harness's (tests in this package do not run in parallel).
@@ -67,7 +69,7 @@ func unauthenticated(msg string) error {
 // (with its session, when it names one).
 func authenticateToken(ctx context.Context, config testAuthConfig, token string) (*permission.RequestContext, error) {
 	if identity.IsAPIKey(token) {
-		rc, err := control.ResolveAPIKeyContext(ctx, config.Router, token, time.Now(),
+		rc, err := authctx.ResolveAPIKeyContext(ctx, config.Router, token, time.Now(),
 			config.AuthContextEntity, config.Metadata, config.ContextAttributesCache)
 		switch {
 		case errors.Is(err, identity.ErrSessionRevoked):
@@ -93,7 +95,7 @@ func authenticateToken(ctx context.Context, config testAuthConfig, token string)
 	if claims.FunctionID != nil {
 		functionID = *claims.FunctionID
 	}
-	rc, err := control.ResolveRequestContext(ctx, config.Router, tenantID, userID, functionID, claims.IssuedAt,
+	rc, err := authctx.ResolveRequestContext(ctx, config.Router, tenantID, userID, functionID, claims.IssuedAt,
 		config.AuthContextEntity, config.Metadata, config.ContextAttributesCache)
 	switch {
 	case errors.Is(err, identity.ErrSessionRevoked):
@@ -103,7 +105,7 @@ func authenticateToken(ctx context.Context, config testAuthConfig, token string)
 	case err != nil:
 		return nil, unauthenticated("failed to resolve roles")
 	}
-	if err := control.ApplySessionClaim(ctx, config.Router, rc, claims.SessionID, time.Now()); err != nil {
+	if err := authctx.ApplySessionClaim(ctx, config.Router, rc, claims.SessionID, time.Now()); err != nil {
 		return nil, crud.NewServiceErrorMsg(401, errcode.SessionRevoked, "Your session was ended, sign in again.")
 	}
 	if claims.Scope != nil {
@@ -145,9 +147,9 @@ func genRSAKeyPair(t *testing.T) (privatePEM string, publicKey *rsa.PublicKey) {
 	return string(privPEM), &key.PublicKey
 }
 
-func testRouterFor(pool *pgxpool.Pool) *control.Router {
-	registry := control.NewPostgresTenantRegistry(pool)
-	return control.NewRouter(pool, control.NewRegistryCache(registry), control.NewMemorySecretStore())
+func testRouterFor(pool *pgxpool.Pool) *tenancy.Router {
+	registry := tenancy.NewPostgresTenantRegistry(pool)
+	return tenancy.NewRouter(pool, tenancy.NewRegistryCache(registry), secrets.NewMemoryStore())
 }
 
 // asServiceError is the *crud.ServiceError err carries (nil when it is not one).

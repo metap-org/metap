@@ -19,6 +19,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/metap-org/metap/pkg/captcha"
+	"github.com/metap-org/metap/pkg/permission/policypg"
 	"log/slog"
 	"net"
 	"net/http"
@@ -32,7 +33,6 @@ import (
 	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/httpserver"
 	"github.com/metap-org/metap/pkg/httpserver/attachmentroutes"
@@ -48,7 +48,8 @@ import (
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/reconciler"
-	"github.com/metap-org/metap/pkg/secrets"
+	"github.com/metap-org/metap/pkg/secrets/backend"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // Options describes one service.
@@ -125,12 +126,12 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	defer pool.Close()
 
-	secretManager, err := secrets.NewManager(ctx, secrets.ConfigFromAppConfig(config), pool)
+	secretManager, err := backend.NewManager(ctx, backend.ConfigFromAppConfig(config), pool)
 	if err != nil {
 		return fmt.Errorf("building secret store: %w", err)
 	}
-	router := control.NewRouter(pool, control.NewRegistryCache(control.NewPostgresTenantRegistry(pool)), secretManager)
-	permissions := permission.NewPermissionService(control.NewPostgresPolicyStore(router))
+	router := tenancy.NewRouter(pool, tenancy.NewRegistryCache(tenancy.NewPostgresTenantRegistry(pool)), secretManager)
+	permissions := permission.NewPermissionService(policypg.NewPostgresPolicyStore(router))
 
 	tokens, err := BuildTokenAuth(ctx, config)
 	if err != nil {
@@ -150,7 +151,7 @@ func Run(ctx context.Context, opts Options) error {
 		toReconcile = registry.Definitions()
 	}
 	for _, entity := range toReconcile {
-		outcome, err := reconciler.ReconcileWithScope(ctx, pool, control.PlatformTenantID, entity, nil, reconciler.ScopeAllTenants)
+		outcome, err := reconciler.ReconcileWithScope(ctx, pool, tenancy.PlatformTenantID, entity, nil, reconciler.ScopeAllTenants)
 		if err != nil {
 			return fmt.Errorf("reconciling %s: %w", entity.Name, err)
 		}
@@ -265,7 +266,7 @@ func Run(ctx context.Context, opts Options) error {
 
 // identityConfig serves user administration on the token issuer only (it owns identities); a
 // verify-only service returns nil.
-func identityConfig(state *httpserver.AppState, auditStore audit.Store, manager *secrets.Manager) *admin.IdentityConfig {
+func identityConfig(state *httpserver.AppState, auditStore audit.Store, manager *backend.Manager) *admin.IdentityConfig {
 	if !state.CanIssueTokens() {
 		return nil
 	}
@@ -313,9 +314,9 @@ func ReadPublicKey(path string) (any, error) {
 	return jwt.ParseRSAPublicKeyFromPEM(data)
 }
 
-// credentialAdapter presents the secrets.Manager to adminapi, which cannot import the package
+// credentialAdapter presents the backend.Manager to adminapi, which cannot import the package
 // (it links the cloud SDKs).
-type credentialAdapter struct{ m *secrets.Manager }
+type credentialAdapter struct{ m *backend.Manager }
 
 func (a credentialAdapter) Capabilities() admin.CredentialCapabilities {
 	c := a.m.Capabilities()

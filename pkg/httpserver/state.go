@@ -5,6 +5,7 @@ package httpserver
 
 import (
 	"context"
+	"github.com/metap-org/metap/internal/authctx"
 	"github.com/metap-org/metap/pkg/captcha"
 	"net/http"
 	"net/netip"
@@ -19,7 +20,6 @@ import (
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/jwks"
@@ -27,6 +27,7 @@ import (
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/runtime"
 	"github.com/metap-org/metap/pkg/storage"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // Optional features (TokenSigner/TokenVerifier/JwksKeys for the JWKS trust root, MetadataResolver,
@@ -38,7 +39,7 @@ type AppState struct {
 	Pool *pgxpool.Pool
 	// Router is the multi-tenant seam — every tenant-scoped query goes through
 	// Router.Begin(ctx, tenantID), never Pool directly.
-	Router *control.Router
+	Router *tenancy.Router
 	// MetadataBase: code-authored entities only, fixed after boot.
 	MetadataBase *metadata.MetadataRegistry
 	// Metadata is the live, request-serving registry — an atomic.Pointer.
@@ -78,7 +79,7 @@ type AppState struct {
 
 	// AuthContextEntity: opt-in AUTH_CONTEXT_ENTITY name, "" means unset (the default).
 	AuthContextEntity      string
-	ContextAttributesCache *control.ContextAttributesCache
+	ContextAttributesCache *authctx.ContextAttributesCache
 
 	Config *config.Store
 	// Mailer sends invitation and password-reset emails (roadmap 113 P2); nil sends none.
@@ -107,12 +108,12 @@ type AppState struct {
 }
 
 func NewAppState(pool *pgxpool.Pool, metadataBase *metadata.MetadataRegistry, md *atomic.Pointer[metadata.MetadataRegistry],
-	permissions *permission.PermissionService, jwtPrivateKeyPEM string, jwtPublicKey any, router *control.Router) *AppState {
+	permissions *permission.PermissionService, jwtPrivateKeyPEM string, jwtPublicKey any, router *tenancy.Router) *AppState {
 	crudService := crud.NewCrudService(router, md, permissions)
 	return &AppState{
 		Pool: pool, Router: router, MetadataBase: metadataBase, Metadata: md, Permissions: permissions,
 		Crud: crudService, JWTPrivateKeyPEM: jwtPrivateKeyPEM, JWTPublicKey: jwtPublicKey,
-		ContextAttributesCache: control.NewContextAttributesCache(contextAttributesCacheTTL),
+		ContextAttributesCache: authctx.NewContextAttributesCache(contextAttributesCacheTTL),
 		Config:                 config.Unloaded(pool),
 		CookieSecure:           true,
 		Metrics:                runtime.NewMetricsRegistry(),

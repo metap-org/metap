@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // authenticatedCaller is the caller in ctx; any signed-in member will do.
@@ -43,7 +43,7 @@ func platformAdminCaller(ctx context.Context) (*permission.RequestContext, error
 	if err != nil {
 		return nil, err
 	}
-	if rc.TenantID != control.PlatformTenantID.String() || !slices.Contains(rc.Roles, "platform_admin") {
+	if rc.TenantID != tenancy.PlatformTenantID.String() || !slices.Contains(rc.Roles, "platform_admin") {
 		return nil, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, "this action requires the platform_admin role")
 	}
 	if !rc.ScopePermitsAdminSurface() {

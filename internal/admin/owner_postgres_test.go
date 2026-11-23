@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // Roadmap 115 M8: the owner is protected from other admins; ownership moves by the owner's own
@@ -27,8 +27,8 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	other := h.member(tenant, "admin2@acme.io", "admin")
 	viewer := h.member(tenant, "viewer@acme.io", "viewer")
 	asOwner, asOther := h.as(tenant, owner.ID), h.as(tenant, other.ID)
-	vendor := h.member(control.PlatformTenantID, "agent@vendor.io", RolePlatformAdmin)
-	asVendor := h.as(control.PlatformTenantID, vendor.ID)
+	vendor := h.member(tenancy.PlatformTenantID, "agent@vendor.io", RolePlatformAdmin)
+	asVendor := h.as(tenancy.PlatformTenantID, vendor.ID)
 
 	// The oldest admin is the owner, and the user list says so.
 	st, err := h.client.Owner.GetOwnerStatus(asOther, &Empty{})
@@ -127,11 +127,11 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 func TestOwnerDeletesTheWorkspaceAndTheLinkCancelsIt(t *testing.T) {
 	h := newIdentityHarness(t)
 	tenant := uuid.New()
-	require.NoError(t, control.NewPostgresTenantRegistry(h.pool).RegisterShared(context.Background(), tenant, "Acme Ltd", "trial", "active"))
+	require.NoError(t, tenancy.NewPostgresTenantRegistry(h.pool).RegisterShared(context.Background(), tenant, "Acme Ltd", "trial", "active"))
 	owner := h.member(tenant, "owner@acme.io", "admin")
 	other := h.member(tenant, "admin2@acme.io", "admin")
 	asOwner, asOther := h.as(tenant, owner.ID), h.as(tenant, other.ID)
-	registry := control.NewPostgresTenantRegistry(h.pool)
+	registry := tenancy.NewPostgresTenantRegistry(h.pool)
 	ctx := context.Background()
 
 	// Not the owner; wrong name.
@@ -167,7 +167,7 @@ func TestOwnerDeletesTheWorkspaceAndTheLinkCancelsIt(t *testing.T) {
 	assert.Empty(t, out.CancelLink, "the link is in the emails when mail works")
 	d, err := registry.Get(ctx, tenant)
 	require.NoError(t, err)
-	assert.Equal(t, control.StatusSuspended, d.Status)
+	assert.Equal(t, tenancy.StatusSuspended, d.Status)
 
 	// Both admins were emailed the same working link.
 	token := cancelTokenFrom(t, h.mail.last(t, "owner@acme.io"))
@@ -187,7 +187,7 @@ func TestOwnerDeletesTheWorkspaceAndTheLinkCancelsIt(t *testing.T) {
 	_, err = identity.ConsumeDeletionCancelToken(ctx, h.pool, token, time.Now())
 	assert.ErrorIs(t, err, identity.ErrCancelInvalid, "a link works once")
 	d, _ = registry.Get(ctx, tenant)
-	assert.Equal(t, control.StatusActive, d.Status)
+	assert.Equal(t, tenancy.StatusActive, d.Status)
 }
 
 // A link stops working once the deletion would have taken effect.

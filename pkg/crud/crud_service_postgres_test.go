@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/pkg/permission/policypg"
+	"github.com/metap-org/metap/pkg/secrets"
 	"sync/atomic"
 	"testing"
 
@@ -17,12 +19,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
 	"github.com/metap-org/metap/pkg/reconciler"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 const (
@@ -87,13 +89,13 @@ func cleanupTenant(t *testing.T, pool *pgxpool.Pool, tenantID uuid.UUID) {
 // testRouter: no control.tenants row is ever inserted by these tests, so Router.Begin always
 // takes the unregistered-tenant fallback (public schema) — same behavior CrudService had before
 // Router existed.
-func testRouter(pool *pgxpool.Pool) *control.Router {
-	registry := control.NewPostgresTenantRegistry(pool)
-	return control.NewRouter(pool, control.NewRegistryCache(registry), control.EnvStore{})
+func testRouter(pool *pgxpool.Pool) *tenancy.Router {
+	registry := tenancy.NewPostgresTenantRegistry(pool)
+	return tenancy.NewRouter(pool, tenancy.NewRegistryCache(registry), secrets.EnvStore{})
 }
 
 func testPermissions(pool *pgxpool.Pool) *permission.PermissionService {
-	return permission.NewPermissionService(control.NewPostgresPolicyStore(testRouter(pool)))
+	return permission.NewPermissionService(policypg.NewPostgresPolicyStore(testRouter(pool)))
 }
 
 func adminContext(tenantID uuid.UUID) *permission.RequestContext {

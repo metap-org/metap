@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 const (
@@ -278,7 +278,7 @@ func TestScopedRolesResolvedFromTheDatabase(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit(ctx))
 	assert.Len(t, sr, 2)
-	_ = control.PlatformTenantID
+	_ = tenancy.PlatformTenantID
 
 	require.NoError(t, rolestore.RevokeScopedRole(ctx, pool, tenant, user, "analyst", "zone", "z-1"))
 	got, _ = rolestore.ScopedRolesForUser(ctx, pool, tenant, user)

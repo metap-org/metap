@@ -13,11 +13,11 @@ import (
 
 	"github.com/metap-org/metap/pkg/accountmail"
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // OwnerService is roadmap 115 M8: a tenant owner who is more than an admin, and a recovery path
@@ -259,7 +259,7 @@ func (s *OwnerService) RequestOwnerRecovery(ctx context.Context, req *RequestOwn
 	if err != nil || target.Status != identity.StatusActive || target.AuthProvider == identity.ServiceAccountProvider {
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "The new owner must be an active person in the tenant.")
 	}
-	person, err := identity.GetMember(ctx, s.d.cfg.Shared, control.PlatformTenantID, c.self)
+	person, err := identity.GetMember(ctx, s.d.cfg.Shared, tenancy.PlatformTenantID, c.self)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -346,11 +346,11 @@ func (s *OwnerService) RequestWorkspaceDeletion(ctx context.Context, req *Reques
 		return nil, err
 	}
 	now := s.d.now()
-	registry := control.NewPostgresTenantRegistry(s.d.cfg.Shared)
-	if err := registry.RequestDeletion(ctx, c.tenant, now, control.DefaultDeletionRetention); err != nil {
+	registry := tenancy.NewPostgresTenantRegistry(s.d.cfg.Shared)
+	if err := registry.RequestDeletion(ctx, c.tenant, now, tenancy.DefaultDeletionRetention); err != nil {
 		return nil, svcErr(ctx, http.StatusConflict, errcode.ValidationFailed, "A deletion is already scheduled for this workspace.")
 	}
-	effective := now.Add(control.DefaultDeletionRetention)
+	effective := now.Add(tenancy.DefaultDeletionRetention)
 	token, err := identity.CreateDeletionCancelToken(ctx, s.d.cfg.Shared, c.tenant, effective)
 	if err != nil {
 		// Without a way to cancel, do not leave the workspace scheduled.
