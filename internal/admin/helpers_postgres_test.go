@@ -70,7 +70,7 @@ func unauthenticated(msg string) error {
 func authenticateToken(ctx context.Context, config testAuthConfig, token string) (*permission.RequestContext, error) {
 	if identity.IsAPIKey(token) {
 		rc, err := authctx.ResolveAPIKeyContext(ctx, config.Router, token, time.Now(),
-			config.AuthContextEntity, config.Metadata, config.ContextAttributesCache)
+			config.AuthContextEntity, config.Metadata, config.ContextAttributesCache, nil)
 		switch {
 		case errors.Is(err, identity.ErrSessionRevoked):
 			return nil, crud.NewServiceErrorMsg(401, errcode.SessionRevoked, "This API key was revoked.")
@@ -96,7 +96,7 @@ func authenticateToken(ctx context.Context, config testAuthConfig, token string)
 		functionID = *claims.FunctionID
 	}
 	rc, err := authctx.ResolveRequestContext(ctx, config.Router, tenantID, userID, functionID, claims.IssuedAt,
-		config.AuthContextEntity, config.Metadata, config.ContextAttributesCache)
+		config.AuthContextEntity, config.Metadata, config.ContextAttributesCache, nil)
 	switch {
 	case errors.Is(err, identity.ErrSessionRevoked):
 		return nil, crud.NewServiceErrorMsg(401, errcode.SessionRevoked, "Your session was revoked, sign in again.")

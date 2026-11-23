@@ -80,6 +80,10 @@ type AppState struct {
 	// AuthContextEntity: opt-in AUTH_CONTEXT_ENTITY name, "" means unset (the default).
 	AuthContextEntity      string
 	ContextAttributesCache *authctx.ContextAttributesCache
+	// RolesCache reuses a member's resolved roles for its TTL (roadmap 120); nil reads them on every
+	// request. The session check is never cached. NewAppState leaves it nil; pkg/app sets it from
+	// ROLE_CACHE_TTL_SECONDS (default 45).
+	RolesCache *authctx.RolesCache
 
 	Config *config.Store
 	// Mailer sends invitation and password-reset emails (roadmap 113 P2); nil sends none.

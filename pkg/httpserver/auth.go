@@ -85,7 +85,7 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 	// An API key (roadmap 115 M5) authenticates as its member: no JWT, no OAuth grant.
 	if identity.IsAPIKey(token) {
 		rc, err := authctx.ResolveAPIKeyContext(ctx, state.Router, token, time.Now(),
-			state.AuthContextEntity, state.Metadata, state.ContextAttributesCache)
+			state.AuthContextEntity, state.Metadata, state.ContextAttributesCache, state.RolesCache)
 		switch {
 		case errors.Is(err, identity.ErrAPIKeyInvalid):
 			return nil, unauthorized("Invalid or expired API key.")
@@ -121,7 +121,7 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 		functionID = *claims.FunctionID
 	}
 	rc, err := authctx.ResolveRequestContext(ctx, state.Router, tenantID, userID, functionID, claims.IssuedAt,
-		state.AuthContextEntity, state.Metadata, state.ContextAttributesCache)
+		state.AuthContextEntity, state.Metadata, state.ContextAttributesCache, state.RolesCache)
 	switch {
 	case errors.Is(err, identity.ErrSessionRevoked):
 		return nil, &authError{status: http.StatusUnauthorized, code: errcode.SessionRevoked, message: "Your session was revoked, sign in again."}

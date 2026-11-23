@@ -31,6 +31,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/metap-org/metap/internal/admin"
+	"github.com/metap-org/metap/internal/authctx"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/config"
@@ -194,6 +195,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	state := httpserver.NewAppState(pool, registry, &mdPtr, permissions, tokens.PrivateKeyPEM, publicKey, router)
 	state.TokenSigner, state.TokenVerifier, state.JwksKeys = tokens.Signer, tokens.Verifier, tokens.Keys
+	// A role change or revocation applies within this TTL (roadmap 120); a session revocation is
+	// checked on every request regardless. 0 turns the cache off.
+	state.RolesCache = authctx.NewRolesCache(env.Seconds("ROLE_CACHE_TTL_SECONDS", 45*time.Second))
 	auditStore := audit.NewPostgresStore(state.Pool)
 	state.Audit = auditStore
 	state.PublicAppURL = appCfg.PublicAppURL
