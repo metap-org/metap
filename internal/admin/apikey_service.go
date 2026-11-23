@@ -24,7 +24,7 @@ func toAPIKey(k identity.APIKey) *ApiKey {
 }
 
 func (s *UserAdminService) CreateServiceAccount(ctx context.Context, req *CreateServiceAccountRequest) (*User, error) {
-	c, err := s.admin(ctx)
+	c, err := adminDurable(s.d, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (s *UserAdminService) ListServiceAccounts(ctx context.Context, _ *Empty) (*
 }
 
 func (s *UserAdminService) CreateApiKey(ctx context.Context, req *CreateApiKeyRequest) (*CreateApiKeyResponse, error) {
-	c, err := s.admin(ctx)
+	c, err := adminDurable(s.d, ctx)
 	if err != nil {
 		return nil, err
 	}

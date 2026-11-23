@@ -6,11 +6,13 @@ package crud
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/metap-org/metap/pkg/permission/policypg"
 	"github.com/metap-org/metap/pkg/secrets"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/metap-org/metap/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -435,6 +437,47 @@ func TestListHydratesRelatedDisplayForReferenceFieldsWithDisplayField(t *testing
 	require.NoError(t, err)
 	require.Len(t, listed.Data, 1, "expected 1 child, got %d", len(listed.Data))
 	require.Equal(t, "Acme Corp", listed.Data[0].RelatedDisplay["parentId"], "expected hydrated display value, got %+v", listed.Data[0].RelatedDisplay)
+}
+
+// Concurrent lists that hydrate a related display must not starve each other of connections: the
+// permissions of the related entity are read before the list's transaction, not inside it, so a
+// pool no bigger than the number of lists still makes progress (the old code held one connection
+// per list and asked for a second, which deadlocked as soon as every connection was held).
+func TestConcurrentListsWithRelatedDisplayDoNotExhaustTheConnectionPool(t *testing.T) {
+	pool := testPool(t)
+	tenantID := uuid.New()
+	defer cleanupTenant(t, pool, tenantID)
+	ctx := context.Background()
+	rc := adminContext(tenantID)
+	setup := newCrudService(pool, parentEntity(), childEntity())
+	parent, err := setup.Create(ctx, "test.parents", JsonObject{"name": raw("Acme Corp")}, rc, nil)
+	require.NoError(t, err)
+	_, err = setup.Create(ctx, "test.children", JsonObject{"parentId": raw(parent.ID.String())}, rc, nil)
+	require.NoError(t, err)
+
+	cfg := pool.Config().Copy()
+	cfg.MaxConns = 3
+	small, err := pgxpool.NewWithConfig(ctx, cfg)
+	require.NoError(t, err)
+	defer small.Close()
+	crud := newCrudService(small, parentEntity(), childEntity())
+
+	callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	const lists = 12
+	errs := make(chan error, lists)
+	for i := 0; i < lists; i++ {
+		go func() {
+			res, err := crud.List(callCtx, "test.children", query.ListInput{Limit: 50}, rc)
+			if err == nil && (len(res.Data) != 1 || res.Data[0].RelatedDisplay["parentId"] != "Acme Corp") {
+				err = errors.New("the related display was not hydrated")
+			}
+			errs <- err
+		}()
+	}
+	for i := 0; i < lists; i++ {
+		require.NoError(t, <-errs)
+	}
 }
 
 func TestComputedFieldIsRecalculatedOnCreateAndUpdate(t *testing.T) {

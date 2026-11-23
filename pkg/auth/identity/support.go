@@ -224,3 +224,12 @@ func ExpireSupportSessions(ctx context.Context, db DBTX, tenantID uuid.UUID, now
 	}
 	return removed, nil
 }
+
+// IsSupportSessionMember reports whether memberID is a vendor support session's service account in
+// the tenant (whatever the state of its grant).
+func IsSupportSessionMember(ctx context.Context, db DBTX, tenantID, memberID uuid.UUID) (bool, error) {
+	var yes bool
+	err := db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM metadata.support_sessions WHERE tenant_id = $1 AND member_id = $2)`,
+		tenantID, memberID).Scan(&yes)
+	return yes, err
+}

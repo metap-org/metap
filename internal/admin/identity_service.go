@@ -128,6 +128,28 @@ func (d identityDeps) admin(ctx context.Context) (caller, error) {
 	return c, nil
 }
 
+// adminDurable is admin for an action that creates access outliving the moment: a person, a service
+// account, a key, a role, a password or MFA reset, a sign-in provider. A support session (vendor
+// access, time-boxed by a grant) is refused, so revoking or lapsing the grant really ends it; the
+// tenant's own admins make these changes.
+func adminDurable(d identityDeps, ctx context.Context) (caller, error) {
+	c, err := d.admin(ctx)
+	if err != nil {
+		return caller{}, err
+	}
+	if c.self != uuid.Nil {
+		support, err := identity.IsSupportSessionMember(ctx, d.cfg.Shared, c.tenant, c.self)
+		if err != nil {
+			return caller{}, rpcError(ctx, err)
+		}
+		if support {
+			return caller{}, svcErr(ctx, http.StatusForbidden, errcode.Forbidden,
+				"A support session cannot create people, keys, roles or sign-in settings: those outlive the grant. Ask a workspace admin.")
+		}
+	}
+	return c, nil
+}
+
 func svcErr(ctx context.Context, httpStatus uint16, code, message string) error {
 	return sendServiceError(ctx, crud.NewServiceErrorMsg(httpStatus, code, message))
 }
@@ -144,6 +166,8 @@ func identityErr(ctx context.Context, err error) error {
 			Message: err.Error(), FieldErrors: map[string][]string{"password": {err.Error()}}})
 	case errors.Is(err, identity.ErrMFAInvalidCode):
 		return svcErr(ctx, http.StatusUnauthorized, errcode.MFAInvalidCode, err.Error())
+	case errors.Is(err, identity.ErrMFALocked):
+		return svcErr(ctx, http.StatusTooManyRequests, errcode.AccountLocked, err.Error())
 	case errors.Is(err, identity.ErrMFAAlreadyOn):
 		return svcErr(ctx, http.StatusConflict, errcode.MFAAlreadyOn, err.Error())
 	case errors.Is(err, identity.ErrMFANotEnrolled), errors.Is(err, identity.ErrMFAEnrollNotRun):
@@ -347,7 +371,7 @@ func (d identityDeps) checkRoles(ctx context.Context, tenant uuid.UUID, roles []
 }
 
 func (s *UserAdminService) CreateUser(ctx context.Context, req *CreateUserRequest) (*CreateUserResponse, error) {
-	c, err := s.admin(ctx)
+	c, err := adminDurable(s.d, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -534,7 +558,7 @@ func (s *UserAdminService) RemoveUser(ctx context.Context, req *UserIdRequest) (
 }
 
 func (s *UserAdminService) ResetPassword(ctx context.Context, req *ResetPasswordRequest) (*Empty, error) {
-	c, err := s.admin(ctx)
+	c, err := adminDurable(s.d, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -569,6 +593,9 @@ func (s *UserAdminService) ResetPassword(ctx context.Context, req *ResetPassword
 
 func (s *UserAdminService) changeRole(ctx context.Context, req *RoleRequest, assign bool) (*User, error) {
 	c, err := s.admin(ctx)
+	if err == nil && assign {
+		c, err = adminDurable(s.d, ctx)
+	}
 	if err != nil {
 		return nil, err
 	}

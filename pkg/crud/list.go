@@ -72,6 +72,12 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 	sql := fmt.Sprintf("SELECT %s FROM %s t WHERE %s ORDER BY %s LIMIT %d OFFSET %d",
 		recordSelectList(entity), entity.TableName, planned.WhereSQL, planned.OrderBySQL, planned.Limit+1, planned.Offset)
 
+	// Everything that reads permissions happens before the transaction (see loadRelatedAccess).
+	related, err := s.loadRelatedAccess(ctx, entity, rc, tenantID)
+	if err != nil {
+		return ListResult{}, err
+	}
+
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {
 		if r, ok := routerUnavailable(err); ok {
@@ -134,7 +140,7 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 	for i, dto := range pageDtos {
 		data[i] = maskRecordForRead(entity, rc, snapshot, dto)
 	}
-	data, err = s.hydrateRelatedDisplay(ctx, entity, rc, tenantID, md, tx, data)
+	data, err = s.hydrateRelatedDisplay(ctx, entity, rc, tenantID, md, tx, data, related)
 	if err != nil {
 		return ListResult{}, err
 	}

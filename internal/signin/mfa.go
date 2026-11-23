@@ -44,6 +44,8 @@ func MFAError(err error) error {
 		return serviceErr(http.StatusUnauthorized, errcode.MFAChallenge, err.Error(), nil)
 	case errors.Is(err, identity.ErrMFAInvalidCode):
 		return serviceErr(http.StatusUnauthorized, errcode.MFAInvalidCode, err.Error(), nil)
+	case errors.Is(err, identity.ErrMFALocked):
+		return serviceErr(http.StatusTooManyRequests, errcode.AccountLocked, err.Error(), nil)
 	case errors.Is(err, identity.ErrMFAAlreadyOn):
 		return serviceErr(http.StatusConflict, errcode.MFAAlreadyOn, err.Error(), nil)
 	case errors.Is(err, identity.ErrMFANotEnrolled), errors.Is(err, identity.ErrMFAEnrollNotRun):
@@ -82,7 +84,11 @@ func (s *Service) LoginMFA(ctx context.Context, token, code string, c Client) (*
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	if err := identity.VerifyMFA(ctx, tx, ch.IdentityID, code, now); err != nil {
-		_ = tx.Rollback(ctx)
+		if identity.MFAAttemptCounts(err) {
+			_ = tx.Commit(ctx) // keep the wrong-code count across sign-in attempts
+		} else {
+			_ = tx.Rollback(ctx)
+		}
 		if errors.Is(err, identity.ErrMFAInvalidCode) {
 			_ = identity.FailChallenge(ctx, s.d.Pool, token)
 		}

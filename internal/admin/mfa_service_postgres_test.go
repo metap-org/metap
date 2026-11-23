@@ -75,3 +75,39 @@ func TestAccountMFALifecycleAndAdminReset(t *testing.T) {
 	_, err = h.client.Admin.ResetMfa(asAdmin, &UserIdRequest{Id: bob.ID.String()})
 	assert.Error(t, err)
 }
+
+// Wrong codes are counted per identity and survive the failed request (audit 07): after
+// MaxMFAFailures even the right code is refused until the lock lapses, so a six-digit code cannot
+// be guessed from a stolen session.
+func TestWrongMFACodesLockTheFactor(t *testing.T) {
+	h := newIdentityHarness(t)
+	tenant := uuid.New()
+	bob := h.member(tenant, "bob@acme.io")
+	asBob := h.as(tenant, bob.ID)
+	en, err := h.client.Account.BeginMfaEnrollment(asBob, &Empty{})
+	require.NoError(t, err)
+	good, err := identity.TOTPAt(en.GetSecret(), time.Now())
+	require.NoError(t, err)
+	_, err = h.client.Account.ConfirmMfaEnrollment(asBob, &MfaCodeRequest{Code: good})
+	require.NoError(t, err)
+
+	for i := 0; i < identity.MaxMFAFailures; i++ {
+		_, err = h.client.Account.DisableMfa(asBob, &MfaCodeRequest{Code: "000000"})
+		require.Error(t, err)
+	}
+	next, err := identity.TOTPAt(en.GetSecret(), time.Now().Add(30*time.Second))
+	require.NoError(t, err)
+	_, err = h.client.Account.DisableMfa(asBob, &MfaCodeRequest{Code: next})
+	assert.Equal(t, http.StatusTooManyRequests, statusOf(err), "the right code is refused while locked")
+	st, _ := h.client.Account.GetMfaStatus(asBob, &Empty{})
+	assert.True(t, st.GetEnabled(), "a locked factor is still on")
+
+	// The lock lapses: the right code works again, and the counter starts over.
+	_, err = h.pool.Exec(context.Background(), `UPDATE metadata.mfa_factors SET locked_until = now() - interval '1 minute'
+		WHERE identity_id = (SELECT identity_id FROM metadata.users WHERE id = $1)`, bob.ID)
+	require.NoError(t, err)
+	_, err = h.client.Account.RegenerateRecoveryCodes(asBob, &MfaCodeRequest{Code: good})
+	assert.Error(t, err, "the code of the earlier step was used already")
+	_, err = h.client.Account.RegenerateRecoveryCodes(asBob, &MfaCodeRequest{Code: next})
+	assert.NoError(t, err)
+}

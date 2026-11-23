@@ -19,7 +19,7 @@ import (
 )
 
 func (s *UserAdminService) InviteUser(ctx context.Context, req *InviteUserRequest) (*InviteUserResponse, error) {
-	c, err := s.admin(ctx)
+	c, err := adminDurable(s.d, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func (s *UserAdminService) InviteUser(ctx context.Context, req *InviteUserReques
 }
 
 func (s *UserAdminService) ResendInvitation(ctx context.Context, req *UserIdRequest) (*InviteUserResponse, error) {
-	c, err := s.admin(ctx)
+	c, err := adminDurable(s.d, ctx)
 	if err != nil {
 		return nil, err
 	}

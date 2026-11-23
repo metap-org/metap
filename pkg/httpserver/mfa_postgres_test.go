@@ -87,6 +87,15 @@ func TestLoginWithSecondFactor(t *testing.T) {
 	res = doRequest(t, "POST", base+"/auth/login/mfa", "", map[string]any{"mfaToken": burn, "code": recovery[0]})
 	assert.Equal(t, 401, res.StatusCode)
 
+	// The wrong codes also count against the person, whatever challenge they came with: five lock
+	// the factor, so minting fresh challenges does not buy more guesses (audit 07).
+	locked := login()["mfaToken"].(string)
+	res = doRequest(t, "POST", base+"/auth/login/mfa", "", map[string]any{"mfaToken": locked, "code": recovery[0]})
+	assert.Equal(t, 429, res.StatusCode, "the factor is locked, even for a right code")
+	assert.Equal(t, "account_locked", decodeJSON(t, res)["error"].(map[string]any)["code"])
+	_, err = pool.Exec(ctx, `UPDATE metadata.mfa_factors SET locked_until = NULL, failed_attempts = 0 WHERE identity_id = $1`, m.IdentityID)
+	require.NoError(t, err)
+
 	// A recovery code works once.
 	rc := login()["mfaToken"].(string)
 	res = doRequest(t, "POST", base+"/auth/login/mfa", "", map[string]any{"mfaToken": rc, "code": recovery[0]})

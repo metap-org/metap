@@ -99,3 +99,42 @@ func TestSupportGrantExpires(t *testing.T) {
 	_, err = h.client.Support.StartSupportSession(asVendor, &StartSupportSessionRequest{TenantId: tenant.String(), GrantId: grant.GetId()})
 	assert.Equal(t, http.StatusConflict, statusOf(err), "an expired grant cannot start a session")
 }
+
+// A support session holding the admin role still cannot create access that outlives it: a service
+// account, a key, a person, a role, a sign-in provider. Otherwise revoking the grant would leave
+// whatever the session made behind.
+func TestSupportSessionCannotCreateDurableAccess(t *testing.T) {
+	h := newIdentityHarness(t)
+	tenant := uuid.New()
+	admin := h.member(tenant, "admin@acme.io", "admin")
+	bob := h.member(tenant, "bob@acme.io", "viewer")
+	asAdmin := h.as(tenant, admin.ID)
+	vendor := h.member(tenancy.PlatformTenantID, "agent@vendor.io", RolePlatformAdmin)
+	asVendor := h.as(tenancy.PlatformTenantID, vendor.ID)
+
+	_, err := h.client.Support.GrantSupportAccess(asAdmin, &GrantSupportAccessRequest{Reason: "outage", Role: "admin", Hours: 2})
+	require.NoError(t, err)
+	session, err := h.client.Support.StartSupportSession(asVendor, &StartSupportSessionRequest{TenantId: tenant.String()})
+	require.NoError(t, err)
+	asSupport := CallContext(context.Background(), session.GetToken())
+
+	_, err = h.client.Admin.ListUsers(asSupport, &ListUsersRequest{})
+	assert.NoError(t, err, "it can look around and do the admin's ordinary work")
+
+	_, err = h.client.Admin.CreateServiceAccount(asSupport, &CreateServiceAccountRequest{Name: "backdoor"})
+	assert.Equal(t, http.StatusForbidden, statusOf(err), "no service account")
+	_, err = h.client.Admin.CreateApiKey(asSupport, &CreateApiKeyRequest{UserId: bob.ID.String(), Name: "k", ExpiresInDays: 30})
+	assert.Equal(t, http.StatusForbidden, statusOf(err), "no key")
+	_, err = h.client.Admin.InviteUser(asSupport, &InviteUserRequest{Email: "mallory@evil.test", Roles: []string{"admin"}})
+	assert.Equal(t, http.StatusForbidden, statusOf(err), "no invitation")
+	_, err = h.client.Admin.AssignRole(asSupport, &RoleRequest{Id: bob.ID.String(), Role: "admin"})
+	assert.Equal(t, http.StatusForbidden, statusOf(err), "no role")
+	_, err = h.client.Admin.ResetPassword(asSupport, &ResetPasswordRequest{Id: bob.ID.String(), Password: "a-new-password-123"})
+	assert.Equal(t, http.StatusForbidden, statusOf(err), "no password reset")
+	_, err = h.client.Admin.ResetMfa(asSupport, &UserIdRequest{Id: bob.ID.String()})
+	assert.Equal(t, http.StatusForbidden, statusOf(err), "no MFA reset")
+
+	// The tenant's own admin is unaffected.
+	_, err = h.client.Admin.CreateServiceAccount(asAdmin, &CreateServiceAccountRequest{Name: "ci"})
+	assert.NoError(t, err)
+}

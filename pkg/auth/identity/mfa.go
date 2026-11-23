@@ -23,6 +23,7 @@ import (
 // MFA errors. ErrMFAInvalidCode covers a wrong, replayed or already-used code alike.
 var (
 	ErrMFAInvalidCode  = errors.New("invalid verification code")
+	ErrMFALocked       = errors.New("too many wrong codes: two-factor verification is locked for a while, try again later")
 	ErrMFAChallenge    = errors.New("this sign-in step expired, sign in again")
 	ErrMFANotEnrolled  = errors.New("two-factor authentication is not set up")
 	ErrMFAAlreadyOn    = errors.New("two-factor authentication is already on")
@@ -191,36 +192,69 @@ func RecoveryCodesLeft(ctx context.Context, db DBTX, identityID uuid.UUID) (int,
 	return n, err
 }
 
+// Lockout: MaxMFAFailures consecutive wrong codes lock the factor for MFALockout, on every route
+// that checks a code, so a six-digit code cannot be guessed by minting fresh sign-in challenges or
+// from a stolen session.
+const (
+	MaxMFAFailures = 5
+	MFALockout     = 15 * time.Minute
+)
+
+// MFAAttemptCounts reports whether err is a verification outcome the caller must still commit: the
+// wrong-code counter and the lock are written in the caller's transaction, so rolling it back on a
+// wrong code would undo the very count that stops guessing.
+func MFAAttemptCounts(err error) bool {
+	return errors.Is(err, ErrMFAInvalidCode) || errors.Is(err, ErrMFALocked)
+}
+
 // VerifyMFA accepts a current TOTP code or an unused recovery code (which it then burns). A TOTP
 // code is single use: the step it matched is recorded and anything at or before it is refused.
+// Wrong codes are counted and lock the factor (see MaxMFAFailures); commit the transaction when
+// MFAAttemptCounts(err) so the count is kept.
 func VerifyMFA(ctx context.Context, db DBTX, identityID uuid.UUID, code string, now time.Time) error {
 	var secretText string
 	var last int64
-	err := db.QueryRow(ctx, `SELECT secret, last_used_step FROM metadata.mfa_factors
-		WHERE identity_id = $1 AND confirmed_at IS NOT NULL FOR UPDATE`, identityID).Scan(&secretText, &last)
+	var lockedUntil *time.Time
+	err := db.QueryRow(ctx, `SELECT secret, last_used_step, locked_until FROM metadata.mfa_factors
+		WHERE identity_id = $1 AND confirmed_at IS NOT NULL FOR UPDATE`, identityID).Scan(&secretText, &last, &lockedUntil)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrMFANotEnrolled
 	}
 	if err != nil {
 		return err
 	}
+	if lockedUntil != nil && lockedUntil.After(now) {
+		return ErrMFALocked
+	}
 	secret, err := decodeSecret(secretText)
 	if err != nil {
 		return err
 	}
+	ok := false
 	if step := matchTOTP(secret, code, now, last); step != 0 {
-		_, err := db.Exec(ctx, `UPDATE metadata.mfa_factors SET last_used_step = $2 WHERE identity_id = $1`, identityID, step)
+		if _, err := db.Exec(ctx, `UPDATE metadata.mfa_factors SET last_used_step = $2 WHERE identity_id = $1`, identityID, step); err != nil {
+			return err
+		}
+		ok = true
+	} else {
+		tag, err := db.Exec(ctx, `UPDATE metadata.mfa_recovery_codes SET used_at = $3
+			WHERE identity_id = $1 AND code_hash = $2 AND used_at IS NULL`, identityID, hashRecoveryCode(code), now)
+		if err != nil {
+			return err
+		}
+		ok = tag.RowsAffected() > 0
+	}
+	if ok {
+		_, err := db.Exec(ctx, `UPDATE metadata.mfa_factors SET failed_attempts = 0, locked_until = NULL WHERE identity_id = $1`, identityID)
 		return err
 	}
-	tag, err := db.Exec(ctx, `UPDATE metadata.mfa_recovery_codes SET used_at = $3
-		WHERE identity_id = $1 AND code_hash = $2 AND used_at IS NULL`, identityID, hashRecoveryCode(code), now)
-	if err != nil {
+	if _, err := db.Exec(ctx, `UPDATE metadata.mfa_factors SET
+			failed_attempts = CASE WHEN failed_attempts + 1 >= $2 THEN 0 ELSE failed_attempts + 1 END,
+			locked_until = CASE WHEN failed_attempts + 1 >= $2 THEN $3::timestamptz ELSE locked_until END
+		WHERE identity_id = $1`, identityID, MaxMFAFailures, now.Add(MFALockout)); err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrMFAInvalidCode
-	}
-	return nil
+	return ErrMFAInvalidCode
 }
 
 // DisableMFA removes the factor and its recovery codes (the caller proved a code, or an admin

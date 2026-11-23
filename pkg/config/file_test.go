@@ -61,3 +61,23 @@ func TestLoadFailsOnAMissingOrBrokenFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(bad, []byte("a: [unclosed"), 0o600))
 	assert.Error(t, config.LoadFile(bad))
 }
+
+func TestSecretKeysNamesCredentialsWithoutReturningValues(t *testing.T) {
+	values, err := config.ParseFile([]byte(`
+database:
+  url: postgres://metap:hunter2@db:5432/metap
+redis:
+  url: redis://cache:6379
+smtp:
+  host: mail.example.com
+  password: s3cret
+secrets:
+  encryption_keys: "k1:AAAA"
+vault:
+  token: t
+port: 3000
+`))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"DATABASE_URL", "SECRETS_ENCRYPTION_KEYS", "SMTP_PASSWORD", "VAULT_TOKEN"}, config.SecretKeys(values),
+		"a URL counts only when it carries a password")
+}
