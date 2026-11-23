@@ -51,8 +51,9 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 	}
 	mountMetrics(r, state)
 	mountMetadata(r, state)
-	mountAuth(r, state)
-	mountSSO(r, state)
+	guard := authGuard(state)
+	mountAuth(r, state, guard)
+	mountSSO(r, state, guard)
 	mountRecords(r, state)
 	mountActions(r, state)
 	mountPublicConfig(r, state)

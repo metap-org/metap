@@ -32,26 +32,53 @@ type Options struct {
 	Resolve Resolver
 }
 
-// PublicAddress reports whether ip is one a customer's site could legitimately live on.
+// PublicAddress reports whether ip is one a customer's site could legitimately live on. It is the
+// one list of "inside the deployment, or not an address at all" every outbound client of this
+// platform uses (this package, the cron webhook executor, the SAML metadata fetch).
 func PublicAddress(ip netip.Addr) bool {
 	ip = ip.Unmap()
 	if !ip.IsValid() || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast() {
 		return false
 	}
-	// Carrier-grade NAT (100.64.0.0/10), the "this network" block and the reserved space that
-	// netip does not call private.
+	// Carrier-grade NAT, the "this network" block, documentation and benchmarking ranges and the
+	// reserved space that netip does not call private.
 	for _, p := range reserved {
 		if p.Contains(ip) {
 			return false
 		}
 	}
+	// An IPv6 address that carries an IPv4 one is only as public as that IPv4 address: on an
+	// IPv6-only network with DNS64 a name can resolve to 64:ff9b::a00:1, which the NAT64 gateway
+	// sends to 10.0.0.1.
+	if ip.Is6() {
+		b := ip.As16()
+		switch {
+		case nat64.Contains(ip):
+			return PublicAddress(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}))
+		case sixToFour.Contains(ip):
+			return PublicAddress(netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}))
+		}
+	}
 	return true
 }
 
+var (
+	nat64     = netip.MustParsePrefix("64:ff9b::/96")
+	sixToFour = netip.MustParsePrefix("2002::/16")
+)
+
 var reserved = func() []netip.Prefix {
 	var out []netip.Prefix
-	for _, p := range []string{"100.64.0.0/10", "0.0.0.0/8", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4", "fc00::/7", "fe80::/10"} {
+	for _, p := range []string{
+		"100.64.0.0/10", "0.0.0.0/8", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4",
+		"192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", // documentation (TEST-NET-1/2/3)
+		"fc00::/7", "fe80::/10",
+		"2001::/32",      // Teredo
+		"2001:db8::/32",  // documentation
+		"64:ff9b:1::/48", // local-use NAT64
+		"100::/64",       // discard-only
+	} {
 		out = append(out, netip.MustParsePrefix(p))
 	}
 	return out

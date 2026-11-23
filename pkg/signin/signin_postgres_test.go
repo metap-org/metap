@@ -121,3 +121,25 @@ func TestSecondFactorStepsAndPasswordChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, tenant, g.TenantID)
 }
+
+// A wrong current password on the change-password route counts toward the sign-in lockout, so a
+// stolen session cannot be used to guess the password without limit (audit 07 #1).
+func TestChangePasswordGuessesAreLockedOut(t *testing.T) {
+	s, ctx := newService(t)
+	email := uuid.NewString() + "@example.com"
+	tenant := uuid.New()
+	m, _, err := identity.AddMember(ctx, s.Pool(), identity.NewMember{TenantID: tenant, Email: email, Password: "first-password"})
+	require.NoError(t, err)
+	rc := &permission.RequestContext{TenantID: tenant.String(), UserID: m.ID.String()}
+	client := signin.Client{}
+
+	for range identity.MaxFailedLogins {
+		_, err = s.ChangePassword(ctx, rc, "a-wrong-guess", "a-new-password-1", client)
+		assert.Equal(t, errcode.WrongPassword, serviceErr(t, err).Code)
+	}
+	// The identity is locked now, for the right password too, and for signing in.
+	_, err = s.ChangePassword(ctx, rc, "first-password", "a-new-password-1", client)
+	assert.Equal(t, errcode.AccountLocked, serviceErr(t, err).Code)
+	_, err = s.Login(ctx, signin.LoginRequest{Email: email, Password: "first-password"}, client)
+	assert.Equal(t, errcode.AccountLocked, serviceErr(t, err).Code)
+}

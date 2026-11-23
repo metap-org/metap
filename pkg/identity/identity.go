@@ -473,7 +473,8 @@ func SetPassword(ctx context.Context, db DBTX, identityID uuid.UUID, password st
 		WHERE id = $1`, identityID, hash, now))
 }
 
-// CheckPassword reports whether password is identityID's current password.
+// CheckPassword reports whether password is identityID's current password, without counting a
+// failure: for tests and tools. A request path must use VerifyCurrentPassword (or Authenticate).
 func CheckPassword(ctx context.Context, db DBTX, identityID uuid.UUID, password string) (bool, error) {
 	var hash *string
 	if err := db.QueryRow(ctx, `SELECT password_hash FROM metadata.identities WHERE id = $1`, identityID).Scan(&hash); err != nil {
@@ -483,6 +484,44 @@ func CheckPassword(ctx context.Context, db DBTX, identityID uuid.UUID, password 
 		return false, nil
 	}
 	return VerifyPassword(password, *hash)
+}
+
+// VerifyCurrentPassword checks that password is identityID's current one, for an action by a
+// person who is already signed in (changing the password). It counts a wrong password toward the
+// same lockout as signing in (ErrInvalidCredentials, then ErrLocked once locked), so a stolen
+// session cannot be used to guess the password without limit.
+func VerifyCurrentPassword(ctx context.Context, db DBTX, identityID uuid.UUID, password string, now time.Time) error {
+	var (
+		hash        *string
+		failed      int
+		lockedUntil *time.Time
+	)
+	if err := db.QueryRow(ctx, `SELECT password_hash, failed_logins, locked_until FROM metadata.identities WHERE id = $1`, identityID).
+		Scan(&hash, &failed, &lockedUntil); err != nil {
+		return err
+	}
+	if hash == nil {
+		verifyDummyPassword(password)
+		return ErrInvalidCredentials
+	}
+	ok, err := VerifyPassword(password, *hash)
+	if err != nil {
+		return err
+	}
+	locked := lockedUntil != nil && now.Before(*lockedUntil)
+	if !ok {
+		if !locked {
+			if err := recordFailure(ctx, db, identityID, failed+1, now); err != nil {
+				return err
+			}
+		}
+		return ErrInvalidCredentials
+	}
+	if locked {
+		return ErrLocked
+	}
+	_, err = db.Exec(ctx, `UPDATE metadata.identities SET failed_logins = 0 WHERE id = $1`, identityID)
+	return err
 }
 
 // CheckSession decides whether a token for (tenantID, userID), issued at issuedAt, may still be
