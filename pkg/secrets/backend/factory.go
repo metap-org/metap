@@ -1,17 +1,16 @@
 // Picks which SecretStore impl a binary should build. Centralized here (rather than each binary
 // hand-rolling the same branch) so four independent copies can't drift.
-// Package secrets builds the control.SecretStore a deployment is configured for — GCP Secret
-// Manager, AWS Secrets Manager, Vault, or (default) control.EnvStore. The cloud SDKs live here,
+// Package secrets builds the secrets.Store a deployment is configured for — GCP Secret
+// Manager, AWS Secrets Manager, Vault, or (default) secrets.EnvStore. The cloud SDKs live here,
 // not in package control, so importing control (and everything built on it: crud, httpserver)
 // no longer links three cloud SDKs into every binary; only a binary that calls Build
 // does.
-package secrets
+package backend
 
 import (
 	"context"
 	"fmt"
-
-	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/secrets"
 
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/kit/env"
@@ -83,14 +82,14 @@ func ConfigFromEnv() Config {
 // BuildSecretStore's precedence when more than one backend's env vars are somehow set at once:
 // GCP, then AWS, then Vault, then the EnvStore fallback — an arbitrary but fixed order,
 // deterministic and documented rather than left to if/match arm evaluation order.
-func Build(ctx context.Context, config Config) (control.SecretStore, error) {
+func Build(ctx context.Context, config Config) (secrets.Store, error) {
 	store, _, err := buildExternal(ctx, config)
 	return store, err
 }
 
 // buildExternal builds the deployment's secret manager and names its kind: "gcp", "aws", "vault",
 // or "env" (the read-only environment fallback).
-func buildExternal(ctx context.Context, config Config) (control.SecretStore, string, error) {
+func buildExternal(ctx context.Context, config Config) (secrets.Store, string, error) {
 	if config.GCPSecretsProjectID != "" {
 		store, err := NewGcpSecretManagerStore(ctx, config.GCPSecretsProjectID)
 		return store, KindGCP, err
@@ -127,5 +126,5 @@ func buildExternal(ctx context.Context, config Config) (control.SecretStore, str
 		}
 	}
 
-	return control.EnvStore{}, KindEnv, nil
+	return secrets.EnvStore{}, KindEnv, nil
 }

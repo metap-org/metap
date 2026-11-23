@@ -5,14 +5,13 @@
 // secretmanager.NewClient resolves on its own. That's the one deliberate asymmetry with
 // AwsSecretsManagerStoreConfig here — everything else (the {"dsn": "..."} JSON payload shape,
 // the PutDSN/DbCredentials split) mirrors it exactly.
-package secrets
+package backend
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/secrets"
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
@@ -91,7 +90,7 @@ func (s *GcpSecretManagerStore) PutDSN(ctx context.Context, dsnSecretRef, dsn st
 	return nil
 }
 
-func (s *GcpSecretManagerStore) DbCredentials(ctx context.Context, dsnSecretRef string) (*control.DbCreds, error) {
+func (s *GcpSecretManagerStore) DbCredentials(ctx context.Context, dsnSecretRef string) (*secrets.DbCreds, error) {
 	data, err := s.accessLatest(ctx, dsnSecretRef)
 	if err != nil {
 		return nil, fmt.Errorf("GCP Secret Manager access_secret_version failed for %s: %w", dsnSecretRef, err)
@@ -100,7 +99,7 @@ func (s *GcpSecretManagerStore) DbCredentials(ctx context.Context, dsnSecretRef 
 	if err := json.Unmarshal(data, &secret); err != nil {
 		return nil, fmt.Errorf(`GCP Secret Manager secret %s is not the expected {"dsn": ...} JSON shape: %w`, dsnSecretRef, err)
 	}
-	return &control.DbCreds{DSN: secret.Dsn}, nil
+	return &secrets.DbCreds{DSN: secret.Dsn}, nil
 }
 
 func (s *GcpSecretManagerStore) GetSecret(ctx context.Context, secretRef string) (string, error) {

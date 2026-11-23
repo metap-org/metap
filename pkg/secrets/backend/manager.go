@@ -1,14 +1,13 @@
-package secrets
+package backend
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/metap-org/metap/pkg/secrets"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/metap-org/metap/pkg/control"
 )
 
 // The kinds of external secret manager a deployment can be configured with (KindEnv: none — the
@@ -26,7 +25,7 @@ const (
 	SourceExternal = "external"
 )
 
-// Manager is the control.SecretStore of a deployment, and the one place that knows its two
+// Manager is the secrets.Store of a deployment, and the one place that knows its two
 // homes for a tenant credential:
 //
 //   - the metap database, sealed with an application key (when SECRETS_ENCRYPTION_KEYS is set);
@@ -38,11 +37,11 @@ const (
 // chooses explicitly (Put) and keeps exactly one copy: saving in one place removes the other.
 type Manager struct {
 	db       *DBStore
-	external control.SecretStore
+	external secrets.Store
 	kind     string
 }
 
-var _ control.SecretStore = (*Manager)(nil)
+var _ secrets.Store = (*Manager)(nil)
 
 // NewManager builds the Manager for the deployment's configuration over pool (the metap database).
 func NewManager(ctx context.Context, config Config, pool *pgxpool.Pool) (*Manager, error) {
@@ -62,13 +61,13 @@ func NewManager(ctx context.Context, config Config, pool *pgxpool.Pool) (*Manage
 }
 
 // NewManagerWith assembles a Manager from parts (tests, custom wiring). db may be nil.
-func NewManagerWith(db *DBStore, external control.SecretStore, kind string) *Manager {
+func NewManagerWith(db *DBStore, external secrets.Store, kind string) *Manager {
 	return &Manager{db: db, external: external, kind: kind}
 }
 
 func (m *Manager) externalWritable() bool { return m.kind != KindEnv }
 
-func (m *Manager) DbCredentials(ctx context.Context, ref string) (*control.DbCreds, error) {
+func (m *Manager) DbCredentials(ctx context.Context, ref string) (*secrets.DbCreds, error) {
 	return m.external.DbCredentials(ctx, ref)
 }
 

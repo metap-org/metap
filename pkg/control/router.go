@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/secrets"
 	"strings"
 	"time"
 
@@ -88,14 +89,14 @@ func ValidateSchemaName(name string) error {
 type Router struct {
 	sharedPool     *pgxpool.Pool
 	registry       *RegistryCache
-	secretStore    SecretStore
+	secretStore    secrets.Store
 	dedicatedPools *gocache.Cache
 	schemaPools    *gocache.Cache
 	// poolOpenGroup de-dupes concurrent pool-opens for the same key (dedicated or schema).
 	poolOpenGroup singleflight.Group
 }
 
-func NewRouter(sharedPool *pgxpool.Pool, registry *RegistryCache, secretStore SecretStore) *Router {
+func NewRouter(sharedPool *pgxpool.Pool, registry *RegistryCache, secretStore secrets.Store) *Router {
 	return &Router{
 		sharedPool:     sharedPool,
 		registry:       registry,
@@ -105,10 +106,10 @@ func NewRouter(sharedPool *pgxpool.Pool, registry *RegistryCache, secretStore Se
 	}
 }
 
-// Secrets is the SecretStore this router resolves tenant credentials through. Exposed so callers
+// Secrets is the secrets.Store this router resolves tenant credentials through. Exposed so callers
 // outside this package reach the *same* configured backend rather than building a second one
 // from env.
-func (r *Router) Secrets() SecretStore { return r.secretStore }
+func (r *Router) Secrets() secrets.Store { return r.secretStore }
 
 // SharedPool is the shared database — where identities and members live for every tenant.
 func (r *Router) SharedPool() *pgxpool.Pool { return r.sharedPool }

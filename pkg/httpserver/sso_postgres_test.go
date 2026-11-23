@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
+	"github.com/metap-org/metap/pkg/secrets"
 	"io"
 	"math/big"
 	"net"
@@ -25,7 +26,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/httpserver"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/tenantauth"
@@ -183,7 +183,7 @@ func TestSSOSignInProvisioningAndEnforcement(t *testing.T) {
 	base := startTestServerWithPublicURL(t, state)
 
 	store := state.Router.Secrets()
-	ref := control.TenantSecretRef(tenant, "sso.clientSecret")
+	ref := secrets.TenantSecretRef(tenant, "sso.clientSecret")
 	require.NoError(t, store.PutSecret(ctx, ref, "shh"))
 	cfg := &tenantauth.OidcConfig{IssuerURL: idp.srv.URL, ClientID: "client-1", ClientSecretRef: ref, Scopes: []string{"openid", "email"},
 		EmailDomains: []string{"acme.io"}, DefaultRole: "viewer", PostLoginRedirect: "PORTAL/home"}
@@ -314,7 +314,7 @@ func setupSSOTenant(t *testing.T, idp *mockIdP, mutate func(*tenantauth.OidcConf
 	tenant = uuid.New()
 	state, _ = newTestAppState(t, p, httpTestEntity())
 	base = startTestServerWithPublicURL(t, state)
-	ref := control.TenantSecretRef(tenant, "sso.clientSecret")
+	ref := secrets.TenantSecretRef(tenant, "sso.clientSecret")
 	require.NoError(t, state.Router.Secrets().PutSecret(context.Background(), ref, "shh"))
 	cfg = &tenantauth.OidcConfig{IssuerURL: idp.srv.URL, ClientID: "client-1", ClientSecretRef: ref, Scopes: []string{"openid", "email"},
 		EmailDomains: []string{"acme.io"}, PostLoginRedirect: base + "/home"}

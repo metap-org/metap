@@ -11,9 +11,9 @@
 package scheduler
 
 import (
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/httpx"
+	"github.com/metap-org/metap/pkg/secrets"
 )
 
 // ExecutorConfig is everything the dispatch handlers need that isn't itself a job's own
@@ -46,7 +46,7 @@ type ExecutorConfig struct {
 	// this one reading somewhere else. nil means no credential can be resolved and a job that
 	// asks for one fails saying so — the honest failure, rather than silently sending the webhook
 	// without the Authorization it was configured to carry.
-	Secrets control.SecretStore
+	Secrets secrets.Store
 }
 
 type SmtpConfig struct {

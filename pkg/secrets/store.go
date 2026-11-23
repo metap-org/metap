@@ -1,7 +1,7 @@
-// SecretStore is an interface, not a concrete type, for the same reason EventBus and PolicyStore
+// Store is an interface, not a concrete type, for the same reason EventBus and PolicyStore
 // are — swapping how a DedicatedDb tenant's connection string is resolved without touching
 // Router.
-package control
+package secrets
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 type DbCreds struct {
 	DSN string
 	// ExpiresAt is nil for a static credential, never rotated (every case today — EnvStore).
-	// Non-nil is for a future dynamic-credential SecretStore (Vault-issued, self-expiring) to
+	// Non-nil is for a future dynamic-credential Store (Vault-issued, self-expiring) to
 	// signal Router it should refresh the cached pool before this instant — not implemented yet,
 	// nothing produces a non-nil value today.
 	ExpiresAt *time.Time
@@ -53,7 +53,7 @@ func TenantCredentialRef(tenantID, credentialID uuid.UUID) string {
 	return TenantSecretRef(tenantID, "credential."+credentialID.String())
 }
 
-type SecretStore interface {
+type Store interface {
 	// DbCredentials: dsnSecretRef is control.tenants.dsn_secret_ref — Router already resolved
 	// the tenant's routing row before calling this, so it's passed the reference directly
 	// rather than a tenant id the store would have to look up again itself.
@@ -75,7 +75,7 @@ type SecretStore interface {
 }
 
 // EnvStore reads the DSN straight from an environment variable named dsnSecretRef, verbatim —
-// no naming transformation. The default SecretStore, and the one a deployment gets when none of
+// no naming transformation. The default Store, and the one a deployment gets when none of
 // Vault/AWS/GCP is configured.
 //
 // Read-only for general secrets: GetSecret works (an operator can provision a tenant's webhook

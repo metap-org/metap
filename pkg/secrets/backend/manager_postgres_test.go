@@ -1,17 +1,17 @@
 //go:build integration
 
-package secrets
+package backend
 
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/pkg/secrets"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/testkit"
 )
 
@@ -23,7 +23,7 @@ type memStore struct {
 
 func newMemStore() *memStore { return &memStore{data: map[string]string{}} }
 
-func (m *memStore) DbCredentials(context.Context, string) (*control.DbCreds, error) {
+func (m *memStore) DbCredentials(context.Context, string) (*secrets.DbCreds, error) {
 	return nil, errors.New("not used")
 }
 func (m *memStore) GetSecret(_ context.Context, ref string) (string, error) {
@@ -122,7 +122,7 @@ func TestManagerWithoutExternalOrDatabase(t *testing.T) {
 
 	// Environment only (the default deployment): reads work, the external mode refuses, and the
 	// SecretStore write path (SSO) falls back to the database when it is enabled.
-	m := NewManagerWith(dbStore(t), control.EnvStore{}, KindEnv)
+	m := NewManagerWith(dbStore(t), secrets.EnvStore{}, KindEnv)
 	assert.Equal(t, Capabilities{Database: true, External: false, Kind: KindEnv}, m.Capabilities())
 	st, _ := m.Status(ctx, "REF_ENV")
 	assert.Equal(t, SourceExternal, st.Source, "an operator-provisioned environment value reads as external")
@@ -134,7 +134,7 @@ func TestManagerWithoutExternalOrDatabase(t *testing.T) {
 	require.NoError(t, m.DeleteSecret(ctx, "REF_SSO"), "deleting needs no write to the environment")
 
 	// Database disabled: the database mode refuses.
-	off := NewManagerWith(nil, control.EnvStore{}, KindEnv)
+	off := NewManagerWith(nil, secrets.EnvStore{}, KindEnv)
 	assert.Equal(t, Capabilities{Kind: KindEnv}, off.Capabilities())
 	assert.ErrorContains(t, off.Put(ctx, "REF", SourceDatabase, "x"), "not enabled")
 	assert.Error(t, off.PutSecret(ctx, "REF", "x"), "the environment's own refusal surfaces")

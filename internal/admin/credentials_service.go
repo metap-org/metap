@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/pkg/secrets"
 	"net/http"
 	"strings"
 	"time"
@@ -13,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/jobs/cron"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -50,7 +50,7 @@ type CredentialCapabilities struct {
 }
 
 // CredentialManager is the store behind the Credentials tab (implemented over secrets.Manager).
-// ref is always control.TenantCredentialRef — derived from the credential's own row, never supplied.
+// ref is always secrets.TenantCredentialRef — derived from the credential's own row, never supplied.
 type CredentialManager interface {
 	Capabilities() CredentialCapabilities
 	Put(ctx context.Context, ref, source, value string) error
@@ -109,7 +109,7 @@ func validateCredentialValue(ctx context.Context, kind, value string) error {
 		return fieldInvalid(ctx, field, "A value is required.")
 	case len(value) > maxCredentialValue:
 		return fieldInvalid(ctx, field, "The value must be at most 4096 characters.")
-	case kind != CredentialKindUserPass && control.IsReservedCredentialValue(value):
+	case kind != CredentialKindUserPass && secrets.IsReservedCredentialValue(value):
 		return fieldInvalid(ctx, field, "The value must not start with \"userpass:\" (reserved).")
 	}
 	if kind == CredentialKindAuthorization {
@@ -287,7 +287,7 @@ func (s *CredentialsService) CreateCredential(ctx context.Context, req *CreateCr
 		if err := validateCredentialValue(ctx, req.Kind, req.Value); err != nil {
 			return nil, err
 		}
-		stored = control.EncodeUserPass(username, req.Value)
+		stored = secrets.EncodeUserPass(username, req.Value)
 	} else {
 		if req.Username != "" {
 			return nil, fieldInvalid(ctx, "username", "Only a username and password credential has a username.")
@@ -299,13 +299,13 @@ func (s *CredentialsService) CreateCredential(ctx context.Context, req *CreateCr
 	id := uuid.New()
 	// The value first, then the row: a failure leaves an unreferenced secret, never a credential
 	// that points at nothing.
-	if err := m.Put(ctx, control.TenantCredentialRef(c.tenant, id), req.Source, stored); err != nil {
+	if err := m.Put(ctx, secrets.TenantCredentialRef(c.tenant, id), req.Source, stored); err != nil {
 		return nil, svcErr(ctx, http.StatusConflict, errcode.Forbidden, err.Error())
 	}
 	_, err = s.d.cfg.Shared.Exec(ctx, `INSERT INTO metadata.tenant_credentials (id, tenant_id, name, description, kind, source, username, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, id, c.tenant, name, strings.TrimSpace(req.Description), req.Kind, req.Source, username, c.self)
 	if err != nil {
-		_ = m.Remove(ctx, control.TenantCredentialRef(c.tenant, id))
+		_ = m.Remove(ctx, secrets.TenantCredentialRef(c.tenant, id))
 		if isUniqueViolation(err) {
 			return nil, fieldInvalid(ctx, "name", "A credential with this name already exists.")
 		}
@@ -378,7 +378,7 @@ func (s *CredentialsService) UpdateCredential(ctx context.Context, req *UpdateCr
 			next.username = username
 		}
 	}
-	ref := control.TenantCredentialRef(c.tenant, id)
+	ref := secrets.TenantCredentialRef(c.tenant, id)
 	if newValue != "" || usernameChanged {
 		stored := newValue
 		if cur.kind == CredentialKindUserPass {
@@ -386,7 +386,7 @@ func (s *CredentialsService) UpdateCredential(ctx context.Context, req *UpdateCr
 			if password == "" {
 				// A new username keeps the stored password: read it for this alone.
 				existing, gerr := m.Get(ctx, ref)
-				_, kept, ok := control.DecodeUserPass(existing)
+				_, kept, ok := secrets.DecodeUserPass(existing)
 				if gerr != nil || !ok {
 					return nil, fieldInvalid(ctx, "value", "The stored password could not be read: enter the password again.")
 				}
@@ -395,7 +395,7 @@ func (s *CredentialsService) UpdateCredential(ctx context.Context, req *UpdateCr
 			if err := validateCredentialValue(ctx, cur.kind, password); err != nil {
 				return nil, err
 			}
-			stored = control.EncodeUserPass(next.username, password)
+			stored = secrets.EncodeUserPass(next.username, password)
 		} else if err := validateCredentialValue(ctx, cur.kind, newValue); err != nil {
 			return nil, err
 		}
@@ -453,7 +453,7 @@ func (s *CredentialsService) DeleteCredential(ctx context.Context, req *Credenti
 			Message:     "This credential is still used by " + strings.Join(names, ", ") + ". Point those at another credential first.",
 			FieldErrors: map[string][]string{"usedBy": names}})
 	}
-	if err := m.Remove(ctx, control.TenantCredentialRef(c.tenant, id)); err != nil {
+	if err := m.Remove(ctx, secrets.TenantCredentialRef(c.tenant, id)); err != nil {
 		return nil, svcErr(ctx, http.StatusConflict, errcode.Forbidden, err.Error())
 	}
 	if _, err := s.d.cfg.Shared.Exec(ctx, `DELETE FROM metadata.tenant_credentials WHERE tenant_id = $1 AND id = $2`, c.tenant, id); err != nil {

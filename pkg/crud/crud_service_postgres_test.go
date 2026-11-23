@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/pkg/secrets"
 	"sync/atomic"
 	"testing"
 
@@ -89,7 +90,7 @@ func cleanupTenant(t *testing.T, pool *pgxpool.Pool, tenantID uuid.UUID) {
 // Router existed.
 func testRouter(pool *pgxpool.Pool) *control.Router {
 	registry := control.NewPostgresTenantRegistry(pool)
-	return control.NewRouter(pool, control.NewRegistryCache(registry), control.EnvStore{})
+	return control.NewRouter(pool, control.NewRegistryCache(registry), secrets.EnvStore{})
 }
 
 func testPermissions(pool *pgxpool.Pool) *permission.PermissionService {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/pkg/secrets"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,8 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/metap-org/metap/pkg/control"
 )
 
 // Live verification (a real outbound HTTP call, against a real test server) that an
@@ -122,10 +121,10 @@ func TestTruncateHandlesAStringThatIsEntirelyMultibyte(t *testing.T) {
 	assert.True(t, strings.HasSuffix(out, "..."), "expected ... suffix, got %q", out)
 }
 
-// mapSecrets is a control.SecretStore over a map of reference -> value.
+// mapSecrets is a secrets.Store over a map of reference -> value.
 type mapSecrets map[string]string
 
-func (m mapSecrets) DbCredentials(context.Context, string) (*control.DbCreds, error) {
+func (m mapSecrets) DbCredentials(context.Context, string) (*secrets.DbCreds, error) {
 	return nil, fmt.Errorf("not used")
 }
 func (m mapSecrets) GetSecret(_ context.Context, ref string) (string, error) {
@@ -148,7 +147,7 @@ func TestWebhookSendsTheNamedCredentialOfItsOwnTenantOnly(t *testing.T) {
 	}))
 	defer srv.Close()
 	tenant, other, credential := uuid.New(), uuid.New(), uuid.New()
-	secrets := mapSecrets{control.TenantCredentialRef(tenant, credential): "Bearer mine"}
+	secrets := mapSecrets{secrets.TenantCredentialRef(tenant, credential): "Bearer mine"}
 	policy := WebhookPolicy{AllowPrivateTargets: true}
 	config, _ := json.Marshal(map[string]any{"url": srv.URL, "credentialId": credential.String()})
 
@@ -175,7 +174,7 @@ func TestWebhookSendsAUserPassCredentialAsBasic(t *testing.T) {
 	}))
 	defer srv.Close()
 	tenant, credential := uuid.New(), uuid.New()
-	secrets := mapSecrets{control.TenantCredentialRef(tenant, credential): control.EncodeUserPass("alice", "s3:cret")}
+	secrets := mapSecrets{secrets.TenantCredentialRef(tenant, credential): secrets.EncodeUserPass("alice", "s3:cret")}
 	config, _ := json.Marshal(map[string]any{"url": srv.URL, "credentialId": credential.String()})
 
 	_, err := RunWebhook(context.Background(), WebhookPolicy{AllowPrivateTargets: true}, secrets, tenant, uuid.New(), uuid.New(), nil, nil, config)

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
+	"github.com/metap-org/metap/pkg/secrets"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -60,7 +61,7 @@ func genRSAKeyPair(t *testing.T) (privatePEM, publicPEM string, publicKey *rsa.P
 
 func testRouterFor(pool *pgxpool.Pool) *control.Router {
 	registry := control.NewPostgresTenantRegistry(pool)
-	return control.NewRouter(pool, control.NewRegistryCache(registry), control.NewMemorySecretStore())
+	return control.NewRouter(pool, control.NewRegistryCache(registry), secrets.NewMemoryStore())
 }
 
 const testOrdersTable = "entities.test_orders"

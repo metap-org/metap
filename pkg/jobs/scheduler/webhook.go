@@ -17,13 +17,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/metap-org/metap/pkg/kit/httpx"
+	"github.com/metap-org/metap/pkg/secrets"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
@@ -39,7 +39,7 @@ type webhookConfig struct {
 	Headers map[string]string `json:"headers,omitempty"`
 	Body    json.RawMessage   `json:"body,omitempty"`
 	// AuthorizationFromSecret: opt-in, a boolean deliberately — not a reference string. A tenant
-	// naming the secret to use would be the exact hole control.TenantSecretRef exists to remove:
+	// naming the secret to use would be the exact hole secrets.TenantSecretRef exists to remove:
 	// the reference is derived from the job's own tenantID, so a job can only ever present its
 	// own tenant's credential, whatever it puts in target_config.
 	AuthorizationFromSecret bool `json:"authorizationFromSecret,omitempty"`
@@ -70,7 +70,7 @@ func webhookHTTPClient() *http.Client {
 }
 
 // RunWebhook runs one "webhook" target firing (or step).
-func RunWebhook(ctx context.Context, policy WebhookPolicy, secrets control.SecretStore, tenantID, jobID, runID uuid.UUID,
+func RunWebhook(ctx context.Context, policy WebhookPolicy, store secrets.Store, tenantID, jobID, runID uuid.UUID,
 	triggerEntity *string, triggerRecordID *uuid.UUID, targetConfig json.RawMessage) (json.RawMessage, error) {
 	var cfg webhookConfig
 	if err := json.Unmarshal(targetConfig, &cfg); err != nil {
@@ -106,21 +106,21 @@ func RunWebhook(ctx context.Context, policy WebhookPolicy, secrets control.Secre
 		if perr != nil {
 			return nil, fmt.Errorf("invalid credentialId %q", cfg.CredentialID)
 		}
-		if secrets == nil {
+		if store == nil {
 			return nil, fmt.Errorf("this job uses a stored credential, but no secret backend is configured for cron-scheduler")
 		}
-		secretRef := control.TenantCredentialRef(tenantID, credentialID)
-		value, serr := secrets.GetSecret(ctx, secretRef)
+		secretRef := secrets.TenantCredentialRef(tenantID, credentialID)
+		value, serr := store.GetSecret(ctx, secretRef)
 		if serr != nil {
 			return nil, fmt.Errorf("could not read credential %s (deleted, or its secret store is unreachable): %w", credentialID, serr)
 		}
-		credential, hasCredential = control.AuthorizationFromCredential(value), true
+		credential, hasCredential = secrets.AuthorizationFromCredential(value), true
 	} else if cfg.AuthorizationFromSecret {
-		if secrets == nil {
+		if store == nil {
 			return nil, fmt.Errorf("this job requests its tenant's stored credential, but no secret backend is configured for cron-scheduler")
 		}
-		secretRef := control.TenantSecretRef(tenantID, webhookAuthorizationKey)
-		value, serr := secrets.GetSecret(ctx, secretRef)
+		secretRef := secrets.TenantSecretRef(tenantID, webhookAuthorizationKey)
+		value, serr := store.GetSecret(ctx, secretRef)
 		if serr != nil {
 			// The reference is safe to name (it is derivable from the tenant id); the value is
 			// not, and never reaches this string.

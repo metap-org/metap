@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"github.com/metap-org/metap/pkg/secrets"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -147,7 +148,7 @@ func genRSAKeyPair(t *testing.T) (privatePEM string, publicKey *rsa.PublicKey) {
 
 func testRouterFor(pool *pgxpool.Pool) *control.Router {
 	registry := control.NewPostgresTenantRegistry(pool)
-	return control.NewRouter(pool, control.NewRegistryCache(registry), control.NewMemorySecretStore())
+	return control.NewRouter(pool, control.NewRegistryCache(registry), secrets.NewMemoryStore())
 }
 
 // asServiceError is the *crud.ServiceError err carries (nil when it is not one).

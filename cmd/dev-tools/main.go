@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/secrets"
 	"os"
 
 	"github.com/google/uuid"
@@ -143,7 +144,7 @@ func connectShared(ctx context.Context, maxConns int32) (*pgxpool.Pool, error) {
 // seeded by hand via vault-put-dsn first, same as it always could.
 func routerFor(sharedPool *pgxpool.Pool) *control.Router {
 	tenantRegistry := control.NewPostgresTenantRegistry(sharedPool)
-	return control.NewRouter(sharedPool, control.NewRegistryCache(tenantRegistry), control.EnvStore{})
+	return control.NewRouter(sharedPool, control.NewRegistryCache(tenantRegistry), secrets.EnvStore{})
 }
 
 func parseUUID(s string) (uuid.UUID, error) {

@@ -5,6 +5,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/secrets"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 
 func testRouter(pool *pgxpool.Pool) *Router {
 	registry := NewPostgresTenantRegistry(pool)
-	return NewRouter(pool, NewRegistryCache(registry), EnvStore{})
+	return NewRouter(pool, NewRegistryCache(registry), secrets.EnvStore{})
 }
 
 func searchPath(ctx context.Context, tx pgx.Tx) string {

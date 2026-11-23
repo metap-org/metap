@@ -20,7 +20,7 @@ import (
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/secrets"
+	"github.com/metap-org/metap/pkg/secrets/backend"
 )
 
 // BootstrapOptions configure RunBootstrap.
@@ -65,7 +65,7 @@ func RunBootstrap(ctx context.Context, opts BootstrapOptions) error {
 		return fmt.Errorf("connecting to postgres: %w", err)
 	}
 	defer pool.Close()
-	secretManager, err := secrets.NewManager(ctx, secrets.ConfigFromEnv(), pool)
+	secretManager, err := backend.NewManager(ctx, backend.ConfigFromEnv(), pool)
 	if err != nil {
 		return fmt.Errorf("building secret store: %w", err)
 	}

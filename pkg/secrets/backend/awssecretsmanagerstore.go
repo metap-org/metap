@@ -7,14 +7,13 @@
 // The secret's SecretString value is expected to be JSON, {"dsn": "<connection-string>"} — the
 // same shape VaultStore uses, so an operator has one mental model regardless of which
 // SecretStore backend a tenant's dsn_secret_ref actually resolves against.
-package secrets
+package backend
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/metap-org/metap/pkg/control"
+	"github.com/metap-org/metap/pkg/secrets"
 
 	awsv2config "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -73,7 +72,7 @@ func (s *AwsSecretsManagerStore) PutDSN(ctx context.Context, dsnSecretRef, dsn s
 	return nil
 }
 
-func (s *AwsSecretsManagerStore) DbCredentials(ctx context.Context, dsnSecretRef string) (*control.DbCreds, error) {
+func (s *AwsSecretsManagerStore) DbCredentials(ctx context.Context, dsnSecretRef string) (*secrets.DbCreds, error) {
 	out, err := s.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: &dsnSecretRef})
 	if err != nil {
 		return nil, fmt.Errorf("AWS Secrets Manager get_secret_value failed for %s: %w", dsnSecretRef, err)
@@ -85,7 +84,7 @@ func (s *AwsSecretsManagerStore) DbCredentials(ctx context.Context, dsnSecretRef
 	if err := json.Unmarshal([]byte(*out.SecretString), &secret); err != nil {
 		return nil, fmt.Errorf(`AWS Secrets Manager secret %s is not the expected {"dsn": ...} JSON shape: %w`, dsnSecretRef, err)
 	}
-	return &control.DbCreds{DSN: secret.Dsn}, nil
+	return &secrets.DbCreds{DSN: secret.Dsn}, nil
 }
 
 func (s *AwsSecretsManagerStore) GetSecret(ctx context.Context, secretRef string) (string, error) {

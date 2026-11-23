@@ -20,15 +20,14 @@
 // client without rebuilding it — simpler, same net effect (concurrent calls for different tenants
 // don't serialize behind one lock held for a network round trip, since the lock is only held for
 // the token-freshness check, not the KV call itself).
-package secrets
+package backend
 
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/secrets"
 	"sync"
 	"time"
-
-	"github.com/metap-org/metap/pkg/control"
 
 	vaultapi "github.com/openbao/openbao/api/v2"
 )
@@ -171,7 +170,7 @@ func (s *VaultStore) PutDSN(ctx context.Context, dsnSecretRef, dsn string) error
 	return nil
 }
 
-func (s *VaultStore) DbCredentials(ctx context.Context, dsnSecretRef string) (*control.DbCreds, error) {
+func (s *VaultStore) DbCredentials(ctx context.Context, dsnSecretRef string) (*secrets.DbCreds, error) {
 	kv, err := s.kv2(ctx)
 	if err != nil {
 		return nil, err
@@ -182,7 +181,7 @@ func (s *VaultStore) DbCredentials(ctx context.Context, dsnSecretRef string) (*c
 		return nil, fmt.Errorf("vault kv2 read failed for dsn_secret_ref %s at %s/%s: %w", dsnSecretRef, vaultMount, path, err)
 	}
 	dsn, _ := secret.Data["dsn"].(string)
-	return &control.DbCreds{DSN: dsn}, nil
+	return &secrets.DbCreds{DSN: dsn}, nil
 }
 
 func (s *VaultStore) GetSecret(ctx context.Context, secretRef string) (string, error) {

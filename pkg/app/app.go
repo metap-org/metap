@@ -48,7 +48,7 @@ import (
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/reconciler"
-	"github.com/metap-org/metap/pkg/secrets"
+	"github.com/metap-org/metap/pkg/secrets/backend"
 )
 
 // Options describes one service.
@@ -125,7 +125,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	defer pool.Close()
 
-	secretManager, err := secrets.NewManager(ctx, secrets.ConfigFromAppConfig(config), pool)
+	secretManager, err := backend.NewManager(ctx, backend.ConfigFromAppConfig(config), pool)
 	if err != nil {
 		return fmt.Errorf("building secret store: %w", err)
 	}
@@ -265,7 +265,7 @@ func Run(ctx context.Context, opts Options) error {
 
 // identityConfig serves user administration on the token issuer only (it owns identities); a
 // verify-only service returns nil.
-func identityConfig(state *httpserver.AppState, auditStore audit.Store, manager *secrets.Manager) *admin.IdentityConfig {
+func identityConfig(state *httpserver.AppState, auditStore audit.Store, manager *backend.Manager) *admin.IdentityConfig {
 	if !state.CanIssueTokens() {
 		return nil
 	}
@@ -313,9 +313,9 @@ func ReadPublicKey(path string) (any, error) {
 	return jwt.ParseRSAPublicKeyFromPEM(data)
 }
 
-// credentialAdapter presents the secrets.Manager to adminapi, which cannot import the package
+// credentialAdapter presents the backend.Manager to adminapi, which cannot import the package
 // (it links the cloud SDKs).
-type credentialAdapter struct{ m *secrets.Manager }
+type credentialAdapter struct{ m *backend.Manager }
 
 func (a credentialAdapter) Capabilities() admin.CredentialCapabilities {
 	c := a.m.Capabilities()

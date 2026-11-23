@@ -1,4 +1,4 @@
-package secrets
+package backend
 
 import (
 	"encoding/base64"

@@ -6,6 +6,7 @@ import (
 	"context"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
+	"github.com/metap-org/metap/pkg/secrets"
 	"testing"
 
 	"github.com/google/uuid"
@@ -51,7 +52,7 @@ func TestApplyPoliciesAgainstPostgres(t *testing.T) {
 	pool := testkit.NewPostgres(t, testkit.WithSearchPath("metadata", "public"))
 	ctx := context.Background()
 	tenant := uuid.New()
-	router := control.NewRouter(pool, control.NewRegistryCache(control.NewPostgresTenantRegistry(pool)), control.EnvStore{})
+	router := control.NewRouter(pool, control.NewRegistryCache(control.NewPostgresTenantRegistry(pool)), secrets.EnvStore{})
 	perms := permission.NewPermissionService(control.NewPostgresPolicyStore(router))
 	deps := Deps{Registry: registry(t, "waf.zones", "waf.rules"), Policies: perms, Identity: PgIdentity{DB: pool}}
 	b := Bootstrap{Roles: []string{"analyst"}, Grants: []Grant{{Role: "analyst", Entities: []string{"waf.*"}, Actions: []string{"read", "update"}}}}
