@@ -241,12 +241,13 @@ func (s *Service) ChangePassword(ctx context.Context, caller *permission.Request
 	if err != nil {
 		return nil, err
 	}
-	ok, err := identity.CheckPassword(ctx, s.d.Pool, identityID, current)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
+	// A wrong current password counts toward the same lockout as a sign-in: a stolen session must
+	// not be a way to guess the password.
+	switch err := identity.VerifyCurrentPassword(ctx, s.d.Pool, identityID, current, s.now()); {
+	case errors.Is(err, identity.ErrInvalidCredentials):
 		return nil, serviceErr(http.StatusBadRequest, errcode.WrongPassword, "The current password is wrong.", nil)
+	case err != nil:
+		return nil, IdentityError(err)
 	}
 	if err := identity.CheckPasswordPolicy(ctx, s.d.Pool, identityID, next, s.d.PasswordPolicy); err != nil {
 		return nil, IdentityError(err)
