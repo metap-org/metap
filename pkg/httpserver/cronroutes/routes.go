@@ -14,8 +14,8 @@ import (
 
 	"github.com/metap-org/metap/pkg/httpserver"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/jobs/cron"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -273,7 +273,7 @@ func getCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.AppSta
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		cronNotFound(w)
 		return
@@ -314,7 +314,7 @@ func updateCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.App
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		cronNotFound(w)
 		return
@@ -449,7 +449,7 @@ func deleteCronJob(w http.ResponseWriter, r *http.Request, state *httpserver.App
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		cronNotFound(w)
 		return
@@ -471,7 +471,7 @@ func listCronJobRuns(w http.ResponseWriter, r *http.Request, state *httpserver.A
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		cronNotFound(w)
 		return
@@ -503,12 +503,12 @@ func getWorkflowRun(w http.ResponseWriter, r *http.Request, state *httpserver.Ap
 	if !ok {
 		return
 	}
-	jobID, err := uuid.Parse(chi.URLParam(r, "jobId"))
+	jobID, err := uuid.Parse(r.PathValue("jobId"))
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusNotFound, "workflow_run_not_found", "Workflow run not found.", nil)
 		return
 	}
-	runID, err := uuid.Parse(chi.URLParam(r, "runId"))
+	runID, err := uuid.Parse(r.PathValue("runId"))
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusNotFound, "workflow_run_not_found", "Workflow run not found.", nil)
 		return
@@ -530,7 +530,7 @@ func getWorkflowRun(w http.ResponseWriter, r *http.Request, state *httpserver.Ap
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": run})
 }
 
-func Mount(r chi.Router, state *httpserver.AppState) {
+func Mount(r *router.Router, state *httpserver.AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *httpserver.AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}

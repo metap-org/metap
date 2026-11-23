@@ -16,7 +16,7 @@ package httpserver
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/control"
@@ -57,7 +57,7 @@ func setTenantConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
 	if !ok {
 		return
 	}
-	key := chi.URLParam(r, "key")
+	key := r.PathValue("key")
 	var body setConfigBody
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -93,7 +93,7 @@ func resetTenantConfig(w http.ResponseWriter, r *http.Request, state *AppState) 
 	if !ok {
 		return
 	}
-	key := chi.URLParam(r, "key")
+	key := r.PathValue("key")
 	tenantID, err := state.Permissions.ScopedTenant(rc)
 	if err != nil {
 		writeInternalError(w, err)
@@ -153,7 +153,7 @@ func publicConfig(w http.ResponseWriter, r *http.Request, state *AppState) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": items})
 }
 
-func mountTenantConfig(r chi.Router, state *AppState) {
+func mountTenantConfig(r *router.Router, state *AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}

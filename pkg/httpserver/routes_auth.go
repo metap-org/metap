@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/identity"
@@ -433,7 +433,7 @@ func resolveOwnEmail(r *http.Request, state *AppState, rc *permission.RequestCon
 	return user.Email
 }
 
-func mountAuth(r chi.Router, state *AppState) {
+func mountAuth(r *router.Router, state *AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
@@ -442,7 +442,7 @@ func mountAuth(r chi.Router, state *AppState) {
 	// account lockout counts per identity; this counts per source, so one address cannot walk
 	// through many identities or many reset tokens either.
 	cfg := state.Config.Current()
-	guarded := r.With(runtime.RateLimitBehind(
+	guarded := r.Group(runtime.RateLimitBehind(
 		time.Duration(cfg.GetU64(config.HTTPAuthRateLimitPerMs))*time.Millisecond,
 		int(cfg.GetU64(config.HTTPAuthRateLimitBurst)),
 		state.TrustedProxies,

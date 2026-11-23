@@ -6,14 +6,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 	"github.com/stretchr/testify/require"
 
 	"github.com/metap-org/metap/pkg/adminapi"
@@ -35,13 +34,20 @@ func TestRouteInventory(t *testing.T) {
 	state.Identity = &adminapi.IdentityConfig{Shared: pool, Router: state.Router, Audit: audit.NewPostgresStore(pool), PublicURL: "http://portal.test"}
 	handler := httpserver.BuildRouter(state, nil, oauth2routes.Mount, cronroutes.Mount, dashboardroutes.Mount, attachmentroutes.Mount)
 
-	routes, ok := handler.(chi.Routes)
+	r, ok := handler.(*router.Router)
 	require.True(t, ok)
 	var lines []string
-	require.NoError(t, chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		lines = append(lines, method+" "+strings.ReplaceAll(route, "/*", "/{rest...}"))
-		return nil
-	}))
+	for _, route := range r.Routes() {
+		method, path, hasMethod := strings.Cut(route.Pattern, " ")
+		if !hasMethod {
+			// A pattern with no method serves every method (a Mount): list one line per method.
+			for _, m := range []string{"CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "QUERY", "TRACE"} {
+				lines = append(lines, m+" "+route.Pattern)
+			}
+			continue
+		}
+		lines = append(lines, method+" "+path)
+	}
 	sort.Strings(lines)
 	golden(t, "routes.golden", []byte(strings.Join(lines, "\n")+"\n"))
 

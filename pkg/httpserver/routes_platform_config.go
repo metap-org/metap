@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -88,7 +88,7 @@ func setPlatformConfig(w http.ResponseWriter, r *http.Request, state *AppState) 
 	if _, ok := requirePlatformAdmin(w, r, state); !ok {
 		return
 	}
-	key := chi.URLParam(r, "key")
+	key := r.PathValue("key")
 	var body setConfigBody
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -109,7 +109,7 @@ func resetPlatformConfig(w http.ResponseWriter, r *http.Request, state *AppState
 	if _, ok := requirePlatformAdmin(w, r, state); !ok {
 		return
 	}
-	key := chi.URLParam(r, "key")
+	key := r.PathValue("key")
 	if err := state.Config.ResetPlatformGlobal(r.Context(), key); err != nil {
 		configErrorResponse(w, err)
 		return
@@ -120,7 +120,7 @@ func resetPlatformConfig(w http.ResponseWriter, r *http.Request, state *AppState
 	})
 }
 
-func mountPlatformConfig(r chi.Router, state *AppState) {
+func mountPlatformConfig(r *router.Router, state *AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}

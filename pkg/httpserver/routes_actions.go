@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -26,7 +26,7 @@ func invokeDeclaredAction(w http.ResponseWriter, r *http.Request, state *AppStat
 	if !ok {
 		return
 	}
-	entity, action := chi.URLParam(r, "entity"), chi.URLParam(r, "action")
+	entity, action := r.PathValue("entity"), r.PathValue("action")
 	notFound := func() {
 		writeServiceError(w, http.StatusNotFound, errcode.ActionNotFound, "No action "+action+" on entity "+entity+".", nil)
 	}
@@ -55,7 +55,7 @@ func invokeDeclaredAction(w http.ResponseWriter, r *http.Request, state *AppStat
 	}
 	call := crud.ActionCall{Entity: entity, Name: action, Input: crud.JsonObject{}, RC: rc}
 	if scope == metadata.ActionScopeRecord {
-		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		id, err := uuid.Parse(r.PathValue("id"))
 		if err != nil {
 			writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 			return
@@ -82,9 +82,24 @@ func invokeDeclaredAction(w http.ResponseWriter, r *http.Request, state *AppStat
 	writeJSON(w, http.StatusOK, map[string]any{"data": result})
 }
 
-func mountActions(r chi.Router, state *AppState) {
-	r.Post("/api/{entity}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
-		invokeDeclaredAction(w, r, state, metadata.ActionScopeEntity)
+func mountActions(r *router.Router, state *AppState) {
+	// POST /api/{entity}/{first}/{second} is two things a ServeMux cannot hold as two patterns
+	// (they overlap whenever {first} could be the word "actions"): an action on the entity
+	// (first == "actions") and a sub-resource of a record that a route module registered with
+	// AppState.HandleRecordPost (first is the record id, second the sub-resource: "attachments").
+	r.Post("/api/{entity}/{first}/{second}", func(w http.ResponseWriter, req *http.Request) {
+		first, second := req.PathValue("first"), req.PathValue("second")
+		if first == "actions" {
+			req.SetPathValue("action", second)
+			invokeDeclaredAction(w, req, state, metadata.ActionScopeEntity)
+			return
+		}
+		if h := state.recordPosts[second]; h != nil {
+			req.SetPathValue("recordId", first)
+			h(w, req)
+			return
+		}
+		writeServiceError(w, http.StatusNotFound, errcode.NotFound, "No such route.", nil)
 	})
 	r.Post("/api/{entity}/{id}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
 		invokeDeclaredAction(w, r, state, metadata.ActionScopeRecord)

@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
@@ -41,7 +41,7 @@ func invalidateContextAdmin(w http.ResponseWriter, r *http.Request, state *AppSt
 	if !ok {
 		return
 	}
-	userID, err := uuid.Parse(chi.URLParam(r, "userId"))
+	userID, err := uuid.Parse(r.PathValue("userId"))
 	if err != nil {
 		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`userId` must be a UUID.", nil)
 		return
@@ -202,7 +202,7 @@ func deletePolicyAdmin(w http.ResponseWriter, r *http.Request, state *AppState) 
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "`id` must be a UUID.", nil)
 		return
@@ -327,7 +327,7 @@ func joinQuoted(items []string) string {
 	return out + "]"
 }
 
-func mountAdmin(r chi.Router, state *AppState) {
+func mountAdmin(r *router.Router, state *AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}

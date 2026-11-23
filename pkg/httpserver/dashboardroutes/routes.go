@@ -14,8 +14,8 @@ import (
 
 	"github.com/metap-org/metap/pkg/httpserver"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/dashboards"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -167,7 +167,7 @@ func saveTenantDefaultDashboard(w http.ResponseWriter, r *http.Request, state *h
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": dashboardConfigJSON(config)})
 }
 
-func Mount(r chi.Router, state *httpserver.AppState) {
+func Mount(r *router.Router, state *httpserver.AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *httpserver.AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}

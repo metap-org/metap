@@ -3,7 +3,7 @@ package httpserver
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/metadata"
@@ -16,7 +16,7 @@ import (
 // authenticated user of the tenant. They are
 // what @metap/platform-ui's useEntities/useEntity/graphqlRecords and the permission matrix read, so
 // a service without them renders no entity screen at all.
-func mountMetadata(r chi.Router, state *AppState) {
+func mountMetadata(r *router.Router, state *AppState) {
 	r.Get("/metadata/openapi.json", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, metadata.GenerateOpenAPIDocument())
 	})
@@ -32,7 +32,7 @@ func mountMetadata(r chi.Router, state *AppState) {
 		if !ok {
 			return
 		}
-		summary, found := registry.GetEntityMetadata(chi.URLParam(r, "entity"))
+		summary, found := registry.GetEntityMetadata(r.PathValue("entity"))
 		if !found {
 			writeServiceError(w, http.StatusNotFound, errcode.EntityNotFound, "Entity not found.", nil)
 			return

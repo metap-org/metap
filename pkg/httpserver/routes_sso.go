@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 	saml2 "github.com/russellhaering/gosaml2"
 
 	"github.com/metap-org/metap/pkg/identity"
@@ -331,7 +331,7 @@ func ssoMember(ctx context.Context, state *AppState, tenant uuid.UUID, p ssoPoli
 	return m, nil
 }
 
-func mountSSO(r chi.Router, state *AppState) {
+func mountSSO(r *router.Router, state *AppState) {
 	r.Get("/auth/saml/{tenant}/metadata", func(w http.ResponseWriter, r *http.Request) { samlMetadata(w, r, state) })
 	r.Get("/auth/saml/{tenant}/start", func(w http.ResponseWriter, r *http.Request) { samlStart(w, r, state) })
 	r.Post("/auth/saml/{tenant}/acs", func(w http.ResponseWriter, r *http.Request) { samlACS(w, r, state) })
@@ -346,7 +346,7 @@ func samlProvider(w http.ResponseWriter, r *http.Request, state *AppState) (uuid
 		writeServiceError(w, http.StatusNotImplemented, errcode.NotTokenIssuer, ErrNotTokenIssuer.Error(), nil)
 		return uuid.Nil, nil, nil, false
 	}
-	tenant, err := uuid.Parse(chi.URLParam(r, "tenant"))
+	tenant, err := uuid.Parse(r.PathValue("tenant"))
 	if err != nil {
 		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "The tenant in the path is not a tenant id.", nil)
 		return uuid.Nil, nil, nil, false

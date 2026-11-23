@@ -1,3 +1,4 @@
+CONNECT /scim/v2
 CONNECT /scim/v2/{rest...}
 DELETE /admin/api-keys/{id}
 DELETE /admin/config/{key}
@@ -15,6 +16,7 @@ DELETE /api/{entity}/{recordId}/attachments/{attachmentId}
 DELETE /me/sessions/{id}
 DELETE /platform/config/{key}
 DELETE /platform/tenants/{id}/deletion
+DELETE /scim/v2
 DELETE /scim/v2/{rest...}
 GET /.well-known/oauth-authorization-server
 GET /admin/audit
@@ -80,9 +82,12 @@ GET /platform/tenants/{id}
 GET /platform/tenants/{id}/owner
 GET /preferences
 GET /public/config
+GET /scim/v2
 GET /scim/v2/{rest...}
 GET /tenant-users
+HEAD /scim/v2
 HEAD /scim/v2/{rest...}
+OPTIONS /scim/v2
 OPTIONS /scim/v2/{rest...}
 PATCH /admin/credentials/{id}
 PATCH /admin/cron-jobs/{id}
@@ -91,6 +96,7 @@ PATCH /admin/users/{id}
 PATCH /api/{entity}/{id}
 PATCH /me
 PATCH /platform/tenants/{id}
+PATCH /scim/v2
 PATCH /scim/v2/{rest...}
 POST /admin/audit/verify
 POST /admin/credentials
@@ -118,11 +124,10 @@ POST /admin/users/{id}/roles
 POST /admin/users/{userId}/context/invalidate
 POST /admin/workspace/deletion
 POST /api/{entity}
-POST /api/{entity}/actions/{action}
 POST /api/{entity}/aggregate
+POST /api/{entity}/{first}/{second}
 POST /api/{entity}/{id}/actions/{action}
 POST /api/{entity}/{id}/transitions/{action}
-POST /api/{entity}/{recordId}/attachments
 POST /auth/invitations/accept
 POST /auth/invitations/lookup
 POST /auth/login
@@ -153,6 +158,7 @@ POST /platform/tenants
 POST /platform/tenants/{id}/deletion
 POST /platform/tenants/{id}/resume
 POST /platform/tenants/{id}/suspend
+POST /scim/v2
 POST /scim/v2/{rest...}
 PUT /admin/config/{key}
 PUT /admin/policies/matrix
@@ -163,6 +169,9 @@ PUT /dashboards/me
 PUT /dashboards/tenant-default
 PUT /platform/config/{key}
 PUT /preferences
+PUT /scim/v2
 PUT /scim/v2/{rest...}
+QUERY /scim/v2
 QUERY /scim/v2/{rest...}
+TRACE /scim/v2
 TRACE /scim/v2/{rest...}

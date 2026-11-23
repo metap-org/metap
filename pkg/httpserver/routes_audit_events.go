@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -23,8 +23,8 @@ func listRecordAuditEvents(w http.ResponseWriter, r *http.Request, state *AppSta
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
-	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
+	entity := r.PathValue("entity")
+	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
 		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
@@ -102,7 +102,7 @@ func auditQueryFrom(w http.ResponseWriter, r *http.Request) (crud.AuditQuery, bo
 	return q, true
 }
 
-func mountAuditEvents(r chi.Router, state *AppState) {
+func mountAuditEvents(r *router.Router, state *AppState) {
 	r.Get("/api/{entity}/{recordId}/audit-events", func(w http.ResponseWriter, r *http.Request) {
 		listRecordAuditEvents(w, r, state)
 	})

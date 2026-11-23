@@ -7,8 +7,8 @@ package httpserver
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/permission"
 )
@@ -61,9 +61,20 @@ func WriteCrudError(w http.ResponseWriter, err error) { writeCrudError(w, err) }
 // ParseOptionalUUID is the exported form of parseOptionalUUID: nil for "" or a malformed id.
 func ParseOptionalUUID(s string) *uuid.UUID { return parseOptionalUUID(s) }
 
+// HandleRecordPost registers h as the handler of POST /api/{entity}/{recordId}/{sub} (the record's id
+// is available as r.PathValue("recordId")). A route module uses this instead of registering the
+// pattern itself: it overlaps POST /api/{entity}/actions/{action}, and one ServeMux cannot hold both,
+// so the core serves the shared shape and hands the sub-resource to its module.
+func (s *AppState) HandleRecordPost(sub string, h http.HandlerFunc) {
+	if s.recordPosts == nil {
+		s.recordPosts = map[string]http.HandlerFunc{}
+	}
+	s.recordPosts[sub] = h
+}
+
 // Mount adds a group of routes to the router BuildRouter builds. Optional route groups
 // (OAuth2 server, cron jobs, dashboards, attachments) and a service's own routes are Mounts.
-type Mount func(r chi.Router, state *AppState)
+type Mount func(r *router.Router, state *AppState)
 
 // DecodeJSONBody decodes the request's JSON body into dst, bounded by httpx.DefaultMaxBodyBytes,
 // and writes the failure response itself (413 payload_too_large, or 400 validation_failed). It

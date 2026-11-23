@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/adminapi"
 	"github.com/metap-org/metap/pkg/audit"
@@ -118,6 +118,6 @@ func exportAudit(w http.ResponseWriter, r *http.Request, state *AppState) {
 	finish()
 }
 
-func mountAuditExport(r chi.Router, state *AppState) {
+func mountAuditExport(r *router.Router, state *AppState) {
 	r.Get("/admin/audit/export", func(w http.ResponseWriter, r *http.Request) { exportAudit(w, r, state) })
 }

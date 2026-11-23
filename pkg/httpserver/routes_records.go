@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/permission"
@@ -124,7 +124,7 @@ func listRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
+	entity := r.PathValue("entity")
 	if raw := r.URL.Query().Get("ids"); raw != "" {
 		listRecordsByID(w, r, state, rc, entity, raw)
 		return
@@ -156,8 +156,8 @@ func getRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	entity := r.PathValue("entity")
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
@@ -199,7 +199,7 @@ func createRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
+	entity := r.PathValue("entity")
 	var body recordBody
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -224,8 +224,8 @@ func updateRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	entity := r.PathValue("entity")
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
@@ -253,8 +253,8 @@ func deleteRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	entity := r.PathValue("entity")
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
@@ -283,13 +283,13 @@ func transitionRecord(w http.ResponseWriter, r *http.Request, state *AppState) {
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	entity := r.PathValue("entity")
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
-	action := chi.URLParam(r, "action")
+	action := r.PathValue("action")
 	var body transitionBody
 	if !decodeJSONBody(w, r, &body) {
 		return
@@ -311,7 +311,7 @@ func aggregateRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
+	entity := r.PathValue("entity")
 	var spec query.AggregateSpec
 	if err := httpx.DecodeJSON(w, r, &spec, 0); err != nil {
 		if errors.Is(err, httpx.ErrBodyTooLarge) {
@@ -330,7 +330,7 @@ func aggregateRecords(w http.ResponseWriter, r *http.Request, state *AppState) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": result})
 }
 
-func mountRecords(r chi.Router, state *AppState) {
+func mountRecords(r *router.Router, state *AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}

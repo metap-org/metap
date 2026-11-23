@@ -21,8 +21,8 @@ import (
 	"github.com/metap-org/metap/pkg/httpserver"
 	"github.com/metap-org/metap/pkg/kit/env"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/pkg/attachments"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -69,8 +69,8 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
-	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
+	entity := r.PathValue("entity")
+	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
@@ -159,8 +159,8 @@ func listAttachments(w http.ResponseWriter, r *http.Request, state *httpserver.A
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
-	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
+	entity := r.PathValue("entity")
+	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
@@ -228,13 +228,13 @@ func downloadAttachment(w http.ResponseWriter, r *http.Request, state *httpserve
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
-	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
+	entity := r.PathValue("entity")
+	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
-	attachmentID, err := uuid.Parse(chi.URLParam(r, "attachmentId"))
+	attachmentID, err := uuid.Parse(r.PathValue("attachmentId"))
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
@@ -284,13 +284,13 @@ func deleteAttachment(w http.ResponseWriter, r *http.Request, state *httpserver.
 	if !ok {
 		return
 	}
-	entity := chi.URLParam(r, "entity")
-	recordID, err := uuid.Parse(chi.URLParam(r, "recordId"))
+	entity := r.PathValue("entity")
+	recordID, err := uuid.Parse(r.PathValue("recordId"))
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
 	}
-	attachmentID, err := uuid.Parse(chi.URLParam(r, "attachmentId"))
+	attachmentID, err := uuid.Parse(r.PathValue("attachmentId"))
 	if err != nil {
 		httpserver.WriteServiceError(w, http.StatusNotFound, errcode.RecordNotFound, "", nil)
 		return
@@ -349,11 +349,11 @@ func maxUploadBytes() int64 {
 	return defaultMaxUploadBytes
 }
 
-func Mount(r chi.Router, state *httpserver.AppState) {
+func Mount(r *router.Router, state *httpserver.AppState) {
 	wrap := func(h func(http.ResponseWriter, *http.Request, *httpserver.AppState)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { h(w, r, state) }
 	}
-	r.Post("/api/{entity}/{recordId}/attachments", wrap(uploadAttachment))
+	state.HandleRecordPost("attachments", wrap(uploadAttachment))
 	r.Get("/api/{entity}/{recordId}/attachments", wrap(listAttachments))
 	r.Get("/api/{entity}/{recordId}/attachments/{attachmentId}/download", wrap(downloadAttachment))
 	r.Delete("/api/{entity}/{recordId}/attachments/{attachmentId}", wrap(deleteAttachment))
