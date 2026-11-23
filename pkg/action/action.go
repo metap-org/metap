@@ -44,13 +44,16 @@ import (
 // None is the input or output of an action that takes or returns nothing.
 type None struct{}
 
-// Sink writes what a handler queued: outbox events inside a transaction of their own, audit entries
-// after it commits (the audit store keeps its own hash chain). NewSink is the production one;
-// actiontest has one that keeps everything in memory.
+// Sink is where an action's writes meet the database. Atomic runs one unit of work on the tenant's
+// database; NewSink is the production one and actiontest has one that keeps everything in memory.
 type Sink interface {
-	// Emit enqueues the events for tenant in one transaction.
-	Emit(ctx context.Context, tenantID uuid.UUID, evs []events.Event) error
-	// Audit records the entries; a failure is the sink's to log, never the handler's to see.
+	// Atomic runs work in ONE transaction on tenant's database. Everything work does through the
+	// context it is given (record writes, policy reads) joins that transaction, enqueue adds outbox
+	// events to it, and a nil result commits all of it together while an error rolls all of it back.
+	// Audit entries recorded by those writes wait for the commit.
+	Atomic(ctx context.Context, tenantID uuid.UUID, work func(ctx context.Context, enqueue func([]events.Event) error) error) error
+	// Audit records the entries once the unit has committed; a failure is the sink's to log, never
+	// the handler's to see.
 	Audit(ctx context.Context, tenantID uuid.UUID, entries []audit.Entry)
 }
 
@@ -104,36 +107,65 @@ func (a *Ctx) Audit(name string, recordID uuid.UUID, detail any) {
 	})
 }
 
-// Step runs one part of a multi-part action. When fn returns nil, what it queued is written; when it
-// returns an error, what it queued is dropped and the error is returned. The handler itself runs
-// outside any transaction, so a long action never holds a connection while it waits (roadmap 120,
-// section 2.6); a step's own writes go through Records, each as the CRUD service commits it.
+// Step runs one part of a multi-part action as one unit of work: the record writes it makes
+// through Records, the events it queued with Emit, and the audit entries of both, commit together
+// or not at all. When fn returns an error everything the step did is rolled back, what it queued
+// is dropped, and the error is returned; earlier steps stay committed.
 //
-// name labels the step in errors and is what a later version will key resuming on.
+// Use the ctx fn is given: it carries the step's transaction. Keep fn to reads and writes of the
+// tenant's records (no calls to other services): the step holds one database connection until it
+// ends. The handler itself runs outside any transaction, so a long action never holds a connection
+// while it waits (roadmap 120, section 2.6).
+//
+// name labels the step in errors.
 func (a *Ctx) Step(ctx context.Context, name string, fn func(ctx context.Context) error) error {
-	events, entries := len(a.events), len(a.entries)
-	if err := fn(ctx); err != nil {
-		a.events, a.entries = a.events[:events], a.entries[:entries]
+	fromEvents, fromEntries := len(a.events), len(a.entries)
+	if a.sink == nil {
+		if err := fn(ctx); err != nil {
+			a.events, a.entries = a.events[:fromEvents], a.entries[:fromEntries]
+			return fmt.Errorf("step %q: %w", name, err)
+		}
+		return nil
+	}
+	err := a.sink.Atomic(ctx, a.Tenant, func(ctx context.Context, enqueue func([]events.Event) error) error {
+		if err := fn(ctx); err != nil {
+			return err
+		}
+		return enqueue(a.events[fromEvents:])
+	})
+	if err != nil {
+		a.events, a.entries = a.events[:fromEvents], a.entries[:fromEntries]
 		return fmt.Errorf("step %q: %w", name, err)
 	}
-	return a.flushFrom(ctx, events, entries)
+	a.recordAudit(ctx, fromEntries)
+	a.events = a.events[:fromEvents]
+	return nil
 }
 
-// flushFrom writes everything queued from the given positions on and forgets it.
-func (a *Ctx) flushFrom(ctx context.Context, fromEvents, fromEntries int) error {
-	evs, entries := a.events[fromEvents:], a.entries[fromEntries:]
-	a.events, a.entries = a.events[:fromEvents], a.entries[:fromEntries]
+// recordAudit hands the entries queued from a position on to the sink and forgets them.
+func (a *Ctx) recordAudit(ctx context.Context, from int) {
+	entries := a.entries[from:]
+	a.entries = a.entries[:from]
+	if a.sink != nil && len(entries) > 0 {
+		a.sink.Audit(ctx, a.Tenant, entries)
+	}
+}
+
+// flush writes what is still queued after the handler's last Step: its events in one unit of work,
+// then its audit entries.
+func (a *Ctx) flush(ctx context.Context) error {
 	if a.sink == nil {
 		return nil
 	}
-	if len(evs) > 0 {
-		if err := a.sink.Emit(ctx, a.Tenant, evs); err != nil {
+	if len(a.events) > 0 {
+		if err := a.sink.Atomic(ctx, a.Tenant, func(_ context.Context, enqueue func([]events.Event) error) error {
+			return enqueue(a.events)
+		}); err != nil {
 			return err
 		}
+		a.events = nil
 	}
-	if len(entries) > 0 {
-		a.sink.Audit(ctx, a.Tenant, entries)
-	}
+	a.recordAudit(ctx, 0)
 	return nil
 }
 
@@ -213,7 +245,7 @@ func finish[Out any](ctx context.Context, a *Ctx, run func() (Out, error)) (crud
 	if err != nil {
 		return nil, err
 	}
-	if err := a.flushFrom(ctx, 0, 0); err != nil {
+	if err := a.flush(ctx); err != nil {
 		return nil, err
 	}
 	return crud.ToObject(out, nil)

@@ -13,6 +13,7 @@ import (
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 	"github.com/metap-org/metap/pkg/workflow"
 )
 
@@ -207,22 +208,26 @@ func (s *CrudService) persist(ctx context.Context, c call, snapshot *permission.
 	if err := tx.Commit(ctx); err != nil {
 		return RecordDto{}, err
 	}
-	if w.after != nil {
-		w.after()
-	}
-
+	// What follows the commit (the audit entry, the context-cache invalidation) must not happen for a
+	// write whose enclosing unit of work later rolls back, so it waits for that unit when there is
+	// one and runs now when there is not.
 	versionAfter := record.Version
-	s.recordAudit(ctx, c.entity, record.Data, audit.Entry{
-		TenantID:         c.tenantID,
-		Entity:           c.entity.Name,
-		RecordID:         record.ID,
-		Action:           w.auditAction,
-		TransitionAction: w.transitionAction,
-		ActorUserID:      w.userID,
-		Reason:           w.reason,
-		Diff:             w.diff(record),
-		VersionAfter:     &versionAfter,
-		OccurredAt:       time.Now().UTC(),
+	tenancy.OnCommit(ctx, func() {
+		if w.after != nil {
+			w.after()
+		}
+		s.recordAudit(ctx, c.entity, record.Data, audit.Entry{
+			TenantID:         c.tenantID,
+			Entity:           c.entity.Name,
+			RecordID:         record.ID,
+			Action:           w.auditAction,
+			TransitionAction: w.transitionAction,
+			ActorUserID:      w.userID,
+			Reason:           w.reason,
+			Diff:             w.diff(record),
+			VersionAfter:     &versionAfter,
+			OccurredAt:       time.Now().UTC(),
+		})
 	})
 	return maskRecordForRead(c.entity, c.rc, snapshot, record), nil
 }

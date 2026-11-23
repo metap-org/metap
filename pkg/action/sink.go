@@ -9,37 +9,46 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/messaging/events"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 
-// dbSink writes events through the tenant's own transaction and audit entries through the audit
+// dbSink runs units of work through the tenant router and records audit entries in the audit
 // store, the same two paths the CRUD service uses.
 type dbSink struct {
-	tx    crud.TxBeginner
-	audit audit.Store
+	router *tenancy.Router
+	audit  audit.Store
 }
 
-// NewSink is the production Sink: events are enqueued in one transaction on the tenant's database
-// (the outbox publisher delivers them), audit entries go to store (nil drops them, like a CRUD
-// service built without an audit store).
-func NewSink(tx crud.TxBeginner, store audit.Store) Sink { return dbSink{tx: tx, audit: store} }
+// NewSink is the production Sink: a unit of work is one transaction on the tenant's database
+// (record writes and policy reads made with its context join it, and the outbox publisher delivers
+// the events it enqueued); audit entries go to store (nil drops them, like a CRUD service built
+// without an audit store).
+func NewSink(router *tenancy.Router, store audit.Store) Sink {
+	return dbSink{router: router, audit: store}
+}
 
-func (s dbSink) Emit(ctx context.Context, tenantID uuid.UUID, evs []events.Event) error {
-	tx, err := s.tx.Begin(ctx, tenantID)
+func (s dbSink) Atomic(ctx context.Context, tenantID uuid.UUID, work func(ctx context.Context, enqueue func([]events.Event) error) error) error {
+	uctx, unit, err := s.router.BeginUnit(ctx, tenantID)
 	if err != nil {
 		return err
 	}
-	for _, e := range evs {
-		if err := events.Emit(ctx, tx, e); err != nil {
-			tx.Rollback(ctx) //nolint:errcheck
-			return err
+	enqueue := func(evs []events.Event) error {
+		for _, e := range evs {
+			if err := events.Emit(uctx, unit.Tx(), e); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
-	return tx.Commit(ctx)
+	if err := work(uctx, enqueue); err != nil {
+		unit.Rollback(ctx)
+		return err
+	}
+	return unit.Commit(ctx)
 }
 
 func (s dbSink) Audit(ctx context.Context, tenantID uuid.UUID, entries []audit.Entry) {

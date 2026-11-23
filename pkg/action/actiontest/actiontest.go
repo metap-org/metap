@@ -29,13 +29,25 @@ type Sink struct {
 	EmitErr error
 }
 
-func (s *Sink) Emit(_ context.Context, _ uuid.UUID, evs []events.Event) error {
+// Atomic runs work once and keeps the events it enqueued only if it succeeds, the way the database
+// sink commits or rolls back. There is no transaction here: the record writes an action makes
+// through Records are kept in Records.Writes either way, so a test that needs "a failed step undoes
+// its writes" belongs in the integration suite.
+func (s *Sink) Atomic(ctx context.Context, _ uuid.UUID, work func(ctx context.Context, enqueue func([]events.Event) error) error) error {
+	var pending []events.Event
+	err := work(ctx, func(evs []events.Event) error {
+		if s.EmitErr != nil {
+			return s.EmitErr
+		}
+		pending = append(pending, evs...)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.EmitErr != nil {
-		return s.EmitErr
-	}
-	s.Events = append(s.Events, evs...)
+	s.Events = append(s.Events, pending...)
 	return nil
 }
 
