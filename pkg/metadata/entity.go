@@ -331,6 +331,11 @@ type EntityAction struct {
 	// calls a service — touches no record, so without this nothing but being signed in stands between
 	// anyone and it. Empty keeps the old behavior: the handler authorizes whatever it does itself.
 	Requires string `json:"requires,omitempty"`
+	// Roles are the roles that may run the action unless the tenant has policies of its own for it
+	// (policy action `action:<name>`, see permission.ActionPolicy): then those decide. Empty, and no
+	// policy, leaves the action open to any signed-in caller (Requires still applies); the admin role
+	// always may. The check runs before the handler and before its input is read.
+	Roles []string `json:"roles,omitempty"`
 }
 
 // ActionRequirements are the values EntityAction.Requires accepts.

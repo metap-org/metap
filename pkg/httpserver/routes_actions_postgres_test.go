@@ -19,6 +19,7 @@ import (
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/messaging/events"
 	"github.com/metap-org/metap/pkg/metadata"
+	"github.com/metap-org/metap/pkg/permission"
 )
 
 // Declared actions over REST (roadmap 116): record- and entity-scoped, only what the entity
@@ -306,4 +307,56 @@ func TestAStepThatFailsUndoesItsRecordWriteAndLeavesNoEventOrAudit(t *testing.T)
 	assert.Equal(t, 1, outbox(), "...its event...")
 	assert.Equal(t, 2, updates(), "...and both audit entries: the record's update and the action's")
 	assert.EqualValues(t, 1, heldInStep, "a step holds one database connection, however many reads and writes it makes")
+}
+
+// An action's declared Roles decide who may run it, before its input is read and its handler runs;
+// the tenant's own policies on action:<name> replace them; the admin role always may.
+func TestDeclaredActionRolesAndTenantPolicyOverride(t *testing.T) {
+	pool := httpTestPool(t)
+	ctx := context.Background()
+	tenantID := uuid.New()
+	adminID, analystID, viewerID := uuid.New(), uuid.New(), uuid.New()
+	for user, role := range map[uuid.UUID]string{adminID: "admin", analystID: "analyst", viewerID: "viewer"} {
+		_, err := pool.Exec(ctx, "INSERT INTO metadata.user_roles (tenant_id, user_id, role) VALUES ($1, $2, $3)", tenantID, user, role)
+		require.NoError(t, err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), "DELETE FROM metadata.user_roles WHERE tenant_id = $1", tenantID)
+		pool.Exec(context.Background(), "DELETE FROM metadata.policies WHERE tenant_id = $1", tenantID)
+	})
+
+	entity := httpTestEntity()
+	entity.Actions = []metadata.EntityAction{{Name: "probe", Scope: metadata.ActionScopeEntity, Roles: []string{"analyst"}}}
+	state, privPEM := newTestAppState(t, pool, entity)
+	calls := 0
+	reg := crud.NewActionRegistry()
+	require.NoError(t, reg.Register("test.orders", "probe", func(context.Context, crud.ActionCall) (crud.JsonObject, error) {
+		calls++
+		return crud.JsonObject{"ok": json.RawMessage("true")}, nil
+	}))
+	state.Actions = reg
+	base := startTestServer(t, state, nil)
+	tokenOf := func(user uuid.UUID) string {
+		token, err := jwks.MintRSAJWT(privPEM, tenantID, user, 3600)
+		require.NoError(t, err)
+		return token
+	}
+	run := func(user uuid.UUID) int {
+		return doRequest(t, "POST", base+"/api/test.orders/actions/probe", tokenOf(user), nil).StatusCode
+	}
+
+	assert.Equal(t, 200, run(analystID), "a declared role may run it")
+	assert.Equal(t, 200, run(adminID), "admin always may")
+	before := calls
+	assert.Equal(t, 403, run(viewerID), "a role that is not declared may not")
+	assert.Equal(t, before, calls, "and the handler never ran")
+
+	// The tenant gives the viewer role the action: policies now decide, and the declared roles no
+	// longer count.
+	subject := permission.SubjectContext
+	_, err := state.Permissions.CreatePolicy(ctx, tenantID, "test.orders", permission.ActionPolicy("probe"), []string{"viewer"}, true, nil, nil, "", &subject, permission.EffectAllow)
+	require.NoError(t, err)
+	assert.Equal(t, 200, run(viewerID), "a tenant policy grants it")
+	assert.Equal(t, 403, run(analystID), "and replaces the declared roles")
+	assert.Equal(t, 200, run(adminID))
 }

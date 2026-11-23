@@ -27,15 +27,19 @@ const maxGrants = 5000
 
 var workflowActionPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,100}$`)
 
-// validGrantAction is a base policy action or transition:<workflow action>.
+// validGrantAction is a base policy action, transition:<workflow action>, or action:<declared action>.
 func validGrantAction(action string) bool {
 	for _, a := range permission.AllEntityActions {
 		if action == a.String() {
 			return true
 		}
 	}
-	prefix := permission.TransitionActionPolicy("")
-	return strings.HasPrefix(action, prefix) && workflowActionPattern.MatchString(strings.TrimPrefix(action, prefix))
+	for _, prefix := range []string{permission.TransitionActionPolicy(""), permission.ActionPolicy("")} {
+		if strings.HasPrefix(action, prefix) && workflowActionPattern.MatchString(strings.TrimPrefix(action, prefix)) {
+			return true
+		}
+	}
+	return false
 }
 
 func grantKey(g rolestore.RoleGrant) string { return g.Entity + " " + g.Action }

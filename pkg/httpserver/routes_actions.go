@@ -47,6 +47,15 @@ func invokeDeclaredAction(w http.ResponseWriter, r *http.Request, state *AppStat
 		notFound()
 		return
 	}
+	// Who may run it is decided before anything about the request is read: the tenant's policies on
+	// the action, else the roles the action declares.
+	if d, err := state.Permissions.CanRunAction(r.Context(), rc, entity, action, declared.Roles); err != nil {
+		writeInternalError(w, err)
+		return
+	} else if !d.Allowed {
+		writeServiceError(w, http.StatusForbidden, errcode.Forbidden, "You may not run this action.", nil)
+		return
+	}
 	if !actionRequirementMet(w, r, state, rc, entity, declared.Requires) {
 		return
 	}

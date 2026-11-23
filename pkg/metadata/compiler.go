@@ -368,6 +368,16 @@ func Validate(entity EntityDefinition) error {
 		if action.Requires != "" && !slices.Contains(ActionRequirements, action.Requires) {
 			issues = append(issues, fmt.Sprintf("action %q requires %q, which is not one of %v", action.Name, action.Requires, ActionRequirements))
 		}
+		seenRoles := map[string]bool{}
+		for _, role := range action.Roles {
+			if role == "" {
+				issues = append(issues, fmt.Sprintf("action %q lists an empty role", action.Name))
+			}
+			if seenRoles[role] {
+				issues = append(issues, fmt.Sprintf("action %q lists role %q twice", action.Name, role))
+			}
+			seenRoles[role] = true
+		}
 	}
 
 	seenScopeTypes := map[string]bool{}

@@ -179,6 +179,11 @@ var AllEntityActions = [5]EntityAction{ActionRead, ActionCreate, ActionUpdate, A
 // token by entity, not by workflow action.)
 func TransitionActionPolicy(action string) string { return ActionTransition.String() + ":" + action }
 
+// ActionPolicy is the policy action that grants or denies running one declared entity action (a
+// custom action such as "verifyDns"): policies on it decide who may run it, in place of the roles
+// the action declares. Unrelated to the five entity actions and to `transition:<workflow action>`.
+func ActionPolicy(name string) string { return "action:" + name }
+
 func (a EntityAction) String() string {
 	switch a {
 	case ActionRead:
