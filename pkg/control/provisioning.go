@@ -5,13 +5,14 @@ package control
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metap-org/metap/pkg/dbmigrate"
 	"github.com/metap-org/metap/pkg/infra"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -63,12 +64,12 @@ func ProvisionSchemaTenant(ctx context.Context, sharedPool *pgxpool.Pool, regist
 		conn.Release()
 		return nil, err
 	}
-	user, err := peripherals.CreateUser(ctx, conn, tenantID, adminEmail, adminPassword)
+	user, err := identity.CreateUser(ctx, conn, tenantID, adminEmail, adminPassword)
 	if err != nil {
 		conn.Release()
 		return nil, err
 	}
-	if err := peripherals.AssignRole(ctx, conn, tenantID, user.ID, permission.RoleAdmin, nil); err != nil {
+	if err := rolestore.AssignRole(ctx, conn, tenantID, user.ID, permission.RoleAdmin, nil); err != nil {
 		conn.Release()
 		return nil, err
 	}
@@ -114,11 +115,11 @@ func ProvisionDedicatedDbTenant(ctx context.Context, registry *PostgresTenantReg
 	}
 	// Members live in the shared database for every tenant (pkg/identity); only the role goes
 	// into the tenant's own database.
-	user, err := peripherals.CreateUser(ctx, registry.pool, tenantID, adminEmail, adminPassword)
+	user, err := identity.CreateUser(ctx, registry.pool, tenantID, adminEmail, adminPassword)
 	if err != nil {
 		return nil, err
 	}
-	if err := peripherals.AssignRole(ctx, dedicatedPool, tenantID, user.ID, permission.RoleAdmin, nil); err != nil {
+	if err := rolestore.AssignRole(ctx, dedicatedPool, tenantID, user.ID, permission.RoleAdmin, nil); err != nil {
 		return nil, err
 	}
 

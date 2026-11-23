@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"io"
 	"math/big"
 	"net"
@@ -27,7 +28,6 @@ import (
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/httpserver"
 	"github.com/metap-org/metap/pkg/identity"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
@@ -419,7 +419,7 @@ func TestSSOMapsGroupsToRoles(t *testing.T) {
 	assert.Equal(t, []string{"security_analyst", "viewer"}, rolesOf(t, pool, tenant, dana.ID), "default role plus the mapped one")
 
 	// A role an admin granted by hand is not the provider's to remove.
-	require.NoError(t, peripherals.AssignRole(ctx, pool, tenant, dana.ID, "custom_reader", nil))
+	require.NoError(t, rolestore.AssignRole(ctx, pool, tenant, dana.ID, "custom_reader", nil))
 
 	// The groups change: one mapped role goes, another comes; unmanaged roles stay.
 	signIn("dana@acme.io", "sub-dana", "ops")

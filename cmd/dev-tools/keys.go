@@ -7,7 +7,6 @@ import (
 
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/env"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // genKeys mirrors generate-dev-jwt-keypair.mjs: an RSA 2048 keypair via the openssl CLI
@@ -50,7 +49,7 @@ func genJwksKey(dir, kid string) error {
 
 // mintToken mirrors mint-dev-token.mjs: same default tenant/user IDs, same 1h expiry, same
 // keys/dev-jwt-private.pem path (relative to cwd). Delegates the actual encoding to
-// peripherals.MintJWT — the same function POST /auth/login calls — so this CLI and a real login
+// jwks.MintRSAJWT — the same function POST /auth/login calls — so this CLI and a real login
 // can't mint differently-shaped tokens.
 //
 // The default tenant/user ids are not a registered control.tenants row — calling this with no
@@ -105,7 +104,7 @@ func mintToken(args []string) error {
 		return fmt.Errorf("failed to read %s: %w", keyPath, err)
 	}
 
-	token, err := peripherals.MintJWT(string(privatePEM), tenant, user, 3600)
+	token, err := jwks.MintRSAJWT(string(privatePEM), tenant, user, 3600)
 	if err != nil {
 		return err
 	}

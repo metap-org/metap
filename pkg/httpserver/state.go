@@ -24,7 +24,6 @@ import (
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/metadata"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/runtime"
 	"github.com/metap-org/metap/pkg/storage"
@@ -125,11 +124,11 @@ func NewAppState(pool *pgxpool.Pool, metadataBase *metadata.MetadataRegistry, md
 var ErrNotTokenIssuer = signin.ErrNotTokenIssuer
 
 // VerifyToken verifies a Bearer/session token — the one place AuthContext decodes a token.
-func (s *AppState) VerifyToken(ctx context.Context, token string, leeway time.Duration) (*peripherals.AccessClaims, error) {
+func (s *AppState) VerifyToken(ctx context.Context, token string, leeway time.Duration) (*jwks.AccessClaims, error) {
 	if s.TokenVerifier != nil {
 		return jwks.DecodeWithVerifier(ctx, token, s.TokenVerifier, &leeway)
 	}
-	return peripherals.DecodeAccessToken(token, s.JWTPublicKey, leeway)
+	return jwks.DecodeAccessToken(token, s.JWTPublicKey, leeway)
 }
 
 // CanIssueTokens reports whether this service mints tokens (TokenSigner or an RSA private key).
@@ -141,7 +140,7 @@ func (s *AppState) MintToken(tenantID, userID uuid.UUID, ttlSeconds uint64) (str
 	case s.TokenSigner != nil:
 		return jwks.MintWithSigner(s.TokenSigner, tenantID, userID, nil, ttlSeconds)
 	case s.JWTPrivateKeyPEM != "":
-		return peripherals.MintJWT(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds)
+		return jwks.MintRSAJWT(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds)
 	default:
 		return "", ErrNotTokenIssuer
 	}
@@ -157,7 +156,7 @@ func (s *AppState) MintSessionToken(tenantID, userID uuid.UUID, ttlSeconds uint6
 	case s.TokenSigner != nil:
 		return jwks.MintSessionWithSigner(s.TokenSigner, tenantID, userID, ttlSeconds, sessionID)
 	case s.JWTPrivateKeyPEM != "":
-		return peripherals.MintSessionJWT(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds, sessionID)
+		return jwks.MintRSASessionJWT(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds, sessionID)
 	default:
 		return "", ErrNotTokenIssuer
 	}
@@ -169,7 +168,7 @@ func (s *AppState) MintOAuthToken(tenantID, userID uuid.UUID, ttlSeconds uint64,
 	case s.TokenSigner != nil:
 		return jwks.MintOAuthTokenWithSigner(s.TokenSigner, tenantID, userID, ttlSeconds, scope, clientID)
 	case s.JWTPrivateKeyPEM != "":
-		return peripherals.MintOAuthAccessToken(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds, scope, clientID)
+		return jwks.MintRSAOAuthAccessToken(s.JWTPrivateKeyPEM, tenantID, userID, ttlSeconds, scope, clientID)
 	default:
 		return "", ErrNotTokenIssuer
 	}

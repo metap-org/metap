@@ -1,6 +1,6 @@
 // Package peripherals is a grab-bag of small platform-identity concerns. No HTTP, no
 // business-entity knowledge.
-package peripherals
+package rolestore
 
 import (
 	"context"

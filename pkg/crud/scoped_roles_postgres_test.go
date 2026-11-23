@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/metadata"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/query"
 )
@@ -254,38 +254,38 @@ func TestScopedRolesResolvedFromTheDatabase(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	tenant, user := uuid.New(), uuid.New()
-	require.NoError(t, peripherals.AssignRole(ctx, pool, tenant, user, "viewer", nil))
-	require.NoError(t, peripherals.AssignScopedRole(ctx, pool, tenant, user, "analyst", "zone", "z-1", nil))
-	require.NoError(t, peripherals.AssignScopedRole(ctx, pool, tenant, user, "analyst", "zone", "z-1", nil), "a duplicate is a no-op")
-	require.NoError(t, peripherals.AssignScopedRole(ctx, pool, tenant, user, "viewer", "account", "acme", nil))
-	assert.ErrorIs(t, peripherals.AssignScopedRole(ctx, pool, tenant, user, "viewer", "Bad Type", "x", nil), peripherals.ErrInvalidScope)
-	assert.ErrorIs(t, peripherals.AssignScopedRole(ctx, pool, tenant, user, "viewer", "zone", "", nil), peripherals.ErrInvalidScope)
+	require.NoError(t, rolestore.AssignRole(ctx, pool, tenant, user, "viewer", nil))
+	require.NoError(t, rolestore.AssignScopedRole(ctx, pool, tenant, user, "analyst", "zone", "z-1", nil))
+	require.NoError(t, rolestore.AssignScopedRole(ctx, pool, tenant, user, "analyst", "zone", "z-1", nil), "a duplicate is a no-op")
+	require.NoError(t, rolestore.AssignScopedRole(ctx, pool, tenant, user, "viewer", "account", "acme", nil))
+	assert.ErrorIs(t, rolestore.AssignScopedRole(ctx, pool, tenant, user, "viewer", "Bad Type", "x", nil), rolestore.ErrInvalidScope)
+	assert.ErrorIs(t, rolestore.AssignScopedRole(ctx, pool, tenant, user, "viewer", "zone", "", nil), rolestore.ErrInvalidScope)
 
-	got, err := peripherals.ScopedRolesForUser(ctx, pool, tenant, user)
+	got, err := rolestore.ScopedRolesForUser(ctx, pool, tenant, user)
 	require.NoError(t, err)
 	assert.Equal(t, []permission.ScopedRole{{Role: "viewer", ScopeType: "account", ScopeID: "acme"},
 		{Role: "analyst", ScopeType: "zone", ScopeID: "z-1"}}, got)
 
-	members, err := peripherals.MembersOfScope(ctx, pool, tenant, "zone", "z-1")
+	members, err := rolestore.MembersOfScope(ctx, pool, tenant, "zone", "z-1")
 	require.NoError(t, err)
-	assert.Equal(t, []peripherals.ScopeMember{{UserID: user, Role: "analyst"}}, members)
+	assert.Equal(t, []rolestore.ScopeMember{{UserID: user, Role: "analyst"}}, members)
 
 	// What a request is built from.
 	router := testRouter(pool)
 	tx, err := router.Begin(ctx, tenant)
 	require.NoError(t, err)
-	sr, err := peripherals.ScopedRolesForUser(ctx, tx, tenant, user)
+	sr, err := rolestore.ScopedRolesForUser(ctx, tx, tenant, user)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit(ctx))
 	assert.Len(t, sr, 2)
 	_ = control.PlatformTenantID
 
-	require.NoError(t, peripherals.RevokeScopedRole(ctx, pool, tenant, user, "analyst", "zone", "z-1"))
-	got, _ = peripherals.ScopedRolesForUser(ctx, pool, tenant, user)
+	require.NoError(t, rolestore.RevokeScopedRole(ctx, pool, tenant, user, "analyst", "zone", "z-1"))
+	got, _ = rolestore.ScopedRolesForUser(ctx, pool, tenant, user)
 	assert.Len(t, got, 1)
 	// Removing every role of a user takes the scoped ones with it.
-	require.NoError(t, peripherals.RevokeAllRoles(ctx, pool, tenant, user))
-	got, _ = peripherals.ScopedRolesForUser(ctx, pool, tenant, user)
+	require.NoError(t, rolestore.RevokeAllRoles(ctx, pool, tenant, user))
+	got, _ = rolestore.ScopedRolesForUser(ctx, pool, tenant, user)
 	assert.Empty(t, got)
 	_ = fmt.Sprint
 }

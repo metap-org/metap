@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // AuditEntitySupportGrants is the audit-trail entity support grants are recorded under.
@@ -124,9 +124,9 @@ func (s *SupportAccessService) clearRoles(ctx context.Context, tenant uuid.UUID,
 	if len(members) == 0 {
 		return
 	}
-	_ = s.d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
+	_ = s.d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
 		for _, m := range members {
-			if err := peripherals.RevokeAllRoles(ctx, db, tenant, m); err != nil {
+			if err := rolestore.RevokeAllRoles(ctx, db, tenant, m); err != nil {
 				return err
 			}
 		}
@@ -183,8 +183,8 @@ func (s *SupportAccessService) StartSupportSession(ctx context.Context, req *Sta
 		_ = identity.RemoveMember(ctx, s.d.cfg.Shared, tenant, member.ID, now)
 		return nil, supportErr(ctx, err)
 	}
-	if err := s.d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
-		return peripherals.AssignRole(ctx, db, tenant, member.ID, grant.Role, nil)
+	if err := s.d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
+		return rolestore.AssignRole(ctx, db, tenant, member.ID, grant.Role, nil)
 	}); err != nil {
 		return fail(err)
 	}

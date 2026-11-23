@@ -1,4 +1,4 @@
-package peripherals
+package rolestore
 
 import (
 	"context"

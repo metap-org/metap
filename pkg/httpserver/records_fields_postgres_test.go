@@ -5,13 +5,12 @@ package httpserver_test
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/jwks"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // ?fields= trims each record's data to the named fields on list, ids and get; the envelope stays,
@@ -29,7 +28,7 @@ func TestFieldsProjection(t *testing.T) {
 	})
 	ensureTestOrdersTable(t, pool)
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
-	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 	base := startTestServer(t, state, nil)
 

@@ -4,7 +4,7 @@
 // interface every provider must uniformly implement — Local/Basic/OIDC/OAuth2 take genuinely
 // different inputs.
 // Bearer (JWT) itself is not a provider here — it's the session mechanism every successful login
-// (regardless of provider) ends in (peripherals.MintJWT), verified per-request by the HTTP auth
+// (regardless of provider) ends in (jwks.MintRSAJWT), verified per-request by the HTTP auth
 // layer, unchanged by this package.
 // No HTTP, no business-entity knowledge — a plain library, same shape as permission.
 package tenantauth
@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/metap-org/metap/pkg/identity"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // DBTX is satisfied by *pgxpool.Pool and pgx.Tx.
@@ -67,7 +66,7 @@ func ParseAuthProviderKind(s string) (AuthProviderKind, bool) {
 }
 
 // LocalPasswordProvider: the only provider that's a thin wrapper over
-// peripherals.VerifyCredentials. Also backs "basic" (HTTP Basic auth verifies the exact same
+// identity.VerifyCredentials. Also backs "basic" (HTTP Basic auth verifies the exact same
 // password credential, only the HTTP transport that carries it differs) — one verifier, two ways
 // a client presents it.
 type LocalPasswordProvider struct{}
@@ -75,14 +74,14 @@ type LocalPasswordProvider struct{}
 func (LocalPasswordProvider) Kind() AuthProviderKind { return ProviderLocal }
 
 // Verify returns the member to sign in as — in tenantID when set, else the person's only or last
-// used tenant — or (nil, nil); see peripherals.VerifyCredentials.
+// used tenant — or (nil, nil); see identity.VerifyCredentials.
 func (LocalPasswordProvider) Verify(
 	ctx context.Context,
 	db DBTX,
 	email, password string,
 	tenantID *uuid.UUID,
-) (*peripherals.AuthUser, error) {
-	return peripherals.VerifyCredentials(ctx, db, email, password, tenantID)
+) (*identity.AuthUser, error) {
+	return identity.VerifyCredentials(ctx, db, email, password, tenantID)
 }
 
 // EnabledProviders: which providers a tenant currently has enabled. An empty result means
@@ -112,11 +111,11 @@ func EnabledProviders(ctx context.Context, db DBTX, tenantID uuid.UUID) ([]AuthP
 	return kinds, rows.Err()
 }
 
-func authUserOf(m *identity.Member) *peripherals.AuthUser {
+func authUserOf(m *identity.Member) *identity.AuthUser {
 	if m == nil {
 		return nil
 	}
-	return &peripherals.AuthUser{ID: m.ID, TenantID: m.TenantID, Email: m.Email}
+	return &identity.AuthUser{ID: m.ID, TenantID: m.TenantID, Email: m.Email}
 }
 
 // FindExternalUser: a user JIT-provisioned (or previously linked) by a prior login through an
@@ -128,7 +127,7 @@ func FindExternalUser(
 	db DBTX,
 	tenantID uuid.UUID,
 	provider, externalSubject string,
-) (*peripherals.AuthUser, error) {
+) (*identity.AuthUser, error) {
 	m, err := identity.FindExternalMember(ctx, db, tenantID, provider, externalSubject)
 	if err != nil {
 		return nil, err
@@ -141,7 +140,7 @@ func FindOidcUser(
 	db DBTX,
 	tenantID uuid.UUID,
 	externalSubject string,
-) (*peripherals.AuthUser, error) {
+) (*identity.AuthUser, error) {
 	return FindExternalUser(ctx, db, tenantID, "oidc", externalSubject)
 }
 
@@ -155,7 +154,7 @@ func JitProvisionExternalUser(
 	db DBTX,
 	tenantID uuid.UUID,
 	provider, email, externalSubject string,
-) (*peripherals.AuthUser, error) {
+) (*identity.AuthUser, error) {
 	m, _, err := identity.AddMember(ctx, db, identity.NewMember{
 		TenantID: tenantID, Email: email, AuthProvider: provider, ExternalSubject: externalSubject,
 	})
@@ -170,6 +169,6 @@ func JitProvisionOidcUser(
 	db DBTX,
 	tenantID uuid.UUID,
 	email, externalSubject string,
-) (*peripherals.AuthUser, error) {
+) (*identity.AuthUser, error) {
 	return JitProvisionExternalUser(ctx, db, tenantID, "oidc", email, externalSubject)
 }

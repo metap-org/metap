@@ -14,7 +14,6 @@ import (
 
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/identity"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // Roadmap 115 M3: a person with a second factor signs in in two steps, a code works once, a wrong
@@ -97,7 +96,7 @@ func TestLoginWithSecondFactor(t *testing.T) {
 	assert.Equal(t, 401, res.StatusCode, "a recovery code is single use")
 
 	// A path with only a password (HTTP Basic and what is built on it) refuses the account.
-	u, err := peripherals.VerifyCredentials(ctx, pool, email, "first-password", &tenant)
+	u, err := identity.VerifyCredentials(ctx, pool, email, "first-password", &tenant)
 	require.NoError(t, err)
 	assert.Nil(t, u)
 

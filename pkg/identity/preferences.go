@@ -2,7 +2,7 @@
 // user's UI chrome should render in. Stored server-side (not just client localStorage) so it
 // follows the user across devices/logins, same reasoning as user_roles living in Postgres rather
 // than on the JWT.
-package peripherals
+package identity
 
 import (
 	"context"

@@ -3,6 +3,7 @@ package signin
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -17,7 +18,6 @@ import (
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -204,10 +204,10 @@ func (s *Service) VerifySignup(ctx context.Context, token string, c Client) (*Ou
 	if err != nil {
 		return fail(err)
 	}
-	if err := peripherals.EnsureBuiltinRoles(ctx, s.d.Pool, tenantID); err != nil {
+	if err := rolestore.EnsureBuiltinRoles(ctx, s.d.Pool, tenantID); err != nil {
 		return fail(err)
 	}
-	if err := peripherals.AssignRole(ctx, s.d.Pool, tenantID, m.ID, permission.RoleAdmin, nil); err != nil {
+	if err := rolestore.AssignRole(ctx, s.d.Pool, tenantID, m.ID, permission.RoleAdmin, nil); err != nil {
 		return fail(err)
 	}
 	if ok, err := registry.SetStatus(ctx, tenantID, "active"); err != nil || !ok {

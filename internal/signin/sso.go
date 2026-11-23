@@ -3,6 +3,7 @@ package signin
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"net/http"
 
@@ -10,7 +11,6 @@ import (
 
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/tenantauth"
 )
 
@@ -68,7 +68,7 @@ func (s *Service) syncSSORoles(ctx context.Context, tenant uuid.UUID, member *id
 		return nil
 	}
 	want := mapping.MappedRoles(claimValues)
-	have, err := peripherals.GetRolesForUser(ctx, s.d.Pool, tenant, member.ID)
+	have, err := rolestore.GetRolesForUser(ctx, s.d.Pool, tenant, member.ID)
 	if err != nil {
 		return err
 	}
@@ -83,11 +83,11 @@ func (s *Service) syncSSORoles(ctx context.Context, tenant uuid.UUID, member *id
 	for _, role := range managed {
 		switch {
 		case want[role] && !held[role]:
-			if err := peripherals.AssignRole(ctx, s.d.Pool, tenant, member.ID, role, nil); err != nil {
+			if err := rolestore.AssignRole(ctx, s.d.Pool, tenant, member.ID, role, nil); err != nil {
 				return err
 			}
 		case !want[role] && held[role] && owner != member.ID:
-			if err := peripherals.RevokeRole(ctx, s.d.Pool, tenant, member.ID, role); err != nil {
+			if err := rolestore.RevokeRole(ctx, s.d.Pool, tenant, member.ID, role); err != nil {
 				return err
 			}
 		}
@@ -127,7 +127,7 @@ func (s *Service) ssoMember(ctx context.Context, tenant uuid.UUID, p SSOPolicy, 
 		return nil, err
 	}
 	if p.DefaultRole != "" {
-		if err := peripherals.AssignRole(ctx, s.d.Pool, tenant, m.ID, p.DefaultRole, nil); err != nil {
+		if err := rolestore.AssignRole(ctx, s.d.Pool, tenant, m.ID, p.DefaultRole, nil); err != nil {
 			return nil, err
 		}
 	}

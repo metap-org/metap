@@ -4,14 +4,13 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 func TestScopedRoleAdministration(t *testing.T) {
@@ -34,10 +33,10 @@ func TestScopedRoleAdministration(t *testing.T) {
 	assert.Equal(t, zone, u.GetScopedRoles()[0].GetScopeId())
 
 	// What the request context for bob is built from.
-	sr, err := peripherals.ScopedRolesForUser(ctx, h.pool, tenant, bob.ID)
+	sr, err := rolestore.ScopedRolesForUser(ctx, h.pool, tenant, bob.ID)
 	require.NoError(t, err)
 	require.Len(t, sr, 1)
-	roles, _ := peripherals.GetRolesForUser(ctx, h.pool, tenant, bob.ID)
+	roles, _ := rolestore.GetRolesForUser(ctx, h.pool, tenant, bob.ID)
 	assert.Empty(t, roles)
 
 	// A duplicate is a no-op.
@@ -97,6 +96,6 @@ func TestScopedRoleAdministration(t *testing.T) {
 	require.NoError(t, err)
 	_, err = h.client.Admin.RemoveUser(asAdmin, &UserIdRequest{Id: bob.ID.String()})
 	require.NoError(t, err)
-	sr, _ = peripherals.ScopedRolesForUser(ctx, h.pool, tenant, bob.ID)
+	sr, _ = rolestore.ScopedRolesForUser(ctx, h.pool, tenant, bob.ID)
 	assert.Empty(t, sr)
 }

@@ -1,6 +1,6 @@
 // The verify-side dispatch every transport that accepts this platform's bearer/session tokens
 // needs: a token is either signed by a binary's own static per-app RS256 keypair
-// (peripherals.DecodeAccessToken) or by the JWKS multi-service trust root (JwksClient.Decode).
+// (DecodeAccessToken) or by the JWKS multi-service trust root (JwksClient.Decode).
 // Both produce the same AccessClaims shape, so a caller downstream of either can't tell which
 // one verified a given request's token.
 package jwks
@@ -10,8 +10,6 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"time"
-
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // TokenVerifierKind discriminates which trust root a TokenVerifier uses.
@@ -46,7 +44,7 @@ type TokenVerifier struct {
 
 // DecodeWithVerifier verifies token against whichever trust root verifier names — the one place
 // this dispatch happens.
-func DecodeWithVerifier(ctx context.Context, token string, verifier *TokenVerifier, leewayOverride *time.Duration) (*peripherals.AccessClaims, error) {
+func DecodeWithVerifier(ctx context.Context, token string, verifier *TokenVerifier, leewayOverride *time.Duration) (*AccessClaims, error) {
 	leeway := verifier.Leeway
 	if leewayOverride != nil {
 		leeway = *leewayOverride
@@ -66,13 +64,13 @@ func DecodeWithVerifier(ctx context.Context, token string, verifier *TokenVerifi
 		if verifier.PublicKey == nil {
 			return nil, fmt.Errorf("invalid or expired token: token has no kid and static RSA verification is disabled")
 		}
-		claims, err := peripherals.DecodeAccessToken(token, verifier.PublicKey, leeway)
+		claims, err := DecodeAccessToken(token, verifier.PublicKey, leeway)
 		if err != nil {
 			return nil, fmt.Errorf("invalid or expired token: %w", err)
 		}
 		return claims, nil
 	case VerifierStatic:
-		claims, err := peripherals.DecodeAccessToken(token, verifier.PublicKey, leeway)
+		claims, err := DecodeAccessToken(token, verifier.PublicKey, leeway)
 		if err != nil {
 			return nil, fmt.Errorf("invalid or expired token: %w", err)
 		}

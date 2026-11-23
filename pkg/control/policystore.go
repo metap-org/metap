@@ -7,10 +7,10 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -182,7 +182,7 @@ func (s *PostgresPolicyStore) CreatePolicy(ctx context.Context, tenantID uuid.UU
 
 	// Every role a policy names is in the tenant's role catalog (roadmap 114).
 	if hasRoles {
-		if err := peripherals.EnsureRoles(ctx, tx, tenantID, roles, createdBy); err != nil {
+		if err := rolestore.EnsureRoles(ctx, tx, tenantID, roles, createdBy); err != nil {
 			return permission.PolicyRow{}, err
 		}
 	}
@@ -230,7 +230,7 @@ func (s *PostgresPolicyStore) SyncBasicPolicies(ctx context.Context, tenantID uu
 			named = append(named, g.Role)
 		}
 	}
-	if err := peripherals.EnsureRoles(ctx, tx, tenantID, named, createdBy); err != nil {
+	if err := rolestore.EnsureRoles(ctx, tx, tenantID, named, createdBy); err != nil {
 		return nil, err
 	}
 

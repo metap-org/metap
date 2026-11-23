@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"github.com/metap-org/metap/pkg/jwks"
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 	"net"
 	"net/http"
@@ -36,7 +37,6 @@ import (
 
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/metadata"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/reconciler"
 )
@@ -152,7 +152,7 @@ func TestFullHTTPLifecycleOverARealServerAndARealJWT(t *testing.T) {
 	ensureTestOrdersTable(t, pool)
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
-	token, err := peripherals.MintJWT(privPEM, tenantID, userID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenantID, userID, 3600)
 	require.NoError(t, err)
 
 	// A real origin list, not empty — exercises the allow_credentials + explicit-origin/header
@@ -196,7 +196,7 @@ func TestFullHTTPLifecycleOverARealServerAndARealJWT(t *testing.T) {
 	access := decodeJSON(t, accessRes)["data"].(map[string]any)
 	require.Equal(t, map[string]any{"canRead": true, "canCreate": true, "canUpdate": true, "canDelete": true}, access["test.orders"])
 	// ...and a user with no role and no policy may do nothing (default deny), but still gets the map
-	plainToken, err := peripherals.MintJWT(privPEM, tenantID, uuid.New(), 3600)
+	plainToken, err := jwks.MintRSAJWT(privPEM, tenantID, uuid.New(), 3600)
 	require.NoError(t, err)
 	plainRes := doRequest(t, "GET", base+"/metadata/entity-access", plainToken, nil)
 	require.Equal(t, 200, plainRes.StatusCode, "got %d", plainRes.StatusCode)

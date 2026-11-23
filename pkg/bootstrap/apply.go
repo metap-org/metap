@@ -3,6 +3,8 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/identity"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"os"
 	"slices"
@@ -12,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/metap-org/metap/pkg/metadata"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -193,7 +194,7 @@ func isBasicGrant(r permission.PolicyRow, action, role string) bool {
 }
 
 // PgIdentity is the Postgres-backed Identity, over a pool or an open transaction.
-type PgIdentity struct{ DB peripherals.DBTX }
+type PgIdentity struct{ DB rolestore.DBTX }
 
 func (p PgIdentity) FindUserByEmail(ctx context.Context, tenantID uuid.UUID, email string) (uuid.UUID, bool, error) {
 	var id uuid.UUID
@@ -211,7 +212,7 @@ func (p PgIdentity) FindUserByEmail(ctx context.Context, tenantID uuid.UUID, ema
 }
 
 func (p PgIdentity) CreateUser(ctx context.Context, tenantID uuid.UUID, email, password string) (uuid.UUID, error) {
-	u, err := peripherals.CreateUser(ctx, p.DB, tenantID, email, password)
+	u, err := identity.CreateUser(ctx, p.DB, tenantID, email, password)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -219,15 +220,15 @@ func (p PgIdentity) CreateUser(ctx context.Context, tenantID uuid.UUID, email, p
 }
 
 func (p PgIdentity) AssignRole(ctx context.Context, tenantID, userID uuid.UUID, role string) error {
-	return peripherals.AssignRole(ctx, p.DB, tenantID, userID, role, nil)
+	return rolestore.AssignRole(ctx, p.DB, tenantID, userID, role, nil)
 }
 
 // ScopedIdentity is an Identity for a mix of tenants: members always live in the shared database
 // (Shared), roles in each tenant's own (Pool, through control.Router.PoolFor — a dedicated_db
 // tenant keeps user_roles in its own database).
 type ScopedIdentity struct {
-	Shared peripherals.DBTX
-	Pool   func(ctx context.Context, tenantID uuid.UUID) (peripherals.DBTX, error)
+	Shared rolestore.DBTX
+	Pool   func(ctx context.Context, tenantID uuid.UUID) (rolestore.DBTX, error)
 }
 
 func (s ScopedIdentity) at(ctx context.Context, tenantID uuid.UUID) (PgIdentity, error) {

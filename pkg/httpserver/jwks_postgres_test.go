@@ -5,6 +5,7 @@ package httpserver_test
 import (
 	"context"
 	"crypto/rsa"
+	"github.com/metap-org/metap/pkg/identity"
 	"net/http"
 	"testing"
 	"time"
@@ -14,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/metap-org/metap/pkg/jwks"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // Single-issuer JWKS over real HTTP: one AppState is the issuer (signs, publishes
@@ -24,7 +24,7 @@ func TestSingleIssuerJWKSLoginVerifyAndCutover(t *testing.T) {
 	ctx := context.Background()
 	pool := httpTestPool(t)
 	tenantID := uuid.New()
-	_, err := peripherals.CreateUser(ctx, pool, tenantID, "jwks-user@test.local", "pass123")
+	_, err := identity.CreateUser(ctx, pool, tenantID, "jwks-user@test.local", "pass123")
 	require.NoError(t, err)
 
 	// Issuer.
@@ -74,7 +74,7 @@ func TestSingleIssuerJWKSLoginVerifyAndCutover(t *testing.T) {
 
 	// Cutover: a session issued under the old shared RSA key is rejected by a JWKS-only verifier,
 	// accepted while the RSA public key is still configured as a fallback.
-	legacy, err := peripherals.MintJWT(legacyPEM, tenantID, uuid.New(), 300)
+	legacy, err := jwks.MintRSAJWT(legacyPEM, tenantID, uuid.New(), 300)
 	require.NoError(t, err)
 	me = doRequest(t, http.MethodGet, verifierBase+"/auth/me", legacy, nil)
 	require.Equal(t, http.StatusUnauthorized, me.StatusCode)

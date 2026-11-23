@@ -8,6 +8,7 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
 	"regexp"
 	"slices"
@@ -18,7 +19,6 @@ import (
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -38,9 +38,9 @@ func validGrantAction(action string) bool {
 	return strings.HasPrefix(action, prefix) && workflowActionPattern.MatchString(strings.TrimPrefix(action, prefix))
 }
 
-func grantKey(g peripherals.RoleGrant) string { return g.Entity + " " + g.Action }
+func grantKey(g rolestore.RoleGrant) string { return g.Entity + " " + g.Action }
 
-func toPBPermissions(role string, grants []peripherals.RoleGrant, advanced []peripherals.AdvancedPolicy) *RolePermissions {
+func toPBPermissions(role string, grants []rolestore.RoleGrant, advanced []rolestore.AdvancedPolicy) *RolePermissions {
 	out := &RolePermissions{Role: role}
 	for _, g := range grants {
 		out.Grants = append(out.Grants, &RoleGrant{Entity: g.Entity, Action: g.Action})
@@ -53,20 +53,20 @@ func toPBPermissions(role string, grants []peripherals.RoleGrant, advanced []per
 }
 
 func (s *RoleAdminService) permissions(ctx context.Context, tenant uuid.UUID, name string) (*RolePermissions, error) {
-	var grants []peripherals.RoleGrant
-	var advanced []peripherals.AdvancedPolicy
-	err := s.d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
-		if err := peripherals.EnsureBuiltinRoles(ctx, db, tenant); err != nil {
+	var grants []rolestore.RoleGrant
+	var advanced []rolestore.AdvancedPolicy
+	err := s.d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
+		if err := rolestore.EnsureBuiltinRoles(ctx, db, tenant); err != nil {
 			return err
 		}
-		if _, err := peripherals.GetRoleByName(ctx, db, tenant, name); err != nil {
+		if _, err := rolestore.GetRoleByName(ctx, db, tenant, name); err != nil {
 			return err
 		}
 		var err error
-		if grants, err = peripherals.RoleBasicGrants(ctx, db, tenant, name); err != nil {
+		if grants, err = rolestore.RoleBasicGrants(ctx, db, tenant, name); err != nil {
 			return err
 		}
-		advanced, err = peripherals.AdvancedPoliciesNamingRole(ctx, db, tenant, name)
+		advanced, err = rolestore.AdvancedPoliciesNamingRole(ctx, db, tenant, name)
 		return err
 	})
 	if err != nil {
@@ -101,7 +101,7 @@ func (s *RoleAdminService) SetRolePermissions(ctx context.Context, req *SetRoleP
 	if len(req.GetGrants()) > maxGrants {
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "Too many permissions in one call.")
 	}
-	grants := make([]peripherals.RoleGrant, 0, len(req.GetGrants()))
+	grants := make([]rolestore.RoleGrant, 0, len(req.GetGrants()))
 	for _, g := range req.GetGrants() {
 		entity, action := strings.TrimSpace(g.GetEntity()), strings.TrimSpace(g.GetAction())
 		// A virtual resource (roadmap 115 M6) takes only the actions it declares; anything else only the
@@ -115,24 +115,24 @@ func (s *RoleAdminService) SetRolePermissions(ctx context.Context, req *SetRoleP
 				Message:     "Invalid permission " + entity + " " + action + ".",
 				FieldErrors: map[string][]string{"grants": {entity + " " + action}}})
 		}
-		grants = append(grants, peripherals.RoleGrant{Entity: entity, Action: action})
+		grants = append(grants, rolestore.RoleGrant{Entity: entity, Action: action})
 	}
 	var by *uuid.UUID
 	if c.self != uuid.Nil {
 		self := c.self
 		by = &self
 	}
-	var role peripherals.Role
-	var before []peripherals.RoleGrant
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
+	var role rolestore.Role
+	var before []rolestore.RoleGrant
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
 		var err error
-		if role, err = peripherals.GetRoleByName(ctx, db, c.tenant, name); err != nil {
+		if role, err = rolestore.GetRoleByName(ctx, db, c.tenant, name); err != nil {
 			return err
 		}
-		if before, err = peripherals.RoleBasicGrants(ctx, db, c.tenant, name); err != nil {
+		if before, err = rolestore.RoleBasicGrants(ctx, db, c.tenant, name); err != nil {
 			return err
 		}
-		_, err = peripherals.ReplaceRoleBasicGrants(ctx, db, c.tenant, name, grants, by)
+		_, err = rolestore.ReplaceRoleBasicGrants(ctx, db, c.tenant, name, grants, by)
 		return err
 	}); err != nil {
 		return nil, roleErr(ctx, err, name)
@@ -155,14 +155,14 @@ func (s *RoleAdminService) SetRolePermissions(ctx context.Context, req *SetRoleP
 }
 
 // grantDiff lists, as "entity action", what after adds to and drops from before.
-func grantDiff(before []peripherals.RoleGrant, after []*RoleGrant) (added, removed []string) {
+func grantDiff(before []rolestore.RoleGrant, after []*RoleGrant) (added, removed []string) {
 	was := map[string]bool{}
 	for _, g := range before {
 		was[grantKey(g)] = true
 	}
 	now := map[string]bool{}
 	for _, g := range after {
-		k := grantKey(peripherals.RoleGrant{Entity: g.GetEntity(), Action: g.GetAction()})
+		k := grantKey(rolestore.RoleGrant{Entity: g.GetEntity(), Action: g.GetAction()})
 		now[k] = true
 		if !was[k] {
 			added = append(added, k)

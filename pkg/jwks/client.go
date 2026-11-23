@@ -13,8 +13,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // DefaultMinRefreshInterval bounds how often a lookup of an unknown kid may trigger a fetch:
@@ -121,7 +119,7 @@ func (c *JwksClient) PublicKeyFor(ctx context.Context, kid string) (ed25519.Publ
 }
 
 // Decode verifies an EdDSA token against the issuer's published keys.
-func (c *JwksClient) Decode(ctx context.Context, tokenString string, leeway time.Duration) (*peripherals.AccessClaims, error) {
+func (c *JwksClient) Decode(ctx context.Context, tokenString string, leeway time.Duration) (*AccessClaims, error) {
 	return DecodeEdDSA(ctx, tokenString, c, leeway)
 }
 

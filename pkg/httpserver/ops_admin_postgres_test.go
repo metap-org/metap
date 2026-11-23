@@ -4,6 +4,7 @@ package httpserver_test
 
 import (
 	"context"
+	"github.com/metap-org/metap/pkg/jwks"
 	"testing"
 
 	"github.com/google/uuid"
@@ -13,7 +14,6 @@ import (
 	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/identity"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/testkit"
 )
 
@@ -32,9 +32,9 @@ func TestAdminOperationsOverREST(t *testing.T) {
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
 	state.Identity = &admin.IdentityConfig{Shared: pool, Router: state.Router, Audit: audit.NewPostgresStore(pool), PublicURL: "http://portal.test"}
 	base := startTestServer(t, state, nil)
-	asAdmin, err := peripherals.MintJWT(privPEM, tenant, adminMember.ID, 3600)
+	asAdmin, err := jwks.MintRSAJWT(privPEM, tenant, adminMember.ID, 3600)
 	require.NoError(t, err)
-	asPlain, err := peripherals.MintJWT(privPEM, tenant, plain.ID, 3600)
+	asPlain, err := jwks.MintRSAJWT(privPEM, tenant, plain.ID, 3600)
 	require.NoError(t, err)
 
 	res := doRequest(t, "GET", base+"/admin/users?limit=10", asAdmin, nil)
@@ -126,7 +126,7 @@ func TestCredentialOperationsOverREST(t *testing.T) {
 	store := &memCredentials{source: map[string]string{}, value: map[string]string{}}
 	state.Identity = &admin.IdentityConfig{Shared: pool, Router: state.Router, Audit: audit.NewPostgresStore(pool), Credentials: store}
 	base := startTestServer(t, state, nil)
-	token, err := peripherals.MintJWT(privPEM, tenant, adminMember.ID, 3600)
+	token, err := jwks.MintRSAJWT(privPEM, tenant, adminMember.ID, 3600)
 	require.NoError(t, err)
 
 	res := doRequest(t, "GET", base+"/admin/credentials", token, nil)

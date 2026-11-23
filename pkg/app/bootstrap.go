@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"os"
 	"strings"
@@ -18,7 +19,6 @@ import (
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/secrets"
 )
@@ -111,7 +111,7 @@ func ApplyBootstrap(ctx context.Context, registry *metadata.MetadataRegistry, pe
 	deps := bootstrap.Deps{
 		Registry: registry,
 		Policies: permissions,
-		Identity: bootstrap.ScopedIdentity{Shared: router.SharedPool(), Pool: func(ctx context.Context, tenantID uuid.UUID) (peripherals.DBTX, error) {
+		Identity: bootstrap.ScopedIdentity{Shared: router.SharedPool(), Pool: func(ctx context.Context, tenantID uuid.UUID) (rolestore.DBTX, error) {
 			return router.PoolFor(ctx, tenantID)
 		}},
 	}

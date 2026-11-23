@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 // MaxAPIKeyLifetimeDays bounds an expiring key's lifetime.
@@ -41,9 +41,9 @@ func (s *UserAdminService) CreateServiceAccount(ctx context.Context, req *Create
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, err.Error())
 	}
 	if len(roles) > 0 {
-		if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
+		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
 			for _, r := range roles {
-				if err := peripherals.AssignRole(ctx, db, c.tenant, m.ID, r, createdBy); err != nil {
+				if err := rolestore.AssignRole(ctx, db, c.tenant, m.ID, r, createdBy); err != nil {
 					return err
 				}
 			}

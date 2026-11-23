@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
 	"slices"
 	"strings"
@@ -22,7 +23,6 @@ import (
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/tenantauth"
 )
@@ -156,7 +156,7 @@ func identityErr(ctx context.Context, err error) error {
 }
 
 // withTenantTx runs fn in a transaction on tenant's own database (where user_roles live).
-func (d identityDeps) withTenantTx(ctx context.Context, tenant uuid.UUID, fn func(db peripherals.DBTX) error) error {
+func (d identityDeps) withTenantTx(ctx context.Context, tenant uuid.UUID, fn func(db rolestore.DBTX) error) error {
 	tx, err := d.cfg.Router.Begin(ctx, tenant)
 	if err != nil {
 		return err
@@ -184,12 +184,12 @@ func (d identityDeps) toUsers(ctx context.Context, tenant uuid.UUID, ms []identi
 	}
 	var roles map[uuid.UUID][]string
 	var scoped map[uuid.UUID][]permission.ScopedRole
-	if err := d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
+	if err := d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
 		var err error
-		if roles, err = peripherals.RolesForUsers(ctx, db, tenant, ids); err != nil {
+		if roles, err = rolestore.RolesForUsers(ctx, db, tenant, ids); err != nil {
 			return err
 		}
-		scoped, err = peripherals.ScopedRolesForUsers(ctx, db, tenant, ids)
+		scoped, err = rolestore.ScopedRolesForUsers(ctx, db, tenant, ids)
 		return err
 	}); err != nil {
 		return nil, err
@@ -283,8 +283,8 @@ func (s *UserAdminService) ListUsers(ctx context.Context, req *ListUsersRequest)
 	}
 	q := identity.ListQuery{Search: req.GetSearch(), Status: req.GetStatus(), Offset: int(req.GetOffset()), Limit: int(req.GetLimit())}
 	if role := strings.TrimSpace(req.GetRole()); role != "" {
-		if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
-			q.IDs, err = peripherals.UsersWithRole(ctx, db, c.tenant, role)
+		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+			q.IDs, err = rolestore.UsersWithRole(ctx, db, c.tenant, role)
 			return err
 		}); err != nil {
 			return nil, rpcError(ctx, err)
@@ -321,12 +321,12 @@ func (s *UserAdminService) GetUser(ctx context.Context, req *UserIdRequest) (*Us
 // built-in rows are created on first use. A name outside it is a typo, not a role.
 func (d identityDeps) knownRoles(ctx context.Context, tenant uuid.UUID) ([]string, error) {
 	var roles []string
-	err := d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
-		if err := peripherals.EnsureBuiltinRoles(ctx, db, tenant); err != nil {
+	err := d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
+		if err := rolestore.EnsureBuiltinRoles(ctx, db, tenant); err != nil {
 			return err
 		}
 		var err error
-		roles, err = peripherals.RoleNames(ctx, db, tenant)
+		roles, err = rolestore.RoleNames(ctx, db, tenant)
 		return err
 	})
 	return roles, err
@@ -378,9 +378,9 @@ func (s *UserAdminService) CreateUser(ctx context.Context, req *CreateUserReques
 			Message: "A password is required for a new account, or invite the person instead.", FieldErrors: map[string][]string{"password": {"required for a new account"}}})
 	}
 	if len(roles) > 0 {
-		if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
+		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
 			for _, r := range roles {
-				if err := peripherals.AssignRole(ctx, db, c.tenant, m.ID, r, invitedBy); err != nil {
+				if err := rolestore.AssignRole(ctx, db, c.tenant, m.ID, r, invitedBy); err != nil {
 					return err
 				}
 			}
@@ -431,9 +431,9 @@ func (s *UserAdminService) UpdateUser(ctx context.Context, req *UpdateUserReques
 // leave the tenant with no active admin.
 func (d identityDeps) wouldOrphanAdmins(ctx context.Context, tenant, id uuid.UUID) (bool, error) {
 	var admins []uuid.UUID
-	if err := d.withTenantTx(ctx, tenant, func(db peripherals.DBTX) error {
+	if err := d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
 		var err error
-		admins, err = peripherals.UsersWithRole(ctx, db, tenant, permission.RoleAdmin)
+		admins, err = rolestore.UsersWithRole(ctx, db, tenant, permission.RoleAdmin)
 		return err
 	}); err != nil {
 		return false, err
@@ -522,8 +522,8 @@ func (s *UserAdminService) RemoveUser(ctx context.Context, req *UserIdRequest) (
 	if err := identity.RemoveMember(ctx, s.d.cfg.Shared, c.tenant, id, s.d.now()); err != nil {
 		return nil, identityErr(ctx, err)
 	}
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
-		return peripherals.RevokeAllRoles(ctx, db, c.tenant, id)
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+		return rolestore.RevokeAllRoles(ctx, db, c.tenant, id)
 	}); err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -593,15 +593,15 @@ func (s *UserAdminService) changeRole(ctx context.Context, req *RoleRequest, ass
 			return nil, err
 		}
 	}
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
 		if assign {
 			by := &c.self
 			if c.self == uuid.Nil {
 				by = nil
 			}
-			return peripherals.AssignRole(ctx, db, c.tenant, id, role, by)
+			return rolestore.AssignRole(ctx, db, c.tenant, id, role, by)
 		}
-		return peripherals.RevokeRole(ctx, db, c.tenant, id, role)
+		return rolestore.RevokeRole(ctx, db, c.tenant, id, role)
 	}); err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -618,7 +618,7 @@ func (s *UserAdminService) changeRole(ctx context.Context, req *RoleRequest, ass
 // changeScopedRole assigns or revokes a role only on one scope (roadmap 115 M1). There is no
 // last-admin guard here: a role held on a scope is never the tenant's admin.
 func (s *UserAdminService) changeScopedRole(ctx context.Context, c caller, id uuid.UUID, role, scopeType, scopeID string, assign bool, before *User) (*User, error) {
-	if err := peripherals.ValidateScope(scopeType, scopeID); err != nil {
+	if err := rolestore.ValidateScope(scopeType, scopeID); err != nil {
 		return nil, sendServiceError(ctx, &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed,
 			Message: err.Error(), FieldErrors: map[string][]string{"scope": {err.Error()}}})
 	}
@@ -627,11 +627,11 @@ func (s *UserAdminService) changeScopedRole(ctx context.Context, c caller, id uu
 			return nil, err
 		}
 	}
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
 		if assign {
-			return peripherals.AssignScopedRole(ctx, db, c.tenant, id, role, scopeType, scopeID, c.selfPtr())
+			return rolestore.AssignScopedRole(ctx, db, c.tenant, id, role, scopeType, scopeID, c.selfPtr())
 		}
-		return peripherals.RevokeScopedRole(ctx, db, c.tenant, id, role, scopeType, scopeID)
+		return rolestore.RevokeScopedRole(ctx, db, c.tenant, id, role, scopeType, scopeID)
 	}); err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -661,13 +661,13 @@ func (s *UserAdminService) ListScopeMembers(ctx context.Context, req *ScopeReque
 	if err != nil {
 		return nil, err
 	}
-	if err := peripherals.ValidateScope(req.GetScopeType(), req.GetScopeId()); err != nil {
+	if err := rolestore.ValidateScope(req.GetScopeType(), req.GetScopeId()); err != nil {
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, err.Error())
 	}
-	var members []peripherals.ScopeMember
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db peripherals.DBTX) error {
+	var members []rolestore.ScopeMember
+	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
 		var err error
-		members, err = peripherals.MembersOfScope(ctx, db, c.tenant, req.GetScopeType(), req.GetScopeId())
+		members, err = rolestore.MembersOfScope(ctx, db, c.tenant, req.GetScopeType(), req.GetScopeId())
 		return err
 	}); err != nil {
 		return nil, rpcError(ctx, err)

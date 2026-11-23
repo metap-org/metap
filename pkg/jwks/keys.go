@@ -1,5 +1,5 @@
 // Package jwks is a JWKS-based multi-service trust root — an alternative to the platform's default
-// per-app static RS256 keypair (peripherals.MintJWT) for a deployment where several
+// per-app static RS256 keypair (MintRSAJWT) for a deployment where several
 // separately-deployed microservices need to trust the *same* signing identity: one nominated issuer
 // binary holds the only private key(s), every other microservice verifies locally via a cached
 // JwksClient.

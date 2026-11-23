@@ -1,91 +1,22 @@
 //go:build integration
 
-package peripherals
-
-// E2E tests against a real Postgres.
+package identity
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
-	"github.com/metap-org/metap/pkg/testkit"
-	"github.com/stretchr/testify/require"
-
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/metap-org/metap/pkg/metadata"
+	"github.com/stretchr/testify/require"
+
+	"github.com/metap-org/metap/pkg/testkit"
 )
 
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool := testkit.NewPostgres(t, testkit.WithSearchPath("metadata", "public"))
-	return pool
-}
-
-func TestRoleAssignmentRoundTrip(t *testing.T) {
-	pool := testPool(t)
-	ctx := context.Background()
-	tenantID := uuid.New()
-	userID := uuid.New()
-
-	roles, err := GetRolesForUser(ctx, pool, tenantID, userID)
-	require.NoError(t, err, "expected no roles yet, got %v err=", roles)
-	require.Len(t, roles, 0, "expected no roles yet, got %v err=%v", roles, err)
-
-	require.NoError(t, AssignRole(ctx, pool, tenantID, userID, "sales", nil))
-	require.NoError(t, AssignRole(ctx, pool, tenantID, userID, "support", nil))
-	// Duplicate assign is a no-op, not an error.
-	require.NoError(t, AssignRole(ctx, pool, tenantID, userID, "sales", nil))
-
-	roles, err = GetRolesForUser(ctx, pool, tenantID, userID)
-	require.NoError(t, err)
-	require.True(t, containsAll(roles, "sales", "support"), "expected [sales support], got %v", roles)
-	require.Len(t, roles, 2, "expected [sales support], got %v", roles)
-
-	users, err := ListUsers(ctx, pool, tenantID)
-	require.NoError(t, err)
-	require.Len(t, users, 1, "expected exactly one user, got %+v", users)
-	require.Equal(t, userID, users[0].UserID, "expected exactly one user, got %+v", users)
-
-	require.NoError(t, RevokeRole(ctx, pool, tenantID, userID, "sales"))
-	roles, err = GetRolesForUser(ctx, pool, tenantID, userID)
-	require.NoError(t, err)
-	require.Len(t, roles, 1, "expected [support], got %v", roles)
-	require.Equal(t, "support", roles[0], "expected [support], got %v", roles)
-
-	pool.Exec(ctx, "DELETE FROM user_roles WHERE tenant_id = $1", tenantID)
-}
-
-func containsAll(haystack []string, needles ...string) bool {
-	set := make(map[string]bool, len(haystack))
-	for _, h := range haystack {
-		set[h] = true
-	}
-	for _, n := range needles {
-		if !set[n] {
-			return false
-		}
-	}
-	return true
-}
-
-func TestMetadataDriftRecordsFirstBootThenDetectsChange(t *testing.T) {
-	pool := testPool(t)
-	ctx := context.Background()
-	entityName := "test.drift." + uuid.NewString()
-
-	Check(ctx, pool, []metadata.EntitySummary{{Name: entityName, Version: "hash-v1"}})
-	var stored string
-	require.NoError(t, pool.QueryRow(ctx, "SELECT hash FROM metadata_versions WHERE entity_name = $1", entityName).Scan(&stored))
-	require.Equal(t, "hash-v1", stored, "expected hash-v1, got %q", stored)
-
-	// Second call with a different hash — drift is logged, row is updated either way.
-	Check(ctx, pool, []metadata.EntitySummary{{Name: entityName, Version: "hash-v2"}})
-	require.NoError(t, pool.QueryRow(ctx, "SELECT hash FROM metadata_versions WHERE entity_name = $1", entityName).Scan(&stored))
-	require.Equal(t, "hash-v2", stored, "expected hash-v2, got %q", stored)
-
-	pool.Exec(ctx, "DELETE FROM metadata_versions WHERE entity_name = $1", entityName)
+	return testkit.NewPostgres(t, testkit.WithSearchPath("metadata", "public"))
 }
 
 func TestCreateUserAndVerifyCredentialsRoundTrip(t *testing.T) {

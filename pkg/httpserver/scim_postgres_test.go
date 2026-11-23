@@ -5,6 +5,7 @@ package httpserver_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/metap-org/metap/pkg/jwks"
 	"io"
 	"net/http"
 	"strings"
@@ -17,7 +18,6 @@ import (
 	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/identity"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/testkit"
 )
@@ -67,7 +67,7 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 	bob, _, err := identity.AddMember(context.Background(), pool, identity.NewMember{TenantID: tenant, Email: "bob@acme.io", Password: "password-1"})
 	require.NoError(t, err)
 	testkit.SeedRole(t, pool, tenant, bob.ID, "viewer")
-	bobToken, err := peripherals.MintJWT(privPEM, tenant, bob.ID, 3600)
+	bobToken, err := jwks.MintRSAJWT(privPEM, tenant, bob.ID, 3600)
 	require.NoError(t, err)
 	code, _ = call("GET", "/Users", bobToken, "")
 	assert.Equal(t, 403, code, "a non-admin cannot provision")

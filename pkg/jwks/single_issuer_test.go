@@ -20,8 +20,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/metap-org/metap/pkg/peripherals"
 )
 
 func rsaPair(t *testing.T) (string, *rsa.PublicKey) {
@@ -57,7 +55,7 @@ func TestAutoVerifierRoutesByKidAndFallsBackToStaticRSAOnlyWhenEnabled(t *testin
 
 	eddsa, err := MintWithSigner(&TokenSigner{Kind: SignerStore, Store: store}, uuid.New(), uuid.New(), nil, 60)
 	require.NoError(t, err)
-	legacy, err := peripherals.MintJWT(privPEM, uuid.New(), uuid.New(), 60)
+	legacy, err := MintRSAJWT(privPEM, uuid.New(), uuid.New(), 60)
 	require.NoError(t, err)
 	require.True(t, HasKid(eddsa))
 	require.False(t, HasKid(legacy))

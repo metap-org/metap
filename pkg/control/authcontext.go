@@ -1,5 +1,5 @@
 // Turns a verified access token's claims into a permission.RequestContext — the DB-touching
-// half of authentication that peripherals.DecodeAccessToken (the pure JWT-verify half)
+// half of authentication that jwks.DecodeAccessToken (the pure JWT-verify half)
 // deliberately can't do itself, since it needs a tenant-scoped Router to open the transaction
 // GetRolesForUser/FetchContextAttributes run against.
 package control
@@ -7,6 +7,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -18,7 +19,6 @@ import (
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
-	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -90,14 +90,14 @@ func ResolveRequestContext(ctx context.Context, router *Router, tenantID, userID
 	if err != nil {
 		return nil, err
 	}
-	roles, err := peripherals.GetRolesForUser(ctx, tx, tenantID, userID)
+	roles, err := rolestore.GetRolesForUser(ctx, tx, tenantID, userID)
 	if err != nil {
 		tx.Rollback(ctx)
 		return nil, err
 	}
 	// Roles held only inside a scope (roadmap 115 M1), from the same transaction and so the same
 	// freshness as the roles above: never cached.
-	scopedRoles, err := peripherals.ScopedRolesForUser(ctx, tx, tenantID, userID)
+	scopedRoles, err := rolestore.ScopedRolesForUser(ctx, tx, tenantID, userID)
 	if err != nil {
 		tx.Rollback(ctx)
 		return nil, err
@@ -124,7 +124,7 @@ func ResolveRequestContext(ctx context.Context, router *Router, tenantID, userID
 			if err != nil {
 				return nil, err
 			}
-			result, err := peripherals.FetchContextAttributes(ctx, tx, tenantID, authContextTable, userID)
+			result, err := identity.FetchContextAttributes(ctx, tx, tenantID, authContextTable, userID)
 			if err != nil {
 				tx.Rollback(ctx)
 				return nil, err
