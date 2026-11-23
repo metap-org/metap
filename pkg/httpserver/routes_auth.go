@@ -16,12 +16,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
+	"github.com/metap-org/metap/internal/signin"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/peripherals"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/runtime"
-	"github.com/metap-org/metap/pkg/signin"
 )
 
 func sessionTTLSeconds(ctx *http.Request, state *AppState, tenantID uuid.UUID) uint64 {

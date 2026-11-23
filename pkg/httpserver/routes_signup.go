@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/metap-org/metap/internal/signin"
 	"github.com/metap-org/metap/pkg/kit/httpx"
-	"github.com/metap-org/metap/pkg/signin"
 )
 
 type signupBody struct {

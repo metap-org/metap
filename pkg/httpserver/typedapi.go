@@ -19,7 +19,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
-	"github.com/metap-org/metap/pkg/adminapi"
+	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -171,6 +171,6 @@ func mountTypedAPI(r *router.Router, state *AppState) {
 	registerConfigOperations(api, state)
 	registerAdminOperations(api, state)
 	if state.Identity != nil {
-		self.Mount("/scim/v2", adminapi.SCIMHandler(adminapi.NewUserAdminService(*state.Identity), scimAuthenticate(state)))
+		self.Mount("/scim/v2", admin.SCIMHandler(admin.NewUserAdminService(*state.Identity), scimAuthenticate(state)))
 	}
 }

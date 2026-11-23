@@ -36,11 +36,11 @@ linters:
             - pkg: github.com/go-chi
               desc: use pkg/kit/httpx/router (standard-library ServeMux), not chi
         # Layers (roadmap 118): transport (pkg/httpserver, huma, the router) calls application
-        # services (adminapi, signin, crud, identity, ...); never the other way round.
+        # services (admin, signin, crud, identity, ...); never the other way round.
         application-below-transport:
           files:
-            - "**/pkg/adminapi/**"
-            - "**/pkg/signin/**"
+            - "**/internal/admin/**"
+            - "**/internal/signin/**"
             - "**/pkg/identity/**"
             - "**/pkg/permission/**"
             - "**/pkg/crud/**"

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/adminapi"
+	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/identity"
 	"github.com/metap-org/metap/pkg/peripherals"
@@ -23,16 +23,16 @@ func TestAdminOperationsOverREST(t *testing.T) {
 	pool := httpTestPool(t)
 	ctx := context.Background()
 	tenant := uuid.New()
-	admin, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: "admin@acme.io", Password: "password-1"})
+	adminMember, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: "admin@acme.io", Password: "password-1"})
 	require.NoError(t, err)
-	testkit.SeedRole(t, pool, tenant, admin.ID, "admin")
+	testkit.SeedRole(t, pool, tenant, adminMember.ID, "admin")
 	plain, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: "plain@acme.io", Password: "password-1"})
 	require.NoError(t, err)
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
-	state.Identity = &adminapi.IdentityConfig{Shared: pool, Router: state.Router, Audit: audit.NewPostgresStore(pool), PublicURL: "http://portal.test"}
+	state.Identity = &admin.IdentityConfig{Shared: pool, Router: state.Router, Audit: audit.NewPostgresStore(pool), PublicURL: "http://portal.test"}
 	base := startTestServer(t, state, nil)
-	asAdmin, err := peripherals.MintJWT(privPEM, tenant, admin.ID, 3600)
+	asAdmin, err := peripherals.MintJWT(privPEM, tenant, adminMember.ID, 3600)
 	require.NoError(t, err)
 	asPlain, err := peripherals.MintJWT(privPEM, tenant, plain.ID, 3600)
 	require.NoError(t, err)
@@ -97,8 +97,8 @@ func TestAdminOperationsOverREST(t *testing.T) {
 
 type memCredentials struct{ source, value map[string]string }
 
-func (m *memCredentials) Capabilities() adminapi.CredentialCapabilities {
-	return adminapi.CredentialCapabilities{Database: true, External: false, ExternalKind: "env"}
+func (m *memCredentials) Capabilities() admin.CredentialCapabilities {
+	return admin.CredentialCapabilities{Database: true, External: false, ExternalKind: "env"}
 }
 func (m *memCredentials) Put(_ context.Context, ref, source, value string) error {
 	m.source[ref], m.value[ref] = source, value
@@ -118,15 +118,15 @@ func TestCredentialOperationsOverREST(t *testing.T) {
 	pool := httpTestPool(t)
 	ctx := context.Background()
 	tenant := uuid.New()
-	admin, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: "admin@acme.io", Password: "password-1"})
+	adminMember, _, err := identity.AddMember(ctx, pool, identity.NewMember{TenantID: tenant, Email: "admin@acme.io", Password: "password-1"})
 	require.NoError(t, err)
-	testkit.SeedRole(t, pool, tenant, admin.ID, "admin")
+	testkit.SeedRole(t, pool, tenant, adminMember.ID, "admin")
 
 	state, privPEM := newTestAppState(t, pool, httpTestEntity())
 	store := &memCredentials{source: map[string]string{}, value: map[string]string{}}
-	state.Identity = &adminapi.IdentityConfig{Shared: pool, Router: state.Router, Audit: audit.NewPostgresStore(pool), Credentials: store}
+	state.Identity = &admin.IdentityConfig{Shared: pool, Router: state.Router, Audit: audit.NewPostgresStore(pool), Credentials: store}
 	base := startTestServer(t, state, nil)
-	token, err := peripherals.MintJWT(privPEM, tenant, admin.ID, 3600)
+	token, err := peripherals.MintJWT(privPEM, tenant, adminMember.ID, 3600)
 	require.NoError(t, err)
 
 	res := doRequest(t, "GET", base+"/admin/credentials", token, nil)

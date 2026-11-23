@@ -1,5 +1,5 @@
 // GET /public/config — unauthenticated, resolving the tenant from the Host header, and returning only
-// keys declared public in config.Registry (the tenant and platform tiers are adminapi.ConfigAdminService).
+// keys declared public in config.Registry (the tenant and platform tiers are admin.ConfigAdminService).
 //
 // Why it has to exist separately: branding must render on the login screen, and at that moment the
 // browser has no session and the server knows nothing about who is asking. The Host header is

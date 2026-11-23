@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/metap-org/metap/pkg/signin"
+	"github.com/metap-org/metap/internal/signin"
 )
 
 type tokenBody struct {

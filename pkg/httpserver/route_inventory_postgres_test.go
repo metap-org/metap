@@ -15,7 +15,7 @@ import (
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/adminapi"
+	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/httpserver"
 	"github.com/metap-org/metap/pkg/httpserver/attachmentroutes"
@@ -31,7 +31,7 @@ import (
 func TestRouteInventory(t *testing.T) {
 	pool := httpTestPool(t)
 	state, _ := newTestAppState(t, pool, httpTestEntity())
-	state.Identity = &adminapi.IdentityConfig{Shared: pool, Router: state.Router, Audit: audit.NewPostgresStore(pool), PublicURL: "http://portal.test"}
+	state.Identity = &admin.IdentityConfig{Shared: pool, Router: state.Router, Audit: audit.NewPostgresStore(pool), PublicURL: "http://portal.test"}
 	handler := httpserver.BuildRouter(state, nil, oauth2routes.Mount, cronroutes.Mount, dashboardroutes.Mount, attachmentroutes.Mount)
 
 	r, ok := handler.(*router.Router)
