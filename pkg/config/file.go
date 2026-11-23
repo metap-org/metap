@@ -1,5 +1,6 @@
-// Package configfile lets a service be configured from a YAML file instead of only from
-// environment variables.
+// The YAML configuration file: lets a service be configured from a file instead of only from
+// environment variables (the other half of this package is the tiered, database-backed platform
+// configuration; the two never share state: this one feeds kit/env at process start).
 //
 // The file is structured the way a person reads it:
 //
@@ -21,7 +22,8 @@
 //
 // Secrets do not belong in the file. Put them in the environment, or in a file outside the
 // repository that CONFIG_FILE points at.
-package configfile
+
+package config
 
 import (
 	"fmt"
@@ -37,33 +39,33 @@ import (
 	"github.com/metap-org/metap/pkg/kit/env"
 )
 
-// PathVar names the environment variable that points at the file.
-const PathVar = "CONFIG_FILE"
+// FilePathVar names the environment variable that points at the file.
+const FilePathVar = "CONFIG_FILE"
 
 var once sync.Once
 
-// LoadFromEnv loads the file CONFIG_FILE names, once per process. With the variable unset it does
+// LoadFileFromEnv loads the file CONFIG_FILE names, once per process. With the variable unset it does
 // nothing (a service with no file runs on the environment alone). A file that is named but cannot
 // be read or parsed is an error: running on defaults when someone asked for a file would hide it.
-func LoadFromEnv() error {
+func LoadFileFromEnv() error {
 	var err error
 	once.Do(func() {
-		path := os.Getenv(PathVar)
+		path := os.Getenv(FilePathVar)
 		if path == "" {
 			return
 		}
-		err = Load(path)
+		err = LoadFile(path)
 	})
 	return err
 }
 
-// Load reads the YAML file at path and makes its values the fallback source of kit/env.
-func Load(path string) error {
+// LoadFile reads the YAML file at path and makes its values the fallback source of kit/env.
+func LoadFile(path string) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("config file: %w", err)
 	}
-	values, err := Parse(raw)
+	values, err := ParseFile(raw)
 	if err != nil {
 		return fmt.Errorf("config file %s: %w", path, err)
 	}
@@ -80,8 +82,8 @@ func Load(path string) error {
 	return nil
 }
 
-// Parse flattens a YAML document into environment-variable names and string values.
-func Parse(raw []byte) (map[string]string, error) {
+// ParseFile flattens a YAML document into environment-variable names and string values.
+func ParseFile(raw []byte) (map[string]string, error) {
 	var doc map[string]any
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return nil, err
@@ -144,10 +146,10 @@ func scalar(v any) (string, bool) {
 	return "", false
 }
 
-// MustLoadFromEnv is LoadFromEnv for the first line of a main: a file that was asked for and
+// MustLoadFileFromEnv is LoadFileFromEnv for the first line of a main: a file that was asked for and
 // cannot be used stops the process with the reason, before anything else reads a setting.
-func MustLoadFromEnv() {
-	if err := LoadFromEnv(); err != nil {
+func MustLoadFileFromEnv() {
+	if err := LoadFileFromEnv(); err != nil {
 		slog.Error("loading the config file", "error", err)
 		os.Exit(1)
 	}

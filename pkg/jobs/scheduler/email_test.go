@@ -1,4 +1,4 @@
-package cronscheduler
+package scheduler
 
 import (
 	"encoding/json"

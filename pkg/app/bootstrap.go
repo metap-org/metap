@@ -12,7 +12,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/metap-org/metap/pkg/bootstrap"
-	"github.com/metap-org/metap/pkg/configfile"
+	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/control"
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/kit/env"
@@ -53,7 +53,7 @@ func BootstrapMain(opts BootstrapOptions) {
 // infra.LoadConfig: a one-shot that only writes grants and users needs no RabbitMQ or token keys.
 func RunBootstrap(ctx context.Context, opts BootstrapOptions) error {
 	_ = godotenv.Load()
-	if err := configfile.LoadFromEnv(); err != nil {
+	if err := config.LoadFileFromEnv(); err != nil {
 		return err
 	}
 	databaseURL, err := env.Require("DATABASE_URL")

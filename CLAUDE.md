@@ -304,6 +304,7 @@ this file above or below is pre-2026-11-07 history: read `go/<pkg>` as `pkg/<pkg
   owner, who keeps password sign-in as the way back (M8); deleting the config restores passwords. Not built: SAML, signing the IdP's `email_verified` claim into the
   check, group/role mapping from IdP claims, enforcing SSO on invitation acceptance and password reset, domain verification. `control.MemorySecretStore` is the in-process
   SecretStore for tests and single-process development.
+- **Package groups after the 2026-11-23 merge.** Everything that runs work on a schedule or an event is under `pkg/jobs/`: `jobs/cron` (job and run records, schedule math, claims, retries, Steps runs — formerly `pkg/cron`) and `jobs/scheduler` (ticker, executor, trigger listener, webhook/email/workflow targets, housekeeping loops — formerly `pkg/cronscheduler`; imports `cron`, never the reverse); the binary stays `cmd/cron-scheduler`. The YAML configuration file loader is `pkg/config`'s `file.go` (`config.LoadFileFromEnv`, `ParseFile`, `LoadFile`, `FilePathVar`; formerly `pkg/configfile`, same behavior); the tiered database-backed configuration is the rest of that package. Any older `pkg/cron`, `pkg/cronscheduler` or `pkg/configfile` path in this file or in `../metap-docs` is history.
 - **`pkg/kit/*` — standard-library-only utilities** (`env`, `shutdown`, `httpx`) for any Go code,
   including downstream code deliberately *not* built on this platform (`../waap`'s edge-plane may
   import only these). depguard (`.golangci.yml`, `golangci-lint run ./...`, in CI) rejects any

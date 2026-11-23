@@ -20,7 +20,7 @@ var fallback atomic.Pointer[func(string) (string, bool)]
 // SetFallback installs a second source of values, read when the process environment has none
 // (unset or empty) for a name. The environment therefore always wins, and every reader in this
 // package (String, Int, Bool, List, ...) sees the second source without knowing it exists. It is
-// how a configuration file plugs in (metap's pkg/configfile) while this package stays
+// how a configuration file plugs in (metap's pkg/config, file.go) while this package stays
 // standard-library-only. Pass nil to remove it.
 func SetFallback(src func(name string) (string, bool)) {
 	if src == nil {

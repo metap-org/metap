@@ -9,7 +9,7 @@
 // http.ErrUseLastResponse makes the first hop the only hop — a webhook that legitimately needs
 // to follow one now fails visibly with the 3xx status rather than silently becoming an SSRF
 // primitive.
-package cronscheduler
+package scheduler
 
 import (
 	"bytes"

@@ -14,8 +14,8 @@ import (
 
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/control"
-	"github.com/metap-org/metap/pkg/cron"
 	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/jobs/cron"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 

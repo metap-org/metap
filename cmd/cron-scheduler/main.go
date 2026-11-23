@@ -18,10 +18,10 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/metap-org/metap/pkg/control"
-	"github.com/metap-org/metap/pkg/cronscheduler"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/infra"
 	"github.com/metap-org/metap/pkg/infra/eventbus"
+	"github.com/metap-org/metap/pkg/jobs/scheduler"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/secrets"
@@ -102,18 +102,18 @@ func main() {
 		secretStore = secretManager
 	}
 
-	executorConfig := &cronscheduler.ExecutorConfig{
+	executorConfig := &scheduler.ExecutorConfig{
 		TargetBaseURL: targetBaseURL,
 		TargetBackend: targetBackend,
 		ServiceToken:  serviceToken,
-		SMTP: cronscheduler.SmtpConfig{
+		SMTP: scheduler.SmtpConfig{
 			Host: config.SMTPHost, Port: config.SMTPPort, User: config.SMTPUser,
 			Password: config.SMTPPassword, From: config.SMTPFrom,
 		},
-		Webhook: cronscheduler.WebhookPolicyFromEnv(),
+		Webhook: scheduler.WebhookPolicyFromEnv(),
 		Secrets: secretStore,
 	}
-	tickerConfig := cronscheduler.TickerConfig{Interval: tickMs, BatchSize: batchSize}
+	tickerConfig := scheduler.TickerConfig{Interval: tickMs, BatchSize: batchSize}
 
 	slog.Info("ready, ticking and listening", "tick_ms", tickMs, "batch_size", batchSize, "target_base_url", targetBaseURL)
 
@@ -162,19 +162,19 @@ func main() {
 	tenantPurgeSecs := uint64(env.Int("TENANT_PURGE_INTERVAL_SECONDS", 3600))
 
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error { return cronscheduler.RunTicker(gctx, pool, executorConfig, tickerConfig) })
-	g.Go(func() error { return cronscheduler.RunExecutor(gctx, executorConnect, pool, executorConfig) })
-	g.Go(func() error { return cronscheduler.RunTriggerListener(gctx, triggerConnect, pool, executorConfig) })
+	g.Go(func() error { return scheduler.RunTicker(gctx, pool, executorConfig, tickerConfig) })
+	g.Go(func() error { return scheduler.RunExecutor(gctx, executorConnect, pool, executorConfig) })
+	g.Go(func() error { return scheduler.RunTriggerListener(gctx, triggerConnect, pool, executorConfig) })
 	if oauthPool != nil {
 		g.Go(func() error {
-			cronscheduler.RunOAuthCleanup(gctx, oauthPool, time.Duration(oauthCleanupSecs)*time.Second)
+			scheduler.RunOAuthCleanup(gctx, oauthPool, time.Duration(oauthCleanupSecs)*time.Second)
 			return nil
 		})
 	}
 
 	if auditPool != nil {
 		g.Go(func() error {
-			cronscheduler.RunAuditPartitionMaintenance(gctx, auditPool, time.Duration(auditPartitionSecs)*time.Second, auditMonthsAhead)
+			scheduler.RunAuditPartitionMaintenance(gctx, auditPool, time.Duration(auditPartitionSecs)*time.Second, auditMonthsAhead)
 			return nil
 		})
 	}
@@ -188,7 +188,7 @@ func main() {
 		}
 		defer purgePool.Close()
 		g.Go(func() error {
-			cronscheduler.RunTenantPurge(gctx, purgePool, time.Duration(tenantPurgeSecs)*time.Second)
+			scheduler.RunTenantPurge(gctx, purgePool, time.Duration(tenantPurgeSecs)*time.Second)
 			return nil
 		})
 	}

@@ -1,4 +1,4 @@
-// Package cronscheduler is the dispatch loop for the cron package's job definitions. Three loops
+// Package scheduler is the dispatch loop for the cron package's job definitions. Three loops
 // run concurrently from cmd/cron-scheduler's main: RunTicker polls cron_jobs/cron_job_runs for
 // schedule-due entries (and retries due from a prior failed attempt) and either writes a
 // cron.job.due outbox event per firing (the default) or — for DispatchMode "direct" jobs — executes
@@ -8,7 +8,7 @@
 // wait_event-paused Steps chain that matches too. A fourth, unrelated housekeeping loop,
 // RunOAuthCleanup, sweeps expired OAuth2 codes/refresh tokens — hosted here because this is the one
 // always-on ops process, not because it has anything to do with cron jobs.
-package cronscheduler
+package scheduler
 
 import (
 	"github.com/metap-org/metap/pkg/control"

@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/metap-org/metap/pkg/configfile"
+	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/standard"
@@ -21,7 +21,7 @@ import (
 //	                 X-Forwarded-For is believed; unset: the TCP peer is the caller
 //	RATE_LIMIT_PER_MS, RATE_LIMIT_BURST  per-caller token bucket (default 200 ms, burst 300)
 func Main() {
-	if err := configfile.LoadFromEnv(); err != nil {
+	if err := config.LoadFileFromEnv(); err != nil {
 		slog.Error("loading the config file", standard.LogError, err)
 		os.Exit(1)
 	}

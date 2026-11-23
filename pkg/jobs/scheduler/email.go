@@ -4,7 +4,7 @@
 // skips auth entirely when no Auth is passed, which is the same two cases (authenticated relay vs.
 // plaintext dev target) reached through stdlib's own single code path instead of two explicit
 // builders.
-package cronscheduler
+package scheduler
 
 import (
 	"encoding/json"

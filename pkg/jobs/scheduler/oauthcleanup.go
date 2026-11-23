@@ -6,7 +6,7 @@
 // main DATABASE_URL) — not necessarily the outbox pool, which cmd/cron-scheduler's main resolves
 // separately, since the OAuth tables are deliberately not tenant-schema-split and live wherever
 // migration 0034_oauth2.sql was applied.
-package cronscheduler
+package scheduler
 
 import (
 	"context"

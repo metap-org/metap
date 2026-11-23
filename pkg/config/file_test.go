@@ -1,4 +1,4 @@
-package configfile_test
+package config_test
 
 import (
 	"os"
@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/metap-org/metap/pkg/configfile"
+	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/env"
 )
 
@@ -24,7 +24,7 @@ empty:
 `
 
 func TestParseNamesEachKeyAfterTheVariableItReplaces(t *testing.T) {
-	got, err := configfile.Parse([]byte(sample))
+	got, err := config.ParseFile([]byte(sample))
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{
 		"DATABASE_URL":          "postgres://file/db",
@@ -36,7 +36,7 @@ func TestParseNamesEachKeyAfterTheVariableItReplaces(t *testing.T) {
 }
 
 func TestParseRefusesWhatIsNotAPlainValue(t *testing.T) {
-	_, err := configfile.Parse([]byte("a:\n  - {b: 1}\n"))
+	_, err := config.ParseFile([]byte("a:\n  - {b: 1}\n"))
 	assert.Error(t, err)
 }
 
@@ -44,7 +44,7 @@ func TestLoadFeedsEveryEnvReaderAndTheEnvironmentStillWins(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "service.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(sample), 0o600))
 	t.Cleanup(func() { env.SetFallback(nil) })
-	require.NoError(t, configfile.Load(path))
+	require.NoError(t, config.LoadFile(path))
 
 	assert.Equal(t, "mail.example.com", env.String("SMTP_HOST", "default"))
 	assert.Equal(t, 587, env.Int("SMTP_PORT", 25))
@@ -56,8 +56,8 @@ func TestLoadFeedsEveryEnvReaderAndTheEnvironmentStillWins(t *testing.T) {
 }
 
 func TestLoadFailsOnAMissingOrBrokenFile(t *testing.T) {
-	assert.Error(t, configfile.Load(filepath.Join(t.TempDir(), "absent.yaml")))
+	assert.Error(t, config.LoadFile(filepath.Join(t.TempDir(), "absent.yaml")))
 	bad := filepath.Join(t.TempDir(), "bad.yaml")
 	require.NoError(t, os.WriteFile(bad, []byte("a: [unclosed"), 0o600))
-	assert.Error(t, configfile.Load(bad))
+	assert.Error(t, config.LoadFile(bad))
 }

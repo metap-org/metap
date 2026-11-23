@@ -15,7 +15,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/control"
-	"github.com/metap-org/metap/pkg/cron"
+	"github.com/metap-org/metap/pkg/jobs/cron"
 )
 
 // fakeCredentials stores credential values in memory, in the "database" or "external" home.

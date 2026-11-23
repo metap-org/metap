@@ -5,7 +5,7 @@
 // loop instead lets an in-flight tick run to completion (pgx itself still respects ctx cancellation
 // inside its own queries, so a long-stuck query is still interrupted) and checks ctx.Err()
 // before/after each tick, which is a close equivalent rather than byte-identical.
-package cronscheduler
+package scheduler
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/metap-org/metap/pkg/cron"
+	"github.com/metap-org/metap/pkg/jobs/cron"
 )
 
 type TickerConfig struct {
