@@ -105,3 +105,37 @@ func OnCommit(ctx context.Context, fn func()) {
 	}
 	u.hooks = append(u.hooks, fn)
 }
+
+// WithKeyLock runs fn while holding a database lock named key, so two callers using the same key run
+// one after the other, across goroutines and across processes. Use it for a read-then-write that
+// must not interleave with itself (count the rows, then add one under a limit).
+//
+// The lock is a transaction-level advisory lock, taken on the transaction fn's work joins and
+// released when that transaction ends. Inside a unit of work for this tenant it is that unit's
+// transaction, so the lock is held until the unit commits and fn's reads and writes (made with the
+// context fn is given) are on the same connection. Outside one, a unit of its own is opened around
+// fn and committed when fn returns nil. Either way it needs no second connection while it waits.
+//
+// key should name the tenant and the thing being serialised; it is not interpreted.
+func (r *Router) WithKeyLock(ctx context.Context, tenantID uuid.UUID, key string, fn func(ctx context.Context) error) error {
+	const lock = "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))"
+	if u := unitFrom(ctx); u != nil && u.tenant == tenantID {
+		if _, err := u.tx.Exec(ctx, lock, key); err != nil {
+			return err
+		}
+		return fn(ctx)
+	}
+	uctx, u, err := r.BeginUnit(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if _, err := u.tx.Exec(uctx, lock, key); err != nil {
+		u.Rollback(ctx)
+		return err
+	}
+	if err := fn(uctx); err != nil {
+		u.Rollback(ctx)
+		return err
+	}
+	return u.Commit(ctx)
+}
