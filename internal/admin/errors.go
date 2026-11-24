@@ -11,43 +11,31 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
-type callerKey struct{}
-
 // WithCaller is ctx carrying the authenticated caller the services act as.
 func WithCaller(ctx context.Context, rc *permission.RequestContext) context.Context {
-	return context.WithValue(ctx, callerKey{}, rc)
+	return kernel.WithCaller(ctx, rc)
 }
 
-type authenticatorKey struct{}
-
 // Authenticator resolves the caller when a service call needs it.
-type Authenticator func(ctx context.Context) (*permission.RequestContext, error)
+type Authenticator = kernel.Authenticator
 
 // WithAuthenticator is ctx whose caller is resolved by auth at call time rather than up front:
 // a token revoked between two calls made with the same ctx fails the second one.
 func WithAuthenticator(ctx context.Context, auth Authenticator) context.Context {
-	return context.WithValue(ctx, authenticatorKey{}, auth)
+	return kernel.WithAuthenticator(ctx, auth)
 }
 
 // CallerFrom is the caller WithCaller put in ctx; nil when none.
-func CallerFrom(ctx context.Context) *permission.RequestContext {
-	rc, _ := ctx.Value(callerKey{}).(*permission.RequestContext)
-	return rc
-}
+func CallerFrom(ctx context.Context) *permission.RequestContext { return kernel.CallerFrom(ctx) }
 
 // resolveCaller is the caller in ctx (WithCaller, else WithAuthenticator).
 func resolveCaller(ctx context.Context) (*permission.RequestContext, error) {
-	if rc := CallerFrom(ctx); rc != nil {
-		return rc, nil
-	}
-	if auth, ok := ctx.Value(authenticatorKey{}).(Authenticator); ok && auth != nil {
-		return auth(ctx)
-	}
-	return nil, nil
+	return kernel.Resolve(ctx)
 }
 
 // sendServiceError returns se as the error (the name is the gRPC era's; kept so the services read

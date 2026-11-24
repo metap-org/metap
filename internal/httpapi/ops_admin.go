@@ -11,6 +11,7 @@ import (
 
 	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/admin"
+	"github.com/metap-org/metap/internal/admin/preferences"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
@@ -343,14 +344,14 @@ func registerConfigOperations(api huma.API, state *AppState) {
 			return s.ResetTenantConfig(ctx, &admin.ConfigKeyRequest{Key: in.Key})
 		})
 
-	prefs := admin.NewPreferencesService(state.Pool, state.Permissions)
+	prefs := preferences.New(preferences.NewPgStore(state.Pool), state.Permissions)
 	adminOp(api, state, opOf("getPreferences", http.MethodGet, "/preferences", "The caller's preferences", "Preferences"),
-		func(ctx context.Context, _ *struct{}) (*admin.PreferencesResult, error) {
-			return prefs.GetPreferences(ctx, &admin.Empty{})
+		func(ctx context.Context, _ *struct{}) (*preferences.PreferencesResult, error) {
+			return prefs.Get(ctx)
 		})
 	adminOp(api, state, opOf("updatePreferences", http.MethodPut, "/preferences", "Change the caller's preferences", "Preferences"),
-		func(ctx context.Context, in *bodyIn[admin.Preferences]) (*admin.PreferencesResult, error) {
-			return prefs.UpdatePreferences(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[preferences.Preferences]) (*preferences.PreferencesResult, error) {
+			return prefs.Update(ctx, &in.Body)
 		})
 }
 

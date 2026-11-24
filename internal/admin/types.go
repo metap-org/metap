@@ -2900,11 +2900,3 @@ type TenantConfigSet struct {
 type TenantConfigResult struct {
 	Data *TenantConfigSet `json:"data"`
 }
-
-type Preferences struct {
-	Locale string `json:"locale" required:"false"`
-}
-
-type PreferencesResult struct {
-	Data *Preferences `json:"data"`
-}
