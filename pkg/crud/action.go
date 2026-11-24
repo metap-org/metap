@@ -23,7 +23,12 @@ type ActionCall struct {
 	RC    *permission.RequestContext
 }
 
-// ActionHandler runs one action. It must read and write through a RecordBackend with call.RC, so
+// ActionHandler runs one action. It is the handler type of the ActionRegistry. An application writes its
+// actions with pkg/action (typed input and output, a context for records, audit and events, a step as one
+// transaction), which registers them here; writing an ActionHandler directly still works, for what
+// needs the raw call.
+//
+// A handler must read and write through a RecordBackend with call.RC, so
 // the caller's own permissions bound what it can do. A business failure is a *ServiceError; any
 // other error is internal.
 type ActionHandler func(ctx context.Context, call ActionCall) (JsonObject, error)
