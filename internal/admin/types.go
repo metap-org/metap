@@ -325,30 +325,6 @@ type ListTenantUsersResponse struct {
 	Users []*TenantUser `json:"users" required:"false"`
 }
 
-type Session struct {
-	Id         string `json:"id" required:"false"`
-	Current    bool   `json:"current" required:"false"`
-	TenantId   string `json:"tenantId" required:"false"`
-	TenantName string `json:"tenantName" required:"false"`
-	CreatedAt  string `json:"createdAt" required:"false"`
-	LastSeenAt string `json:"lastSeenAt" required:"false"`
-	ExpiresAt  string `json:"expiresAt" required:"false"`
-	Ip         string `json:"ip" required:"false"`
-	UserAgent  string `json:"userAgent" required:"false"`
-}
-
-type ListSessionsResponse struct {
-	Sessions []*Session `json:"sessions" required:"false"`
-}
-
-type SessionIdRequest struct {
-	Id string `json:"id" required:"false"`
-}
-
-type RevokedSessions struct {
-	Count int32 `json:"count" required:"false"`
-}
-
 type MfaStatus struct {
 	Enabled           bool  `json:"enabled" required:"false"`
 	RecoveryCodesLeft int32 `json:"recoveryCodesLeft" required:"false"`
@@ -1665,90 +1641,6 @@ func (x *ListTenantUsersResponse) GetUsers() []*TenantUser {
 		return x.Users
 	}
 	return nil
-}
-
-func (x *Session) GetId() string {
-	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *Session) GetCurrent() bool {
-	if x != nil {
-		return x.Current
-	}
-	return false
-}
-
-func (x *Session) GetTenantId() string {
-	if x != nil {
-		return x.TenantId
-	}
-	return ""
-}
-
-func (x *Session) GetTenantName() string {
-	if x != nil {
-		return x.TenantName
-	}
-	return ""
-}
-
-func (x *Session) GetCreatedAt() string {
-	if x != nil {
-		return x.CreatedAt
-	}
-	return ""
-}
-
-func (x *Session) GetLastSeenAt() string {
-	if x != nil {
-		return x.LastSeenAt
-	}
-	return ""
-}
-
-func (x *Session) GetExpiresAt() string {
-	if x != nil {
-		return x.ExpiresAt
-	}
-	return ""
-}
-
-func (x *Session) GetIp() string {
-	if x != nil {
-		return x.Ip
-	}
-	return ""
-}
-
-func (x *Session) GetUserAgent() string {
-	if x != nil {
-		return x.UserAgent
-	}
-	return ""
-}
-
-func (x *ListSessionsResponse) GetSessions() []*Session {
-	if x != nil {
-		return x.Sessions
-	}
-	return nil
-}
-
-func (x *SessionIdRequest) GetId() string {
-	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *RevokedSessions) GetCount() int32 {
-	if x != nil {
-		return x.Count
-	}
-	return 0
 }
 
 func (x *MfaStatus) GetEnabled() bool {
