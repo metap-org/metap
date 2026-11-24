@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/internal/admin/apikeys"
 	"net/http"
 	"testing"
 
@@ -123,7 +124,7 @@ func TestSupportSessionCannotCreateDurableAccess(t *testing.T) {
 
 	_, err = h.client.Admin.CreateServiceAccount(asSupport, &CreateServiceAccountRequest{Name: "backdoor"})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "no service account")
-	_, err = h.client.Admin.CreateApiKey(asSupport, &CreateApiKeyRequest{UserId: bob.ID.String(), Name: "k", ExpiresInDays: 30})
+	_, err = h.client.Keys.Create(asSupport, &apikeys.CreateApiKeyRequest{UserId: bob.ID.String(), Name: "k", ExpiresInDays: 30})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "no key")
 	_, err = h.client.Admin.InviteUser(asSupport, &InviteUserRequest{Email: "mallory@evil.test", Roles: []string{"admin"}})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "no invitation")

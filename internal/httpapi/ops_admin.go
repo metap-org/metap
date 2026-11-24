@@ -11,6 +11,8 @@ import (
 
 	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/admin"
+	"github.com/metap-org/metap/internal/admin/apikeys"
+	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/preferences"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -477,19 +479,21 @@ func registerUserOperations(api huma.API, state *AppState, s *admin.UserAdminSer
 	adminOp(api, state, createSA, func(ctx context.Context, in *bodyIn[admin.CreateServiceAccountRequest]) (*admin.User, error) {
 		return s.CreateServiceAccount(ctx, &in.Body)
 	})
+	cfg := state.Identity
+	keys := apikeys.New(apikeys.NewPgStore(cfg.Shared), kernel.StoreAuditor{Store: cfg.Audit}, cfg.APIKeyMaxDays, nil)
 	adminOp(api, state, opOf("listApiKeys", http.MethodGet, "/admin/users/{id}/api-keys", "A member's API keys", tag),
-		func(ctx context.Context, in *idPath) (*admin.ListApiKeysResponse, error) {
-			return s.ListApiKeys(ctx, id(in.ID))
+		func(ctx context.Context, in *idPath) (*apikeys.ListApiKeysResponse, error) {
+			return keys.List(ctx, in.ID)
 		})
 	createKey := opOf("createApiKey", http.MethodPost, "/admin/users/{id}/api-keys", "Issue an API key (the secret is shown once)", tag)
 	createKey.DefaultStatus = http.StatusCreated
-	adminOp(api, state, createKey, func(ctx context.Context, in *idBodyIn[admin.CreateApiKeyRequest]) (*admin.CreateApiKeyResponse, error) {
+	adminOp(api, state, createKey, func(ctx context.Context, in *idBodyIn[apikeys.CreateApiKeyRequest]) (*apikeys.CreateApiKeyResponse, error) {
 		in.Body.UserId = in.ID
-		return s.CreateApiKey(ctx, &in.Body)
+		return keys.Create(ctx, &in.Body)
 	})
 	adminNoContent(api, state, opOf("revokeApiKey", http.MethodDelete, "/admin/api-keys/{id}", "Revoke an API key", tag),
 		func(ctx context.Context, in *idPath) (*admin.Empty, error) {
-			return s.RevokeApiKey(ctx, &admin.ApiKeyIdRequest{Id: in.ID})
+			return &admin.Empty{}, keys.Revoke(ctx, in.ID)
 		})
 }
 

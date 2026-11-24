@@ -17,6 +17,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/metap-org/metap/internal/admin"
+	"github.com/metap-org/metap/internal/admin/apikeys"
+	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/permission"
@@ -38,13 +40,14 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 	testkit.SeedRole(t, pool, tenant, adminMember.ID, "admin")
 	// The admin's own service calls, as the HTTP layer makes them once it has authenticated the caller.
 	users := admin.NewUserAdminService(idCfg)
+	keys := apikeys.New(apikeys.NewPgStore(idCfg.Shared), kernel.StoreAuditor{Store: idCfg.Audit}, idCfg.APIKeyMaxDays, nil)
 	asAdmin := admin.WithCaller(context.Background(), &permission.RequestContext{
 		TenantID: tenant.String(), UserID: adminMember.ID.String(), Roles: []string{"admin"}, HasRoles: true})
 	sa, err := users.CreateServiceAccount(asAdmin, &admin.CreateServiceAccountRequest{Name: "entra"})
 	require.NoError(t, err)
 	_, err = users.AssignRole(asAdmin, &admin.RoleRequest{Id: sa.GetId(), Role: "admin"})
 	require.NoError(t, err)
-	key, err := users.CreateApiKey(asAdmin, &admin.CreateApiKeyRequest{UserId: sa.GetId(), Name: "scim", ExpiresInDays: 30})
+	key, err := keys.Create(asAdmin, &apikeys.CreateApiKeyRequest{UserId: sa.GetId(), Name: "scim", ExpiresInDays: 30})
 	require.NoError(t, err)
 
 	call := func(method, path, token, body string) (int, map[string]any) {
@@ -61,7 +64,7 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 		_ = json.Unmarshal(raw, &out)
 		return res.StatusCode, out
 	}
-	token := key.GetToken()
+	token := key.Token
 
 	code, _ := call("GET", "/Users", "", "")
 	assert.Equal(t, 401, code, "no token")

@@ -111,6 +111,43 @@ func At(ctx context.Context, level access.Level) (Caller, error) {
 	return c, nil
 }
 
+// SupportRefusal is why a vendor's support session may not use an access.Durable operation.
+const SupportRefusal = "A support session cannot create people, keys, roles or sign-in settings: those outlive the grant. Ask a workspace admin."
+
+// SupportCheck says whether a member is a vendor's support session (it needs the database, so it is
+// asked of the slice's store).
+type SupportCheck func(ctx context.Context, tenant, member uuid.UUID) (bool, error)
+
+// Durable is the authenticated caller for an operation that creates access outliving the moment (a
+// person, a key, a role, a password or MFA reset, a sign-in provider): an admin who is not a
+// vendor's support session, so revoking or lapsing a support grant really ends what it could do.
+func Durable(ctx context.Context, isSupport SupportCheck) (Caller, error) {
+	c, err := At(ctx, access.Durable)
+	if err != nil {
+		return Caller{}, err
+	}
+	if c.Self == uuid.Nil {
+		return c, nil
+	}
+	support, err := isSupport(ctx, c.Tenant, c.Self)
+	if err != nil {
+		return Caller{}, err
+	}
+	if support {
+		return Caller{}, Err(http.StatusForbidden, errcode.Forbidden, SupportRefusal)
+	}
+	return c, nil
+}
+
+// ParseID reads an id from a request, or is the 400 that says it must be a UUID.
+func ParseID(id string) (uuid.UUID, error) {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return uuid.Nil, Err(http.StatusBadRequest, errcode.ValidationFailed, "`id` must be a UUID")
+	}
+	return parsed, nil
+}
+
 // IdentityErr maps pkg/identity's errors onto the platform error envelope; anything it does not
 // know is returned as it is (an internal error the HTTP layer logs).
 func IdentityErr(err error) error {

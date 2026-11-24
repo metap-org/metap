@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/metap-org/metap/internal/admin/apikeys"
 	"github.com/metap-org/metap/pkg/auth/identity"
 )
 
@@ -41,42 +42,42 @@ func TestServiceAccountAndAPIKeyLifecycle(t *testing.T) {
 	require.Error(t, err, "a name is required")
 
 	// A key authenticates as the account, with its roles, and the secret is only in the response.
-	created, err := h.client.Admin.CreateApiKey(asAdmin, &CreateApiKeyRequest{UserId: sa.GetId(), Name: "pipeline", ExpiresInDays: 30})
+	created, err := h.client.Keys.Create(asAdmin, &apikeys.CreateApiKeyRequest{UserId: sa.GetId(), Name: "pipeline", ExpiresInDays: 30})
 	require.NoError(t, err)
-	require.True(t, identity.IsAPIKey(created.GetToken()))
-	assert.NotEmpty(t, created.GetApiKey().GetExpiresAt())
-	assert.Contains(t, created.GetToken(), created.GetApiKey().GetPrefix())
-	asKey := CallContext(context.Background(), created.GetToken())
+	require.True(t, identity.IsAPIKey(created.Token))
+	assert.NotEmpty(t, created.ApiKey.ExpiresAt)
+	assert.Contains(t, created.Token, created.ApiKey.Prefix)
+	asKey := CallContext(context.Background(), created.Token)
 	me, err := h.client.Account.GetMe(asKey, &Empty{})
 	require.NoError(t, err)
 	assert.Equal(t, sa.GetId(), me.GetUserId())
 	_, err = h.client.Admin.ListUsers(asKey, &ListUsersRequest{})
 	require.NoError(t, err, "the account's admin role applies to its key")
 
-	keys, err := h.client.Admin.ListApiKeys(asAdmin, &UserIdRequest{Id: sa.GetId()})
+	keys, err := h.client.Keys.List(asAdmin, sa.GetId())
 	require.NoError(t, err)
-	require.Len(t, keys.GetApiKeys(), 1)
-	assert.NotEmpty(t, keys.GetApiKeys()[0].GetLastUsedAt(), "use is stamped")
-	assert.Empty(t, keys.GetApiKeys()[0].GetRevokedAt())
+	require.Len(t, keys.ApiKeys, 1)
+	assert.NotEmpty(t, keys.ApiKeys[0].LastUsedAt, "use is stamped")
+	assert.Empty(t, keys.ApiKeys[0].RevokedAt)
 
 	// Unknown, malformed and cross-tenant: refused.
 	_, err = h.client.Account.GetMe(CallContext(context.Background(), "mk_not-a-real-key"), &Empty{})
 	assert.Equal(t, http.StatusUnauthorized, statusOf(err))
 	other := uuid.New()
 	otherAdmin := h.member(other, "admin@other.io", "admin")
-	_, err = h.client.Admin.RevokeApiKey(h.as(other, otherAdmin.ID), &ApiKeyIdRequest{Id: created.GetApiKey().GetId()})
+	err = h.client.Keys.Revoke(h.as(other, otherAdmin.ID), created.ApiKey.Id)
 	assert.Error(t, err, "another tenant's admin cannot revoke the key")
-	_, err = h.client.Admin.CreateApiKey(h.as(other, otherAdmin.ID), &CreateApiKeyRequest{UserId: sa.GetId(), Name: "x"})
+	_, err = h.client.Keys.Create(h.as(other, otherAdmin.ID), &apikeys.CreateApiKeyRequest{UserId: sa.GetId(), Name: "x"})
 	assert.Error(t, err, "a key cannot be minted for another tenant's member")
 
 	// A non-admin cannot manage keys.
-	_, err = h.client.Admin.CreateApiKey(h.as(tenant, bob.ID), &CreateApiKeyRequest{UserId: bob.ID.String(), Name: "mine"})
+	_, err = h.client.Keys.Create(h.as(tenant, bob.ID), &apikeys.CreateApiKeyRequest{UserId: bob.ID.String(), Name: "mine"})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 
 	// Disabling the account stops its keys at once, and enabling it again does not bring them back:
 	// a key issued before the disable stays dead (the comparison is to the second, so the key is
 	// backdated to keep the test off a second boundary). A key made afterwards works.
-	_, err = h.pool.Exec(context.Background(), `UPDATE metadata.api_keys SET created_at = now() - interval '1 hour' WHERE id = $1`, created.GetApiKey().GetId())
+	_, err = h.pool.Exec(context.Background(), `UPDATE metadata.api_keys SET created_at = now() - interval '1 hour' WHERE id = $1`, created.ApiKey.Id)
 	require.NoError(t, err)
 	_, err = h.client.Admin.DisableUser(asAdmin, &UserIdRequest{Id: sa.GetId()})
 	require.NoError(t, err)
@@ -86,15 +87,15 @@ func TestServiceAccountAndAPIKeyLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	_, err = h.client.Account.GetMe(asKey, &Empty{})
 	assert.Error(t, err, "a key issued before the disable stays revoked after the account is enabled again")
-	fresh, err := h.client.Admin.CreateApiKey(asAdmin, &CreateApiKeyRequest{UserId: sa.GetId(), Name: "after"})
+	fresh, err := h.client.Keys.Create(asAdmin, &apikeys.CreateApiKeyRequest{UserId: sa.GetId(), Name: "after"})
 	require.NoError(t, err)
-	_, err = h.client.Account.GetMe(CallContext(context.Background(), fresh.GetToken()), &Empty{})
+	_, err = h.client.Account.GetMe(CallContext(context.Background(), fresh.Token), &Empty{})
 	require.NoError(t, err)
 
 	// Revoking kills it, idempotently.
-	_, err = h.client.Admin.RevokeApiKey(asAdmin, &ApiKeyIdRequest{Id: created.GetApiKey().GetId()})
+	err = h.client.Keys.Revoke(asAdmin, created.ApiKey.Id)
 	require.NoError(t, err)
-	_, err = h.client.Admin.RevokeApiKey(asAdmin, &ApiKeyIdRequest{Id: created.GetApiKey().GetId()})
+	err = h.client.Keys.Revoke(asAdmin, created.ApiKey.Id)
 	require.NoError(t, err)
 	_, err = h.client.Account.GetMe(asKey, &Empty{})
 	assert.Equal(t, http.StatusUnauthorized, statusOf(err))
@@ -117,17 +118,17 @@ func TestAPIKeyLifetimeIsCappedByTheTenant(t *testing.T) {
 	require.NoError(t, err)
 
 	// No cap: a key that never expires is fine.
-	_, err = h.client.Admin.CreateApiKey(asAdmin, &CreateApiKeyRequest{UserId: sa.GetId(), Name: "forever"})
+	_, err = h.client.Keys.Create(asAdmin, &apikeys.CreateApiKeyRequest{UserId: sa.GetId(), Name: "forever"})
 	require.NoError(t, err)
 
 	_, err = h.pool.Exec(context.Background(),
 		`INSERT INTO metadata.tenant_configs (tenant_id, key, value) VALUES ($1, 'auth.apiKeyMaxLifetimeDays', '90')`, tenant)
 	require.NoError(t, err)
 	for _, days := range []int32{0, 91, 3650} {
-		_, err = h.client.Admin.CreateApiKey(asAdmin, &CreateApiKeyRequest{UserId: sa.GetId(), Name: "too long", ExpiresInDays: days})
+		_, err = h.client.Keys.Create(asAdmin, &apikeys.CreateApiKeyRequest{UserId: sa.GetId(), Name: "too long", ExpiresInDays: days})
 		assert.Equal(t, http.StatusBadRequest, statusOf(err), "expiresInDays=%d", days)
 	}
-	_, err = h.client.Admin.CreateApiKey(asAdmin, &CreateApiKeyRequest{UserId: sa.GetId(), Name: "ok", ExpiresInDays: 90})
+	_, err = h.client.Keys.Create(asAdmin, &apikeys.CreateApiKeyRequest{UserId: sa.GetId(), Name: "ok", ExpiresInDays: 90})
 	require.NoError(t, err)
 
 	// Another tenant is unaffected.
@@ -135,6 +136,6 @@ func TestAPIKeyLifetimeIsCappedByTheTenant(t *testing.T) {
 	otherAdmin := h.member(otherTenant, "admin@beta.io", "admin")
 	otherSA, err := h.client.Admin.CreateServiceAccount(h.as(otherTenant, otherAdmin.ID), &CreateServiceAccountRequest{Name: "ci"})
 	require.NoError(t, err)
-	_, err = h.client.Admin.CreateApiKey(h.as(otherTenant, otherAdmin.ID), &CreateApiKeyRequest{UserId: otherSA.GetId(), Name: "forever"})
+	_, err = h.client.Keys.Create(h.as(otherTenant, otherAdmin.ID), &apikeys.CreateApiKeyRequest{UserId: otherSA.GetId(), Name: "forever"})
 	require.NoError(t, err)
 }

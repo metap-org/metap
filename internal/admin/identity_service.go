@@ -167,7 +167,7 @@ func SupportSessionRefusal(ctx context.Context, cfg IdentityConfig, rc *permissi
 		return "", err
 	}
 	if support {
-		return "A support session cannot create people, keys, roles or sign-in settings: those outlive the grant. Ask a workspace admin.", nil
+		return kernel.SupportRefusal, nil
 	}
 	return "", nil
 }
@@ -276,13 +276,7 @@ func (d identityDeps) recordFor(ctx context.Context, c caller, entity string, id
 	writeAdminAudit(ctx, d.cfg.Audit, c.tenant, c.self, entity, id, action, diff, d.now())
 }
 
-func parseID(id string) (uuid.UUID, error) {
-	parsed, err := uuid.Parse(id)
-	if err != nil {
-		return uuid.Nil, crud.NewServiceErrorMsg(http.StatusBadRequest, errcode.ValidationFailed, "`id` must be a UUID")
-	}
-	return parsed, nil
-}
+func parseID(id string) (uuid.UUID, error) { return kernel.ParseID(id) }
 
 func (s *UserAdminService) ListUsers(ctx context.Context, req *ListUsersRequest) (*ListUsersResponse, error) {
 	c, err := s.admin(ctx)
