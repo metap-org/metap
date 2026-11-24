@@ -46,6 +46,11 @@ func (s *Sink) Atomic(ctx context.Context, _ uuid.UUID, work func(ctx context.Co
 	return nil
 }
 
+// AtomicShared is Atomic for a unit on the shared database; in memory the two are the same.
+func (s *Sink) AtomicShared(ctx context.Context, work func(ctx context.Context, w action.Writer) error) error {
+	return s.Atomic(ctx, uuid.Nil, work)
+}
+
 type memWriter struct {
 	emitErr error
 	events  []events.Event

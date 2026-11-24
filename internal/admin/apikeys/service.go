@@ -15,6 +15,7 @@ import (
 
 	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/admin/kernel"
+	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -26,6 +27,10 @@ const AuditEntityUsers = "metadata.users"
 type Service struct {
 	store Store
 	audit kernel.Auditor
+	// sink, when set, makes each change and its audit entry one transaction on the shared database
+	// (the identity data and the audit store live there for every tenant); nil keeps the older
+	// "change, then record best-effort".
+	sink action.Sink
 	// maxDays is the tenant's cap on a key's lifetime in days (auth.apiKeyMaxLifetimeDays); nil or 0
 	// means none.
 	maxDays func(ctx context.Context, tenant uuid.UUID) int
@@ -39,6 +44,42 @@ func New(store Store, auditor kernel.Auditor, maxDays func(ctx context.Context, 
 		now = time.Now
 	}
 	return &Service{store: store, audit: auditor, maxDays: maxDays, now: now}
+}
+
+// WithSink makes every change atomic with its audit entry (see Service.sink) and returns s.
+func (s *Service) WithSink(sink action.Sink) *Service {
+	s.sink = sink
+	return s
+}
+
+// change runs one administrative change and records it: change returns what to audit, and when there
+// is a sink both happen in one transaction, so there is never a key without its entry or an entry
+// for a key that was not made.
+func (s *Service) change(ctx context.Context, c kernel.Caller, member uuid.UUID, change func(ctx context.Context) (map[string][2]any, error)) error {
+	if s.sink == nil {
+		diff, err := change(ctx)
+		if err != nil {
+			return err
+		}
+		s.record(ctx, c, member, diff)
+		return nil
+	}
+	unit, err := action.NewSharedUnit(s.sink, c.RC)
+	if err != nil {
+		return err
+	}
+	err = unit.Step(ctx, "api key", func(ctx context.Context) error {
+		diff, err := change(ctx)
+		if err != nil {
+			return err
+		}
+		unit.AuditPrepared(kernel.AuditEntryOf(c.Tenant, c.Self, AuditEntityUsers, member, audit.ActionUpdate, diff, s.now()))
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return unit.Close(ctx)
 }
 
 func (s *Service) record(ctx context.Context, c kernel.Caller, member uuid.UUID, diff map[string][2]any) {
@@ -73,14 +114,22 @@ func (s *Service) Create(ctx context.Context, req *CreateApiKeyRequest) (*Create
 	if c.Self != uuid.Nil {
 		createdBy = &c.Self
 	}
-	token, key, err := s.store.Create(ctx, c.Tenant, member, req.Name, expires, createdBy, now)
-	if err != nil {
-		if errors.Is(err, identity.ErrNotFound) {
-			return nil, kernel.IdentityErr(err)
+	var token string
+	var key *identity.APIKey
+	err = s.change(ctx, c, member, func(ctx context.Context) (map[string][2]any, error) {
+		var err error
+		token, key, err = s.store.Create(ctx, c.Tenant, member, req.Name, expires, createdBy, now)
+		if err != nil {
+			if errors.Is(err, identity.ErrNotFound) {
+				return nil, kernel.IdentityErr(err)
+			}
+			return nil, kernel.Err(http.StatusBadRequest, errcode.ValidationFailed, err.Error())
 		}
-		return nil, kernel.Err(http.StatusBadRequest, errcode.ValidationFailed, err.Error())
+		return map[string][2]any{"apiKeyCreated": {nil, key.Name + " (" + key.Prefix + ")"}}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	s.record(ctx, c, member, map[string][2]any{"apiKeyCreated": {nil, key.Name + " (" + key.Prefix + ")"}})
 	return &CreateApiKeyResponse{ApiKey: view(*key), Token: token}, nil
 }
 
@@ -119,9 +168,10 @@ func (s *Service) Revoke(ctx context.Context, keyID string) error {
 	if err != nil {
 		return kernel.IdentityErr(err)
 	}
-	if err := s.store.Revoke(ctx, c.Tenant, id, s.now()); err != nil {
-		return kernel.IdentityErr(err)
-	}
-	s.record(ctx, c, member, map[string][2]any{"apiKeyRevoked": {nil, id.String()}})
-	return nil
+	return s.change(ctx, c, member, func(ctx context.Context) (map[string][2]any, error) {
+		if err := s.store.Revoke(ctx, c.Tenant, id, s.now()); err != nil {
+			return nil, kernel.IdentityErr(err)
+		}
+		return map[string][2]any{"apiKeyRevoked": {nil, id.String()}}, nil
+	})
 }

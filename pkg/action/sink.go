@@ -61,3 +61,16 @@ func (s dbSink) Atomic(ctx context.Context, tenantID uuid.UUID, work func(ctx co
 	}
 	return unit.Commit(ctx)
 }
+
+// AtomicShared is Atomic on the shared database, for work on identity data (see SharedSink).
+func (s dbSink) AtomicShared(ctx context.Context, work func(ctx context.Context, w Writer) error) error {
+	uctx, unit, err := s.router.BeginSharedUnit(ctx)
+	if err != nil {
+		return err
+	}
+	if err := work(uctx, dbWriter{ctx: uctx, unit: unit}); err != nil {
+		unit.Rollback(ctx)
+		return err
+	}
+	return unit.Commit(ctx)
+}

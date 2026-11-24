@@ -204,6 +204,13 @@ func WriteAudit(ctx context.Context, store audit.Store, tenant, actor uuid.UUID,
 	if store == nil {
 		return
 	}
+	_ = store.Record(ctx, tenant, AuditEntryOf(tenant, actor, entity, id, action, diff, now))
+}
+
+// AuditEntryOf is the audit entry of an administrative change, in the form WriteAudit records it:
+// a slice that writes the entry atomically (action.Unit.AuditPrepared) builds the same one.
+func AuditEntryOf(tenant, actor uuid.UUID, entity string, id uuid.UUID,
+	action audit.AuditAction, diff map[string][2]any, now time.Time) audit.Entry {
 	obj := audit.JsonObject{}
 	for field, ba := range diff {
 		raw, err := json.Marshal(map[string]any{"before": ba[0], "after": ba[1]})
@@ -215,5 +222,5 @@ func WriteAudit(ctx context.Context, store audit.Store, tenant, actor uuid.UUID,
 	if actor != uuid.Nil {
 		entry.ActorUserID = &actor
 	}
-	_ = store.Record(ctx, tenant, entry)
+	return entry
 }

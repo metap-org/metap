@@ -32,7 +32,7 @@ type revokeOthersOutput struct {
 func registerSessionOperations(api huma.API, state *AppState) {
 	mw := huma.Middlewares{authed(state)}
 	tags := []string{"Account"}
-	svc := sessions.New(sessions.NewPgStore(state.Pool), kernel.StoreAuditor{Store: state.Audit}, nil)
+	svc := sessions.New(sessions.NewPgStore(kernel.IdentityDB{Pool: state.Pool}), kernel.StoreAuditor{Store: state.Audit}, nil)
 	// The service reads its caller from the context the way the administrative services do.
 	as := func(ctx context.Context) context.Context { return kernel.WithCaller(ctx, callerOf(ctx)) }
 
