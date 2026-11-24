@@ -62,7 +62,7 @@ func run(ctx context.Context, sink action.Sink, fallback Auditor, now func() tim
 		if err != nil {
 			return err
 		}
-		if fallback != nil {
+		if fallback != nil && diff != nil {
 			fallback.Record(ctx, c, entity, id, act, diff)
 		}
 		return nil
@@ -85,7 +85,9 @@ func run(ctx context.Context, sink action.Sink, fallback Auditor, now func() tim
 			}
 			return err
 		}
-		unit.AuditPrepared(AuditEntryOf(c.Tenant, c.Self, entity, id, act, diff, now()))
+		if diff != nil { // nil: the work made no change worth an entry
+			unit.AuditPrepared(AuditEntryOf(c.Tenant, c.Self, entity, id, act, diff, now()))
+		}
 		return nil
 	})
 	if err != nil {
