@@ -28,6 +28,18 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 }
 
 func (s *PostgresStore) Record(ctx context.Context, tenantID uuid.UUID, entry Entry) error {
+	return s.record(ctx, tenantID, uuid.New(), entry, false)
+}
+
+// RecordOnce writes entry under id, or does nothing when an entry with that id (and time) is
+// already in the chain: the drain calls it with the id of the outbox row the entry arrived in, so
+// a row delivered twice (a crash between the write and marking the row done) lands once. The check
+// runs under the tenant's chain lock, so two drains of the same row cannot both pass it.
+func (s *PostgresStore) RecordOnce(ctx context.Context, tenantID, id uuid.UUID, entry Entry) error {
+	return s.record(ctx, tenantID, id, entry, true)
+}
+
+func (s *PostgresStore) record(ctx context.Context, tenantID, id uuid.UUID, entry Entry, once bool) error {
 	if tenantID != entry.TenantID {
 		return fmt.Errorf("audit.Store.Record called with tenantID %s but entry.TenantID is %s", tenantID, entry.TenantID)
 	}
@@ -37,7 +49,6 @@ func (s *PostgresStore) Record(ctx context.Context, tenantID uuid.UUID, entry En
 	}
 	// Postgres stores microseconds; hash what is stored, not the nanoseconds Go carries.
 	occurred := entry.OccurredAt.UTC().Truncate(time.Microsecond)
-	id := uuid.New()
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -58,6 +69,17 @@ func (s *PostgresStore) Record(ctx context.Context, tenantID uuid.UUID, entry En
 		`SELECT seq, hash FROM metadata.audit_chain_heads WHERE tenant_id = $1 FOR UPDATE`, tenantID).
 		Scan(&prevSeq, &prevHash); err != nil {
 		return err
+	}
+	if once {
+		var exists bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM metadata.audit_trail_entries WHERE tenant_id = $1 AND id = $2 AND occurred_at = $3)`,
+			tenantID, id, occurred).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
 	}
 	seq := prevSeq + 1
 	var hash []byte

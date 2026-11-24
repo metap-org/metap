@@ -101,8 +101,8 @@ func publishPending(ctx context.Context, pool *pgxpool.Pool, bus eventbus.EventB
 	defer tx.Rollback(ctx)
 
 	rows, err := tx.Query(ctx,
-		"SELECT id, topic, payload FROM outbox_events WHERE published_at IS NULL ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED",
-		batchSize)
+		"SELECT id, topic, payload FROM outbox_events WHERE published_at IS NULL AND topic <> $2 ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED",
+		batchSize, AuditTopic)
 	if err != nil {
 		return false, err
 	}

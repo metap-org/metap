@@ -205,29 +205,34 @@ func (s *CrudService) persist(ctx context.Context, c call, snapshot *permission.
 		tx.Rollback(ctx) //nolint:errcheck
 		return RecordDto{}, err
 	}
+	// The audit entry goes into the write's own transaction (the outbox), so a committed write
+	// always has its entry and a rolled-back one never does.
+	versionAfter := record.Version
+	if entry, ok := s.auditEntryFor(c.entity, record.Data, audit.Entry{
+		TenantID:         c.tenantID,
+		Entity:           c.entity.Name,
+		RecordID:         record.ID,
+		Action:           w.auditAction,
+		TransitionAction: w.transitionAction,
+		ActorUserID:      w.userID,
+		Reason:           w.reason,
+		Diff:             w.diff(record),
+		VersionAfter:     &versionAfter,
+		OccurredAt:       time.Now().UTC(),
+	}); ok {
+		if err := audit.Enqueue(ctx, tx, entry); err != nil {
+			tx.Rollback(ctx) //nolint:errcheck
+			return RecordDto{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return RecordDto{}, err
 	}
-	// What follows the commit (the audit entry, the context-cache invalidation) must not happen for a
-	// write whose enclosing unit of work later rolls back, so it waits for that unit when there is
-	// one and runs now when there is not.
-	versionAfter := record.Version
-	tenancy.OnCommit(ctx, func() {
-		if w.after != nil {
-			w.after()
-		}
-		s.recordAudit(ctx, c.entity, record.Data, audit.Entry{
-			TenantID:         c.tenantID,
-			Entity:           c.entity.Name,
-			RecordID:         record.ID,
-			Action:           w.auditAction,
-			TransitionAction: w.transitionAction,
-			ActorUserID:      w.userID,
-			Reason:           w.reason,
-			Diff:             w.diff(record),
-			VersionAfter:     &versionAfter,
-			OccurredAt:       time.Now().UTC(),
-		})
-	})
+	// What follows the commit (the context-cache invalidation) must not happen for a write whose
+	// enclosing unit of work later rolls back, so it waits for that unit when there is one and runs
+	// now when there is not.
+	if w.after != nil {
+		tenancy.OnCommit(ctx, w.after)
+	}
 	return maskRecordForRead(c.entity, c.rc, snapshot, record), nil
 }

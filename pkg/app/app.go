@@ -206,6 +206,7 @@ func Run(ctx context.Context, opts Options) error {
 	defer authctx.SubscribeChanges(state.RolesCache, policyStore)()
 	auditStore := audit.NewPostgresStore(state.Pool)
 	state.Audit = auditStore
+	startAuditDrain(ctx, pool, router, auditStore)
 	state.PublicAppURL = appCfg.PublicAppURL
 	state.Crud = crud.WithAudit(state.Router, state.Metadata, state.Permissions, auditStore)
 	state.CookieSecure = false

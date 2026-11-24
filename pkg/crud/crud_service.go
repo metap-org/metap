@@ -3,14 +3,12 @@ package crud
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 )
@@ -110,20 +108,20 @@ func (s *CrudService) registryFor(ctx context.Context, tenantID uuid.UUID) (*met
 	return s.metadata.Load(), nil
 }
 
-// recordAudit records one audit-trail entry if (a) an audit.Store is configured on this service
-// at all, and (b) entity.Audit opts this specific entity in. No-ops instantly otherwise. Called
-// *after* the caller's own business write has already committed — a store error is only logged,
-// never surfaced to the caller, since an audit-write failure must not turn an already-successful
-// business write into a failed response.
-// recordAudit writes one audit entry. data is the record as written (read back from the row), the
+// auditEntryFor completes one audit-trail entry for the write that is about to commit, or reports
+// false when there is nothing to record: no audit store is configured on this service, or the
+// entity does not opt in (entity.Audit). data is the record as written (read back from the row), the
 // source of the entry's parent when the entity declares EntityAuditConfig.Parent.
-func (s *CrudService) recordAudit(ctx context.Context, entity metadata.EntityDefinition, data JsonObject, entry audit.Entry) {
+//
+// The entry is written to the outbox in the write's own transaction (audit.Enqueue), so it exists
+// exactly when the write does; the audit drain moves it into the tenant's chain afterwards.
+func (s *CrudService) auditEntryFor(entity metadata.EntityDefinition, data JsonObject, entry audit.Entry) (audit.Entry, bool) {
 	if s.auditStore == nil {
-		return
+		return entry, false
 	}
 	config := entity.Audit
 	if config == nil || !config.Enabled {
-		return
+		return entry, false
 	}
 	// Write-side redaction, applied here rather than at each of the 4 call sites precisely
 	// because this is the one choke point all of them pass through.
@@ -133,9 +131,7 @@ func (s *CrudService) recordAudit(ctx context.Context, entity metadata.EntityDef
 			entry.ParentEntity, entry.ParentID = &parentEntity, &id
 		}
 	}
-	if err := s.auditStore.Record(ctx, entry.TenantID, entry); err != nil {
-		slog.Error("failed to record audit trail entry", "entity", entity.Name, standard.LogError, err)
-	}
+	return entry, true
 }
 
 // parentIDOf reads the parent reference field's value (a uuid string) from a record's data; false

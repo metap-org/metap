@@ -111,3 +111,21 @@ func TestPublishPendingDoesNotRepublishAnAlreadyPublishedRow(t *testing.T) {
 		require.NotEqual(t, topic, p, "an already-published row must not be republished")
 	}
 }
+
+// An audit entry in the outbox is the audit drain's: the publisher never sends it to the broker and
+// leaves it pending.
+func TestPublishPendingLeavesAuditEntriesToTheAuditDrain(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	id := insertOutboxRow(t, pool, AuditTopic)
+
+	bus := &fakeBus{}
+	allPublished, err := publishPending(ctx, pool, bus, 100)
+	require.NoError(t, err)
+	require.True(t, allPublished)
+	require.NotContains(t, bus.published, AuditTopic)
+
+	var publishedAt *string
+	require.NoError(t, pool.QueryRow(ctx, "SELECT published_at::text FROM outbox_events WHERE id = $1", id).Scan(&publishedAt))
+	require.Nil(t, publishedAt, "the row is still pending for the drain")
+}

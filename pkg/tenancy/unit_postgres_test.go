@@ -11,8 +11,23 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 )
+
+// probeCount counts the rows of the probe table as someone outside the unit sees them. It uses a
+// connection of its own, not the pool: while a unit is open it holds the pool's only connection
+// when the suite runs with a pool of one, and "outside" must not wait for it.
+func probeCount(t *testing.T, pool *pgxpool.Pool) int {
+	t.Helper()
+	conn, err := pgx.ConnectConfig(context.Background(), pool.Config().ConnConfig.Copy())
+	require.NoError(t, err)
+	defer conn.Close(context.Background())
+	var n int
+	require.NoError(t, conn.QueryRow(context.Background(), "SELECT count(*) FROM public.unit_probe").Scan(&n))
+	return n
+}
 
 func TestAUnitOfWorkCommitsEverythingThatJoinedIt(t *testing.T) {
 	pool := testPool(t)
@@ -35,13 +50,10 @@ func TestAUnitOfWorkCommitsEverythingThatJoinedIt(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit(uctx))
 	}
-	var seenOutside int
-	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM public.unit_probe").Scan(&seenOutside))
-	require.Equal(t, 0, seenOutside, "nothing is visible outside until the unit commits")
+	require.Equal(t, 0, probeCount(t, pool), "nothing is visible outside until the unit commits")
 
 	require.NoError(t, unit.Commit(ctx))
-	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM public.unit_probe").Scan(&seenOutside))
-	require.Equal(t, 2, seenOutside)
+	require.Equal(t, 2, probeCount(t, pool))
 }
 
 func TestAUnitOfWorkRollsBackEverythingThatJoinedIt(t *testing.T) {

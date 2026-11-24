@@ -149,13 +149,15 @@ func TestTypedActionOverRESTWritesRecordAuditAndOutboxEvent(t *testing.T) {
 	rename := action.Record("test.orders", "rename",
 		func(ctx context.Context, a *action.Ctx, o order, in renameIn) (renameOut, error) {
 			name, _ := json.Marshal(in.Name)
-			if _, err := a.Records.Update(ctx, a.Entity, a.ID, 1, crud.JsonObject{"name": name}, a.RC, nil); err != nil {
-				return renameOut{}, err
-			}
 			out := renameOut{Was: o.Name, Now: in.Name}
-			a.Audit("order.renamed", a.ID, out)
-			a.Emit(events.Event{Topic: "test.order.renamed", AggregateType: a.Entity, AggregateID: a.ID, Payload: out})
-			return out, nil
+			err := a.Step(ctx, "rename", func(ctx context.Context) error {
+				if _, err := a.Records.Update(ctx, a.Entity, a.ID, 1, crud.JsonObject{"name": name}, a.RC, nil); err != nil {
+					return err
+				}
+				a.Audit("order.renamed", a.ID, out)
+				return a.Emit(events.Event{Topic: "test.order.renamed", AggregateType: a.Entity, AggregateID: a.ID, Payload: out})
+			})
+			return out, err
 		})
 	reg := crud.NewActionRegistry()
 	require.NoError(t, rename.Register(reg, state.ActionDeps()))
@@ -184,6 +186,7 @@ func TestTypedActionOverRESTWritesRecordAuditAndOutboxEvent(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM metadata.outbox_events WHERE topic = 'test.order.renamed' AND aggregate_id = $1", recordID).Scan(&events))
 	assert.Equal(t, 1, events, "the event the action emitted is in the outbox")
 
+	require.NoError(t, audit.DrainAll(ctx, pool, auditStore), "the entries are in the outbox until the drain moves them into the chain")
 	rows, err := auditStore.Query(ctx, tenantID, audit.Query{Entity: "test.orders", RecordID: recordID})
 	require.NoError(t, err)
 	var named []string
@@ -239,9 +242,10 @@ func TestAStepThatFailsUndoesItsRecordWriteAndLeavesNoEventOrAudit(t *testing.T)
 					return err
 				}
 				a.Audit("order.renamed", a.ID, nil)
-				a.Emit(events.Event{Topic: "test.order.renamed", AggregateType: a.Entity, AggregateID: a.ID})
-				a.Emit(events.Event{Topic: "NOT A TOPIC", AggregateType: a.Entity, AggregateID: a.ID})
-				return nil
+				if err := a.Emit(events.Event{Topic: "test.order.renamed", AggregateType: a.Entity, AggregateID: a.ID}); err != nil {
+					return err
+				}
+				return a.Emit(events.Event{Topic: "NOT A TOPIC", AggregateType: a.Entity, AggregateID: a.ID})
 			})
 		})
 	var heldInStep int32
@@ -255,8 +259,7 @@ func TestAStepThatFailsUndoesItsRecordWriteAndLeavesNoEventOrAudit(t *testing.T)
 				// one connection: no second one is held while the step is open.
 				heldInStep = pool.Stat().AcquiredConns()
 				a.Audit("order.renamed", a.ID, nil)
-				a.Emit(events.Event{Topic: "test.order.renamed", AggregateType: a.Entity, AggregateID: a.ID})
-				return nil
+				return a.Emit(events.Event{Topic: "test.order.renamed", AggregateType: a.Entity, AggregateID: a.ID})
 			})
 		})
 	reg := crud.NewActionRegistry()
@@ -284,6 +287,7 @@ func TestAStepThatFailsUndoesItsRecordWriteAndLeavesNoEventOrAudit(t *testing.T)
 		return n
 	}
 	updates := func() int {
+		require.NoError(t, audit.DrainAll(ctx, pool, auditStore))
 		rows, err := auditStore.Query(ctx, tenantID, audit.Query{Entity: "test.orders", RecordID: recordID})
 		require.NoError(t, err)
 		n := 0

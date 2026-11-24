@@ -526,6 +526,12 @@ func TestAuditedEntityWritesAreRecordedAndUnauditedEntityWritesAreNot(t *testing
 	require.NoError(t, err, "create failed: %v %+v", err, audited)
 	require.NoError(t, err)
 
+	// The entry is in the outbox from the moment the write commits; the drain puts it in the chain.
+	var queued int64
+	pool.QueryRow(ctx, `SELECT count(*) FROM metadata.outbox_events WHERE topic = $1 AND aggregate_id = $2`, audit.Topic, audited.ID).Scan(&queued)
+	require.EqualValues(t, 1, queued, "the audited write left its entry in the outbox, in its own transaction")
+	require.NoError(t, audit.DrainAll(ctx, pool, store))
+
 	var plainCount, auditedCount int64
 	pool.QueryRow(ctx, `SELECT count(*) FROM metadata.audit_trail_entries WHERE tenant_id = $1 AND record_id = $2`, tenantID, unaudited.ID).Scan(&plainCount)
 	pool.QueryRow(ctx, `SELECT count(*) FROM metadata.audit_trail_entries WHERE tenant_id = $1 AND record_id = $2`, tenantID, audited.ID).Scan(&auditedCount)
@@ -563,7 +569,8 @@ func TestAuditParentHistoryIncludesChildrenAndPages(t *testing.T) {
 	}
 	var ptr atomic.Pointer[metadata.MetadataRegistry]
 	ptr.Store(reg)
-	crud := WithAudit(testRouter(pool), &ptr, testPermissions(pool), audit.NewPostgresStore(pool))
+	store := audit.NewPostgresStore(pool)
+	crud := WithAudit(testRouter(pool), &ptr, testPermissions(pool), store)
 
 	p, err := crud.Create(ctx, "test.parents", JsonObject{"name": raw("zone")}, rc, nil)
 	require.NoError(t, err)
@@ -573,6 +580,7 @@ func TestAuditParentHistoryIncludesChildrenAndPages(t *testing.T) {
 	require.NoError(t, err)
 	_, err = crud.Delete(ctx, "test.children", c.ID, c.Version, rc, nil)
 	require.NoError(t, err)
+	require.NoError(t, audit.DrainAll(ctx, pool, store))
 
 	own, err := crud.ListAuditEvents(ctx, "test.parents", p.ID, AuditQuery{}, rc)
 	require.NoError(t, err)
@@ -645,7 +653,7 @@ func TestSystemFieldsAreWrittenOnlyBySetSystemFieldsWithoutVersionBumpOrAudit(t 
 
 	countAudit := func() int64 {
 		var n int64
-		pool.QueryRow(ctx, `SELECT count(*) FROM metadata.audit_trail_entries WHERE tenant_id = $1 AND record_id = $2`, tenantID, id).Scan(&n)
+		pool.QueryRow(ctx, `SELECT count(*) FROM metadata.outbox_events WHERE topic = $1 AND aggregate_id = $2`, audit.Topic, id).Scan(&n)
 		return n
 	}
 	countOutbox := func() int64 {

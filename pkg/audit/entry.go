@@ -37,6 +37,16 @@ func (a AuditAction) String() string {
 	}
 }
 
+// ParseAction is the inverse of String.
+func ParseAction(s string) (AuditAction, bool) {
+	for _, a := range []AuditAction{ActionCreate, ActionUpdate, ActionDelete, ActionTransition, ActionCustom} {
+		if a.String() == s {
+			return a, true
+		}
+	}
+	return 0, false
+}
+
 // Entry is one audit-trail row — who changed what, on which record, when, and why. Built by the
 // CRUD layer after a write's own transaction has already committed (see Store's doc comment for
 // why this can't be inside that transaction).
