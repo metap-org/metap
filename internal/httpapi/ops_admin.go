@@ -347,7 +347,7 @@ func registerConfigOperations(api huma.API, state *AppState) {
 			return s.ResetTenantConfig(ctx, &admin.ConfigKeyRequest{Key: in.Key})
 		})
 
-	prefs := preferences.New(preferences.NewPgStore(state.Pool), state.Permissions)
+	prefs := preferences.New(preferences.NewPgStore(kernel.IdentityDB{Pool: state.Pool}), state.Permissions)
 	adminOp(api, state, opOf("getPreferences", http.MethodGet, "/preferences", "The caller's preferences", "Preferences"),
 		func(ctx context.Context, _ *struct{}) (*preferences.PreferencesResult, error) {
 			return prefs.Get(ctx)
@@ -481,7 +481,7 @@ func registerUserOperations(api huma.API, state *AppState, s *admin.UserAdminSer
 		return s.CreateServiceAccount(ctx, &in.Body)
 	})
 	cfg := state.Identity
-	keys := apikeys.New(apikeys.NewPgStore(cfg.Shared), kernel.StoreAuditor{Store: cfg.Audit}, cfg.APIKeyMaxDays, nil)
+	keys := apikeys.New(apikeys.NewPgStore(kernel.IdentityDB{Pool: cfg.Shared}), kernel.StoreAuditor{Store: cfg.Audit}, cfg.APIKeyMaxDays, nil)
 	adminOp(api, state, opOf("listApiKeys", http.MethodGet, "/admin/users/{id}/api-keys", "A member's API keys", tag),
 		func(ctx context.Context, in *idPath) (*apikeys.ListApiKeysResponse, error) {
 			return keys.List(ctx, in.ID)

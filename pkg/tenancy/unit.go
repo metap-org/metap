@@ -25,6 +25,9 @@ type unitKey struct{}
 type Unit struct {
 	tenant uuid.UUID
 	tx     pgx.Tx
+	// sharedDB is true when the unit's database is the shared one (a Schema-strategy tenant), where the
+	// identity tables live too, so identity statements can run on the unit's own transaction.
+	sharedDB bool
 
 	mu    sync.Mutex
 	hooks []func()
@@ -44,13 +47,35 @@ func (r *Router) BeginUnit(ctx context.Context, tenantID uuid.UUID) (context.Con
 	if err != nil {
 		return ctx, nil, err
 	}
-	u := &Unit{tenant: tenantID, tx: tx}
+	strategy, err := r.resolve(ctx, tenantID)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return ctx, nil, err
+	}
+	u := &Unit{tenant: tenantID, tx: tx, sharedDB: strategy.Kind == StrategySchema}
 	return context.WithValue(ctx, unitKey{}, u), u, nil
 }
 
 func unitFrom(ctx context.Context) *Unit {
 	u, _ := ctx.Value(unitKey{}).(*Unit)
 	return u
+}
+
+// SharedTx is the transaction of the unit of work in ctx when that unit runs on the shared database,
+// and nil otherwise (no unit, or a tenant with a database of its own). The shared identity tables live
+// in that database, so code that writes them (pkg/auth/identity) joins the unit through it: the
+// identity change and the tenant's records commit or roll back together, on one connection. For a
+// tenant with a database of its own the identity data is elsewhere and cannot join the unit; the
+// caller then uses the shared pool, which is a different connection and a different transaction.
+//
+// It is the unit's transaction itself, not a savepoint: a statement that fails (a unique violation
+// the caller means to handle) aborts the unit. Code that expects such an error opens its own
+// savepoint with Begin on the transaction first.
+func SharedTx(ctx context.Context) pgx.Tx {
+	if u := unitFrom(ctx); u != nil && u.sharedDB {
+		return u.tx
+	}
+	return nil
 }
 
 // Tx is the unit's transaction, for code that writes to it directly (the outbox enqueue).
