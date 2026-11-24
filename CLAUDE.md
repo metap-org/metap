@@ -269,6 +269,16 @@ this file above or below is pre-2026-11-07 history: read `go/<pkg>` as `pkg/<pkg
   head, so keep `headHash` somewhere they cannot. Read side: `Store.Search` (tenant-wide, by actor/entity/record/actions/time),
   `AuditAdminService.SearchAudit`/`VerifyAuditChain` (admin), gateway `auditEntries`/`verifyAuditChain`, REST `GET /admin/audit/export`
   (csv|json, same filters, streams every page). Never add pruning to this table.
+- **Handlers in two layers, audit written atomically (2026-11-24, roadmap 120 section 2.8 and 122 in `../metap-docs`).** `pkg/action` has an
+  explicit layer (`action.Custom` with `a.Decode`, `a.LoadRecord`, `a.Step`, `a.Audit`, `a.Emit`: every step is a line in the handler)
+  and generic shortcuts (`action.Record`/`action.Entity`) built on it; `action.Unit` is the entity-independent core (caller, tenant, `Step`,
+  `AuditEntry`, `Emit`, `Close`) for operations that are not entity actions. `Emit` is valid only inside a `Step` (`ErrEmitOutsideStep`),
+  steps do not nest. An audit entry is no longer written after the commit: `CrudService` writes and `Step`s put it in the outbox in the
+  write's own transaction (`audit.Enqueue`, topic `audit.entry`, never sent to the broker), and `audit.Drain`/`RunDrain` move it into the
+  tenant's hash chain, idempotently (`PostgresStore.RecordOnce`, the outbox row id is the entry id). `app.Run` and `cmd/outbox-publisher`
+  run the drain (`AUDIT_DRAIN_DISABLED=true` turns it off); audit is therefore eventually consistent (poll 500 ms), and a test that reads it
+  right after a write calls `audit.DrainAll`. `internal/admin` and `ops_sessions` still write audit the old way until their slices move
+  (roadmap 122, P2/P3).
 - **SCIM 2.0 user provisioning (2026-11-20, roadmap 115 M12).** `/scim/v2` (`httpapi.SCIMHandler`, `internal/httpapi/scim.go`, mounted on the token issuer) is a
   REST skin over `UserAdminService`, called in-process with the caller authenticated by the same `httpapi.authenticate` every route uses — so authentication (an API
   key of an admin service account), the admin check, last-admin guards, invitations and audit are the admin API's own; never reimplement a
