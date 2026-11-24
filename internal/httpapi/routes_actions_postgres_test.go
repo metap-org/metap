@@ -186,6 +186,7 @@ func TestTypedActionOverRESTWritesRecordAuditAndOutboxEvent(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM metadata.outbox_events WHERE topic = 'test.order.renamed' AND aggregate_id = $1", recordID).Scan(&events))
 	assert.Equal(t, 1, events, "the event the action emitted is in the outbox")
 
+	require.NoError(t, audit.DrainAll(ctx, pool, auditStore), "the entries are in the outbox until the drain moves them into the chain")
 	rows, err := auditStore.Query(ctx, tenantID, audit.Query{Entity: "test.orders", RecordID: recordID})
 	require.NoError(t, err)
 	var named []string
@@ -286,6 +287,7 @@ func TestAStepThatFailsUndoesItsRecordWriteAndLeavesNoEventOrAudit(t *testing.T)
 		return n
 	}
 	updates := func() int {
+		require.NoError(t, audit.DrainAll(ctx, pool, auditStore))
 		rows, err := auditStore.Query(ctx, tenantID, audit.Query{Entity: "test.orders", RecordID: recordID})
 		require.NoError(t, err)
 		n := 0

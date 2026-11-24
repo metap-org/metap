@@ -241,7 +241,7 @@ func (s *AppState) RecordBackend() crud.RecordBackend {
 // routes use, so an action reads and writes as the caller and through any wrapper the service
 // added, and a sink that enqueues events on the caller's tenant database and records audit entries.
 func (s *AppState) ActionDeps() action.Deps {
-	return action.Deps{Records: s.RecordBackend(), Sink: action.NewSink(s.Router, s.Audit)}
+	return action.Deps{Records: s.RecordBackend(), Sink: action.NewSink(s.Router)}
 }
 
 // Signin is the sign-in service on this state's database, configuration and signing key.

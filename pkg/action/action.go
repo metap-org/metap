@@ -69,17 +69,24 @@ import (
 // None is the input or output of an action that takes or returns nothing.
 type None struct{}
 
+// Writer is what a unit of work writes through: both go into the unit's transaction, so they exist
+// exactly when the unit's record writes do.
+type Writer interface {
+	// Events adds outbox events to the transaction.
+	Events([]events.Event) error
+	// Audit adds audit-trail entries to the transaction (the audit drain moves them into the
+	// tenant's hash chain; see package audit).
+	Audit([]audit.Entry) error
+}
+
 // Sink is where an action's writes meet the database. Atomic runs one unit of work on the tenant's
 // database; NewSink is the production one and actiontest has one that keeps everything in memory.
 type Sink interface {
 	// Atomic runs work in ONE transaction on tenant's database. Everything work does through the
-	// context it is given (record writes, policy reads) joins that transaction, enqueue adds outbox
-	// events to it, and a nil result commits all of it together while an error rolls all of it back.
-	// Audit entries recorded by those writes wait for the commit.
-	Atomic(ctx context.Context, tenantID uuid.UUID, work func(ctx context.Context, enqueue func([]events.Event) error) error) error
-	// Audit records the entries once the unit has committed; a failure is the sink's to log, never
-	// the handler's to see.
-	Audit(ctx context.Context, tenantID uuid.UUID, entries []audit.Entry)
+	// context it is given (record writes, policy reads) joins that transaction, w adds outbox
+	// events and audit entries to it, and a nil result commits all of it together while an error
+	// rolls all of it back.
+	Atomic(ctx context.Context, tenantID uuid.UUID, work func(ctx context.Context, w Writer) error) error
 }
 
 // Deps is what every action of a service shares.
@@ -140,8 +147,9 @@ func (u *Unit) Emit(e events.Event) error {
 }
 
 // AuditEntry queues an audit entry for entity: name says what happened, recordID which record, and
-// detail (anything JSON-marshalable) what is worth keeping. It is written when the current Step
-// ends (or the unit is closed), attributed to the caller.
+// detail (anything JSON-marshalable) what is worth keeping. It is written in the transaction of the
+// current Step (or, queued outside any Step, in one of its own when the unit is closed),
+// attributed to the caller.
 func (u *Unit) AuditEntry(entity, name string, recordID uuid.UUID, detail any) {
 	diff := audit.JsonObject{}
 	if detail != nil {
@@ -182,46 +190,41 @@ func (u *Unit) Step(ctx context.Context, name string, fn func(ctx context.Contex
 	defer func() { u.inStep = false }()
 	if u.sink == nil {
 		err := fn(ctx)
-		u.events = u.events[:fromEvents]
+		u.events, u.entries = u.events[:fromEvents], u.entries[:fromEntries]
 		if err != nil {
-			u.entries = u.entries[:fromEntries]
 			return fmt.Errorf("step %q: %w", name, err)
 		}
 		return nil
 	}
-	err := u.sink.Atomic(ctx, u.Tenant, func(ctx context.Context, enqueue func([]events.Event) error) error {
+	err := u.sink.Atomic(ctx, u.Tenant, func(ctx context.Context, w Writer) error {
 		if err := fn(ctx); err != nil {
 			return err
 		}
-		return enqueue(u.events[fromEvents:])
+		if err := w.Events(u.events[fromEvents:]); err != nil {
+			return err
+		}
+		return w.Audit(u.entries[fromEntries:])
 	})
+	u.events, u.entries = u.events[:fromEvents], u.entries[:fromEntries]
 	if err != nil {
-		u.events, u.entries = u.events[:fromEvents], u.entries[:fromEntries]
 		return fmt.Errorf("step %q: %w", name, err)
 	}
-	u.recordAudit(ctx, fromEntries)
-	u.events = u.events[:fromEvents]
 	return nil
 }
 
-// recordAudit hands the entries queued from a position on to the sink and forgets them.
-func (u *Unit) recordAudit(ctx context.Context, from int) {
-	entries := u.entries[from:]
-	u.entries = u.entries[:from]
-	if u.sink != nil && len(entries) > 0 {
-		u.sink.Audit(ctx, u.Tenant, entries)
-	}
-}
-
 // Close ends the unit after the handler returned without error: it reports a misuse (an Emit
-// outside a Step) and writes the audit entries queued after the last Step. A handler that returned
-// an error must not call Close (it leaves nothing behind).
+// outside a Step) and writes, in one transaction of their own, the audit entries queued after the
+// last Step. A handler that returned an error must not call Close (it leaves nothing behind).
 func (u *Unit) Close(ctx context.Context) error {
 	if u.misuse != nil {
 		return u.misuse
 	}
-	u.recordAudit(ctx, 0)
-	return nil
+	entries := u.entries
+	u.entries = nil
+	if u.sink == nil || len(entries) == 0 {
+		return nil
+	}
+	return u.sink.Atomic(ctx, u.Tenant, func(_ context.Context, w Writer) error { return w.Audit(entries) })
 }
 
 // Ctx is what an entity action's handler receives: the Unit, plus the entity, the record and the

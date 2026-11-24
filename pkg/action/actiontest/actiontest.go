@@ -30,32 +30,39 @@ type Sink struct {
 	EmitErr error
 }
 
-// Atomic runs work once and keeps the events it enqueued only if it succeeds, the way the database
-// sink commits or rolls back. There is no transaction here: the record writes an action makes
-// through Records are kept in Records.Writes either way, so a test that needs "a failed step undoes
-// its writes" belongs in the integration suite.
-func (s *Sink) Atomic(ctx context.Context, _ uuid.UUID, work func(ctx context.Context, enqueue func([]events.Event) error) error) error {
-	var pending []events.Event
-	err := work(ctx, func(evs []events.Event) error {
-		if s.EmitErr != nil {
-			return s.EmitErr
-		}
-		pending = append(pending, evs...)
-		return nil
-	})
-	if err != nil {
+// Atomic runs work once and keeps the events and audit entries it wrote only if it succeeds, the
+// way the database sink commits or rolls back. There is no transaction here: the record writes an
+// action makes through Records are kept in Records.Writes either way, so a test that needs "a
+// failed step undoes its writes" belongs in the integration suite.
+func (s *Sink) Atomic(ctx context.Context, _ uuid.UUID, work func(ctx context.Context, w action.Writer) error) error {
+	w := &memWriter{emitErr: s.EmitErr}
+	if err := work(ctx, w); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Events = append(s.Events, pending...)
+	s.Events = append(s.Events, w.events...)
+	s.Entries = append(s.Entries, w.entries...)
 	return nil
 }
 
-func (s *Sink) Audit(_ context.Context, _ uuid.UUID, entries []audit.Entry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.Entries = append(s.Entries, entries...)
+type memWriter struct {
+	emitErr error
+	events  []events.Event
+	entries []audit.Entry
+}
+
+func (w *memWriter) Events(evs []events.Event) error {
+	if w.emitErr != nil && len(evs) > 0 {
+		return w.emitErr
+	}
+	w.events = append(w.events, evs...)
+	return nil
+}
+
+func (w *memWriter) Audit(entries []audit.Entry) error {
+	w.entries = append(w.entries, entries...)
+	return nil
 }
 
 // Write is one record write an action made.

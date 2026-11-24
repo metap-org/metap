@@ -9,6 +9,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// AuditTopic is the topic of an audit-trail entry written to the outbox in its business
+// transaction. It is never published to the broker: the audit drain (pkg/audit) takes those rows
+// into the tenant's hash chain, and the publisher leaves them alone.
+const AuditTopic = "audit.entry"
+
 type Event struct {
 	Topic         string
 	AggregateType string

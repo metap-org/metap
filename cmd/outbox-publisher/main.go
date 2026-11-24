@@ -6,8 +6,10 @@ import (
 	"github.com/metap-org/metap/pkg/kit/shutdown"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/standard"
@@ -36,6 +38,19 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+
+	// The same loop also moves audit entries from this outbox into the chain (they are never sent to
+	// the broker). The chain lives in the main database, which may not be the one this outbox is in.
+	if !env.Bool("AUDIT_DRAIN_DISABLED") {
+		chainPool, err := pgxpool.New(ctx, config.DatabaseURL)
+		if err != nil {
+			slog.Error("connecting to postgres for the audit chain", standard.LogError, err)
+			os.Exit(1)
+		}
+		defer chainPool.Close()
+		drain := func(context.Context) ([]*pgxpool.Pool, error) { return []*pgxpool.Pool{pool}, nil }
+		go audit.RunDrain(ctx, drain, audit.NewPostgresStore(chainPool), env.Millis("AUDIT_DRAIN_POLL_MS", 500*time.Millisecond), env.Int("AUDIT_DRAIN_BATCH_SIZE", 100))
+	}
 
 	slog.Info("ready, polling", "poll_ms", pollMs, "batch_size", batchSize)
 
