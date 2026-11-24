@@ -56,6 +56,23 @@ func (r *Router) BeginUnit(ctx context.Context, tenantID uuid.UUID) (context.Con
 	return context.WithValue(ctx, unitKey{}, u), u, nil
 }
 
+// BeginSharedUnit opens a unit of work on the shared database whatever a tenant's strategy is: for
+// work that belongs to the identity data (members, keys, sessions), which lives there even for a tenant
+// with a database of its own. Its outbox rows are drained by the same worker that drains a tenant's, so
+// an audit entry written in it reaches the one audit store. It joins no tenant's Router.Begin (its
+// tenant is the nil id), and SharedTx returns its transaction.
+func (r *Router) BeginSharedUnit(ctx context.Context) (context.Context, *Unit, error) {
+	if unitFrom(ctx) != nil {
+		return ctx, nil, ErrUnitOpen
+	}
+	tx, err := r.sharedPool.Begin(ctx)
+	if err != nil {
+		return ctx, nil, err
+	}
+	u := &Unit{tenant: uuid.Nil, tx: tx, sharedDB: true}
+	return context.WithValue(ctx, unitKey{}, u), u, nil
+}
+
 func unitFrom(ctx context.Context) *Unit {
 	u, _ := ctx.Value(unitKey{}).(*Unit)
 	return u

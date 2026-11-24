@@ -89,6 +89,14 @@ type Sink interface {
 	Atomic(ctx context.Context, tenantID uuid.UUID, work func(ctx context.Context, w Writer) error) error
 }
 
+// SharedSink is a Sink that can also run a unit of work on the shared database: where identity data
+// (members, keys, sessions) and the audit store live, for every tenant whatever its strategy. NewSink's
+// is one; a unit made with NewSharedUnit needs it.
+type SharedSink interface {
+	Sink
+	AtomicShared(ctx context.Context, work func(ctx context.Context, w Writer) error) error
+}
+
 // Deps is what every action of a service shares.
 type Deps struct {
 	// Records is what handlers read and write through. It should already enforce the caller's
@@ -107,6 +115,7 @@ type Unit struct {
 	Tenant uuid.UUID
 
 	sink    Sink
+	shared  bool
 	events  []events.Event
 	entries []audit.Entry
 	inStep  bool
@@ -128,6 +137,23 @@ func NewUnit(sink Sink, rc *permission.RequestContext) (*Unit, error) {
 	return &Unit{RC: rc, Tenant: tenant, sink: sink}, nil
 }
 
+// NewSharedUnit is NewUnit for an operation on identity data: its Steps run in one transaction on the
+// shared database (Sink must be a SharedSink), so the change and its audit entry are atomic for a
+// tenant with a database of its own as well. A nil sink only reads, as in NewUnit.
+func NewSharedUnit(sink Sink, rc *permission.RequestContext) (*Unit, error) {
+	u, err := NewUnit(sink, rc)
+	if err != nil {
+		return nil, err
+	}
+	if sink != nil {
+		if _, ok := sink.(SharedSink); !ok {
+			return nil, fmt.Errorf("action: the sink cannot run a unit on the shared database")
+		}
+	}
+	u.shared = true
+	return u, nil
+}
+
 // ErrEmitOutsideStep is what Emit returns when it is called outside a Step: an event belongs to
 // the transaction of the writes it announces, and outside a Step there is none.
 var ErrEmitOutsideStep = fmt.Errorf("action: Emit called outside a Step (an event is written in the transaction of the Step that queued it)")
@@ -144,6 +170,13 @@ func (u *Unit) Emit(e events.Event) error {
 	}
 	u.events = append(u.events, e)
 	return nil
+}
+
+// AuditPrepared queues an entry the caller built, in the form the audit trail already shows (an
+// administrative change is an update with a before and after per field), written in the current Step's
+// transaction like AuditEntry's. The entry's tenant must be set.
+func (u *Unit) AuditPrepared(e audit.Entry) {
+	u.entries = append(u.entries, e)
 }
 
 // AuditEntry queues an audit entry for entity: name says what happened, recordID which record, and
@@ -196,7 +229,7 @@ func (u *Unit) Step(ctx context.Context, name string, fn func(ctx context.Contex
 		}
 		return nil
 	}
-	err := u.sink.Atomic(ctx, u.Tenant, func(ctx context.Context, w Writer) error {
+	work := func(ctx context.Context, w Writer) error {
 		if err := fn(ctx); err != nil {
 			return err
 		}
@@ -204,7 +237,13 @@ func (u *Unit) Step(ctx context.Context, name string, fn func(ctx context.Contex
 			return err
 		}
 		return w.Audit(u.entries[fromEntries:])
-	})
+	}
+	var err error
+	if u.shared {
+		err = u.sink.(SharedSink).AtomicShared(ctx, work)
+	} else {
+		err = u.sink.Atomic(ctx, u.Tenant, work)
+	}
 	u.events, u.entries = u.events[:fromEvents], u.entries[:fromEntries]
 	if err != nil {
 		return fmt.Errorf("step %q: %w", name, err)
@@ -224,7 +263,11 @@ func (u *Unit) Close(ctx context.Context) error {
 	if u.sink == nil || len(entries) == 0 {
 		return nil
 	}
-	return u.sink.Atomic(ctx, u.Tenant, func(_ context.Context, w Writer) error { return w.Audit(entries) })
+	write := func(_ context.Context, w Writer) error { return w.Audit(entries) }
+	if u.shared {
+		return u.sink.(SharedSink).AtomicShared(ctx, write)
+	}
+	return u.sink.Atomic(ctx, u.Tenant, write)
 }
 
 // Ctx is what an entity action's handler receives: the Unit, plus the entity, the record and the

@@ -15,6 +15,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
 	"github.com/metap-org/metap/internal/admin/preferences"
+	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
@@ -481,7 +482,7 @@ func registerUserOperations(api huma.API, state *AppState, s *admin.UserAdminSer
 		return s.CreateServiceAccount(ctx, &in.Body)
 	})
 	cfg := state.Identity
-	keys := apikeys.New(apikeys.NewPgStore(kernel.IdentityDB{Pool: cfg.Shared}), kernel.StoreAuditor{Store: cfg.Audit}, cfg.APIKeyMaxDays, nil)
+	keys := apikeys.New(apikeys.NewPgStore(kernel.IdentityDB{Pool: cfg.Shared}), kernel.StoreAuditor{Store: cfg.Audit}, cfg.APIKeyMaxDays, nil).WithSink(action.NewSink(state.Router))
 	adminOp(api, state, opOf("listApiKeys", http.MethodGet, "/admin/users/{id}/api-keys", "A member's API keys", tag),
 		func(ctx context.Context, in *idPath) (*apikeys.ListApiKeysResponse, error) {
 			return keys.List(ctx, in.ID)
