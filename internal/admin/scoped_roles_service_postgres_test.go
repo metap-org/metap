@@ -83,6 +83,7 @@ func TestScopedRoleAdministration(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 
 	// Audited, and revoking works.
+	h.drainAudit()
 	var n int
 	require.NoError(t, h.pool.QueryRow(ctx, `SELECT count(*) FROM metadata.audit_trail_entries
 		WHERE entity = $1 AND record_id = $2 AND diff ? 'scopedRoles'`, AuditEntityUsers, bob.ID).Scan(&n))

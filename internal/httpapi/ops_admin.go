@@ -272,7 +272,7 @@ type userIDPath struct {
 // identity database (PermissionService only), so a verify-only service serves them too.
 func registerPolicyOperations(api huma.API, state *AppState) {
 	const tag = "Policies"
-	s := admin.NewPolicyAdminService(state.Permissions, state.ContextAttributesCache, state.Audit)
+	s := admin.NewPolicyAdminService(state.Permissions, state.ContextAttributesCache, state.Audit).WithSink(action.NewSink(state.Router))
 
 	adminOp(api, state, opOf("listPolicies", http.MethodGet, "/admin/policies", "The tenant's policies", tag),
 		func(ctx context.Context, in *policiesIn) (*admin.PolicyList, error) {
