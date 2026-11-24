@@ -43,13 +43,14 @@ func (r *Router) BeginUnit(ctx context.Context, tenantID uuid.UUID) (context.Con
 	if unitFrom(ctx) != nil {
 		return ctx, nil, ErrUnitOpen
 	}
-	tx, err := r.begin(ctx, tenantID)
+	// Resolved before the connection is taken: the registry lookup may need a connection of its own, and
+	// on a pool of one that would wait for the one the unit now holds.
+	strategy, err := r.resolve(ctx, tenantID)
 	if err != nil {
 		return ctx, nil, err
 	}
-	strategy, err := r.resolve(ctx, tenantID)
+	tx, err := r.begin(ctx, tenantID)
 	if err != nil {
-		_ = tx.Rollback(ctx)
 		return ctx, nil, err
 	}
 	u := &Unit{tenant: tenantID, tx: tx, sharedDB: strategy.Kind == StrategySchema}
