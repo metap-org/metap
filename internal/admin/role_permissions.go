@@ -126,26 +126,31 @@ func (s *RoleAdminService) SetRolePermissions(ctx context.Context, req *SetRoleP
 		self := c.self
 		by = &self
 	}
-	var role rolestore.Role
-	var before []rolestore.RoleGrant
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+	var out *RolePermissions
+	err = s.d.changeInTenantNew(ctx, c, AuditEntityRoles, audit.ActionUpdate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+		var role rolestore.Role
+		var before []rolestore.RoleGrant
+		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+			var err error
+			if role, err = rolestore.GetRoleByName(ctx, db, c.tenant, name); err != nil {
+				return err
+			}
+			if before, err = rolestore.RoleBasicGrants(ctx, db, c.tenant, name); err != nil {
+				return err
+			}
+			_, err = rolestore.ReplaceRoleBasicGrants(ctx, db, c.tenant, name, grants, by)
+			return err
+		}); err != nil {
+			return uuid.Nil, nil, err
+		}
 		var err error
-		if role, err = rolestore.GetRoleByName(ctx, db, c.tenant, name); err != nil {
-			return err
+		if out, err = s.permissions(ctx, c.tenant, name); err != nil {
+			return uuid.Nil, nil, err
 		}
-		if before, err = rolestore.RoleBasicGrants(ctx, db, c.tenant, name); err != nil {
-			return err
+		added, removed := grantDiff(before, out.GetGrants())
+		if len(added)+len(removed) == 0 {
+			return role.ID, nil, nil
 		}
-		_, err = rolestore.ReplaceRoleBasicGrants(ctx, db, c.tenant, name, grants, by)
-		return err
-	}); err != nil {
-		return nil, roleErr(ctx, err, name)
-	}
-	out, err := s.permissions(ctx, c.tenant, name)
-	if err != nil {
-		return nil, roleErr(ctx, err, name)
-	}
-	if added, removed := grantDiff(before, out.GetGrants()); len(added)+len(removed) > 0 {
 		diff := map[string][2]any{}
 		if len(added) > 0 {
 			diff["granted"] = [2]any{nil, added}
@@ -153,7 +158,10 @@ func (s *RoleAdminService) SetRolePermissions(ctx context.Context, req *SetRoleP
 		if len(removed) > 0 {
 			diff["revoked"] = [2]any{removed, nil}
 		}
-		s.d.recordFor(ctx, c, AuditEntityRoles, role.ID, audit.ActionUpdate, diff)
+		return role.ID, diff, nil
+	})
+	if err != nil {
+		return nil, roleErr(ctx, err, name)
 	}
 	return out, nil
 }

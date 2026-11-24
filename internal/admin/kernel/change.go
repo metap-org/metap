@@ -52,6 +52,12 @@ func ChangeInTenant(ctx context.Context, sink action.Sink, fallback Auditor, now
 	})
 }
 
+// ChangeInTenantNew is ChangeInTenant for a change that creates the thing it audits: fn returns its id.
+func ChangeInTenantNew(ctx context.Context, sink action.Sink, fallback Auditor, now func() time.Time, c Caller,
+	entity string, act audit.AuditAction, fn func(ctx context.Context) (uuid.UUID, map[string][2]any, error)) error {
+	return run(ctx, sink, fallback, now, c, entity, act, false, fn)
+}
+
 func run(ctx context.Context, sink action.Sink, fallback Auditor, now func() time.Time, c Caller,
 	entity string, act audit.AuditAction, shared bool, fn func(ctx context.Context) (uuid.UUID, map[string][2]any, error)) error {
 	if now == nil {

@@ -296,6 +296,21 @@ func (d identityDeps) changeNew(ctx context.Context, c caller, entity string, ac
 	return kernel.ChangeNew(ctx, d.cfg.Sink, adminAuditor{d}, d.nowFor, kc, entity, act, fn)
 }
 
+// changeInTenant is change for work on the tenant's own database (its roles, its policies): the work
+// and the entry are one transaction there, and what opens a transaction through the router joins it.
+func (d identityDeps) changeInTenant(ctx context.Context, c caller, entity string, id uuid.UUID, act audit.AuditAction,
+	fn func(ctx context.Context) (map[string][2]any, error)) error {
+	kc := kernel.Caller{RC: c.rc, Tenant: c.tenant, Self: c.self}
+	return kernel.ChangeInTenant(ctx, d.cfg.Sink, adminAuditor{d}, d.nowFor, kc, entity, id, act, fn)
+}
+
+// changeInTenantNew is changeInTenant for a change that creates the thing it audits.
+func (d identityDeps) changeInTenantNew(ctx context.Context, c caller, entity string, act audit.AuditAction,
+	fn func(ctx context.Context) (uuid.UUID, map[string][2]any, error)) error {
+	kc := kernel.Caller{RC: c.rc, Tenant: c.tenant, Self: c.self}
+	return kernel.ChangeInTenantNew(ctx, d.cfg.Sink, adminAuditor{d}, d.nowFor, kc, entity, act, fn)
+}
+
 // adminAuditor is the older best-effort record, for the no-Sink path of change.
 type adminAuditor struct{ d identityDeps }
 
