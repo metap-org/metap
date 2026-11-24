@@ -10,10 +10,11 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/metap-org/metap/internal/admin/kernel"
+	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
@@ -33,6 +34,26 @@ type PolicyAdminService struct {
 	perms *permission.PermissionService
 	cache ContextInvalidator
 	audit audit.Store
+	// sink, when set, makes a policy change and its audit entry one transaction on the tenant's
+	// database; nil keeps "change, then record best-effort".
+	sink action.Sink
+}
+
+// WithSink makes every change atomic with its audit entry and returns s.
+func (s *PolicyAdminService) WithSink(sink action.Sink) *PolicyAdminService {
+	s.sink = sink
+	return s
+}
+
+// change runs one policy change and records it (atomically with a sink). fn returns the id of the
+// administered record and what to audit; a nil diff writes no entry.
+func (s *PolicyAdminService) change(ctx context.Context, rc *permission.RequestContext, act audit.AuditAction,
+	fn func(ctx context.Context) (uuid.UUID, map[string][2]any, error)) error {
+	c, err := callerOf(rc)
+	if err != nil {
+		return err
+	}
+	return kernel.ChangeInTenantNew(ctx, s.sink, kernel.StoreAuditor{Store: s.audit}, nil, c, AuditEntityPolicies, act, fn)
 }
 
 // NewPolicyAdminService serves policies from perms; store (may be nil) is where changes are audited.
@@ -62,11 +83,6 @@ func policyFields(row permission.PolicyRow, gone bool) map[string][2]any {
 		diff["condition"] = pair(row.Condition)
 	}
 	return diff
-}
-
-func (s *PolicyAdminService) record(ctx context.Context, rc *permission.RequestContext, tenant uuid.UUID, id uuid.UUID, action audit.AuditAction, diff map[string][2]any) {
-	actor, _ := uuid.Parse(rc.UserID)
-	writeAdminAudit(ctx, s.audit, tenant, actor, AuditEntityPolicies, id, action, diff, time.Now())
 }
 
 // basicGrants lists a set of policy rows as sorted "role:action" strings, the part of an entity's
@@ -185,12 +201,18 @@ func (s *PolicyAdminService) CreatePolicy(ctx context.Context, req *CreatePolicy
 	if req.Field != nil {
 		field = *req.Field
 	}
-	row, err := s.perms.CreatePolicy(ctx, tenant, req.Entity, req.Action, req.Roles, req.Roles != nil, cond,
-		optionalUUID(rc.UserID), field, &subject, effect)
+	var row permission.PolicyRow
+	err = s.change(ctx, rc, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+		var err error
+		if row, err = s.perms.CreatePolicy(ctx, tenant, req.Entity, req.Action, req.Roles, req.Roles != nil, cond,
+			optionalUUID(rc.UserID), field, &subject, effect); err != nil {
+			return uuid.Nil, nil, err
+		}
+		return row.ID, policyFields(row, false), nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	s.record(ctx, rc, tenant, row.ID, audit.ActionCreate, policyFields(row, false))
 	return &PolicyOne{Data: policyView(row)}, nil
 }
 
@@ -222,11 +244,17 @@ func (s *PolicyAdminService) SeedDefaultPolicies(ctx context.Context, req *SeedD
 	subject := permission.SubjectContext
 	created := make([]*Policy, 0, len(actions))
 	for _, action := range actions {
-		row, err := s.perms.CreatePolicy(ctx, tenant, req.Entity, action, req.Roles, true, nil, createdBy, "", &subject, permission.EffectAllow)
+		var row permission.PolicyRow
+		err := s.change(ctx, rc, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+			var err error
+			if row, err = s.perms.CreatePolicy(ctx, tenant, req.Entity, action, req.Roles, true, nil, createdBy, "", &subject, permission.EffectAllow); err != nil {
+				return uuid.Nil, nil, err
+			}
+			return row.ID, policyFields(row, false), nil
+		})
 		if err != nil {
 			return nil, err
 		}
-		s.record(ctx, rc, tenant, row.ID, audit.ActionCreate, policyFields(row, false))
 		created = append(created, policyView(row))
 	}
 	return &PolicyList{Data: created}, nil
@@ -260,12 +288,18 @@ func (s *PolicyAdminService) SyncMatrixPolicies(ctx context.Context, req *SyncMa
 	if old, err := s.perms.ListPolicies(ctx, tenant, req.Entity, true); err == nil {
 		before = basicGrants(old)
 	}
-	rows, err := s.perms.SyncBasicPolicies(ctx, tenant, req.Entity, grants, optionalUUID(rc.UserID))
+	var rows []permission.PolicyRow
+	err = s.change(ctx, rc, audit.ActionUpdate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+		var err error
+		if rows, err = s.perms.SyncBasicPolicies(ctx, tenant, req.Entity, grants, optionalUUID(rc.UserID)); err != nil {
+			return uuid.Nil, nil, err
+		}
+		return namedID("policies:"+tenant.String(), req.Entity),
+			map[string][2]any{"entity": {nil, req.Entity}, "grants": {before, basicGrants(rows)}}, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	s.record(ctx, rc, tenant, namedID("policies:"+tenant.String(), req.Entity), audit.ActionUpdate,
-		map[string][2]any{"entity": {nil, req.Entity}, "grants": {before, basicGrants(rows)}})
 	return &PolicyList{Data: policyViews(rows)}, nil
 }
 
@@ -292,11 +326,17 @@ func (s *PolicyAdminService) DeletePolicy(ctx context.Context, req *PolicyIDRequ
 			}
 		}
 	}
-	if err := s.perms.DeletePolicy(ctx, tenant, id); err != nil {
+	err = s.change(ctx, rc, audit.ActionDelete, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+		if err := s.perms.DeletePolicy(ctx, tenant, id); err != nil {
+			return uuid.Nil, nil, err
+		}
+		if gone == nil {
+			return id, nil, nil
+		}
+		return id, policyFields(*gone, true), nil
+	})
+	if err != nil {
 		return nil, err
-	}
-	if gone != nil {
-		s.record(ctx, rc, tenant, id, audit.ActionDelete, policyFields(*gone, true))
 	}
 	return &Empty{}, nil
 }

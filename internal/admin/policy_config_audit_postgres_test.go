@@ -28,9 +28,10 @@ func TestPolicyAndConfigChangesAreAudited(t *testing.T) {
 	ctx := context.Background()
 
 	perms := permission.NewPermissionService(policypg.NewPostgresPolicyStore(h.cfg.Router))
-	policies := NewPolicyAdminService(perms, nil, h.cfg.Audit)
+	policies := NewPolicyAdminService(perms, nil, h.cfg.Audit).WithSink(h.cfg.Sink)
 
 	trail := func(entity string) []audit.Row {
+		h.drainAudit()
 		rows, err := h.cfg.Audit.Search(ctx, tenant, audit.SearchQuery{Entity: entity, Limit: audit.MaxPageSize})
 		require.NoError(t, err)
 		return rows
