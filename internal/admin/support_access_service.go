@@ -64,12 +64,20 @@ func (s *SupportAccessService) GrantSupportAccess(ctx context.Context, req *Gran
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "`role` must be a role of this tenant.")
 	}
 	now := s.d.now()
-	g, err := identity.CreateSupportGrant(ctx, s.d.cfg.Shared, c.tenant, c.self, req.GetReason(), role, int(req.GetHours()), now)
+	// The grant's id is made by the insert, and the audit entry names it, so both are made in the
+	// change; the entry's record id is filled in once the grant exists.
+	var g *identity.SupportGrant
+	err = s.d.changeNew(ctx, c, AuditEntitySupportGrants, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+		var err error
+		if g, err = identity.CreateSupportGrant(ctx, s.d.db(), c.tenant, c.self, req.GetReason(), role, int(req.GetHours()), now); err != nil {
+			return uuid.Nil, nil, supportErr(ctx, err)
+		}
+		return g.ID, map[string][2]any{
+			"reason": {nil, g.Reason}, "role": {nil, g.Role}, "expiresAt": {nil, g.ExpiresAt.UTC().Format(time.RFC3339)}}, nil
+	})
 	if err != nil {
-		return nil, supportErr(ctx, err)
+		return nil, err
 	}
-	s.d.recordFor(ctx, c, AuditEntitySupportGrants, g.ID, audit.ActionCreate, map[string][2]any{
-		"reason": {nil, g.Reason}, "role": {nil, g.Role}, "expiresAt": {nil, g.ExpiresAt.UTC().Format(time.RFC3339)}})
 	return toPBSupportGrant(*g, now), nil
 }
 
@@ -80,10 +88,10 @@ func (s *SupportAccessService) ListSupportGrants(ctx context.Context, _ *Empty) 
 	}
 	now := s.d.now()
 	// Lapsed sessions leave no stale "Support" member behind.
-	if removed, err := identity.ExpireSupportSessions(ctx, s.d.cfg.Shared, c.tenant, now); err == nil {
+	if removed, err := identity.ExpireSupportSessions(ctx, s.d.db(), c.tenant, now); err == nil {
 		s.clearRoles(ctx, c.tenant, removed)
 	}
-	grants, err := identity.ListSupportGrants(ctx, s.d.cfg.Shared, c.tenant)
+	grants, err := identity.ListSupportGrants(ctx, s.d.db(), c.tenant)
 	if err != nil {
 		return nil, supportErr(ctx, err)
 	}
@@ -104,14 +112,20 @@ func (s *SupportAccessService) RevokeSupportGrant(ctx context.Context, req *Supp
 		return nil, err
 	}
 	now := s.d.now()
-	members, err := identity.RevokeSupportGrant(ctx, s.d.cfg.Shared, c.tenant, id, now)
+	var members []uuid.UUID
+	err = s.d.change(ctx, c, AuditEntitySupportGrants, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+		var err error
+		if members, err = identity.RevokeSupportGrant(ctx, s.d.db(), c.tenant, id, now); err != nil {
+			return nil, supportErr(ctx, err)
+		}
+		return map[string][2]any{"revoked": {false, true}, "sessionsEnded": {nil, len(members)}}, nil
+	})
 	if err != nil {
-		return nil, supportErr(ctx, err)
+		return nil, err
 	}
+	// The roles live in the tenant's own database, outside the change (see identityDeps.change).
 	s.clearRoles(ctx, c.tenant, members)
-	s.d.recordFor(ctx, c, AuditEntitySupportGrants, id, audit.ActionUpdate, map[string][2]any{
-		"revoked": {false, true}, "sessionsEnded": {nil, len(members)}})
-	g, err := identity.GetSupportGrant(ctx, s.d.cfg.Shared, c.tenant, id)
+	g, err := identity.GetSupportGrant(ctx, s.d.db(), c.tenant, id)
 	if err != nil {
 		return nil, supportErr(ctx, err)
 	}
@@ -150,10 +164,10 @@ func (s *SupportAccessService) StartSupportSession(ctx context.Context, req *Sta
 		if err != nil {
 			return nil, err
 		}
-		if grant, err = identity.GetSupportGrant(ctx, s.d.cfg.Shared, tenant, gid); err != nil {
+		if grant, err = identity.GetSupportGrant(ctx, s.d.db(), tenant, gid); err != nil {
 			return nil, supportErr(ctx, err)
 		}
-	} else if grant, err = identity.LatestActiveSupportGrant(ctx, s.d.cfg.Shared, tenant, now); err != nil {
+	} else if grant, err = identity.LatestActiveSupportGrant(ctx, s.d.db(), tenant, now); err != nil {
 		if errors.Is(err, identity.ErrNotFound) {
 			err = identity.ErrSupportGrantInactive
 		}
@@ -166,7 +180,7 @@ func (s *SupportAccessService) StartSupportSession(ctx context.Context, req *Sta
 	if _, err := tenancy.NewPostgresTenantRegistry(s.d.cfg.Shared).Get(ctx, tenant); err != nil {
 		return nil, tenantErr(ctx, err)
 	}
-	person, err := identity.GetMember(ctx, s.d.cfg.Shared, tenancy.PlatformTenantID, c.self)
+	person, err := identity.GetMember(ctx, s.d.db(), tenancy.PlatformTenantID, c.self)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -175,12 +189,17 @@ func (s *SupportAccessService) StartSupportSession(ctx context.Context, req *Sta
 	if grant.ExpiresAt.Before(expires) {
 		expires = grant.ExpiresAt
 	}
-	member, err := identity.CreateServiceAccount(ctx, s.d.cfg.Shared, tenant, "Support: "+person.Email, nil)
+	// The account is made first (its id is needed for the role in the tenant's own database); the key,
+	// the session record and the audit entry are one change after it. If anything after the account
+	// fails, the account is removed again.
+	var member *identity.Member
+	var token string
+	member, err = identity.CreateServiceAccount(ctx, s.d.db(), tenant, "Support: "+person.Email, nil)
 	if err != nil {
 		return nil, supportErr(ctx, err)
 	}
 	fail := func(err error) (*SupportSessionToken, error) {
-		_ = identity.RemoveMember(ctx, s.d.cfg.Shared, tenant, member.ID, now)
+		_ = identity.RemoveMember(ctx, s.d.db(), tenant, member.ID, now)
 		return nil, supportErr(ctx, err)
 	}
 	if err := s.d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
@@ -188,17 +207,23 @@ func (s *SupportAccessService) StartSupportSession(ctx context.Context, req *Sta
 	}); err != nil {
 		return fail(err)
 	}
-	token, key, err := identity.CreateAPIKey(ctx, s.d.cfg.Shared, tenant, member.ID, "support session", &expires, nil, now)
+	// Recorded in the tenant's own trail, under the support person.
+	err = s.d.change(ctx, caller{rc: c.rc, tenant: tenant, self: c.self}, AuditEntitySupportGrants, grant.ID, audit.ActionUpdate,
+		func(ctx context.Context) (map[string][2]any, error) {
+			var key *identity.APIKey
+			var err error
+			if token, key, err = identity.CreateAPIKey(ctx, s.d.db(), tenant, member.ID, "support session", &expires, nil, now); err != nil {
+				return nil, err
+			}
+			if err := identity.RecordSupportSession(ctx, s.d.db(), identity.SupportSession{GrantID: grant.ID, MemberID: member.ID,
+				KeyID: key.ID, StartedBy: c.self, StartedByEmail: person.Email, StartedAt: now}, tenant); err != nil {
+				return nil, err
+			}
+			return map[string][2]any{"sessionStarted": {nil, person.Email + " as " + grant.Role}}, nil
+		})
 	if err != nil {
 		return fail(err)
 	}
-	if err := identity.RecordSupportSession(ctx, s.d.cfg.Shared, identity.SupportSession{GrantID: grant.ID, MemberID: member.ID,
-		KeyID: key.ID, StartedBy: c.self, StartedByEmail: person.Email, StartedAt: now}, tenant); err != nil {
-		return fail(err)
-	}
-	// Recorded in the tenant's own trail, under the support person.
-	s.d.recordFor(ctx, caller{rc: c.rc, tenant: tenant, self: c.self}, AuditEntitySupportGrants, grant.ID, audit.ActionUpdate,
-		map[string][2]any{"sessionStarted": {nil, person.Email + " as " + grant.Role}})
 	return &SupportSessionToken{Token: token, ExpiresAt: formatTime(&expires), TenantId: tenant.String(),
 		Role: grant.Role, GrantId: grant.ID.String()}, nil
 }

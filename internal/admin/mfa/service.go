@@ -13,6 +13,7 @@ import (
 
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/pkg/action"
+	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
 )
 
@@ -37,7 +38,7 @@ func (s *Service) WithSink(sink action.Sink) *Service {
 // change runs one change that checks a code. A wrong code is refused but its attempt count is kept
 // (kernel.CommitDespite), or nothing would ever stop guessing.
 func (s *Service) change(ctx context.Context, c kernel.Caller, fn func(ctx context.Context) (map[string][2]any, error)) error {
-	return kernel.Change(ctx, s.sink, s.audit, s.now, c, AuditEntityUsers, c.Self, func(ctx context.Context) (map[string][2]any, error) {
+	return kernel.Change(ctx, s.sink, s.audit, s.now, c, AuditEntityUsers, c.Self, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
 		diff, err := fn(ctx)
 		switch {
 		case err == nil:

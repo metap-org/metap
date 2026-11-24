@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/auth/jwks"
@@ -81,7 +82,7 @@ func newIdentityHarness(t *testing.T, withMailer ...bool) *identityHarness {
 		ContextAttributesCache: authctx.NewContextAttributesCache(60 * time.Second),
 	}
 	mail := &capturedMail{}
-	cfg := IdentityConfig{Shared: pool, Router: router, Audit: audit.NewPostgresStore(pool), PublicURL: "http://portal.test",
+	cfg := IdentityConfig{Shared: pool, Router: router, Audit: audit.NewPostgresStore(pool), Sink: action.NewSink(router), PublicURL: "http://portal.test",
 		PasswordPolicy: func(ctx context.Context, tenant uuid.UUID) int {
 			var n int
 			if err := pool.QueryRow(ctx, `SELECT value::int FROM metadata.tenant_configs
@@ -631,6 +632,8 @@ func TestAuditAdminSearchAndVerify(t *testing.T) {
 	_, err = h.client.Admin.EnableUser(ctx, &UserIdRequest{Id: bob.ID.String()})
 	require.NoError(t, err)
 
+	h.drainAudit()
+
 	res, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{ActorUserId: admin.ID.String()})
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(res.GetEntries()), 2)
@@ -639,23 +642,32 @@ func TestAuditAdminSearchAndVerify(t *testing.T) {
 		assert.NotZero(t, e.GetSeq())
 		assert.NotEmpty(t, e.GetHash())
 	}
+	h.drainAudit()
 	byObject, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{Entity: AuditEntityUsers, RecordId: bob.ID.String()})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(byObject.GetEntries()), 2)
+	h.drainAudit()
 	none, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{ActorUserId: uuid.NewString()})
 	require.NoError(t, err)
 	assert.Empty(t, none.GetEntries())
 	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	h.drainAudit()
 	late, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{From: future})
 	require.NoError(t, err)
 	assert.Empty(t, late.GetEntries())
+	h.drainAudit()
 	_, err = h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{From: "yesterday"})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err))
 
+	h.drainAudit()
+
 	_, err = h.client.Audit.SearchAudit(h.as(tenant, bob.ID), &SearchAuditRequest{})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "admins only")
+	h.drainAudit()
 	_, err = h.client.Audit.VerifyAuditChain(h.as(tenant, bob.ID), &Empty{})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
+
+	h.drainAudit()
 
 	rep, err := h.client.Audit.VerifyAuditChain(ctx, &Empty{})
 	require.NoError(t, err)
@@ -665,6 +677,7 @@ func TestAuditAdminSearchAndVerify(t *testing.T) {
 	_, err = h.pool.Exec(context.Background(),
 		`UPDATE metadata.audit_trail_entries SET diff = '{"x":1}' WHERE tenant_id = $1 AND seq = 1`, tenant)
 	require.NoError(t, err)
+	h.drainAudit()
 	rep, err = h.client.Audit.VerifyAuditChain(ctx, &Empty{})
 	require.NoError(t, err)
 	assert.False(t, rep.GetOk())

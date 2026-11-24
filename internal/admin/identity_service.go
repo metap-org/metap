@@ -18,6 +18,7 @@ import (
 
 	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/admin/kernel"
+	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/auth/mail"
@@ -40,6 +41,9 @@ type IdentityConfig struct {
 	Router *tenancy.Router
 	// Audit records every administrative change; nil records nothing.
 	Audit audit.Store
+	// Sink, when set, makes an administrative change and its audit entry one transaction on the shared
+	// database (kernel.Change); nil keeps "change, then record best-effort through Audit".
+	Sink action.Sink
 	// PublicURL is the origin people reach the service at; the SSO redirect URI is built from it.
 	PublicURL string
 	// Mailer sends invitation emails; nil sends none (the admin gets the link back instead).
@@ -269,6 +273,34 @@ func (d identityDeps) user(ctx context.Context, tenant, id uuid.UUID) (*User, er
 // CRUD layer's: the change itself already committed.
 func (d identityDeps) record(ctx context.Context, c caller, id uuid.UUID, action audit.AuditAction, diff map[string][2]any) {
 	d.recordFor(ctx, c, AuditEntityUsers, id, action, diff)
+}
+
+// db is the shared identity database as the statements of pkg/auth/identity take it: each runs on the
+// transaction of the unit of work in its context when there is one on the shared database, else on
+// the pool, so it can sit inside a change without asking the pool for a second connection.
+func (d identityDeps) db() kernel.IdentityDB { return kernel.IdentityDB{Pool: d.cfg.Shared} }
+
+// change runs one administrative change and records it as one transaction when a Sink is configured
+// (kernel.Change). Nothing inside fn may open the tenant's own database: it would take a second
+// connection while the change holds the first, so work on user_roles goes before or after.
+func (d identityDeps) change(ctx context.Context, c caller, entity string, id uuid.UUID, act audit.AuditAction,
+	fn func(ctx context.Context) (map[string][2]any, error)) error {
+	kc := kernel.Caller{RC: c.rc, Tenant: c.tenant, Self: c.self}
+	return kernel.Change(ctx, d.cfg.Sink, adminAuditor{d}, d.nowFor, kc, entity, id, act, fn)
+}
+
+// changeNew is change for a change that creates the thing it audits: fn returns its id.
+func (d identityDeps) changeNew(ctx context.Context, c caller, entity string, act audit.AuditAction,
+	fn func(ctx context.Context) (uuid.UUID, map[string][2]any, error)) error {
+	kc := kernel.Caller{RC: c.rc, Tenant: c.tenant, Self: c.self}
+	return kernel.ChangeNew(ctx, d.cfg.Sink, adminAuditor{d}, d.nowFor, kc, entity, act, fn)
+}
+
+// adminAuditor is the older best-effort record, for the no-Sink path of change.
+type adminAuditor struct{ d identityDeps }
+
+func (a adminAuditor) Record(ctx context.Context, c kernel.Caller, entity string, id uuid.UUID, act audit.AuditAction, diff map[string][2]any) {
+	a.d.recordFor(ctx, caller{rc: c.RC, tenant: c.Tenant, self: c.Self}, entity, id, act, diff)
 }
 
 // recordFor is record for any administered entity (metadata.users, metadata.roles).

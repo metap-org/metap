@@ -37,6 +37,7 @@ import (
 	"github.com/metap-org/metap/internal/httpapi/cronroutes"
 	"github.com/metap-org/metap/internal/httpapi/dashboardroutes"
 	"github.com/metap-org/metap/internal/httpapi/oauth2routes"
+	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/config"
@@ -282,7 +283,7 @@ func identityConfig(state *httpapi.AppState, auditStore audit.Store, manager *ba
 	if !state.CanIssueTokens() {
 		return nil
 	}
-	return &admin.IdentityConfig{Shared: state.Pool, Router: state.Router, Audit: auditStore,
+	return &admin.IdentityConfig{Shared: state.Pool, Router: state.Router, Audit: auditStore, Sink: action.NewSink(state.Router),
 		Mailer: state.Mailer, PasswordPolicy: state.PasswordPolicy(), APIKeyMaxDays: state.APIKeyMaxDays, PublicURL: state.PublicAppURL,
 		Credentials: credentialAdapter{manager}, HTTPClient: metadataHTTPClient()}
 }

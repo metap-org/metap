@@ -26,17 +26,27 @@ func (c CommitDespite) Unwrap() error { return c.Err }
 // strategy. Without one it is the older "change, then record best-effort" through fallback (nil
 // records nothing). The entry is the one WriteAudit records, in the form the audit trail shows.
 func Change(ctx context.Context, sink action.Sink, fallback Auditor, now func() time.Time, c Caller,
-	entity string, id uuid.UUID, fn func(ctx context.Context) (map[string][2]any, error)) error {
+	entity string, id uuid.UUID, act audit.AuditAction, fn func(ctx context.Context) (map[string][2]any, error)) error {
+	return ChangeNew(ctx, sink, fallback, now, c, entity, act, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+		diff, err := fn(ctx)
+		return id, diff, err
+	})
+}
+
+// ChangeNew is Change for a change that creates the administered thing, so its id is known only once
+// fn has run: fn returns it with what to audit.
+func ChangeNew(ctx context.Context, sink action.Sink, fallback Auditor, now func() time.Time, c Caller,
+	entity string, act audit.AuditAction, fn func(ctx context.Context) (uuid.UUID, map[string][2]any, error)) error {
 	if now == nil {
 		now = time.Now
 	}
 	if sink == nil {
-		diff, err := fn(ctx)
+		id, diff, err := fn(ctx)
 		if err != nil {
 			return err
 		}
 		if fallback != nil {
-			fallback.Record(ctx, c, entity, id, audit.ActionUpdate, diff)
+			fallback.Record(ctx, c, entity, id, act, diff)
 		}
 		return nil
 	}
@@ -46,7 +56,7 @@ func Change(ctx context.Context, sink action.Sink, fallback Auditor, now func() 
 	}
 	var refused error
 	err = unit.Step(ctx, "change", func(ctx context.Context) error {
-		diff, err := fn(ctx)
+		id, diff, err := fn(ctx)
 		if err != nil {
 			if cd, ok := err.(CommitDespite); ok {
 				refused = cd.Err
@@ -54,7 +64,7 @@ func Change(ctx context.Context, sink action.Sink, fallback Auditor, now func() 
 			}
 			return err
 		}
-		unit.AuditPrepared(AuditEntryOf(c.Tenant, c.Self, entity, id, audit.ActionUpdate, diff, now()))
+		unit.AuditPrepared(AuditEntryOf(c.Tenant, c.Self, entity, id, act, diff, now()))
 		return nil
 	})
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
 	"github.com/metap-org/metap/internal/authctx"
+	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/secrets"
 	"net/http"
 	"sync/atomic"
@@ -166,4 +167,11 @@ func asServiceError(err error) *crud.ServiceError {
 		return se
 	}
 	return nil
+}
+
+// drainAudit moves the audit entries the changes so far queued in the outbox into the trail: with a
+// Sink an administrative change and its entry are one transaction, and the drain delivers the entry.
+func (h *identityHarness) drainAudit() {
+	h.t.Helper()
+	require.NoError(h.t, audit.DrainAll(context.Background(), h.pool, audit.NewPostgresStore(h.pool)))
 }

@@ -162,6 +162,7 @@ func TestCredentialsAdmin(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, statusOf(err))
 
 	// The audit trail names credentials and their homes, never a value.
+	require.NoError(t, audit.DrainAll(context.Background(), h.pool, audit.NewPostgresStore(h.pool)))
 	rows, err := audit.NewPostgresStore(h.pool).Search(context.Background(), tenant, audit.SearchQuery{Entity: AuditEntityCredentials})
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)
