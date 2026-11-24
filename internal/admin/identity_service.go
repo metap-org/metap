@@ -6,7 +6,6 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
@@ -273,23 +272,7 @@ func (d identityDeps) record(ctx context.Context, c caller, id uuid.UUID, action
 
 // recordFor is record for any administered entity (metadata.users, metadata.roles).
 func (d identityDeps) recordFor(ctx context.Context, c caller, entity string, id uuid.UUID, action audit.AuditAction, diff map[string][2]any) {
-	if d.cfg.Audit == nil {
-		return
-	}
-	obj := audit.JsonObject{}
-	for field, ba := range diff {
-		raw, err := json.Marshal(map[string]any{"before": ba[0], "after": ba[1]})
-		if err == nil {
-			obj[field] = raw
-		}
-	}
-	entry := audit.Entry{TenantID: c.tenant, Entity: entity, RecordID: id, Action: action,
-		Diff: obj, OccurredAt: d.now()}
-	if c.self != uuid.Nil {
-		self := c.self
-		entry.ActorUserID = &self
-	}
-	_ = d.cfg.Audit.Record(ctx, c.tenant, entry)
+	writeAdminAudit(ctx, d.cfg.Audit, c.tenant, c.self, entity, id, action, diff, d.now())
 }
 
 func parseID(id string) (uuid.UUID, error) {

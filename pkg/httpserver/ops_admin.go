@@ -128,7 +128,7 @@ type userIDPath struct {
 // identity database (PermissionService only), so a verify-only service serves them too.
 func registerPolicyOperations(api huma.API, state *AppState) {
 	const tag = "Policies"
-	s := admin.NewPolicyAdminService(state.Permissions, state.ContextAttributesCache)
+	s := admin.NewPolicyAdminService(state.Permissions, state.ContextAttributesCache, state.Audit)
 
 	adminOp(api, state, opOf("listPolicies", http.MethodGet, "/admin/policies", "The tenant's policies", tag),
 		func(ctx context.Context, in *policiesIn) (*admin.PolicyList, error) {
@@ -177,7 +177,7 @@ type configKeyBodyIn struct {
 // caller's own preferences. None needs the identity database.
 func registerConfigOperations(api huma.API, state *AppState) {
 	const tag = "Configuration"
-	s := admin.NewConfigAdminService(state.Config, state.Router, state.Permissions, state.EffectiveConfig)
+	s := admin.NewConfigAdminService(state.Config, state.Router, state.Permissions, state.EffectiveConfig, state.Audit)
 
 	adminOp(api, state, opOf("listPlatformConfig", http.MethodGet, "/platform/config", "The platform-writable configuration keys", tag),
 		func(ctx context.Context, _ *struct{}) (*admin.PlatformConfigList, error) {

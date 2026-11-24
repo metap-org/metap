@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
@@ -21,15 +23,64 @@ import (
 // EffectiveConfigFunc is the cache-first read of a tenant's effective configuration.
 type EffectiveConfigFunc func(ctx context.Context, tenant uuid.UUID) *config.EffectiveConfig
 
+// AuditEntityConfig and AuditEntityPlatformConfig are the audit-trail entities configuration
+// changes record under: a tenant's own overrides, and the platform's fleet-wide values.
+const (
+	AuditEntityConfig         = "metadata.tenant_config"
+	AuditEntityPlatformConfig = "metadata.platform_config"
+)
+
 type ConfigAdminService struct {
 	store     *config.Store
 	router    *tenancy.Router
 	perms     *permission.PermissionService
 	effective EffectiveConfigFunc
+	audit     audit.Store
 }
 
-func NewConfigAdminService(store *config.Store, router *tenancy.Router, perms *permission.PermissionService, effective EffectiveConfigFunc) *ConfigAdminService {
-	return &ConfigAdminService{store: store, router: router, perms: perms, effective: effective}
+// NewConfigAdminService serves configuration from store; auditStore (may be nil) is where changes
+// are audited.
+func NewConfigAdminService(store *config.Store, router *tenancy.Router, perms *permission.PermissionService, effective EffectiveConfigFunc, auditStore audit.Store) *ConfigAdminService {
+	return &ConfigAdminService{store: store, router: router, perms: perms, effective: effective, audit: auditStore}
+}
+
+// platformValue and tenantValue read a key's current value for an audit entry. A key the registry
+// does not know has none (Get panics on it): the change is refused for that reason a moment later,
+// and a refused change is not audited.
+func (s *ConfigAdminService) platformValue(key string) json.RawMessage {
+	if config.Lookup(key) == nil {
+		return nil
+	}
+	return s.store.Current().Get(key)
+}
+
+func (s *ConfigAdminService) tenantValue(ctx context.Context, tenant uuid.UUID, key string) json.RawMessage {
+	if config.Lookup(key) == nil {
+		return nil
+	}
+	return s.effective(ctx, tenant).Get(key)
+}
+
+// recordConfig audits one configuration change. A key whose value is a credential is audited as
+// changed, never with its value.
+func (s *ConfigAdminService) recordConfig(ctx context.Context, rc *permission.RequestContext, entity, key string, before, after json.RawMessage) {
+	tenant, err := uuid.Parse(rc.TenantID)
+	if err != nil {
+		return
+	}
+	var b, a any = json.RawMessage(before), json.RawMessage(after)
+	if len(before) == 0 {
+		b = nil
+	}
+	if len(after) == 0 {
+		a = nil
+	}
+	if def := config.Lookup(key); def != nil && def.Secret {
+		b, a = "(secret)", "(secret)"
+	}
+	actor, _ := uuid.Parse(rc.UserID)
+	writeAdminAudit(ctx, s.audit, tenant, actor, entity, namedID("config", key), audit.ActionUpdate,
+		map[string][2]any{key: {b, a}}, time.Now())
 }
 
 func configLevelName(level config.Level) string {
@@ -89,25 +140,32 @@ func (s *ConfigAdminService) ListPlatformConfig(ctx context.Context, _ *Empty) (
 }
 
 func (s *ConfigAdminService) SetPlatformConfig(ctx context.Context, req *SetConfigRequest) (*PlatformConfigResult, error) {
-	if _, err := platformAdminCaller(ctx); err != nil {
+	rc, err := platformAdminCaller(ctx)
+	if err != nil {
 		return nil, err
 	}
+	before := s.platformValue(req.Key)
 	if err := s.store.SetPlatformGlobal(ctx, req.Key, req.Value); err != nil {
 		return nil, configErr(ctx, err)
 	}
+	s.recordConfig(ctx, rc, AuditEntityPlatformConfig, req.Key, before, req.Value)
 	return &PlatformConfigResult{Data: &PlatformConfigSet{Key: req.Key, Value: req.Value, AppliesImmediately: appliesImmediately(req.Key)}}, nil
 }
 
 // ResetPlatformConfig clears an override so the key falls back to its declared default: distinct
 // from setting it to the default's current value, which would pin it against a later change.
 func (s *ConfigAdminService) ResetPlatformConfig(ctx context.Context, req *ConfigKeyRequest) (*PlatformConfigResult, error) {
-	if _, err := platformAdminCaller(ctx); err != nil {
+	rc, err := platformAdminCaller(ctx)
+	if err != nil {
 		return nil, err
 	}
+	before := s.platformValue(req.Key)
 	if err := s.store.ResetPlatformGlobal(ctx, req.Key); err != nil {
 		return nil, configErr(ctx, err)
 	}
-	return &PlatformConfigResult{Data: &PlatformConfigSet{Key: req.Key, Value: s.store.Current().Get(req.Key), AppliesImmediately: appliesImmediately(req.Key)}}, nil
+	now := s.platformValue(req.Key)
+	s.recordConfig(ctx, rc, AuditEntityPlatformConfig, req.Key, before, now)
+	return &PlatformConfigResult{Data: &PlatformConfigSet{Key: req.Key, Value: now, AppliesImmediately: appliesImmediately(req.Key)}}, nil
 }
 
 // ListTenantConfig is open to any member: every key shapes what the app looks like or how long a
@@ -143,6 +201,7 @@ func (s *ConfigAdminService) SetTenantConfig(ctx context.Context, req *SetConfig
 	if err != nil {
 		return nil, err
 	}
+	before := s.tenantValue(ctx, tenant, req.Key)
 	tx, err := s.router.Begin(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -154,6 +213,7 @@ func (s *ConfigAdminService) SetTenantConfig(ctx context.Context, req *SetConfig
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	s.recordConfig(ctx, rc, AuditEntityConfig, req.Key, before, req.Value)
 	return &TenantConfigResult{Data: &TenantConfigSet{Key: req.Key, Value: req.Value, Overridden: true}}, nil
 }
 
@@ -168,6 +228,7 @@ func (s *ConfigAdminService) ResetTenantConfig(ctx context.Context, req *ConfigK
 	if err != nil {
 		return nil, err
 	}
+	before := s.tenantValue(ctx, tenant, req.Key)
 	tx, err := s.router.Begin(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -179,5 +240,7 @@ func (s *ConfigAdminService) ResetTenantConfig(ctx context.Context, req *ConfigK
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return &TenantConfigResult{Data: &TenantConfigSet{Key: req.Key, Value: s.effective(ctx, tenant).Get(req.Key), Overridden: false}}, nil
+	now := s.effective(ctx, tenant).Get(req.Key)
+	s.recordConfig(ctx, rc, AuditEntityConfig, req.Key, before, now)
+	return &TenantConfigResult{Data: &TenantConfigSet{Key: req.Key, Value: now, Overridden: false}}, nil
 }
