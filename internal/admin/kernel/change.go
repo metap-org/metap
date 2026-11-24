@@ -37,6 +37,23 @@ func Change(ctx context.Context, sink action.Sink, fallback Auditor, now func() 
 // fn has run: fn returns it with what to audit.
 func ChangeNew(ctx context.Context, sink action.Sink, fallback Auditor, now func() time.Time, c Caller,
 	entity string, act audit.AuditAction, fn func(ctx context.Context) (uuid.UUID, map[string][2]any, error)) error {
+	return run(ctx, sink, fallback, now, c, entity, act, true, fn)
+}
+
+// ChangeInTenant is Change for a change to the tenant's own data (its configuration, its roles): the
+// work and the entry are one transaction on the tenant's database, where the work is, and the audit
+// drain moves the entry from there into the one audit store. Work that opens a transaction through
+// the tenant router joins it as a savepoint.
+func ChangeInTenant(ctx context.Context, sink action.Sink, fallback Auditor, now func() time.Time, c Caller,
+	entity string, id uuid.UUID, act audit.AuditAction, fn func(ctx context.Context) (map[string][2]any, error)) error {
+	return run(ctx, sink, fallback, now, c, entity, act, false, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+		diff, err := fn(ctx)
+		return id, diff, err
+	})
+}
+
+func run(ctx context.Context, sink action.Sink, fallback Auditor, now func() time.Time, c Caller,
+	entity string, act audit.AuditAction, shared bool, fn func(ctx context.Context) (uuid.UUID, map[string][2]any, error)) error {
 	if now == nil {
 		now = time.Now
 	}
@@ -50,7 +67,11 @@ func ChangeNew(ctx context.Context, sink action.Sink, fallback Auditor, now func
 		}
 		return nil
 	}
-	unit, err := action.NewSharedUnit(sink, c.RC)
+	newUnit := action.NewUnit
+	if shared {
+		newUnit = action.NewSharedUnit
+	}
+	unit, err := newUnit(sink, c.RC)
 	if err != nil {
 		return err
 	}

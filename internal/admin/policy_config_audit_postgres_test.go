@@ -14,6 +14,7 @@ import (
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/permission/policypg"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // Who may do what, and how the tenant is configured, are the changes an admin makes that matter
@@ -105,4 +106,64 @@ func TestPolicyAndConfigChangesAreAudited(t *testing.T) {
 		assert.Equal(t, namedID("config", key), c.RecordID)
 		assert.Contains(t, string(c.Diff), "before")
 	}
+}
+
+// With a Sink a configuration change and its audit entry are one transaction, and the cached value
+// moves only when the change commits: a tenant's override on the tenant's database, a platform key on
+// the shared one.
+func TestConfigChangesAreAtomicWithTheirAuditEntry(t *testing.T) {
+	h := newIdentityHarness(t)
+	tenant := uuid.New()
+	boss := h.member(tenant, "boss@example.com", "admin")
+	platform := h.member(tenancy.PlatformTenantID, "root@example.com", RolePlatformAdmin)
+	ctx := context.Background()
+	perms := permission.NewPermissionService(policypg.NewPostgresPolicyStore(h.cfg.Router))
+
+	store := config.Unloaded(h.pool)
+	require.NoError(t, store.Reload(ctx))
+	effective := func(ctx context.Context, tenant uuid.UUID) *config.EffectiveConfig {
+		tx, err := h.cfg.Router.Begin(ctx, tenant)
+		require.NoError(t, err)
+		defer tx.Rollback(ctx) //nolint:errcheck
+		snap, err := store.LoadTenant(ctx, tx, tenant)
+		require.NoError(t, err)
+		return store.Effective(snap)
+	}
+	svc := NewConfigAdminService(store, h.cfg.Router, perms, effective, h.cfg.Audit).WithSink(h.cfg.Sink)
+	trail := func(entity string) []audit.Row {
+		h.drainAudit()
+		rows, err := h.cfg.Audit.Search(ctx, tenant, audit.SearchQuery{Entity: entity, Limit: audit.MaxPageSize})
+		require.NoError(t, err)
+		return rows
+	}
+	const key = "auth.passwordMinLength"
+
+	_, err := svc.SetTenantConfig(h.as(tenant, boss.ID), &SetConfigRequest{Key: key, Value: []byte(`12`)})
+	require.NoError(t, err)
+	require.Len(t, trail(AuditEntityConfig), 1)
+	require.JSONEq(t, `12`, string(effective(ctx, tenant).Get(key)))
+
+	// A refused change writes no entry and changes nothing.
+	_, err = svc.SetTenantConfig(h.as(tenant, boss.ID), &SetConfigRequest{Key: key, Value: []byte(`"not a number"`)})
+	require.Error(t, err)
+	require.Len(t, trail(AuditEntityConfig), 1)
+	require.JSONEq(t, `12`, string(effective(ctx, tenant).Get(key)))
+
+	_, err = svc.ResetTenantConfig(h.as(tenant, boss.ID), &ConfigKeyRequest{Key: key})
+	require.NoError(t, err)
+	require.Len(t, trail(AuditEntityConfig), 2)
+	require.NotEqual(t, `12`, string(effective(ctx, tenant).Get(key)), "the override is gone")
+
+	// A platform key: the snapshot moves when the change commits, with its entry.
+	asRoot := h.as(tenancy.PlatformTenantID, platform.ID)
+	_, err = svc.SetPlatformConfig(asRoot, &SetConfigRequest{Key: config.HTTPRateLimitBurst, Value: []byte(`321`)})
+	require.NoError(t, err)
+	require.JSONEq(t, `321`, string(store.Current().Get(config.HTTPRateLimitBurst)))
+	h.drainAudit()
+	rows, err := h.cfg.Audit.Search(ctx, tenancy.PlatformTenantID, audit.SearchQuery{Entity: AuditEntityPlatformConfig, Limit: audit.MaxPageSize})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	_, err = svc.ResetPlatformConfig(asRoot, &ConfigKeyRequest{Key: config.HTTPRateLimitBurst})
+	require.NoError(t, err)
+	require.NotEqual(t, `321`, string(store.Current().Get(config.HTTPRateLimitBurst)))
 }

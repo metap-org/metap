@@ -61,8 +61,10 @@ func TestAConfigChangeNeverRecordsTheValueOfASecretKey(t *testing.T) {
 
 	require.NotNil(t, config.Lookup(config.CronWebhookAuthorization))
 	require.True(t, config.Lookup(config.CronWebhookAuthorization).Secret, "the premise: this key is a credential")
-	s.recordConfig(context.Background(), rc, AuditEntityConfig, config.CronWebhookAuthorization,
-		json.RawMessage(`"Bearer old-secret"`), json.RawMessage(`"Bearer new-secret"`))
+	require.NoError(t, s.auditConfig(context.Background(), rc, AuditEntityConfig, config.CronWebhookAuthorization, false,
+		func(context.Context) (json.RawMessage, json.RawMessage, error) {
+			return json.RawMessage(`"Bearer old-secret"`), json.RawMessage(`"Bearer new-secret"`), nil
+		}))
 	require.Len(t, store.entries, 1)
 	raw := string(store.entries[0].Diff[config.CronWebhookAuthorization])
 	require.NotContains(t, raw, "old-secret")
@@ -75,7 +77,10 @@ func TestAConfigChangeRecordsBeforeAndAfterOfAnOrdinaryKey(t *testing.T) {
 	s := &ConfigAdminService{audit: store}
 	rc := &permission.RequestContext{TenantID: uuid.NewString(), UserID: uuid.NewString()}
 
-	s.recordConfig(context.Background(), rc, AuditEntityPlatformConfig, "auth.passwordMinLength", json.RawMessage(`8`), json.RawMessage(`12`))
+	require.NoError(t, s.auditConfig(context.Background(), rc, AuditEntityPlatformConfig, "auth.passwordMinLength", true,
+		func(context.Context) (json.RawMessage, json.RawMessage, error) {
+			return json.RawMessage(`8`), json.RawMessage(`12`), nil
+		}))
 	require.Len(t, store.entries, 1)
 	require.Equal(t, AuditEntityPlatformConfig, store.entries[0].Entity)
 	require.Equal(t, namedID("config", "auth.passwordMinLength"), store.entries[0].RecordID)

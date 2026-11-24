@@ -9,10 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/metap-org/metap/internal/admin/kernel"
+	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -36,6 +37,63 @@ type ConfigAdminService struct {
 	perms     *permission.PermissionService
 	effective EffectiveConfigFunc
 	audit     audit.Store
+	// sink, when set, makes a change and its audit entry one transaction (platform keys on the shared
+	// database, a tenant's overrides on the tenant's); nil keeps "change, then record best-effort".
+	sink action.Sink
+}
+
+// WithSink makes every change atomic with its audit entry and returns s.
+func (s *ConfigAdminService) WithSink(sink action.Sink) *ConfigAdminService {
+	s.sink = sink
+	return s
+}
+
+// configDiff is what recordConfig audits for one key: before and after, a credential's value never.
+func configDiff(key string, before, after json.RawMessage) map[string][2]any {
+	var b, a any = json.RawMessage(before), json.RawMessage(after)
+	if len(before) == 0 {
+		b = nil
+	}
+	if len(after) == 0 {
+		a = nil
+	}
+	if def := config.Lookup(key); def != nil && def.Secret {
+		b, a = "(secret)", "(secret)"
+	}
+	return map[string][2]any{key: {b, a}}
+}
+
+// callerOf is the audit caller for rc.
+func callerOf(rc *permission.RequestContext) (kernel.Caller, error) {
+	tenant, err := uuid.Parse(rc.TenantID)
+	if err != nil {
+		return kernel.Caller{}, err
+	}
+	self, _ := uuid.Parse(rc.UserID)
+	return kernel.Caller{RC: rc, Tenant: tenant, Self: self}, nil
+}
+
+// auditConfig runs fn (the write) and records it: atomically with a sink, on the shared database for
+// the platform's keys and on the tenant's own for a tenant's overrides, else write-then-record.
+func (s *ConfigAdminService) auditConfig(ctx context.Context, rc *permission.RequestContext, entity, key string, shared bool,
+	fn func(ctx context.Context) (before, after json.RawMessage, err error)) error {
+	c, err := callerOf(rc)
+	if err != nil {
+		return err
+	}
+	id := namedID("config", key)
+	body := func(ctx context.Context) (map[string][2]any, error) {
+		before, after, err := fn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return configDiff(key, before, after), nil
+	}
+	fallback := kernel.StoreAuditor{Store: s.audit}
+	if shared {
+		return kernel.Change(ctx, s.sink, fallback, nil, c, entity, id, audit.ActionUpdate, body)
+	}
+	return kernel.ChangeInTenant(ctx, s.sink, fallback, nil, c, entity, id, audit.ActionUpdate, body)
 }
 
 // NewConfigAdminService serves configuration from store; auditStore (may be nil) is where changes
@@ -59,28 +117,6 @@ func (s *ConfigAdminService) tenantValue(ctx context.Context, tenant uuid.UUID, 
 		return nil
 	}
 	return s.effective(ctx, tenant).Get(key)
-}
-
-// recordConfig audits one configuration change. A key whose value is a credential is audited as
-// changed, never with its value.
-func (s *ConfigAdminService) recordConfig(ctx context.Context, rc *permission.RequestContext, entity, key string, before, after json.RawMessage) {
-	tenant, err := uuid.Parse(rc.TenantID)
-	if err != nil {
-		return
-	}
-	var b, a any = json.RawMessage(before), json.RawMessage(after)
-	if len(before) == 0 {
-		b = nil
-	}
-	if len(after) == 0 {
-		a = nil
-	}
-	if def := config.Lookup(key); def != nil && def.Secret {
-		b, a = "(secret)", "(secret)"
-	}
-	actor, _ := uuid.Parse(rc.UserID)
-	writeAdminAudit(ctx, s.audit, tenant, actor, entity, namedID("config", key), audit.ActionUpdate,
-		map[string][2]any{key: {b, a}}, time.Now())
 }
 
 func configLevelName(level config.Level) string {
@@ -144,11 +180,16 @@ func (s *ConfigAdminService) SetPlatformConfig(ctx context.Context, req *SetConf
 	if err != nil {
 		return nil, err
 	}
-	before := s.platformValue(req.Key)
-	if err := s.store.SetPlatformGlobal(ctx, req.Key, req.Value); err != nil {
-		return nil, configErr(ctx, err)
+	err = s.auditConfig(ctx, rc, AuditEntityPlatformConfig, req.Key, true, func(ctx context.Context) (json.RawMessage, json.RawMessage, error) {
+		before := s.platformValue(req.Key)
+		if err := s.store.SetPlatformGlobalIn(ctx, kernel.IdentityDB{Pool: s.router.SharedPool()}, req.Key, req.Value); err != nil {
+			return nil, nil, configErr(ctx, err)
+		}
+		return before, req.Value, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	s.recordConfig(ctx, rc, AuditEntityPlatformConfig, req.Key, before, req.Value)
 	return &PlatformConfigResult{Data: &PlatformConfigSet{Key: req.Key, Value: req.Value, AppliesImmediately: appliesImmediately(req.Key)}}, nil
 }
 
@@ -159,12 +200,22 @@ func (s *ConfigAdminService) ResetPlatformConfig(ctx context.Context, req *Confi
 	if err != nil {
 		return nil, err
 	}
-	before := s.platformValue(req.Key)
-	if err := s.store.ResetPlatformGlobal(ctx, req.Key); err != nil {
-		return nil, configErr(ctx, err)
+	var now json.RawMessage
+	err = s.auditConfig(ctx, rc, AuditEntityPlatformConfig, req.Key, true, func(ctx context.Context) (json.RawMessage, json.RawMessage, error) {
+		before := s.platformValue(req.Key)
+		if err := s.store.ResetPlatformGlobalIn(ctx, kernel.IdentityDB{Pool: s.router.SharedPool()}, req.Key); err != nil {
+			return nil, nil, configErr(ctx, err)
+		}
+		// The snapshot is swapped when the change commits, so what the key reads back after the reset is
+		// its declared default (a Reset has no other outcome for a platform key).
+		if def := config.Lookup(req.Key); def != nil && def.Default != nil {
+			now = def.Default()
+		}
+		return before, now, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	now := s.platformValue(req.Key)
-	s.recordConfig(ctx, rc, AuditEntityPlatformConfig, req.Key, before, now)
 	return &PlatformConfigResult{Data: &PlatformConfigSet{Key: req.Key, Value: now, AppliesImmediately: appliesImmediately(req.Key)}}, nil
 }
 
@@ -201,19 +252,24 @@ func (s *ConfigAdminService) SetTenantConfig(ctx context.Context, req *SetConfig
 	if err != nil {
 		return nil, err
 	}
-	before := s.tenantValue(ctx, tenant, req.Key)
-	tx, err := s.router.Begin(ctx, tenant)
+	err = s.auditConfig(ctx, rc, AuditEntityConfig, req.Key, false, func(ctx context.Context) (json.RawMessage, json.RawMessage, error) {
+		before := s.tenantValue(ctx, tenant, req.Key)
+		tx, err := s.router.Begin(ctx, tenant)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := s.store.SetTenant(ctx, tx, tenant, req.Key, req.Value); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, nil, configErr(ctx, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, nil, err
+		}
+		return before, req.Value, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.SetTenant(ctx, tx, tenant, req.Key, req.Value); err != nil {
-		_ = tx.Rollback(ctx)
-		return nil, configErr(ctx, err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-	s.recordConfig(ctx, rc, AuditEntityConfig, req.Key, before, req.Value)
 	return &TenantConfigResult{Data: &TenantConfigSet{Key: req.Key, Value: req.Value, Overridden: true}}, nil
 }
 
@@ -228,19 +284,28 @@ func (s *ConfigAdminService) ResetTenantConfig(ctx context.Context, req *ConfigK
 	if err != nil {
 		return nil, err
 	}
-	before := s.tenantValue(ctx, tenant, req.Key)
-	tx, err := s.router.Begin(ctx, tenant)
+	var now json.RawMessage
+	err = s.auditConfig(ctx, rc, AuditEntityConfig, req.Key, false, func(ctx context.Context) (json.RawMessage, json.RawMessage, error) {
+		before := s.tenantValue(ctx, tenant, req.Key)
+		tx, err := s.router.Begin(ctx, tenant)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := s.store.ResetTenant(ctx, tx, tenant, req.Key); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, nil, configErr(ctx, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, nil, err
+		}
+		// What the key reads back with this tenant's override gone: the fleet default or the declared
+		// one. The tenant cache drops its copy when the change commits, so it is read from the platform
+		// snapshot here.
+		now = s.store.Current().Get(req.Key)
+		return before, now, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.ResetTenant(ctx, tx, tenant, req.Key); err != nil {
-		_ = tx.Rollback(ctx)
-		return nil, configErr(ctx, err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-	now := s.effective(ctx, tenant).Get(req.Key)
-	s.recordConfig(ctx, rc, AuditEntityConfig, req.Key, before, now)
 	return &TenantConfigResult{Data: &TenantConfigSet{Key: req.Key, Value: now, Overridden: false}}, nil
 }
