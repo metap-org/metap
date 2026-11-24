@@ -52,6 +52,9 @@ func AssignRole(ctx context.Context, db DBTX, tenantID, userID uuid.UUID, role s
 		 ON CONFLICT (tenant_id, user_id, role) DO NOTHING`,
 		tenantID, userID, role, assignedBy,
 	)
+	if err == nil {
+		notify(Change{Tenant: tenantID, User: userID})
+	}
 	return err
 }
 
@@ -59,6 +62,9 @@ func AssignRole(ctx context.Context, db DBTX, tenantID, userID uuid.UUID, role s
 func RevokeRole(ctx context.Context, db DBTX, tenantID, userID uuid.UUID, role string) error {
 	_, err := db.Exec(ctx, "DELETE FROM user_roles WHERE tenant_id = $1 AND user_id = $2 AND role = $3",
 		tenantID, userID, role)
+	if err == nil {
+		notify(Change{Tenant: tenantID, User: userID})
+	}
 	return err
 }
 
@@ -139,6 +145,7 @@ func RevokeAllRoles(ctx context.Context, db DBTX, tenantID, userID uuid.UUID) er
 	if _, err := db.Exec(ctx, "DELETE FROM user_roles WHERE tenant_id = $1 AND user_id = $2", tenantID, userID); err != nil {
 		return err
 	}
+	notify(Change{Tenant: tenantID, User: userID})
 	return RevokeScopedRolesOf(ctx, db, tenantID, userID)
 }
 
@@ -214,6 +221,9 @@ func AssignScopedRole(ctx context.Context, db DBTX, tenantID, userID uuid.UUID, 
 	}
 	_, err := db.Exec(ctx, `INSERT INTO role_assignments (tenant_id, user_id, role, scope_type, scope_id, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`, tenantID, userID, role, scopeType, scopeID, assignedBy)
+	if err == nil {
+		notify(Change{Tenant: tenantID, User: userID})
+	}
 	return err
 }
 
@@ -222,6 +232,9 @@ func RevokeScopedRole(ctx context.Context, db DBTX, tenantID, userID uuid.UUID, 
 	_, err := db.Exec(ctx, `DELETE FROM role_assignments
 		WHERE tenant_id = $1 AND user_id = $2 AND role = $3 AND scope_type = $4 AND scope_id = $5`,
 		tenantID, userID, role, scopeType, scopeID)
+	if err == nil {
+		notify(Change{Tenant: tenantID, User: userID})
+	}
 	return err
 }
 
@@ -253,6 +266,9 @@ func MembersOfScope(ctx context.Context, db DBTX, tenantID uuid.UUID, scopeType,
 // RevokeScopedRolesOf removes every scoped role a user holds; used when they leave the tenant.
 func RevokeScopedRolesOf(ctx context.Context, db DBTX, tenantID, userID uuid.UUID) error {
 	_, err := db.Exec(ctx, "DELETE FROM role_assignments WHERE tenant_id = $1 AND user_id = $2", tenantID, userID)
+	if err == nil {
+		notify(Change{Tenant: tenantID, User: userID})
+	}
 	return err
 }
 
@@ -260,5 +276,8 @@ func RevokeScopedRolesOf(ctx context.Context, db DBTX, tenantID, userID uuid.UUI
 func RevokeScopedRolesOnScope(ctx context.Context, db DBTX, tenantID uuid.UUID, scopeType, scopeID string) error {
 	_, err := db.Exec(ctx, "DELETE FROM role_assignments WHERE tenant_id = $1 AND scope_type = $2 AND scope_id = $3",
 		tenantID, scopeType, scopeID)
+	if err == nil {
+		notify(Change{Tenant: tenantID}) // a scope went away: any member's scoped roles may have changed
+	}
 	return err
 }

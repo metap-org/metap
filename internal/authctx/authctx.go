@@ -10,6 +10,7 @@ import (
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"github.com/metap-org/metap/pkg/tenancy"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -129,6 +130,20 @@ func (c *RolesCache) Invalidate(tenantID, userID uuid.UUID) {
 		return
 	}
 	c.cache.Delete(tenantID.String() + "/" + userID.String())
+}
+
+// InvalidateTenant drops every cached member of one tenant (a scope went away, so any member's scoped
+// roles may have changed); a no-op when nothing is cached.
+func (c *RolesCache) InvalidateTenant(tenantID uuid.UUID) {
+	if c == nil {
+		return
+	}
+	prefix := tenantID.String() + "/"
+	for key := range c.cache.Items() {
+		if strings.HasPrefix(key, prefix) {
+			c.cache.Delete(key)
+		}
+	}
 }
 
 // clone copies the slices so a caller that edits its RequestContext cannot change what the next
