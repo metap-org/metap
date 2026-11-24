@@ -157,6 +157,19 @@ func applyGrants(ctx context.Context, d Deps, tenantID uuid.UUID, grants []Grant
 				return fmt.Errorf("bootstrap: grant for role %q: entity pattern %q matches no registered entity", g.Role, pattern)
 			}
 		}
+		for _, name := range g.Resources {
+			key := permission.ResourceKey(name)
+			for _, a := range g.Actions {
+				if !permission.ValidResourceGrant(key, a) {
+					return fmt.Errorf("bootstrap: grant for role %q: %q is not a declared resource with action %q", g.Role, name, a)
+				}
+				t := triple{key, a, g.Role}
+				if !seen[t] {
+					seen[t] = true
+					wanted = append(wanted, t)
+				}
+			}
+		}
 	}
 
 	existing := map[string][]permission.PolicyRow{}
