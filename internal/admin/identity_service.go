@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metap-org/metap/internal/access"
+	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/auth/mail"
@@ -166,7 +167,7 @@ func SupportSessionRefusal(ctx context.Context, cfg IdentityConfig, rc *permissi
 		return "", err
 	}
 	if support {
-		return "A support session cannot create people, keys, roles or sign-in settings: those outlive the grant. Ask a workspace admin.", nil
+		return kernel.SupportRefusal, nil
 	}
 	return "", nil
 }
@@ -176,29 +177,7 @@ func svcErr(ctx context.Context, httpStatus uint16, code, message string) error 
 }
 
 // identityErr maps pkg/identity's errors onto the platform error envelope.
-func identityErr(ctx context.Context, err error) error {
-	switch {
-	case errors.Is(err, identity.ErrNotFound):
-		return svcErr(ctx, http.StatusNotFound, errcode.NotFound, "User not found.")
-	case errors.Is(err, identity.ErrAlreadyMember):
-		return svcErr(ctx, http.StatusConflict, errcode.AlreadyMember, "This person is already a member of the tenant.")
-	case errors.Is(err, identity.ErrWeakPassword):
-		return sendServiceError(ctx, &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.WeakPassword,
-			Message: err.Error(), FieldErrors: map[string][]string{"password": {err.Error()}}})
-	case errors.Is(err, identity.ErrMFAInvalidCode):
-		return svcErr(ctx, http.StatusUnauthorized, errcode.MFAInvalidCode, err.Error())
-	case errors.Is(err, identity.ErrMFALocked):
-		return svcErr(ctx, http.StatusTooManyRequests, errcode.AccountLocked, err.Error())
-	case errors.Is(err, identity.ErrMFAAlreadyOn):
-		return svcErr(ctx, http.StatusConflict, errcode.MFAAlreadyOn, err.Error())
-	case errors.Is(err, identity.ErrMFANotEnrolled), errors.Is(err, identity.ErrMFAEnrollNotRun):
-		return svcErr(ctx, http.StatusConflict, errcode.MFANotEnrolled, err.Error())
-	case errors.Is(err, identity.ErrInvalidEmail):
-		return sendServiceError(ctx, &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed,
-			Message: err.Error(), FieldErrors: map[string][]string{"email": {err.Error()}}})
-	}
-	return rpcError(ctx, err)
-}
+func identityErr(_ context.Context, err error) error { return kernel.IdentityErr(err) }
 
 // withTenantTx runs fn in a transaction on tenant's own database (where user_roles live).
 func (d identityDeps) withTenantTx(ctx context.Context, tenant uuid.UUID, fn func(db rolestore.DBTX) error) error {
@@ -297,13 +276,7 @@ func (d identityDeps) recordFor(ctx context.Context, c caller, entity string, id
 	writeAdminAudit(ctx, d.cfg.Audit, c.tenant, c.self, entity, id, action, diff, d.now())
 }
 
-func parseID(id string) (uuid.UUID, error) {
-	parsed, err := uuid.Parse(id)
-	if err != nil {
-		return uuid.Nil, crud.NewServiceErrorMsg(http.StatusBadRequest, errcode.ValidationFailed, "`id` must be a UUID")
-	}
-	return parsed, nil
-}
+func parseID(id string) (uuid.UUID, error) { return kernel.ParseID(id) }
 
 func (s *UserAdminService) ListUsers(ctx context.Context, req *ListUsersRequest) (*ListUsersResponse, error) {
 	c, err := s.admin(ctx)

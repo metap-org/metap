@@ -11,6 +11,10 @@ import (
 
 	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/admin"
+	"github.com/metap-org/metap/internal/admin/apikeys"
+	"github.com/metap-org/metap/internal/admin/kernel"
+	"github.com/metap-org/metap/internal/admin/mfa"
+	"github.com/metap-org/metap/internal/admin/preferences"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
@@ -343,14 +347,14 @@ func registerConfigOperations(api huma.API, state *AppState) {
 			return s.ResetTenantConfig(ctx, &admin.ConfigKeyRequest{Key: in.Key})
 		})
 
-	prefs := admin.NewPreferencesService(state.Pool, state.Permissions)
+	prefs := preferences.New(preferences.NewPgStore(state.Pool), state.Permissions)
 	adminOp(api, state, opOf("getPreferences", http.MethodGet, "/preferences", "The caller's preferences", "Preferences"),
-		func(ctx context.Context, _ *struct{}) (*admin.PreferencesResult, error) {
-			return prefs.GetPreferences(ctx, &admin.Empty{})
+		func(ctx context.Context, _ *struct{}) (*preferences.PreferencesResult, error) {
+			return prefs.Get(ctx)
 		})
 	adminOp(api, state, opOf("updatePreferences", http.MethodPut, "/preferences", "Change the caller's preferences", "Preferences"),
-		func(ctx context.Context, in *bodyIn[admin.Preferences]) (*admin.PreferencesResult, error) {
-			return prefs.UpdatePreferences(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[preferences.Preferences]) (*preferences.PreferencesResult, error) {
+			return prefs.Update(ctx, &in.Body)
 		})
 }
 
@@ -476,19 +480,21 @@ func registerUserOperations(api huma.API, state *AppState, s *admin.UserAdminSer
 	adminOp(api, state, createSA, func(ctx context.Context, in *bodyIn[admin.CreateServiceAccountRequest]) (*admin.User, error) {
 		return s.CreateServiceAccount(ctx, &in.Body)
 	})
+	cfg := state.Identity
+	keys := apikeys.New(apikeys.NewPgStore(cfg.Shared), kernel.StoreAuditor{Store: cfg.Audit}, cfg.APIKeyMaxDays, nil)
 	adminOp(api, state, opOf("listApiKeys", http.MethodGet, "/admin/users/{id}/api-keys", "A member's API keys", tag),
-		func(ctx context.Context, in *idPath) (*admin.ListApiKeysResponse, error) {
-			return s.ListApiKeys(ctx, id(in.ID))
+		func(ctx context.Context, in *idPath) (*apikeys.ListApiKeysResponse, error) {
+			return keys.List(ctx, in.ID)
 		})
 	createKey := opOf("createApiKey", http.MethodPost, "/admin/users/{id}/api-keys", "Issue an API key (the secret is shown once)", tag)
 	createKey.DefaultStatus = http.StatusCreated
-	adminOp(api, state, createKey, func(ctx context.Context, in *idBodyIn[admin.CreateApiKeyRequest]) (*admin.CreateApiKeyResponse, error) {
+	adminOp(api, state, createKey, func(ctx context.Context, in *idBodyIn[apikeys.CreateApiKeyRequest]) (*apikeys.CreateApiKeyResponse, error) {
 		in.Body.UserId = in.ID
-		return s.CreateApiKey(ctx, &in.Body)
+		return keys.Create(ctx, &in.Body)
 	})
 	adminNoContent(api, state, opOf("revokeApiKey", http.MethodDelete, "/admin/api-keys/{id}", "Revoke an API key", tag),
 		func(ctx context.Context, in *idPath) (*admin.Empty, error) {
-			return s.RevokeApiKey(ctx, &admin.ApiKeyIdRequest{Id: in.ID})
+			return &admin.Empty{}, keys.Revoke(ctx, in.ID)
 		})
 }
 
@@ -570,23 +576,22 @@ func registerAccountOperations(api huma.API, state *AppState, s *admin.AccountSe
 		func(ctx context.Context, in *tenantUsersIn) (*admin.ListTenantUsersResponse, error) {
 			return s.ListTenantUsers(ctx, &admin.ListTenantUsersRequest{Search: in.Search, Limit: in.Limit})
 		})
+	mfaSvc := mfa.New(mfa.NewPgStore(state.Identity.Shared), kernel.StoreAuditor{Store: state.Identity.Audit}, nil)
 	adminOp(api, state, opOf("getMyMfa", http.MethodGet, "/me/mfa", "The caller's two-step sign-in status", tag),
-		func(ctx context.Context, _ *struct{}) (*admin.MfaStatus, error) { return s.GetMfaStatus(ctx, empty) })
+		func(ctx context.Context, _ *struct{}) (*mfa.MfaStatus, error) { return mfaSvc.Status(ctx) })
 	adminOp(api, state, opOf("beginMfaEnrollment", http.MethodPost, "/me/mfa/enrollment", "Start turning on two-step sign-in", tag),
-		func(ctx context.Context, _ *struct{}) (*admin.MfaEnrollment, error) {
-			return s.BeginMfaEnrollment(ctx, empty)
-		})
+		func(ctx context.Context, _ *struct{}) (*mfa.MfaEnrollment, error) { return mfaSvc.Begin(ctx) })
 	adminOp(api, state, opOf("confirmMfaEnrollment", http.MethodPost, "/me/mfa/enrollment/confirm", "Finish turning on two-step sign-in", tag),
-		func(ctx context.Context, in *bodyIn[admin.MfaCodeRequest]) (*admin.MfaRecoveryCodes, error) {
-			return s.ConfirmMfaEnrollment(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[mfa.MfaCodeRequest]) (*mfa.MfaRecoveryCodes, error) {
+			return mfaSvc.Confirm(ctx, &in.Body)
 		})
 	adminNoContent(api, state, opOf("disableMyMfa", http.MethodPost, "/me/mfa/disable", "Turn off two-step sign-in", tag),
-		func(ctx context.Context, in *bodyIn[admin.MfaCodeRequest]) (*admin.Empty, error) {
-			return s.DisableMfa(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[mfa.MfaCodeRequest]) (*admin.Empty, error) {
+			return &admin.Empty{}, mfaSvc.Disable(ctx, &in.Body)
 		})
 	adminOp(api, state, opOf("regenerateRecoveryCodes", http.MethodPost, "/me/mfa/recovery-codes", "Replace the caller's recovery codes", tag),
-		func(ctx context.Context, in *bodyIn[admin.MfaCodeRequest]) (*admin.MfaRecoveryCodes, error) {
-			return s.RegenerateRecoveryCodes(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[mfa.MfaCodeRequest]) (*mfa.MfaRecoveryCodes, error) {
+			return mfaSvc.RegenerateRecoveryCodes(ctx, &in.Body)
 		})
 }
 

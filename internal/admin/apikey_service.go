@@ -2,10 +2,8 @@ package admin
 
 import (
 	"context"
-	"fmt"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -13,15 +11,6 @@ import (
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 )
-
-// MaxAPIKeyLifetimeDays bounds an expiring key's lifetime.
-const MaxAPIKeyLifetimeDays = 3650
-
-func toAPIKey(k identity.APIKey) *ApiKey {
-	return &ApiKey{Id: k.ID.String(), UserId: k.MemberID.String(), Name: k.Name, Prefix: k.Prefix,
-		ExpiresAt: formatTime(k.ExpiresAt), RevokedAt: formatTime(k.RevokedAt), LastUsedAt: formatTime(k.LastUsedAt),
-		CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339)}
-}
 
 func (s *UserAdminService) CreateServiceAccount(ctx context.Context, req *CreateServiceAccountRequest) (*User, error) {
 	c, err := adminDurable(s.d, ctx)
@@ -77,85 +66,4 @@ func (s *UserAdminService) ListServiceAccounts(ctx context.Context, _ *Empty) (*
 		return nil, identityErr(ctx, err)
 	}
 	return &ListUsersResponse{Users: users, Total: int32(len(users))}, nil
-}
-
-func (s *UserAdminService) CreateApiKey(ctx context.Context, req *CreateApiKeyRequest) (*CreateApiKeyResponse, error) {
-	c, err := adminDurable(s.d, ctx)
-	if err != nil {
-		return nil, err
-	}
-	member, err := parseID(req.GetUserId())
-	if err != nil {
-		return nil, err
-	}
-	days := int(req.GetExpiresInDays())
-	if days < 0 || days > MaxAPIKeyLifetimeDays {
-		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "expiresInDays must be between 0 and 3650")
-	}
-	// The tenant's own cap (roadmap 115 M11): a key must expire, and no later than the cap.
-	if s.d.cfg.APIKeyMaxDays != nil {
-		if max := s.d.cfg.APIKeyMaxDays(ctx, c.tenant); max > 0 && (days == 0 || days > max) {
-			return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed,
-				fmt.Sprintf("This tenant limits API keys to %d days; set expiresInDays between 1 and %d.", max, max))
-		}
-	}
-	now := s.d.now()
-	var expires *time.Time
-	if days > 0 {
-		t := now.Add(time.Duration(days) * 24 * time.Hour)
-		expires = &t
-	}
-	var createdBy *uuid.UUID
-	if c.self != uuid.Nil {
-		createdBy = &c.self
-	}
-	token, key, err := identity.CreateAPIKey(ctx, s.d.cfg.Shared, c.tenant, member, req.GetName(), expires, createdBy, now)
-	if err != nil {
-		if err == identity.ErrNotFound {
-			return nil, identityErr(ctx, err)
-		}
-		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, err.Error())
-	}
-	s.d.record(ctx, c, member, audit.ActionUpdate, map[string][2]any{"apiKeyCreated": {nil, key.Name + " (" + key.Prefix + ")"}})
-	return &CreateApiKeyResponse{ApiKey: toAPIKey(*key), Token: token}, nil
-}
-
-func (s *UserAdminService) ListApiKeys(ctx context.Context, req *UserIdRequest) (*ListApiKeysResponse, error) {
-	c, err := s.admin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	member, err := parseID(req.GetId())
-	if err != nil {
-		return nil, err
-	}
-	keys, err := identity.ListAPIKeys(ctx, s.d.cfg.Shared, c.tenant, member)
-	if err != nil {
-		return nil, identityErr(ctx, err)
-	}
-	resp := &ListApiKeysResponse{ApiKeys: []*ApiKey{}}
-	for _, k := range keys {
-		resp.ApiKeys = append(resp.ApiKeys, toAPIKey(k))
-	}
-	return resp, nil
-}
-
-func (s *UserAdminService) RevokeApiKey(ctx context.Context, req *ApiKeyIdRequest) (*Empty, error) {
-	c, err := s.admin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	id, err := parseID(req.GetId())
-	if err != nil {
-		return nil, err
-	}
-	member, err := identity.KeyTenant(ctx, s.d.cfg.Shared, c.tenant, id)
-	if err != nil {
-		return nil, identityErr(ctx, err)
-	}
-	if err := identity.RevokeAPIKey(ctx, s.d.cfg.Shared, c.tenant, id, s.d.now()); err != nil {
-		return nil, identityErr(ctx, err)
-	}
-	s.d.record(ctx, c, member, audit.ActionUpdate, map[string][2]any{"apiKeyRevoked": {nil, id.String()}})
-	return &Empty{}, nil
 }

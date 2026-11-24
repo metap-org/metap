@@ -2,11 +2,11 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/pkg/audit"
 )
 
@@ -19,21 +19,7 @@ import (
 // config services), so what an admin changes is in one trail whatever service made the change.
 func writeAdminAudit(ctx context.Context, store audit.Store, tenant, actor uuid.UUID, entity string, id uuid.UUID,
 	action audit.AuditAction, diff map[string][2]any, now time.Time) {
-	if store == nil {
-		return
-	}
-	obj := audit.JsonObject{}
-	for field, ba := range diff {
-		raw, err := json.Marshal(map[string]any{"before": ba[0], "after": ba[1]})
-		if err == nil {
-			obj[field] = raw
-		}
-	}
-	entry := audit.Entry{TenantID: tenant, Entity: entity, RecordID: id, Action: action, Diff: obj, OccurredAt: now}
-	if actor != uuid.Nil {
-		entry.ActorUserID = &actor
-	}
-	_ = store.Record(ctx, tenant, entry)
+	kernel.WriteAudit(ctx, store, tenant, actor, entity, id, action, diff, now)
 }
 
 // namedID is a stable id for something an audit entry is about that has no uuid of its own (a
