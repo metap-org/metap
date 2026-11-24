@@ -7,7 +7,9 @@ import (
 	"reflect"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -72,9 +74,146 @@ func emptySlices(v reflect.Value) {
 	}
 }
 
+// operationAccess is who each administrative operation lets in, by operation id: the route table
+// of this API, in one place (roadmap 120, P4). adminOp refuses to register an operation that is not
+// listed, so an operation that says nothing about who may call it is never served. The gate checks
+// it before the operation's input is read; the services check it again for in-process callers,
+// from the same definition (internal/access), and a test calls every operation as a caller who
+// should be refused.
+var operationAccess = map[string]access.Level{
+	"listPolicies":             access.Admin,         // GET "/admin/policies"
+	"createPolicy":             access.Admin,         // POST "/admin/policies"
+	"seedDefaultPolicies":      access.Admin,         // POST "/admin/policies/seed-defaults"
+	"syncMatrixPolicies":       access.Admin,         // PUT "/admin/policies/matrix"
+	"explainPolicy":            access.Admin,         // POST "/admin/policies/explain"
+	"deletePolicy":             access.Admin,         // DELETE "/admin/policies/{id}"
+	"invalidateUserContext":    access.Admin,         // POST "/admin/users/{userId}/context/invalidate"
+	"listPlatformConfig":       access.PlatformAdmin, // GET "/platform/config"
+	"setPlatformConfig":        access.PlatformAdmin, // PUT "/platform/config/{key}"
+	"resetPlatformConfig":      access.PlatformAdmin, // DELETE "/platform/config/{key}"
+	"listTenantConfig":         access.Authenticated, // GET "/admin/config"
+	"setTenantConfig":          access.Admin,         // PUT "/admin/config/{key}"
+	"resetTenantConfig":        access.Admin,         // DELETE "/admin/config/{key}"
+	"getPreferences":           access.Authenticated, // GET "/preferences"
+	"updatePreferences":        access.Authenticated, // PUT "/preferences"
+	"listCredentials":          access.Admin,         // GET "/admin/credentials"
+	"createCredential":         access.Admin,         // POST "/admin/credentials"
+	"updateCredential":         access.Admin,         // PATCH "/admin/credentials/{id}"
+	"deleteCredential":         access.Admin,         // DELETE "/admin/credentials/{id}"
+	"listUsers":                access.Admin,         // GET "/admin/users"
+	"createUser":               access.Durable,       // POST "/admin/users"
+	"inviteUser":               access.Durable,       // POST "/admin/invitations"
+	"getUser":                  access.Admin,         // GET "/admin/users/{id}"
+	"updateUser":               access.Admin,         // PATCH "/admin/users/{id}"
+	"removeUser":               access.Admin,         // DELETE "/admin/users/{id}"
+	"disableUser":              access.Admin,         // POST "/admin/users/{id}/disable"
+	"enableUser":               access.Admin,         // POST "/admin/users/{id}/enable"
+	"resetUserPassword":        access.Durable,       // POST "/admin/users/{id}/password"
+	"resetUserMfa":             access.Durable,       // POST "/admin/users/{id}/mfa/reset"
+	"resendInvitation":         access.Durable,       // POST "/admin/users/{id}/invitation/resend"
+	"assignRole":               access.Durable,       // POST "/admin/users/{id}/roles"
+	"revokeRole":               access.Admin,         // DELETE "/admin/users/{id}/roles/{role}"
+	"listUserAudit":            access.Admin,         // GET "/admin/users/{id}/audit"
+	"listScopeMembers":         access.Admin,         // GET "/admin/scope-members"
+	"listServiceAccounts":      access.Admin,         // GET "/admin/service-accounts"
+	"createServiceAccount":     access.Durable,       // POST "/admin/service-accounts"
+	"listApiKeys":              access.Admin,         // GET "/admin/users/{id}/api-keys"
+	"createApiKey":             access.Durable,       // POST "/admin/users/{id}/api-keys"
+	"revokeApiKey":             access.Admin,         // DELETE "/admin/api-keys/{id}"
+	"listRoles":                access.Admin,         // GET "/admin/roles"
+	"createRole":               access.Admin,         // POST "/admin/roles"
+	"getRole":                  access.Admin,         // GET "/admin/roles/{name}"
+	"updateRole":               access.Admin,         // PATCH "/admin/roles/{name}"
+	"deleteRole":               access.Admin,         // DELETE "/admin/roles/{name}"
+	"getRolePermissions":       access.Admin,         // GET "/admin/roles/{name}/permissions"
+	"setRolePermissions":       access.Admin,         // PUT "/admin/roles/{name}/permissions"
+	"listRoleAudit":            access.Admin,         // GET "/admin/roles/{name}/audit"
+	"listPermissionResources":  access.Admin,         // GET "/admin/permission-resources"
+	"getMe":                    access.Authenticated, // GET "/me"
+	"updateMyProfile":          access.Authenticated, // PATCH "/me"
+	"listMyTenants":            access.Authenticated, // GET "/me/tenants"
+	"listTenantUsers":          access.Authenticated, // GET "/tenant-users"
+	"getMyMfa":                 access.Authenticated, // GET "/me/mfa"
+	"beginMfaEnrollment":       access.Authenticated, // POST "/me/mfa/enrollment"
+	"confirmMfaEnrollment":     access.Authenticated, // POST "/me/mfa/enrollment/confirm"
+	"disableMyMfa":             access.Authenticated, // POST "/me/mfa/disable"
+	"regenerateRecoveryCodes":  access.Authenticated, // POST "/me/mfa/recovery-codes"
+	"listTenants":              access.PlatformAdmin, // GET "/platform/tenants"
+	"createTenant":             access.PlatformAdmin, // POST "/platform/tenants"
+	"getTenant":                access.PlatformAdmin, // GET "/platform/tenants/{id}"
+	"updateTenant":             access.PlatformAdmin, // PATCH "/platform/tenants/{id}"
+	"suspendTenant":            access.PlatformAdmin, // POST "/platform/tenants/{id}/suspend"
+	"resumeTenant":             access.PlatformAdmin, // POST "/platform/tenants/{id}/resume"
+	"requestTenantDeletion":    access.PlatformAdmin, // POST "/platform/tenants/{id}/deletion"
+	"cancelTenantDeletion":     access.PlatformAdmin, // DELETE "/platform/tenants/{id}/deletion"
+	"searchAudit":              access.Admin,         // GET "/admin/audit"
+	"verifyAuditChain":         access.Admin,         // POST "/admin/audit/verify"
+	"listSupportGrants":        access.Admin,         // GET "/admin/support-grants"
+	"grantSupportAccess":       access.Admin,         // POST "/admin/support-grants"
+	"revokeSupportGrant":       access.Admin,         // POST "/admin/support-grants/{id}/revoke"
+	"startSupportSession":      access.PlatformAdmin, // POST "/platform/support-sessions"
+	"getOwnerStatus":           access.Admin,         // GET "/admin/owner"
+	"transferOwnership":        access.Admin,         // POST "/admin/owner/transfer"
+	"requestWorkspaceDeletion": access.Admin,         // POST "/admin/workspace/deletion"
+	"cancelOwnerRecovery":      access.Admin,         // POST "/admin/owner/recovery/cancel"
+	"getTenantOwner":           access.PlatformAdmin, // GET "/platform/tenants/{id}/owner"
+	"requestOwnerRecovery":     access.PlatformAdmin, // POST "/platform/owner-recovery"
+	"completeOwnerRecovery":    access.PlatformAdmin, // POST "/platform/owner-recovery/complete"
+	"getSsoConfig":             access.Admin,         // GET "/admin/sso"
+	"setSsoConfig":             access.Durable,       // PUT "/admin/sso"
+	"getSamlConfig":            access.Admin,         // GET "/admin/sso/saml"
+	"setSamlConfig":            access.Durable,       // PUT "/admin/sso/saml"
+	"deleteSamlConfig":         access.Admin,         // DELETE "/admin/sso/saml"
+	"verifySsoDomain":          access.Durable,       // POST "/admin/sso/domains/{domain}/verify"
+	"deleteSsoConfig":          access.Admin,         // DELETE "/admin/sso"
+}
+
+// AdminOperationAccess lists each administrative operation id with the level it was declared at
+// (access.Level's name), for tests and tooling that check the route table against what is served.
+func AdminOperationAccess() map[string]string {
+	out := make(map[string]string, len(operationAccess))
+	for id, level := range operationAccess {
+		out[id] = level.String()
+	}
+	return out
+}
+
+// accessOf is the level an operation was declared at; an undeclared operation is a programming error.
+func accessOf(operationID string) access.Level {
+	level, ok := operationAccess[operationID]
+	if !ok {
+		panic("httpserver: operation " + operationID + " declares no access (add it to operationAccess)")
+	}
+	return level
+}
+
+// gateAccess refuses, before the operation's input is read, a caller its level does not let in.
+func gateAccess(state *AppState, level access.Level) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		rc := callerOf(ctx.Context())
+		_, w := humago.Unwrap(ctx)
+		if why := access.Refusal(level, rc); why != "" {
+			forbidden(why).respond(w)
+			return
+		}
+		if level == access.Durable && state.Identity != nil {
+			why, err := admin.SupportSessionRefusal(ctx.Context(), *state.Identity, rc)
+			if err != nil {
+				writeInternalError(w, err)
+				return
+			}
+			if why != "" {
+				forbidden(why).respond(w)
+				return
+			}
+		}
+		next(ctx)
+	}
+}
+
 // adminOp registers one operation that answers with a JSON body.
 func adminOp[I, R any](api huma.API, state *AppState, op huma.Operation, call func(context.Context, *I) (*R, error)) {
-	op.Middlewares = huma.Middlewares{authed(state)}
+	op.Middlewares = huma.Middlewares{authed(state), gateAccess(state, accessOf(op.OperationID))}
 	huma.Register(api, op, func(ctx context.Context, in *I) (*adminOut[R], error) {
 		res, err := call(admin.WithCaller(ctx, callerOf(ctx)), in)
 		if err != nil {
@@ -87,7 +226,7 @@ func adminOp[I, R any](api huma.API, state *AppState, op huma.Operation, call fu
 
 // adminNoContent registers one operation that answers 204.
 func adminNoContent[I, R any](api huma.API, state *AppState, op huma.Operation, call func(context.Context, *I) (*R, error)) {
-	op.Middlewares = huma.Middlewares{authed(state)}
+	op.Middlewares = huma.Middlewares{authed(state), gateAccess(state, accessOf(op.OperationID))}
 	op.DefaultStatus = http.StatusNoContent
 	huma.Register(api, op, func(ctx context.Context, in *I) (*struct{}, error) {
 		if _, err := call(admin.WithCaller(ctx, callerOf(ctx)), in); err != nil {

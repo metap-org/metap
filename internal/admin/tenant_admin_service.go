@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/auth/mail"
@@ -48,17 +49,7 @@ func (s *TenantAdminService) platformAdmin(ctx context.Context) (caller, error) 
 }
 
 func (d identityDeps) platformAdmin(ctx context.Context) (caller, error) {
-	c, err := d.caller(ctx)
-	if err != nil {
-		return caller{}, err
-	}
-	if c.tenant != tenancy.PlatformTenantID || !hasRole(c.rc, RolePlatformAdmin) {
-		return caller{}, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, "This action requires the platform_admin role.")
-	}
-	if !c.rc.ScopePermitsAdminSurface() {
-		return caller{}, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, "This action requires the `admin` OAuth2 scope.")
-	}
-	return c, nil
+	return d.at(ctx, access.PlatformAdmin)
 }
 
 func hasRole(rc *permission.RequestContext, role string) bool {

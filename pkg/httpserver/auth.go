@@ -7,13 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/authctx"
 	"github.com/metap-org/metap/pkg/auth/jwks"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,7 +21,6 @@ import (
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 type authError struct {
@@ -193,35 +192,18 @@ func Authenticated(state *AppState) router.Middleware {
 }
 
 // Admin is Authenticated plus the tenant admin role (and, for an OAuth2 token, the admin scope).
-func Admin(state *AppState) router.Middleware {
-	return func(next http.Handler) http.Handler {
-		return Authenticated(state)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			rc := RC(r)
-			if !rc.IsAdmin() {
-				forbidden("This action requires the admin role.").respond(w)
-				return
-			}
-			if !rc.ScopePermitsAdminSurface() {
-				forbidden("This action requires the `admin` OAuth2 scope.").respond(w)
-				return
-			}
-			next.ServeHTTP(w, r)
-		}))
-	}
-}
+func Admin(state *AppState) router.Middleware { return atLevel(state, access.Admin) }
 
 // PlatformAdmin is the cross-tenant admin gate: the token's tenant is tenancy.PlatformTenantID
 // and the resolved roles include platform_admin.
-func PlatformAdmin(state *AppState) router.Middleware {
+func PlatformAdmin(state *AppState) router.Middleware { return atLevel(state, access.PlatformAdmin) }
+
+// atLevel is Authenticated plus whatever level asks of the caller (internal/access decides).
+func atLevel(state *AppState, level access.Level) router.Middleware {
 	return func(next http.Handler) http.Handler {
 		return Authenticated(state)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			rc := RC(r)
-			if rc.TenantID != tenancy.PlatformTenantID.String() || !slices.Contains(rc.Roles, "platform_admin") {
-				forbidden("This action requires the platform_admin role.").respond(w)
-				return
-			}
-			if !rc.ScopePermitsAdminSurface() {
-				forbidden("This action requires the `admin` OAuth2 scope.").respond(w)
+			if why := access.Refusal(level, RC(r)); why != "" {
+				forbidden(why).respond(w)
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -261,32 +243,20 @@ func requireAuth(w http.ResponseWriter, r *http.Request, state *AppState) (*perm
 }
 
 func requireAdmin(w http.ResponseWriter, r *http.Request, state *AppState) (*permission.RequestContext, bool) {
-	rc, ok := requireAuth(w, r, state)
-	if !ok {
-		return nil, false
-	}
-	if !rc.IsAdmin() {
-		forbidden("This action requires the admin role.").respond(w)
-		return nil, false
-	}
-	if !rc.ScopePermitsAdminSurface() {
-		forbidden("This action requires the `admin` OAuth2 scope.").respond(w)
-		return nil, false
-	}
-	return rc, true
+	return requireAt(w, r, state, access.Admin)
 }
 
 func requirePlatformAdmin(w http.ResponseWriter, r *http.Request, state *AppState) (*permission.RequestContext, bool) {
+	return requireAt(w, r, state, access.PlatformAdmin)
+}
+
+func requireAt(w http.ResponseWriter, r *http.Request, state *AppState, level access.Level) (*permission.RequestContext, bool) {
 	rc, ok := requireAuth(w, r, state)
 	if !ok {
 		return nil, false
 	}
-	if rc.TenantID != tenancy.PlatformTenantID.String() || !slices.Contains(rc.Roles, "platform_admin") {
-		forbidden("This action requires the platform_admin role.").respond(w)
-		return nil, false
-	}
-	if !rc.ScopePermitsAdminSurface() {
-		forbidden("This action requires the `admin` OAuth2 scope.").respond(w)
+	if why := access.Refusal(level, rc); why != "" {
+		forbidden(why).respond(w)
 		return nil, false
 	}
 	return rc, true
