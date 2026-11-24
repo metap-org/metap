@@ -31,16 +31,17 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/metap-org/metap/internal/admin"
+	"github.com/metap-org/metap/internal/authctx"
+	"github.com/metap-org/metap/internal/httpapi"
+	"github.com/metap-org/metap/internal/httpapi/attachmentroutes"
+	"github.com/metap-org/metap/internal/httpapi/cronroutes"
+	"github.com/metap-org/metap/internal/httpapi/dashboardroutes"
+	"github.com/metap-org/metap/internal/httpapi/oauth2routes"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/db"
-	"github.com/metap-org/metap/pkg/httpserver"
-	"github.com/metap-org/metap/pkg/httpserver/attachmentroutes"
-	"github.com/metap-org/metap/pkg/httpserver/cronroutes"
-	"github.com/metap-org/metap/pkg/httpserver/dashboardroutes"
-	"github.com/metap-org/metap/pkg/httpserver/oauth2routes"
 	"github.com/metap-org/metap/pkg/jobs/scheduler"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/httpx"
@@ -67,7 +68,7 @@ type Options struct {
 
 	// WrapBackend, if set, decorates the CRUD backend the REST API serves (/api/{entity}) — e.g.
 	// to add service-specific create/update/delete guards. Defaults to state.Crud as-is.
-	WrapBackend func(state *httpserver.AppState) (crud.RecordBackend, error)
+	WrapBackend func(state *httpapi.AppState) (crud.RecordBackend, error)
 
 	// ExternalEntities are entities this service serves whose records live outside its database
 	// (a read model over another system): registered and served like the rest (metadata, REST),
@@ -78,25 +79,25 @@ type Options struct {
 	// (EntityDefinition.Actions); they are served over REST (POST /api/{entity}[/{id}]/actions/{action}).
 	// Handlers read and write through state.Crud (or the wrapped backend) with the caller's own
 	// RequestContext, so permissions bound them exactly like plain CRUD.
-	Actions func(state *httpserver.AppState, registry *crud.ActionRegistry) error
+	Actions func(state *httpapi.AppState, registry *crud.ActionRegistry) error
 
 	// Routes mounts the service's own custom HTTP routes next to metap's generic ones.
-	Routes httpserver.Mount
+	Routes httpapi.Mount
 
 	// Configure, if set, runs after AppState is built and before anything is served — the
 	// escape hatch for per-service AppState tweaks.
-	Configure func(state *httpserver.AppState) error
+	Configure func(state *httpapi.AppState) error
 
 	// Modules are the optional route groups to serve next to the core ones. nil means
 	// DefaultModules (everything — the behavior before route groups were split out); pass an
 	// empty, non-nil slice to serve none.
-	Modules []httpserver.Mount
+	Modules []httpapi.Mount
 }
 
 // DefaultModules is every optional route group: the OAuth2 authorization server, cron job
 // admin, dashboards, and record attachments (which answers 503 until state.ObjectStore is set).
-func DefaultModules() []httpserver.Mount {
-	return []httpserver.Mount{oauth2routes.Mount, cronroutes.Mount, dashboardroutes.Mount, attachmentroutes.Mount}
+func DefaultModules() []httpapi.Mount {
+	return []httpapi.Mount{oauth2routes.Mount, cronroutes.Mount, dashboardroutes.Mount, attachmentroutes.Mount}
 }
 
 // Main runs the service and exits the process with status 1 on any error.
@@ -110,7 +111,7 @@ func Main(opts Options) {
 // ExternalEntity is one Options.ExternalEntities entry.
 type ExternalEntity struct {
 	Definition metadata.EntityDefinition
-	Backend    func(state *httpserver.AppState) (crud.RecordBackend, error)
+	Backend    func(state *httpapi.AppState) (crud.RecordBackend, error)
 }
 
 // Run boots the service and serves until ctx is cancelled, SIGINT/SIGTERM, or a listener failure.
@@ -132,7 +133,12 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("building secret store: %w", err)
 	}
 	router := tenancy.NewRouter(pool, tenancy.NewRegistryCache(tenancy.NewPostgresTenantRegistry(pool)), secretManager)
-	permissions := permission.NewPermissionService(policypg.NewPostgresPolicyStore(router))
+	policies := policypg.NewPostgresPolicyStore(router)
+	// The entity-level checks read a tenant's policies from memory for POLICY_CACHE_TTL_SECONDS
+	// (default 45, 0 turns it off); a policy changed through this process applies at once, any
+	// other change within the TTL (roadmap 120).
+	policyStore := permission.NewMatrixStore(policies, policies.LoadContextPolicies, env.Seconds("POLICY_CACHE_TTL_SECONDS", 45*time.Second))
+	permissions := permission.NewPermissionService(policyStore)
 
 	tokens, err := BuildTokenAuth(ctx, appCfg)
 	if err != nil {
@@ -192,8 +198,12 @@ func Run(ctx context.Context, opts Options) error {
 	if tokens.PublicKey != nil {
 		publicKey = tokens.PublicKey
 	}
-	state := httpserver.NewAppState(pool, registry, &mdPtr, permissions, tokens.PrivateKeyPEM, publicKey, router)
+	state := httpapi.NewAppState(pool, registry, &mdPtr, permissions, tokens.PrivateKeyPEM, publicKey, router)
 	state.TokenSigner, state.TokenVerifier, state.JwksKeys = tokens.Signer, tokens.Verifier, tokens.Keys
+	// A role change or revocation applies within this TTL (roadmap 120); a session revocation is
+	// checked on every request regardless. 0 turns the cache off.
+	state.RolesCache = authctx.NewRolesCache(env.Seconds("ROLE_CACHE_TTL_SECONDS", 45*time.Second))
+	defer authctx.SubscribeChanges(state.RolesCache, policyStore)()
 	auditStore := audit.NewPostgresStore(state.Pool)
 	state.Audit = auditStore
 	state.PublicAppURL = appCfg.PublicAppURL
@@ -257,7 +267,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	state.TrustedProxies = trusted
 	state.Identity = identityConfig(state, auditStore, secretManager)
-	handler := httpserver.BuildRouter(state, appCfg.CORSOrigins, append(modules, opts.Routes)...)
+	handler := httpapi.BuildRouter(state, appCfg.CORSOrigins, append(modules, opts.Routes)...)
 	addr := fmt.Sprintf("%s:%d", appCfg.Host, appCfg.Port)
 	slog.Info(opts.Name+" listening", "addr", addr)
 	serveCtx, stop := shutdown.Context(ctx)
@@ -267,7 +277,7 @@ func Run(ctx context.Context, opts Options) error {
 
 // identityConfig serves user administration on the token issuer only (it owns identities); a
 // verify-only service returns nil.
-func identityConfig(state *httpserver.AppState, auditStore audit.Store, manager *backend.Manager) *admin.IdentityConfig {
+func identityConfig(state *httpapi.AppState, auditStore audit.Store, manager *backend.Manager) *admin.IdentityConfig {
 	if !state.CanIssueTokens() {
 		return nil
 	}

@@ -3,129 +3,115 @@ package crud
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/kit/errcode"
+	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/workflow"
 )
 
+// Transition moves a record along its workflow: resolve, authorize the entity for this action, load
+// the record, authorize it, prepare the next state (guard, validation, validator), persist.
 func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid.UUID, action string, expectedVersion int32,
 	payload JsonObject, rc *permission.RequestContext, reason *string) (RecordDto, error) {
-	tenantID, err := s.permissions.ScopedTenant(rc)
+	c, err := s.resolve(ctx, rc, entityName)
 	if err != nil {
 		return RecordDto{}, err
 	}
-	registry, err := s.registryFor(ctx, tenantID)
+	// Per-action entity check: `transition` covers every action, `transition:<action>` only this
+	// one (permission.TransitionActionPolicy).
+	if err := s.authorizeEntity(ctx, c, permission.ActionTransition, action); err != nil {
+		return RecordDto{}, err
+	}
+	cur, err := s.loadCurrent(ctx, c, id, true)
 	if err != nil {
 		return RecordDto{}, err
 	}
-	entity, ok := registry.GetEntity(entityName)
-	if !ok {
-		return RecordDto{}, NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
-	}
-
-	// Per-action entity check: `transition` covers every action, `transition:<action>` only
-	// this one (permission.TransitionActionPolicy).
-	decision, err := s.permissions.CanTransitionAction(ctx, rc, entity.Name, action)
+	snapshot, err := s.authorizeRecord(ctx, c, cur, permission.ActionTransition, action)
 	if err != nil {
 		return RecordDto{}, err
 	}
-	if !decision.Allowed {
-		return RecordDto{}, forbidden(decision)
-	}
-
-	precheckTx, err := s.router.Begin(ctx, tenantID)
+	p, err := prepareTransition(c.entity, snapshot, rc, cur, action, payload)
 	if err != nil {
-		if r, ok := routerUnavailable(err); ok {
-			return RecordDto{}, r
-		}
 		return RecordDto{}, err
 	}
-	existing, err := fetchExisting(ctx, precheckTx, id, tenantID, entity)
+	userID, err := parseUserID(rc)
 	if err != nil {
-		precheckTx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, err
-	}
-	if existing == nil {
-		precheckTx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, NewServiceError(http.StatusNotFound, errcode.RecordNotFound)
-	}
-	var actors map[string]string
-	if workflow.UsesWorkflowContext(entity) {
-		byRecord, err := workflow.LastActors(ctx, precheckTx, tenantID, entity.Name, []uuid.UUID{id})
-		if err != nil {
-			precheckTx.Rollback(ctx) //nolint:errcheck
-			return RecordDto{}, err
-		}
-		actors = byRecord[id]
-	}
-	if err := precheckTx.Commit(ctx); err != nil {
 		return RecordDto{}, err
 	}
 
-	snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, entity.Name)
-	if err != nil {
-		return RecordDto{}, err
-	}
-	enriched, err := s.enrichRecordForActions(ctx, entity, snapshot, []permission.EntityAction{permission.ActionTransition}, tenantID, registry, existing.Data)
-	if err != nil {
-		return RecordDto{}, err
-	}
-	recordDecision := snapshot.CanAccessRecord(rc, entity.Name, entity.Scopes, existing.ID.String(), permission.JsonObject(enriched), permission.ActionTransition, action)
-	if !recordDecision.Allowed {
-		return RecordDto{}, forbidden(recordDecision)
-	}
+	transitionAction := action
+	return s.persist(ctx, c, snapshot, write{
+		userID: userID, reason: reason,
+		sql:       buildUpdateSQL(c.entity, "status = $6::varchar"),
+		args:      []any{json.RawMessage(p.dataJSON), userID, id, c.tenantID, expectedVersion, p.toState},
+		versioned: true,
+		emit: func(ctx context.Context, tx pgx.Tx, record RecordDto) error {
+			if err := workflow.RecordEvent(ctx, tx, c.entity, record.ID, action, p.fromState, p.toState, rc); err != nil {
+				return err
+			}
+			return workflow.EmitTransitioned(ctx, tx, c.entity, c.tenantID, record.ID, action, p.fromState, p.toState, userID)
+		},
+		auditAction:      audit.ActionTransition,
+		transitionAction: &transitionAction,
+		// record.Data (read back from the row this query just wrote), not the local data.
+		diff: func(record RecordDto) audit.JsonObject {
+			return audit.DiffJSONObjects(audit.JsonObject(cur.record.Data), audit.JsonObject(record.Data))
+		},
+	})
+}
 
+// transitioned is what prepareTransition decides to write.
+type transitioned struct {
+	dataJSON  []byte
+	fromState string
+	toState   string
+}
+
+// prepareTransition checks the move is allowed from the record's state (guard, validation,
+// validator) and builds the data for the new state. No I/O.
+func prepareTransition(entity metadata.EntityDefinition, snapshot *permission.PermissionSnapshot, rc *permission.RequestContext,
+	cur *current, action string, payload JsonObject) (transitioned, error) {
 	if entity.Workflow == nil {
-		return RecordDto{}, NewServiceError(http.StatusBadRequest, "no_workflow")
+		return transitioned{}, NewServiceError(http.StatusBadRequest, "no_workflow")
 	}
 	workflowDef := entity.Workflow
+	existing := cur.record
 
 	fromRaw, ok := existing.Data[workflowDef.StateField]
 	if !ok {
-		return RecordDto{}, NewServiceError(http.StatusConflict, errcode.InvalidTransition)
+		return transitioned{}, NewServiceError(http.StatusConflict, errcode.InvalidTransition)
 	}
 	var fromState string
 	if json.Unmarshal(fromRaw, &fromState) != nil {
-		return RecordDto{}, NewServiceError(http.StatusConflict, errcode.InvalidTransition)
+		return transitioned{}, NewServiceError(http.StatusConflict, errcode.InvalidTransition)
 	}
 
 	transition := workflow.FindTransition(entity, action, fromState)
 	if transition == nil {
-		return RecordDto{}, NewServiceError(http.StatusConflict, errcode.InvalidTransition)
+		return transitioned{}, NewServiceError(http.StatusConflict, errcode.InvalidTransition)
 	}
 
-	if guardErr := workflow.RunGuard(transition, workflow.WithWorkflowContext(existing.Data, actors), rc); guardErr != nil {
+	if guardErr := workflow.RunGuard(transition, workflow.WithWorkflowContext(existing.Data, cur.actors), rc); guardErr != nil {
 		message, details := workflow.Explain(guardErr, &entity)
-		return RecordDto{}, &ServiceError{Status: http.StatusUnprocessableEntity, Code: "guard_failed", Message: message, Details: details}
+		return transitioned{}, &ServiceError{Status: http.StatusUnprocessableEntity, Code: "guard_failed", Message: message, Details: details}
 	}
 	toState := transition.To
 
 	// A transition's payload goes through the same writable-fields check and field-metadata
-	// validation as Update — the state field itself is always driven by toState, never by the
-	// caller. No capacity hint on make() here (CodeQL flags a computed capacity as a possible
-	// allocation-size overflow even though both operands are already-materialized map lengths,
-	// nowhere near overflowing in practice) — an un-sized map just grows normally, at the cost of
-	// a few more reallocations than a correctly-sized one would need.
+	// validation as Update; the state field itself is always driven by toState, never by the caller.
 	merged := make(JsonObject)
 	for k, v := range existing.Data {
 		merged[k] = v
 	}
 	if payload != nil {
-		keys := make([]string, 0, len(payload))
-		for k := range payload {
-			keys = append(keys, k)
-		}
-		writeDecision := snapshot.AssertWritableFields(rc, keys, permission.JsonObject(existing.Data), true)
-		if !writeDecision.Allowed {
-			return RecordDto{}, forbiddenWithField(writeDecision)
+		if d := snapshot.AssertWritableFields(rc, keysOf(payload), permission.JsonObject(existing.Data), true); !d.Allowed {
+			return transitioned{}, forbiddenWithField(d)
 		}
 		for k, v := range payload {
 			merged[k] = v
@@ -136,71 +122,19 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 
 	nextData, fieldErrors := ValidatePayload(entity, merged)
 	if fieldErrors != nil {
-		return RecordDto{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fieldErrors)
+		return transitioned{}, NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed, fieldErrors)
 	}
 
-	if validatorErr := workflow.RunValidator(transition, workflow.WithWorkflowContext(nextData, actors), rc); validatorErr != nil {
+	if validatorErr := workflow.RunValidator(transition, workflow.WithWorkflowContext(nextData, cur.actors), rc); validatorErr != nil {
 		message, details := workflow.Explain(validatorErr, &entity)
-		return RecordDto{}, &ServiceError{Status: http.StatusUnprocessableEntity, Code: "validator_failed", Message: message, Details: details}
+		return transitioned{}, &ServiceError{Status: http.StatusUnprocessableEntity, Code: "validator_failed", Message: message, Details: details}
 	}
 
 	workflow.ApplySetFields(transition, nextData, rc)
 
-	userID, err := parseUserID(rc)
+	dataJSON, err := json.Marshal(nextData)
 	if err != nil {
-		return RecordDto{}, err
+		return transitioned{}, err
 	}
-
-	tx, err := s.router.Begin(ctx, tenantID)
-	if err != nil {
-		if r, ok := routerUnavailable(err); ok {
-			return RecordDto{}, r
-		}
-		return RecordDto{}, err
-	}
-
-	nextDataJSON, err := json.Marshal(nextData)
-	if err != nil {
-		tx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, err
-	}
-	row := tx.QueryRow(ctx, buildUpdateSQL(entity, "status = $6::varchar"), json.RawMessage(nextDataJSON), userID, id, tenantID, expectedVersion, toState)
-	record, err := scanRecordRow(row, entity.Name)
-	if err != nil {
-		tx.Rollback(ctx) //nolint:errcheck
-		if errors.Is(err, pgx.ErrNoRows) {
-			return RecordDto{}, NewServiceError(http.StatusConflict, errcode.VersionConflict)
-		}
-		return RecordDto{}, err
-	}
-
-	if err := workflow.RecordEvent(ctx, tx, entity, record.ID, action, fromState, toState, rc); err != nil {
-		tx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, err
-	}
-	if err := workflow.EmitTransitioned(ctx, tx, entity, tenantID, record.ID, action, fromState, toState, userID); err != nil {
-		tx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return RecordDto{}, err
-	}
-
-	versionAfter := record.Version
-	transitionAction := action
-	s.recordAudit(ctx, entity, record.Data, audit.Entry{
-		TenantID:         tenantID,
-		Entity:           entity.Name,
-		RecordID:         record.ID,
-		Action:           audit.ActionTransition,
-		TransitionAction: &transitionAction,
-		ActorUserID:      userID,
-		Reason:           reason,
-		// record.Data (read back from the row this query just wrote), not the local nextData.
-		Diff:         audit.DiffJSONObjects(audit.JsonObject(existing.Data), audit.JsonObject(record.Data)),
-		VersionAfter: &versionAfter,
-		OccurredAt:   time.Now().UTC(),
-	})
-
-	return maskRecordForRead(entity, rc, snapshot, record), nil
+	return transitioned{dataJSON: dataJSON, fromState: fromState, toState: toState}, nil
 }

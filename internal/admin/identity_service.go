@@ -6,7 +6,6 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
@@ -17,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/auth/mail"
@@ -31,7 +31,7 @@ import (
 const AuditEntityUsers = "metadata.users"
 
 // RolePlatformAdmin is the built-in role of the platform tenant.
-const RolePlatformAdmin = "platform_admin"
+const RolePlatformAdmin = access.RolePlatformAdmin
 
 // IdentityConfig turns on UserAdminService and AccountService on a gRPC listener.
 type IdentityConfig struct {
@@ -115,15 +115,17 @@ func (s *UserAdminService) admin(ctx context.Context) (caller, error) { return s
 
 // admin authenticates a caller that must hold the admin role (and the admin OAuth2 scope).
 func (d identityDeps) admin(ctx context.Context) (caller, error) {
+	return d.at(ctx, access.Admin)
+}
+
+// at authenticates a caller and checks that level lets them in.
+func (d identityDeps) at(ctx context.Context, level access.Level) (caller, error) {
 	c, err := d.caller(ctx)
 	if err != nil {
 		return caller{}, err
 	}
-	if !c.rc.IsAdmin() {
-		return caller{}, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, "this action requires the admin role")
-	}
-	if !c.rc.ScopePermitsAdminSurface() {
-		return caller{}, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, "this action requires the `admin` OAuth2 scope")
+	if why := access.Refusal(level, c.rc); why != "" {
+		return caller{}, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, why)
 	}
 	return c, nil
 }
@@ -133,21 +135,40 @@ func (d identityDeps) admin(ctx context.Context) (caller, error) {
 // access, time-boxed by a grant) is refused, so revoking or lapsing the grant really ends it; the
 // tenant's own admins make these changes.
 func adminDurable(d identityDeps, ctx context.Context) (caller, error) {
-	c, err := d.admin(ctx)
+	c, err := d.at(ctx, access.Durable)
 	if err != nil {
 		return caller{}, err
 	}
-	if c.self != uuid.Nil {
-		support, err := identity.IsSupportSessionMember(ctx, d.cfg.Shared, c.tenant, c.self)
-		if err != nil {
-			return caller{}, rpcError(ctx, err)
-		}
-		if support {
-			return caller{}, svcErr(ctx, http.StatusForbidden, errcode.Forbidden,
-				"A support session cannot create people, keys, roles or sign-in settings: those outlive the grant. Ask a workspace admin.")
-		}
+	why, err := SupportSessionRefusal(ctx, d.cfg, c.rc)
+	if err != nil {
+		return caller{}, rpcError(ctx, err)
+	}
+	if why != "" {
+		return caller{}, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, why)
 	}
 	return c, nil
+}
+
+// SupportSessionRefusal says why rc may not use an access.Durable operation because it is a
+// vendor's support session ("" when it may). It needs the database, so it is not part of
+// access.Refusal; the route gate and adminDurable both ask it.
+func SupportSessionRefusal(ctx context.Context, cfg IdentityConfig, rc *permission.RequestContext) (string, error) {
+	tenant, err := uuid.Parse(rc.TenantID)
+	if err != nil {
+		return "", nil
+	}
+	self, err := uuid.Parse(rc.UserID)
+	if err != nil || self == uuid.Nil {
+		return "", nil
+	}
+	support, err := identity.IsSupportSessionMember(ctx, cfg.Shared, tenant, self)
+	if err != nil {
+		return "", err
+	}
+	if support {
+		return "A support session cannot create people, keys, roles or sign-in settings: those outlive the grant. Ask a workspace admin.", nil
+	}
+	return "", nil
 }
 
 func svcErr(ctx context.Context, httpStatus uint16, code, message string) error {
@@ -273,23 +294,7 @@ func (d identityDeps) record(ctx context.Context, c caller, id uuid.UUID, action
 
 // recordFor is record for any administered entity (metadata.users, metadata.roles).
 func (d identityDeps) recordFor(ctx context.Context, c caller, entity string, id uuid.UUID, action audit.AuditAction, diff map[string][2]any) {
-	if d.cfg.Audit == nil {
-		return
-	}
-	obj := audit.JsonObject{}
-	for field, ba := range diff {
-		raw, err := json.Marshal(map[string]any{"before": ba[0], "after": ba[1]})
-		if err == nil {
-			obj[field] = raw
-		}
-	}
-	entry := audit.Entry{TenantID: c.tenant, Entity: entity, RecordID: id, Action: action,
-		Diff: obj, OccurredAt: d.now()}
-	if c.self != uuid.Nil {
-		self := c.self
-		entry.ActorUserID = &self
-	}
-	_ = d.cfg.Audit.Record(ctx, c.tenant, entry)
+	writeAdminAudit(ctx, d.cfg.Audit, c.tenant, c.self, entity, id, action, diff, d.now())
 }
 
 func parseID(id string) (uuid.UUID, error) {

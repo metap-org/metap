@@ -86,6 +86,27 @@ func (s *PostgresPolicyStore) FindContextPolicies(ctx context.Context, tenantID 
 	return out, tx.Commit(ctx)
 }
 
+// LoadContextPolicies returns every entity-level policy of a tenant (no field, subject "context"),
+// for every entity, action and virtual resource: the rows FindContextPolicies returns one
+// (entity, action) at a time. permission.MatrixStore holds them in memory.
+func (s *PostgresPolicyStore) LoadContextPolicies(ctx context.Context, tenantID uuid.UUID) ([]permission.PolicyRow, error) {
+	tx, err := s.router.Begin(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx,
+		"SELECT "+policyColumns+" FROM policies WHERE tenant_id = $1 AND field IS NULL AND subject = 'context'", tenantID)
+	if err != nil {
+		return nil, err
+	}
+	out, err := scanPolicyRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
+}
+
 func (s *PostgresPolicyStore) LoadAllPolicies(ctx context.Context, tenantID uuid.UUID, entity string) ([]permission.PolicyRow, error) {
 	tx, err := s.router.Begin(ctx, tenantID)
 	if err != nil {

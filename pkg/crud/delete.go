@@ -2,10 +2,8 @@ package crud
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -16,134 +14,72 @@ import (
 	"github.com/metap-org/metap/pkg/workflow"
 )
 
+// Delete soft-deletes a record: resolve, authorize the entity, load the record, authorize it,
+// persist (after checking nothing else still points at it).
 func (s *CrudService) Delete(ctx context.Context, entityName string, id uuid.UUID, expectedVersion int32, rc *permission.RequestContext, reason *string) (RecordDto, error) {
-	tenantID, err := s.permissions.ScopedTenant(rc)
+	c, err := s.resolve(ctx, rc, entityName)
 	if err != nil {
 		return RecordDto{}, err
 	}
-	registry, err := s.registryFor(ctx, tenantID)
+	if err := s.authorizeEntity(ctx, c, permission.ActionDelete, ""); err != nil {
+		return RecordDto{}, err
+	}
+	cur, err := s.loadCurrent(ctx, c, id, false)
 	if err != nil {
 		return RecordDto{}, err
 	}
-	entity, ok := registry.GetEntity(entityName)
-	if !ok {
-		return RecordDto{}, NewServiceError(http.StatusNotFound, errcode.EntityNotFound)
-	}
-
-	decision, err := s.permissions.CanDeleteEntity(ctx, rc, entity.Name)
+	snapshot, err := s.authorizeRecord(ctx, c, cur, permission.ActionDelete, "")
 	if err != nil {
 		return RecordDto{}, err
 	}
-	if !decision.Allowed {
-		return RecordDto{}, forbidden(decision)
-	}
-
-	precheckTx, err := s.router.Begin(ctx, tenantID)
-	if err != nil {
-		if r, ok := routerUnavailable(err); ok {
-			return RecordDto{}, r
-		}
-		return RecordDto{}, err
-	}
-	existing, err := fetchExisting(ctx, precheckTx, id, tenantID, entity)
-	if err != nil {
-		precheckTx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, err
-	}
-	if existing == nil {
-		precheckTx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, NewServiceError(http.StatusNotFound, errcode.RecordNotFound)
-	}
-	if err := precheckTx.Commit(ctx); err != nil {
-		return RecordDto{}, err
-	}
-
-	snapshot, err := s.permissions.LoadSnapshot(ctx, tenantID, entity.Name)
-	if err != nil {
-		return RecordDto{}, err
-	}
-	enriched, err := s.enrichRecordForActions(ctx, entity, snapshot, []permission.EntityAction{permission.ActionDelete}, tenantID, registry, existing.Data)
-	if err != nil {
-		return RecordDto{}, err
-	}
-	recordDecision := snapshot.CanAccessRecord(rc, entity.Name, entity.Scopes, existing.ID.String(), permission.JsonObject(enriched), permission.ActionDelete, "")
-	if !recordDecision.Allowed {
-		return RecordDto{}, forbidden(recordDecision)
-	}
-
 	userID, err := parseUserID(rc)
 	if err != nil {
 		return RecordDto{}, err
 	}
 
-	tx, err := s.router.Begin(ctx, tenantID)
-	if err != nil {
-		if r, ok := routerUnavailable(err); ok {
-			return RecordDto{}, r
-		}
-		return RecordDto{}, err
-	}
-
-	// Reference-integrity guard: deleting a record that another record still points to via a
-	// Reference field would otherwise leave a silent orphan reference. Checked inside the same
-	// transaction as the delete itself, right before it.
-	refs := referencingFields(registry, entity.Name)
-	blockers, err := findReferencingRecords(ctx, tx, tenantID, id, refs)
-	if err != nil {
-		tx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, err
-	}
-	if len(blockers) > 0 {
-		tx.Rollback(ctx) //nolint:errcheck
-		first := blockers[0]
-		// Keyed "<entity>.<field>" (not just the field name) so the same field name on two
-		// different referencing entities doesn't collide — value is each blocker's own record id.
-		fieldErrors := map[string][]string{}
-		for _, hit := range blockers {
-			key := hit.entity + "." + hit.field
-			fieldErrors[key] = append(fieldErrors[key], hit.id.String())
-		}
-		return RecordDto{}, NewServiceErrorMsgFields(http.StatusConflict, errcode.RecordReferenced,
-			fmt.Sprintf("This record is referenced by %q on %q and cannot be deleted.", first.field, first.entity),
-			fieldErrors)
-	}
-
 	deleteSQL := fmt.Sprintf(
 		`UPDATE %s AS t SET deleted = true, version = t.version + 1, updated_at = now(), updated_by = $1
 		 WHERE t.id = $2 AND t.tenant_id = $3 AND t.version = $4 AND t.deleted = false RETURNING %s`,
-		entity.TableName, recordSelectList(entity),
+		c.entity.TableName, recordSelectList(c.entity),
 	)
-	row := tx.QueryRow(ctx, deleteSQL, userID, id, tenantID, expectedVersion)
-	record, err := scanRecordRow(row, entity.Name)
-	if err != nil {
-		tx.Rollback(ctx) //nolint:errcheck
-		if errors.Is(err, pgx.ErrNoRows) {
-			return RecordDto{}, NewServiceError(http.StatusConflict, errcode.VersionConflict)
-		}
-		return RecordDto{}, err
-	}
-
-	if err := workflow.EmitDeleted(ctx, tx, entity, tenantID, record.ID); err != nil {
-		tx.Rollback(ctx) //nolint:errcheck
-		return RecordDto{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return RecordDto{}, err
-	}
-
-	versionAfter := record.Version
-	s.recordAudit(ctx, entity, record.Data, audit.Entry{
-		TenantID:    tenantID,
-		Entity:      entity.Name,
-		RecordID:    record.ID,
-		Action:      audit.ActionDelete,
-		ActorUserID: userID,
-		Reason:      reason,
-		// Action-based, not diff-based — RecordDto never exposes the deleted column.
-		Diff:         audit.JsonObject{},
-		VersionAfter: &versionAfter,
-		OccurredAt:   time.Now().UTC(),
+	return s.persist(ctx, c, snapshot, write{
+		userID: userID, reason: reason,
+		sql:       deleteSQL,
+		args:      []any{userID, id, c.tenantID, expectedVersion},
+		versioned: true,
+		before: func(ctx context.Context, tx pgx.Tx) error {
+			return s.assertNotReferenced(ctx, tx, c, id)
+		},
+		emit: func(ctx context.Context, tx pgx.Tx, record RecordDto) error {
+			return workflow.EmitDeleted(ctx, tx, c.entity, c.tenantID, record.ID)
+		},
+		auditAction: audit.ActionDelete,
+		// Action-based, not diff-based: RecordDto never exposes the deleted column.
+		diff: func(RecordDto) audit.JsonObject { return audit.JsonObject{} },
 	})
+}
 
-	return maskRecordForRead(entity, rc, snapshot, record), nil
+// assertNotReferenced is the reference-integrity guard: deleting a record that another record still
+// points to through a Reference field would leave a silent orphan reference. It runs in the same
+// transaction as the delete itself, right before it.
+func (s *CrudService) assertNotReferenced(ctx context.Context, tx pgx.Tx, c call, id uuid.UUID) error {
+	refs := referencingFields(c.registry, c.entity.Name)
+	blockers, err := findReferencingRecords(ctx, tx, c.tenantID, id, refs)
+	if err != nil {
+		return err
+	}
+	if len(blockers) == 0 {
+		return nil
+	}
+	first := blockers[0]
+	// Keyed "<entity>.<field>" (not just the field name) so the same field name on two different
+	// referencing entities doesn't collide; the value is each blocker's own record id.
+	fieldErrors := map[string][]string{}
+	for _, hit := range blockers {
+		key := hit.entity + "." + hit.field
+		fieldErrors[key] = append(fieldErrors[key], hit.id.String())
+	}
+	return NewServiceErrorMsgFields(http.StatusConflict, errcode.RecordReferenced,
+		fmt.Sprintf("This record is referenced by %q on %q and cannot be deleted.", first.field, first.entity),
+		fieldErrors)
 }

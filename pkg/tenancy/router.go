@@ -218,6 +218,16 @@ func (r *Router) resolve(ctx context.Context, tenantID uuid.UUID) (TenantStrateg
 // transaction sees that tenant's schema. Callers must Commit/Rollback it themselves; this never
 // commits on their behalf.
 func (r *Router) Begin(ctx context.Context, tenantID uuid.UUID) (pgx.Tx, error) {
+	// Inside a unit of work (BeginUnit) for this tenant, "a transaction" is a savepoint on the
+	// unit's: the caller commits or rolls back its part as before, and the unit decides whether it
+	// all stays.
+	if u := unitFrom(ctx); u != nil && u.tenant == tenantID {
+		return u.tx.Begin(ctx)
+	}
+	return r.begin(ctx, tenantID)
+}
+
+func (r *Router) begin(ctx context.Context, tenantID uuid.UUID) (pgx.Tx, error) {
 	strategy, err := r.resolve(ctx, tenantID)
 	if err != nil {
 		return nil, err

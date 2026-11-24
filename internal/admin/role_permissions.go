@@ -1,9 +1,9 @@
 // A role's permissions across every entity (roadmap 114, P3): the role-first editor reads and
 // replaces the role's basic grants in one call instead of one entity at a time.
 //
-// No policy cache to invalidate: every PermissionService metap builds reads the policy store
-// fresh (NewPermissionService, no cache), so a saved grant applies on the next request in every
-// service sharing the tenant's policies.
+// A saved grant is written straight to the policy table, not through PermissionService, so a
+// service that holds its policies in memory (permission.MatrixStore, roadmap 120) sees it within
+// POLICY_CACHE_TTL_SECONDS (default 45), not on the next request.
 package admin
 
 import (
@@ -27,15 +27,19 @@ const maxGrants = 5000
 
 var workflowActionPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,100}$`)
 
-// validGrantAction is a base policy action or transition:<workflow action>.
+// validGrantAction is a base policy action, transition:<workflow action>, or action:<declared action>.
 func validGrantAction(action string) bool {
 	for _, a := range permission.AllEntityActions {
 		if action == a.String() {
 			return true
 		}
 	}
-	prefix := permission.TransitionActionPolicy("")
-	return strings.HasPrefix(action, prefix) && workflowActionPattern.MatchString(strings.TrimPrefix(action, prefix))
+	for _, prefix := range []string{permission.TransitionActionPolicy(""), permission.ActionPolicy("")} {
+		if strings.HasPrefix(action, prefix) && workflowActionPattern.MatchString(strings.TrimPrefix(action, prefix)) {
+			return true
+		}
+	}
+	return false
 }
 
 func grantKey(g rolestore.RoleGrant) string { return g.Entity + " " + g.Action }

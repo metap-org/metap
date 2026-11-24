@@ -27,6 +27,10 @@ type Grant struct {
 	Role string `json:"role"`
 	// Entities are exact names ("waf.zones"), a prefix wildcard ("waf.*") or "*" for every entity.
 	Entities []string `json:"entities"`
+	// Resources are exact names of declared virtual resources (permission.DeclareResource); Actions are
+	// then the resource's own actions ("read"), not the entity ones. A grant may name entities,
+	// resources or both.
+	Resources []string `json:"resources,omitempty"`
 	// Actions are read|create|update|delete|transition, a workflow action as "transition:<name>",
 	// or AllActions.
 	Actions []string `json:"actions"`
@@ -132,10 +136,13 @@ func (b Bootstrap) Validate() error {
 		if !declared[g.Role] {
 			return fmt.Errorf("bootstrap: grant %d names undeclared role %q", i, g.Role)
 		}
-		if len(g.Entities) == 0 || len(g.Actions) == 0 {
-			return fmt.Errorf("bootstrap: grant %d for role %q needs entities and actions", i, g.Role)
+		if (len(g.Entities) == 0 && len(g.Resources) == 0) || len(g.Actions) == 0 {
+			return fmt.Errorf("bootstrap: grant %d for role %q needs entities or resources, and actions", i, g.Role)
 		}
 		for _, a := range g.Actions {
+			if len(g.Entities) == 0 {
+				break // a resource grant: checked against the resource's own actions when applied
+			}
 			if !validAction(a) {
 				return fmt.Errorf("bootstrap: grant %d has unknown action %q", i, a)
 			}

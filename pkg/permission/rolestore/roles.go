@@ -296,6 +296,7 @@ func ReplaceRoleBasicGrants(ctx context.Context, db DBTX, tenant uuid.UUID, role
 	for e := range touched {
 		out = append(out, e)
 	}
+	notify(Change{Tenant: tenant, Policies: true})
 	return out, nil
 }
 

@@ -3,7 +3,7 @@
 // sessions), API keys, tenants, audit search, support access, ownership, SSO and SCIM. Moved off
 // gRPC (roadmap 116): requests and responses are plain structs (types.go), failures are
 // *crud.ServiceError, and the caller is the RequestContext the HTTP layer authenticated
-// (WithCaller). pkg/httpserver serves them as REST.
+// (WithCaller). internal/httpapi serves them as REST.
 package admin
 
 import (

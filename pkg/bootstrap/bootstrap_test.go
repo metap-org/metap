@@ -181,3 +181,31 @@ func TestLoadFileRejectsUnknownFields(t *testing.T) {
 	_, err = LoadFile(bad)
 	require.Error(t, err)
 }
+
+func init() {
+	permission.DeclareResource(permission.Resource{Name: "bootstraptest.feed", Actions: []permission.ResourceAction{{Name: "read"}}})
+}
+
+func TestAGrantCanNameAResourceAndItsOwnActions(t *testing.T) {
+	pol := &fakePolicies{}
+	deps := Deps{Registry: registry(t, "waf.zones"), Policies: pol, Identity: &fakeIdentity{users: map[string][]string{}}}
+	b := Bootstrap{Roles: []string{"analyst"}, Grants: []Grant{{Role: "analyst", Resources: []string{"bootstraptest.feed"}, Actions: []string{"read"}}}}
+	require.NoError(t, b.Validate())
+
+	res, err := Apply(context.Background(), deps, uuid.New(), b, Options{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.PoliciesCreated)
+	assert.Equal(t, permission.ResourceKey("bootstraptest.feed"), pol.rows[0].Entity)
+
+	res, err = Apply(context.Background(), deps, uuid.New(), b, Options{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.PoliciesCreated, "a second run adds nothing")
+
+	for name, bad := range map[string]Grant{
+		"undeclared resource": {Role: "analyst", Resources: []string{"bootstraptest.nope"}, Actions: []string{"read"}},
+		"action it lacks":     {Role: "analyst", Resources: []string{"bootstraptest.feed"}, Actions: []string{"delete"}},
+	} {
+		_, err := Apply(context.Background(), deps, uuid.New(), Bootstrap{Roles: []string{"analyst"}, Grants: []Grant{bad}}, Options{})
+		assert.Error(t, err, name)
+	}
+}

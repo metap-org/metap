@@ -131,6 +131,41 @@ func (s *PermissionService) CanTransitionAction(goCtx context.Context, ctx *Requ
 	return contextVerdictGroups(append(generic, specific...), ctx), nil
 }
 
+// CanRunAction decides whether the caller may run a declared entity action. The tenant's policies
+// on ActionPolicy(action) decide when it has any (allow with no matching deny, as everywhere);
+// otherwise the roles the action declares (defaultRoles) do. An action that declares no roles and
+// has no policy is open to any signed-in caller. The admin role always may. Same entity-level
+// question as the CanXEntity checks, from the same in-memory rows.
+func (s *PermissionService) CanRunAction(goCtx context.Context, ctx *RequestContext, entityName, action string, defaultRoles []string) (PermissionDecision, error) {
+	if ctx.IsAdmin() {
+		return Allowed(), nil
+	}
+	tenantID, err := s.ScopedTenant(ctx)
+	if err != nil {
+		return PermissionDecision{}, err
+	}
+	rows, err := s.store.FindContextPolicies(goCtx, tenantID, entityName, ActionPolicy(action))
+	if err != nil {
+		return PermissionDecision{}, err
+	}
+	if len(rows) > 0 {
+		return contextVerdictGroups(rows, ctx), nil
+	}
+	if len(defaultRoles) == 0 {
+		return Allowed(), nil
+	}
+	for _, g := range ctx.RoleGroups() {
+		for _, role := range g.Roles {
+			for _, want := range defaultRoles {
+				if role == want {
+					return Allowed(), nil
+				}
+			}
+		}
+	}
+	return Forbidden(), nil
+}
+
 // contextVerdictGroups is contextVerdict over every role group: allowed when any group is.
 func contextVerdictGroups(rows []PolicyRow, ctx *RequestContext) PermissionDecision {
 	if contextVerdict(rows, ctx).Allowed {

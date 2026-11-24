@@ -25,6 +25,11 @@ type CrudService struct {
 	router      TxBeginner
 	metadata    *atomic.Pointer[metadata.MetadataRegistry]
 	permissions PermissionChecker
+	// access answers the entity-level question for the entity being read or written. It is the
+	// same PermissionChecker unless the service came from Trusted. Reads of OTHER entities (related
+	// display) always go to permissions: Trusted skips the question about the entity a job works
+	// on, not what a record may show of the entities it points to.
+	access EntityAccess
 
 	// audit is the opt-in general-purpose audit trail — nil (via NewCrudService) preserves every
 	// existing deployment's behavior exactly; WithAudit is the second, additive constructor a
@@ -49,21 +54,35 @@ type contextInvalidationConfig struct {
 }
 
 func NewCrudService(router TxBeginner, md *atomic.Pointer[metadata.MetadataRegistry], permissions PermissionChecker) *CrudService {
-	return &CrudService{router: router, metadata: md, permissions: permissions}
+	return &CrudService{router: router, metadata: md, permissions: permissions, access: permissions}
 }
 
 // WithAudit is the same as NewCrudService, plus an audit trail sink every create/update/
 // delete/transition records to — but only for an entity whose own EntityAuditConfig.Enabled is
 // true.
 func WithAudit(router TxBeginner, md *atomic.Pointer[metadata.MetadataRegistry], permissions PermissionChecker, store audit.Store) *CrudService {
-	return &CrudService{router: router, metadata: md, permissions: permissions, auditStore: store}
+	return &CrudService{router: router, metadata: md, permissions: permissions, access: permissions, auditStore: store}
+}
+
+// Trusted returns a copy of the service that does not ask the entity-level question: the caller is
+// code (a job, a bootstrap, a sweep) acting on every entity of its own service, not a person whose
+// roles bound what they may touch. Record-level policy, field rules, scopes and masking still apply
+// to whoever the RequestContext names, so a trusted service run with a user's context still cannot
+// show them a record or field their policies hide.
+//
+// The name is the point: a reader sees at the call site that the role check is off. Everything
+// else reaches a CrudService through NewCrudService or WithAudit, which check.
+func (s *CrudService) Trusted() *CrudService {
+	c := *s
+	c.access = trustedAccess{}
+	return &c
 }
 
 // WithContextInvalidation is the opt-in AUTH_CONTEXT_ENTITY cache invalidation — chainable onto
 // the result of NewCrudService or WithAudit. cache should be the *same* ContextAttributesCache
 // instance ResolveRequestContext reads from — a separate instance would invalidate a cache
 // nothing actually reads.
-// ContextInvalidator drops what is cached about a caller's context attributes (httpserver's
+// ContextInvalidator drops what is cached about a caller's context attributes (httpapi's
 // ContextAttributesCache is the one implementation).
 type ContextInvalidator interface {
 	Invalidate(tenantID, userID uuid.UUID)
