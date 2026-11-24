@@ -43,7 +43,7 @@ func (d identityDeps) activeAdmins(ctx context.Context, tenant uuid.UUID) ([]ide
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	ms, _, err := identity.ListMembers(ctx, d.cfg.Shared, tenant, identity.ListQuery{IDs: ids, Status: identity.StatusActive, Limit: 200})
+	ms, _, err := identity.ListMembers(ctx, d.db(), tenant, identity.ListQuery{IDs: ids, Status: identity.StatusActive, Limit: 200})
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +53,7 @@ func (d identityDeps) activeAdmins(ctx context.Context, tenant uuid.UUID) ([]ide
 // ensureOwner returns the tenant's owner, assigning the oldest active admin when none is set yet
 // (tenants that predate owners, and brand-new ones, are covered the first time anything asks).
 func (d identityDeps) ensureOwner(ctx context.Context, tenant uuid.UUID) (uuid.UUID, error) {
-	owner, err := identity.OwnerID(ctx, d.cfg.Shared, tenant)
+	owner, err := identity.OwnerID(ctx, d.db(), tenant)
 	if err != nil || owner != uuid.Nil {
 		return owner, err
 	}
@@ -93,11 +93,11 @@ func (s *OwnerService) status(ctx context.Context, tenant uuid.UUID) (*OwnerStat
 	out := &OwnerStatus{}
 	if owner != uuid.Nil {
 		out.OwnerMemberId = owner.String()
-		if m, err := identity.GetMember(ctx, s.d.cfg.Shared, tenant, owner); err == nil {
+		if m, err := identity.GetMember(ctx, s.d.db(), tenant, owner); err == nil {
 			out.OwnerEmail = m.Email
 		}
 	}
-	if r, err := identity.PendingOwnerRecovery(ctx, s.d.cfg.Shared, tenant); err == nil {
+	if r, err := identity.PendingOwnerRecovery(ctx, s.d.db(), tenant); err == nil {
 		out.PendingRecovery = toPBRecovery(r)
 	} else if !errors.Is(err, identity.ErrNoRecovery) {
 		return nil, rpcError(ctx, err)
@@ -143,7 +143,7 @@ func (s *OwnerService) PlatformTenantOwner(ctx context.Context, req *TenantIdOnl
 	if err != nil {
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "`tenantId` must be a tenant id.")
 	}
-	owner, err := identity.OwnerID(ctx, s.d.cfg.Shared, tenant)
+	owner, err := identity.OwnerID(ctx, s.d.db(), tenant)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -151,7 +151,7 @@ func (s *OwnerService) PlatformTenantOwner(ctx context.Context, req *TenantIdOnl
 	if owner != uuid.Nil {
 		view.Owner.OwnerMemberId = owner.String()
 	}
-	if r, err := identity.PendingOwnerRecovery(ctx, s.d.cfg.Shared, tenant); err == nil {
+	if r, err := identity.PendingOwnerRecovery(ctx, s.d.db(), tenant); err == nil {
 		view.Owner.PendingRecovery = toPBRecovery(r)
 	} else if !errors.Is(err, identity.ErrNoRecovery) {
 		return nil, rpcError(ctx, err)
@@ -199,10 +199,12 @@ func (s *OwnerService) TransferOwnership(ctx context.Context, req *TransferOwner
 	if !slices.ContainsFunc(admins, func(m identity.Member) bool { return m.ID == target }) {
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "The new owner must be an active admin of this tenant.")
 	}
-	if err := identity.SetOwner(ctx, s.d.cfg.Shared, c.tenant, target); err != nil {
+	err = s.d.change(ctx, c, AuditEntityOwner, c.tenant, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+		return map[string][2]any{"owner": {owner.String(), target.String()}}, identity.SetOwner(ctx, s.d.db(), c.tenant, target)
+	})
+	if err != nil {
 		return nil, ownerErr(ctx, err)
 	}
-	s.d.recordFor(ctx, c, AuditEntityOwner, c.tenant, audit.ActionUpdate, map[string][2]any{"owner": {owner.String(), target.String()}})
 	return s.status(ctx, c.tenant)
 }
 
@@ -211,12 +213,16 @@ func (s *OwnerService) CancelOwnerRecovery(ctx context.Context, _ *Empty) (*Owne
 	if err != nil {
 		return nil, err
 	}
-	r, err := identity.CancelOwnerRecovery(ctx, s.d.cfg.Shared, c.tenant, c.self, s.d.now())
+	err = s.d.change(ctx, c, AuditEntityOwner, c.tenant, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+		r, err := identity.CancelOwnerRecovery(ctx, s.d.db(), c.tenant, c.self, s.d.now())
+		if err != nil {
+			return nil, err
+		}
+		return map[string][2]any{"ownerRecovery": {"pending for " + r.NewOwnerMember.String(), "cancelled"}}, nil
+	})
 	if err != nil {
 		return nil, ownerErr(ctx, err)
 	}
-	s.d.recordFor(ctx, c, AuditEntityOwner, c.tenant, audit.ActionUpdate, map[string][2]any{
-		"ownerRecovery": {"pending for " + r.NewOwnerMember.String(), "cancelled"}})
 	return s.status(ctx, c.tenant)
 }
 
@@ -255,21 +261,27 @@ func (s *OwnerService) RequestOwnerRecovery(ctx context.Context, req *RequestOwn
 	if err != nil {
 		return nil, err
 	}
-	target, err := identity.GetMember(ctx, s.d.cfg.Shared, tenant, newOwner)
+	target, err := identity.GetMember(ctx, s.d.db(), tenant, newOwner)
 	if err != nil || target.Status != identity.StatusActive || target.AuthProvider == identity.ServiceAccountProvider {
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "The new owner must be an active person in the tenant.")
 	}
-	person, err := identity.GetMember(ctx, s.d.cfg.Shared, tenancy.PlatformTenantID, c.self)
+	person, err := identity.GetMember(ctx, s.d.db(), tenancy.PlatformTenantID, c.self)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
 	now := s.d.now()
-	r, err := identity.RequestOwnerRecovery(ctx, s.d.cfg.Shared, tenant, newOwner, c.self, person.Email, req.GetReason(), now)
+	var r *identity.OwnerRecovery
+	err = s.d.change(ctx, caller{rc: c.rc, tenant: tenant, self: c.self}, AuditEntityOwner, tenant, audit.ActionUpdate,
+		func(ctx context.Context) (map[string][2]any, error) {
+			var err error
+			if r, err = identity.RequestOwnerRecovery(ctx, s.d.db(), tenant, newOwner, c.self, person.Email, req.GetReason(), now); err != nil {
+				return nil, err
+			}
+			return map[string][2]any{"ownerRecovery": {nil, "requested for " + target.Email + " (effective " + r.EffectiveAt.UTC().Format(time.RFC3339) + ")"}}, nil
+		})
 	if err != nil {
 		return nil, ownerErr(ctx, err)
 	}
-	s.d.recordFor(ctx, caller{rc: c.rc, tenant: tenant, self: c.self}, AuditEntityOwner, tenant, audit.ActionUpdate,
-		map[string][2]any{"ownerRecovery": {nil, "requested for " + target.Email + " (effective " + r.EffectiveAt.UTC().Format(time.RFC3339) + ")"}})
 	s.notifyAdmins(ctx, tenant, mail.OwnerRecoveryNotice{NewOwner: target.Email, RequestedBy: person.Email,
 		Reason: r.Reason, EffectiveAt: r.EffectiveAt})
 	return toPBRecovery(r), nil
@@ -284,7 +296,7 @@ func (s *OwnerService) CompleteOwnerRecovery(ctx context.Context, req *TenantIdO
 	if err != nil {
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "`tenantId` must be a tenant id.")
 	}
-	pending, err := identity.PendingOwnerRecovery(ctx, s.d.cfg.Shared, tenant)
+	pending, err := identity.PendingOwnerRecovery(ctx, s.d.db(), tenant)
 	if err != nil {
 		return nil, ownerErr(ctx, err)
 	}
@@ -292,7 +304,7 @@ func (s *OwnerService) CompleteOwnerRecovery(ctx context.Context, req *TenantIdO
 	if now.Before(pending.EffectiveAt) {
 		return nil, ownerErr(ctx, identity.ErrRecoveryNotReady)
 	}
-	target, err := identity.GetMember(ctx, s.d.cfg.Shared, tenant, pending.NewOwnerMember)
+	target, err := identity.GetMember(ctx, s.d.db(), tenant, pending.NewOwnerMember)
 	if err != nil || target.Status != identity.StatusActive {
 		return nil, svcErr(ctx, http.StatusConflict, errcode.ValidationFailed, "The proposed new owner is no longer an active member.")
 	}
@@ -302,16 +314,22 @@ func (s *OwnerService) CompleteOwnerRecovery(ctx context.Context, req *TenantIdO
 	}); err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	before, _ := identity.OwnerID(ctx, s.d.cfg.Shared, tenant)
-	if err := identity.SetOwner(ctx, s.d.cfg.Shared, tenant, target.ID); err != nil {
-		return nil, ownerErr(ctx, err)
-	}
-	done, err := identity.CompleteOwnerRecovery(ctx, s.d.cfg.Shared, tenant, now)
+	var done *identity.OwnerRecovery
+	err = s.d.change(ctx, caller{rc: c.rc, tenant: tenant, self: c.self}, AuditEntityOwner, tenant, audit.ActionUpdate,
+		func(ctx context.Context) (map[string][2]any, error) {
+			before, _ := identity.OwnerID(ctx, s.d.db(), tenant)
+			if err := identity.SetOwner(ctx, s.d.db(), tenant, target.ID); err != nil {
+				return nil, err
+			}
+			var err error
+			if done, err = identity.CompleteOwnerRecovery(ctx, s.d.db(), tenant, now); err != nil {
+				return nil, err
+			}
+			return map[string][2]any{"owner": {before.String(), target.ID.String()}}, nil
+		})
 	if err != nil {
 		return nil, ownerErr(ctx, err)
 	}
-	s.d.recordFor(ctx, caller{rc: c.rc, tenant: tenant, self: c.self}, AuditEntityOwner, tenant, audit.ActionUpdate,
-		map[string][2]any{"owner": {before.String(), target.ID.String()}})
 	s.notifyAdmins(ctx, tenant, mail.OwnerRecoveryNotice{NewOwner: target.Email, RequestedBy: done.RequestedByEmail,
 		Reason: done.Reason, EffectiveAt: done.EffectiveAt, Completed: true})
 	return toPBRecovery(done), nil
@@ -351,7 +369,12 @@ func (s *OwnerService) RequestWorkspaceDeletion(ctx context.Context, req *Reques
 		return nil, svcErr(ctx, http.StatusConflict, errcode.ValidationFailed, "A deletion is already scheduled for this workspace.")
 	}
 	effective := now.Add(tenancy.DefaultDeletionRetention)
-	token, err := identity.CreateDeletionCancelToken(ctx, s.d.cfg.Shared, c.tenant, effective)
+	var token string
+	err = s.d.change(ctx, c, AuditEntityOwner, c.tenant, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+		var err error
+		token, err = identity.CreateDeletionCancelToken(ctx, s.d.db(), c.tenant, effective)
+		return map[string][2]any{"deletionRequested": {false, true}}, err
+	})
 	if err != nil {
 		// Without a way to cancel, do not leave the workspace scheduled.
 		_ = registry.CancelDeletion(ctx, c.tenant, now)
@@ -362,7 +385,7 @@ func (s *OwnerService) RequestWorkspaceDeletion(ctx context.Context, req *Reques
 	sent := 0
 	if s.d.cfg.Mailer.Configured() {
 		requestedBy := ""
-		if m, err := identity.GetMember(ctx, s.d.cfg.Shared, c.tenant, c.self); err == nil {
+		if m, err := identity.GetMember(ctx, s.d.db(), c.tenant, c.self); err == nil {
 			requestedBy = m.Email
 		}
 		if admins, err := s.d.activeAdmins(ctx, c.tenant); err == nil {
@@ -378,7 +401,6 @@ func (s *OwnerService) RequestWorkspaceDeletion(ctx context.Context, req *Reques
 	if sent == 0 {
 		out.CancelLink = link
 	}
-	s.d.recordFor(ctx, c, AuditEntityOwner, c.tenant, audit.ActionUpdate, map[string][2]any{"deletionRequested": {false, true}})
 	return out, nil
 }
 

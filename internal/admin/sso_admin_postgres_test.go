@@ -137,6 +137,7 @@ func TestSsoAdminConfig(t *testing.T) {
 	cfg, err = h.client.SSO.GetSsoConfig(asOwner, &Empty{})
 	require.NoError(t, err)
 	assert.False(t, cfg.GetConfigured())
+	h.drainAudit()
 	trail, err := h.client.Audit.SearchAudit(asOwner, &SearchAuditRequest{Entity: AuditEntitySSO})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(trail.GetEntries()), 3, "every change is audited")

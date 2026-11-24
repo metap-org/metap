@@ -192,35 +192,41 @@ func (s *RoleAdminService) CreateRole(ctx context.Context, req *CreateRoleReques
 	copyFrom := strings.TrimSpace(req.GetCopyFrom())
 	var created rolestore.Role
 	var copied []rolestore.RoleGrant
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
-		if copyFrom != "" {
-			if _, err := rolestore.GetRoleByName(ctx, db, c.tenant, copyFrom); err != nil {
-				return err
+	err = s.d.changeInTenantNew(ctx, c, AuditEntityRoles, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+		err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+			if copyFrom != "" {
+				if _, err := rolestore.GetRoleByName(ctx, db, c.tenant, copyFrom); err != nil {
+					return err
+				}
+				var err error
+				if copied, err = rolestore.RoleBasicGrants(ctx, db, c.tenant, copyFrom); err != nil {
+					return err
+				}
 			}
 			var err error
-			if copied, err = rolestore.RoleBasicGrants(ctx, db, c.tenant, copyFrom); err != nil {
+			if created, err = rolestore.CreateRole(ctx, db, c.tenant, name, label, description, by); err != nil {
 				return err
 			}
-		}
-		var err error
-		if created, err = rolestore.CreateRole(ctx, db, c.tenant, name, label, description, by); err != nil {
+			if len(copied) > 0 {
+				_, err = rolestore.ReplaceRoleBasicGrants(ctx, db, c.tenant, name, copied, by)
+			}
 			return err
+		})
+		if err != nil {
+			return uuid.Nil, nil, err
 		}
-		if len(copied) > 0 {
-			_, err = rolestore.ReplaceRoleBasicGrants(ctx, db, c.tenant, name, copied, by)
+		diff := map[string][2]any{"name": {nil, name}, "label": {nil, label}, "description": {nil, description}}
+		if copyFrom != "" {
+			diff["copiedFrom"] = [2]any{nil, copyFrom}
 		}
-		return err
-	}); err != nil {
+		return created.ID, diff, nil
+	})
+	if err != nil {
 		if copyFrom != "" && errors.Is(err, rolestore.ErrRoleNotFound) {
 			return nil, roleErr(ctx, err, copyFrom)
 		}
 		return nil, roleErr(ctx, err, name)
 	}
-	diff := map[string][2]any{"name": {nil, name}, "label": {nil, label}, "description": {nil, description}}
-	if copyFrom != "" {
-		diff["copiedFrom"] = [2]any{nil, copyFrom}
-	}
-	s.d.recordFor(ctx, c, AuditEntityRoles, created.ID, audit.ActionCreate, diff)
 	return toPBRole(created, 0, len(copied)), nil
 }
 
@@ -232,28 +238,34 @@ func (s *RoleAdminService) UpdateRole(ctx context.Context, req *UpdateRoleReques
 	name := strings.TrimSpace(req.GetName())
 	label, description := strings.TrimSpace(req.GetLabel()), strings.TrimSpace(req.GetDescription())
 	var before, after rolestore.Role
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
-		if err := rolestore.EnsureBuiltinRoles(ctx, db, c.tenant); err != nil {
+	err = s.d.changeInTenantNew(ctx, c, AuditEntityRoles, audit.ActionUpdate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+			if err := rolestore.EnsureBuiltinRoles(ctx, db, c.tenant); err != nil {
+				return err
+			}
+			var err error
+			if before, err = rolestore.GetRoleByName(ctx, db, c.tenant, name); err != nil {
+				return err
+			}
+			after, err = rolestore.UpdateRole(ctx, db, c.tenant, name, label, description)
 			return err
+		}); err != nil {
+			return uuid.Nil, nil, err
 		}
-		var err error
-		if before, err = rolestore.GetRoleByName(ctx, db, c.tenant, name); err != nil {
-			return err
+		diff := map[string][2]any{}
+		if before.Label != after.Label {
+			diff["label"] = [2]any{before.Label, after.Label}
 		}
-		after, err = rolestore.UpdateRole(ctx, db, c.tenant, name, label, description)
-		return err
-	}); err != nil {
+		if before.Description != after.Description {
+			diff["description"] = [2]any{before.Description, after.Description}
+		}
+		if len(diff) == 0 {
+			return after.ID, nil, nil
+		}
+		return after.ID, diff, nil
+	})
+	if err != nil {
 		return nil, roleErr(ctx, err, name)
-	}
-	diff := map[string][2]any{}
-	if before.Label != after.Label {
-		diff["label"] = [2]any{before.Label, after.Label}
-	}
-	if before.Description != after.Description {
-		diff["description"] = [2]any{before.Description, after.Description}
-	}
-	if len(diff) > 0 {
-		s.d.recordFor(ctx, c, AuditEntityRoles, after.ID, audit.ActionUpdate, diff)
 	}
 	r, err := s.role(ctx, c.tenant, name)
 	if err != nil {
@@ -295,14 +307,15 @@ func (s *RoleAdminService) DeleteRole(ctx context.Context, req *RoleNameRequest)
 	if len(holders) > 0 || len(policies) > 0 {
 		return nil, s.inUseError(ctx, c.tenant, name, holders, policies)
 	}
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
-		return rolestore.DeleteRole(ctx, db, c.tenant, name)
-	}); err != nil {
+	err = s.d.changeInTenant(ctx, c, AuditEntityRoles, r.ID, audit.ActionDelete, func(ctx context.Context) (map[string][2]any, error) {
+		err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+			return rolestore.DeleteRole(ctx, db, c.tenant, name)
+		})
+		return map[string][2]any{"name": {name, nil}, "label": {r.Label, nil}, "description": {r.Description, nil}}, err
+	})
+	if err != nil {
 		return nil, roleErr(ctx, err, name)
 	}
-	s.d.recordFor(ctx, c, AuditEntityRoles, r.ID, audit.ActionDelete, map[string][2]any{
-		"name": {name, nil}, "label": {r.Label, nil}, "description": {r.Description, nil},
-	})
 	return &Empty{}, nil
 }
 

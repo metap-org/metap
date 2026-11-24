@@ -115,7 +115,7 @@ func ProvisionDedicatedDbTenant(ctx context.Context, registry *PostgresTenantReg
 	}
 	// Members live in the shared database for every tenant (pkg/identity); only the role goes
 	// into the tenant's own database.
-	user, err := identity.CreateUser(ctx, registry.pool, tenantID, adminEmail, adminPassword)
+	user, err := identity.CreateUser(ctx, registry.db, tenantID, adminEmail, adminPassword)
 	if err != nil {
 		return nil, err
 	}

@@ -53,7 +53,7 @@ func (s *Service) WithSink(sink action.Sink) *Service {
 }
 
 func (s *Service) change(ctx context.Context, c kernel.Caller, member uuid.UUID, fn func(ctx context.Context) (map[string][2]any, error)) error {
-	return kernel.Change(ctx, s.sink, s.audit, s.now, c, AuditEntityUsers, member, fn)
+	return kernel.Change(ctx, s.sink, s.audit, s.now, c, AuditEntityUsers, member, audit.ActionUpdate, fn)
 }
 
 func (s *Service) record(ctx context.Context, c kernel.Caller, member uuid.UUID, diff map[string][2]any) {

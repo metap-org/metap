@@ -165,7 +165,7 @@ func scanCredential(row pgx.Row) (credentialRow, error) {
 }
 
 func (s *CredentialsService) get(ctx context.Context, tenant, id uuid.UUID) (credentialRow, error) {
-	c, err := scanCredential(s.d.cfg.Shared.QueryRow(ctx,
+	c, err := scanCredential(s.d.db().QueryRow(ctx,
 		`SELECT `+credentialColumns+` FROM metadata.tenant_credentials WHERE tenant_id = $1 AND id = $2`, tenant, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, svcErr(ctx, http.StatusNotFound, errcode.NotFound, "Credential not found.")
@@ -200,7 +200,7 @@ func (s *CredentialsService) view(ctx context.Context, tenant uuid.UUID, m Crede
 	caps := m.Capabilities()
 	out := &CredentialsView{DatabaseAvailable: caps.Database, ExternalAvailable: caps.External, ExternalKind: caps.ExternalKind,
 		Credentials: []*Credential{}}
-	rows, err := s.d.cfg.Shared.Query(ctx,
+	rows, err := s.d.db().Query(ctx,
 		`SELECT `+credentialColumns+` FROM metadata.tenant_credentials WHERE tenant_id = $1 ORDER BY lower(name)`, tenant)
 	if err != nil {
 		return nil, rpcError(ctx, err)
@@ -302,8 +302,11 @@ func (s *CredentialsService) CreateCredential(ctx context.Context, req *CreateCr
 	if err := m.Put(ctx, secrets.TenantCredentialRef(c.tenant, id), req.Source, stored); err != nil {
 		return nil, svcErr(ctx, http.StatusConflict, errcode.Forbidden, err.Error())
 	}
-	_, err = s.d.cfg.Shared.Exec(ctx, `INSERT INTO metadata.tenant_credentials (id, tenant_id, name, description, kind, source, username, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, id, c.tenant, name, strings.TrimSpace(req.Description), req.Kind, req.Source, username, c.self)
+	err = s.d.change(ctx, c, AuditEntityCredentials, id, audit.ActionCreate, func(ctx context.Context) (map[string][2]any, error) {
+		_, err := s.d.db().Exec(ctx, `INSERT INTO metadata.tenant_credentials (id, tenant_id, name, description, kind, source, username, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, id, c.tenant, name, strings.TrimSpace(req.Description), req.Kind, req.Source, username, c.self)
+		return map[string][2]any{"name": {nil, name}, "kind": {nil, req.Kind}, "source": {nil, req.Source}}, err
+	})
 	if err != nil {
 		_ = m.Remove(ctx, secrets.TenantCredentialRef(c.tenant, id))
 		if isUniqueViolation(err) {
@@ -311,8 +314,6 @@ func (s *CredentialsService) CreateCredential(ctx context.Context, req *CreateCr
 		}
 		return nil, rpcError(ctx, err)
 	}
-	s.d.recordFor(ctx, c, AuditEntityCredentials, id, audit.ActionCreate,
-		map[string][2]any{"name": {nil, name}, "kind": {nil, req.Kind}, "source": {nil, req.Source}})
 	return s.view(ctx, c.tenant, m)
 }
 
@@ -409,16 +410,22 @@ func (s *CredentialsService) UpdateCredential(ctx context.Context, req *UpdateCr
 			diff["value"] = [2]any{"set", "replaced"}
 		}
 	}
-	if _, err := s.d.cfg.Shared.Exec(ctx, `UPDATE metadata.tenant_credentials
-		SET name = $3, description = $4, source = $5, username = $6, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
-		c.tenant, id, next.name, next.description, next.source, next.username); err != nil {
+	err = s.d.change(ctx, c, AuditEntityCredentials, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+		if _, err := s.d.db().Exec(ctx, `UPDATE metadata.tenant_credentials
+			SET name = $3, description = $4, source = $5, username = $6, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+			c.tenant, id, next.name, next.description, next.source, next.username); err != nil {
+			return nil, err
+		}
+		if len(diff) == 0 {
+			return nil, nil // nothing a person would call a change (a description edit): no entry
+		}
+		return diff, nil
+	})
+	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, fieldInvalid(ctx, "name", "A credential with this name already exists.")
 		}
 		return nil, rpcError(ctx, err)
-	}
-	if len(diff) > 0 {
-		s.d.recordFor(ctx, c, AuditEntityCredentials, id, audit.ActionUpdate, diff)
 	}
 	return s.view(ctx, c.tenant, m)
 }
@@ -456,10 +463,12 @@ func (s *CredentialsService) DeleteCredential(ctx context.Context, req *Credenti
 	if err := m.Remove(ctx, secrets.TenantCredentialRef(c.tenant, id)); err != nil {
 		return nil, svcErr(ctx, http.StatusConflict, errcode.Forbidden, err.Error())
 	}
-	if _, err := s.d.cfg.Shared.Exec(ctx, `DELETE FROM metadata.tenant_credentials WHERE tenant_id = $1 AND id = $2`, c.tenant, id); err != nil {
+	err = s.d.change(ctx, c, AuditEntityCredentials, id, audit.ActionDelete, func(ctx context.Context) (map[string][2]any, error) {
+		_, err := s.d.db().Exec(ctx, `DELETE FROM metadata.tenant_credentials WHERE tenant_id = $1 AND id = $2`, c.tenant, id)
+		return map[string][2]any{"name": {cur.name, nil}}, err
+	})
+	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	s.d.recordFor(ctx, c, AuditEntityCredentials, id, audit.ActionDelete,
-		map[string][2]any{"name": {cur.name, nil}})
 	return s.view(ctx, c.tenant, m)
 }

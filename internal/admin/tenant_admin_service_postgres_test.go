@@ -122,6 +122,7 @@ func TestTenantAdminService(t *testing.T) {
 	}))
 
 	// Every change was audited under the tenant entity, by the platform admin.
+	h.drainAudit()
 	var n int
 	require.NoError(t, h.pool.QueryRow(ctx, `SELECT count(*) FROM metadata.audit_trail_entries
 		WHERE entity = $1 AND record_id = $2 AND actor_user_id = $3`, AuditEntityTenants, tid, platform.ID).Scan(&n))

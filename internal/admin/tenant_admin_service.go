@@ -166,7 +166,6 @@ func (s *TenantAdminService) CreateTenant(ctx context.Context, req *CreateTenant
 
 	now := s.d.now()
 	id := uuid.New()
-	pool := s.d.cfg.Shared
 	if err := s.registry.RegisterShared(ctx, id, name, tier, "provisioning"); err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -180,29 +179,39 @@ func (s *TenantAdminService) CreateTenant(ctx context.Context, req *CreateTenant
 		}
 	}
 	invitedBy := c.selfPtr()
-	m, _, err := identity.AddMember(ctx, pool, identity.NewMember{
-		TenantID: id, Email: req.GetAdminEmail(), DisplayName: req.GetAdminDisplayName(), InvitedBy: invitedBy,
-		Status: identity.StatusInvited,
+	var m *identity.Member
+	var token string
+	var inv *identity.Invitation
+	var newAccount bool
+	// The admin, the roles, the invitation, the activation and the audit entry are one change: a
+	// failure anywhere leaves none of them, and the registry row made above is then marked deleted.
+	err = s.d.change(ctx, c, AuditEntityTenants, id, audit.ActionCreate, func(ctx context.Context) (map[string][2]any, error) {
+		var err error
+		if m, _, err = identity.AddMember(ctx, s.d.db(), identity.NewMember{
+			TenantID: id, Email: req.GetAdminEmail(), DisplayName: req.GetAdminDisplayName(), InvitedBy: invitedBy,
+			Status: identity.StatusInvited,
+		}); err != nil {
+			return nil, identityErr(ctx, err)
+		}
+		if err := rolestore.EnsureBuiltinRoles(ctx, s.d.db(), id); err != nil {
+			return nil, rpcError(ctx, err)
+		}
+		if err := rolestore.AssignRole(ctx, s.d.db(), id, m.ID, permission.RoleAdmin, invitedBy); err != nil {
+			return nil, rpcError(ctx, err)
+		}
+		if newAccount, err = identity.CanSetPasswordOnAccept(ctx, s.d.db(), m.IdentityID, m.ID); err != nil {
+			return nil, rpcError(ctx, err)
+		}
+		if token, inv, err = identity.CreateInvitation(ctx, s.d.db(), id, m.ID, m.IdentityID, newAccount, invitedBy, now); err != nil {
+			return nil, rpcError(ctx, err)
+		}
+		if ok, err := s.registry.In(s.d.db()).SetStatus(ctx, id, "active"); err != nil || !ok {
+			return nil, rpcError(ctx, errors.Join(err, errors.New("could not activate the tenant")))
+		}
+		return map[string][2]any{"name": {nil, name}, "tier": {nil, tier}, "adminEmail": {nil, m.Email}}, nil
 	})
 	if err != nil {
-		return nil, fail(identityErr(ctx, err))
-	}
-	if err := rolestore.EnsureBuiltinRoles(ctx, pool, id); err != nil {
-		return nil, fail(rpcError(ctx, err))
-	}
-	if err := rolestore.AssignRole(ctx, pool, id, m.ID, permission.RoleAdmin, invitedBy); err != nil {
-		return nil, fail(rpcError(ctx, err))
-	}
-	newAccount, err := identity.CanSetPasswordOnAccept(ctx, pool, m.IdentityID, m.ID)
-	if err != nil {
-		return nil, fail(rpcError(ctx, err))
-	}
-	token, inv, err := identity.CreateInvitation(ctx, pool, id, m.ID, m.IdentityID, newAccount, invitedBy, now)
-	if err != nil {
-		return nil, fail(rpcError(ctx, err))
-	}
-	if ok, err := s.registry.SetStatus(ctx, id, "active"); err != nil || !ok {
-		return nil, fail(rpcError(ctx, errors.Join(err, errors.New("could not activate the tenant"))))
+		return nil, fail(err)
 	}
 
 	mailer := s.d.cfg.Mailer
@@ -214,9 +223,6 @@ func (s *TenantAdminService) CreateTenant(ctx context.Context, req *CreateTenant
 	if sendErr != nil && !errors.Is(sendErr, mail.ErrNotConfigured) {
 		slog.Warn("tenant admin invitation email not sent", "tenant_id", id, standard.LogError, sendErr)
 	}
-	s.record(ctx, c, id, audit.ActionCreate, map[string][2]any{
-		"name": {nil, name}, "tier": {nil, tier}, "adminEmail": {nil, m.Email},
-	})
 	t, err := s.tenant(ctx, id)
 	if err != nil {
 		return nil, err
@@ -261,18 +267,24 @@ func (s *TenantAdminService) UpdateTenant(ctx context.Context, req *UpdateTenant
 		tier = &t
 		diff["tier"] = [2]any{before.Tier, t}
 	}
-	if err := s.registry.Update(ctx, id, name, tier); err != nil {
+	err = s.d.change(ctx, c, AuditEntityTenants, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+		if err := s.registry.In(s.d.db()).Update(ctx, id, name, tier); err != nil {
+			return nil, err
+		}
+		if len(diff) == 0 {
+			return nil, nil
+		}
+		return diff, nil
+	})
+	if err != nil {
 		return nil, tenantErr(ctx, err)
-	}
-	if len(diff) > 0 {
-		s.record(ctx, c, id, audit.ActionUpdate, diff)
 	}
 	return s.tenant(ctx, id)
 }
 
 // lifecycle runs one state change and returns the tenant afterwards.
 func (s *TenantAdminService) lifecycle(ctx context.Context, idStr, change string,
-	fn func(id uuid.UUID, now time.Time) error, diff map[string][2]any) (*Tenant, error) {
+	fn func(ctx context.Context, r *tenancy.PostgresTenantRegistry, id uuid.UUID, now time.Time) error, diff map[string][2]any) (*Tenant, error) {
 	c, err := s.platformAdmin(ctx)
 	if err != nil {
 		return nil, err
@@ -281,35 +293,37 @@ func (s *TenantAdminService) lifecycle(ctx context.Context, idStr, change string
 	if err != nil {
 		return nil, err
 	}
-	if err := fn(id, s.d.now()); err != nil {
+	diff["change"] = [2]any{nil, change}
+	err = s.d.change(ctx, c, AuditEntityTenants, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+		return diff, fn(ctx, s.registry.In(s.d.db()), id, s.d.now())
+	})
+	if err != nil {
 		return nil, tenantErr(ctx, err)
 	}
-	diff["change"] = [2]any{nil, change}
-	s.record(ctx, c, id, audit.ActionUpdate, diff)
 	return s.tenant(ctx, id)
 }
 
 func (s *TenantAdminService) SuspendTenant(ctx context.Context, req *TenantIdRequest) (*Tenant, error) {
-	return s.lifecycle(ctx, req.GetId(), "suspend", func(id uuid.UUID, _ time.Time) error {
-		return s.registry.Suspend(ctx, id)
+	return s.lifecycle(ctx, req.GetId(), "suspend", func(ctx context.Context, r *tenancy.PostgresTenantRegistry, id uuid.UUID, _ time.Time) error {
+		return r.Suspend(ctx, id)
 	}, map[string][2]any{"status": {"active", "suspended"}})
 }
 
 func (s *TenantAdminService) ResumeTenant(ctx context.Context, req *TenantIdRequest) (*Tenant, error) {
-	return s.lifecycle(ctx, req.GetId(), "resume", func(id uuid.UUID, _ time.Time) error {
-		return s.registry.Resume(ctx, id)
+	return s.lifecycle(ctx, req.GetId(), "resume", func(ctx context.Context, r *tenancy.PostgresTenantRegistry, id uuid.UUID, _ time.Time) error {
+		return r.Resume(ctx, id)
 	}, map[string][2]any{"status": {"suspended", "active"}})
 }
 
 func (s *TenantAdminService) RequestTenantDeletion(ctx context.Context, req *RequestTenantDeletionRequest) (*Tenant, error) {
 	retention := time.Duration(req.GetRetentionDays()) * 24 * time.Hour
-	return s.lifecycle(ctx, req.GetId(), "request-deletion", func(id uuid.UUID, now time.Time) error {
-		return s.registry.RequestDeletion(ctx, id, now, retention)
+	return s.lifecycle(ctx, req.GetId(), "request-deletion", func(ctx context.Context, r *tenancy.PostgresTenantRegistry, id uuid.UUID, now time.Time) error {
+		return r.RequestDeletion(ctx, id, now, retention)
 	}, map[string][2]any{"status": {nil, "suspended"}, "deletionRequested": {false, true}})
 }
 
 func (s *TenantAdminService) CancelTenantDeletion(ctx context.Context, req *TenantIdRequest) (*Tenant, error) {
-	return s.lifecycle(ctx, req.GetId(), "cancel-deletion", func(id uuid.UUID, now time.Time) error {
-		return s.registry.CancelDeletion(ctx, id, now)
+	return s.lifecycle(ctx, req.GetId(), "cancel-deletion", func(ctx context.Context, r *tenancy.PostgresTenantRegistry, id uuid.UUID, now time.Time) error {
+		return r.CancelDeletion(ctx, id, now)
 	}, map[string][2]any{"deletionRequested": {true, false}})
 }

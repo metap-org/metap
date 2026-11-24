@@ -14,6 +14,7 @@ import (
 
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/pkg/action"
+	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 )
@@ -37,7 +38,7 @@ func (s *Service) WithSink(sink action.Sink) *Service {
 }
 
 func (s *Service) change(ctx context.Context, c kernel.Caller, fn func(ctx context.Context) (map[string][2]any, error)) error {
-	return kernel.Change(ctx, s.sink, s.audit, s.now, c, AuditEntityUsers, c.Self, fn)
+	return kernel.Change(ctx, s.sink, s.audit, s.now, c, AuditEntityUsers, c.Self, audit.ActionUpdate, fn)
 }
 
 // New is the service over store. auditor records the revocations (nil records nothing); now is the

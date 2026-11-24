@@ -25,6 +25,7 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 
 	"github.com/metap-org/metap/pkg/kit/standard"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // Snapshot is an immutable view of every stored platform-tier override. Values absent here fall
@@ -305,7 +306,11 @@ func Load(ctx context.Context, pool *pgxpool.Pool) (*Store, error) {
 }
 
 func (s *Store) readSnapshot(ctx context.Context) (*Snapshot, error) {
-	rows, err := s.pool.Query(ctx, "SELECT key, value FROM metadata.platform_configs")
+	return s.readSnapshotFrom(ctx, s.pool)
+}
+
+func (s *Store) readSnapshotFrom(ctx context.Context, e executor) (*Snapshot, error) {
+	rows, err := e.Query(ctx, "SELECT key, value FROM metadata.platform_configs")
 	if err != nil {
 		return nil, err
 	}
@@ -334,6 +339,13 @@ func (s *Store) Current() *Snapshot {
 // Operator keys. Tier is checked before validity so an operator-only key reports why it can't be
 // written rather than leaking whether the proposed value would have been acceptable.
 func (s *Store) SetPlatformGlobal(ctx context.Context, key string, value json.RawMessage) error {
+	return s.SetPlatformGlobalIn(ctx, s.pool, key, value)
+}
+
+// SetPlatformGlobalIn is SetPlatformGlobal through e, which may be the transaction of a unit of work
+// on the shared database: the new snapshot is read through e (it sees the row just written) and
+// swapped in only when the unit commits, so a rolled-back change is never served.
+func (s *Store) SetPlatformGlobalIn(ctx context.Context, e executor, key string, value json.RawMessage) error {
 	def := Lookup(key)
 	if def == nil {
 		return unknownKeyErr(key)
@@ -344,24 +356,31 @@ func (s *Store) SetPlatformGlobal(ctx context.Context, key string, value json.Ra
 	if err := def.Validate(value); err != nil {
 		return invalidErr(key, err.Error())
 	}
-	_, err := s.pool.Exec(ctx,
+	_, err := e.Exec(ctx,
 		`INSERT INTO metadata.platform_configs (key, value) VALUES ($1, $2)
 		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
 		key, value)
 	if err != nil {
 		return dbErr(err)
 	}
-	snap, err := s.readSnapshot(ctx)
+	snap, err := s.readSnapshotFrom(ctx, e)
 	if err != nil {
 		return dbErr(err)
 	}
-	s.snapshot.Store(snap)
-	slog.Info("platform config updated", "key", key)
+	tenancy.OnCommit(ctx, func() {
+		s.snapshot.Store(snap)
+		slog.Info("platform config updated", "key", key)
+	})
 	return nil
 }
 
 // ResetPlatformGlobal removes an override so the key falls back to its declared default.
 func (s *Store) ResetPlatformGlobal(ctx context.Context, key string) error {
+	return s.ResetPlatformGlobalIn(ctx, s.pool, key)
+}
+
+// ResetPlatformGlobalIn is ResetPlatformGlobal through e; see SetPlatformGlobalIn.
+func (s *Store) ResetPlatformGlobalIn(ctx context.Context, e executor, key string) error {
 	def := Lookup(key)
 	if def == nil {
 		return unknownKeyErr(key)
@@ -369,14 +388,14 @@ func (s *Store) ResetPlatformGlobal(ctx context.Context, key string) error {
 	if def.Level == LevelOperator {
 		return notWritableErr(key, "operator-only, settable through deployment configuration only")
 	}
-	if _, err := s.pool.Exec(ctx, "DELETE FROM metadata.platform_configs WHERE key = $1", key); err != nil {
+	if _, err := e.Exec(ctx, "DELETE FROM metadata.platform_configs WHERE key = $1", key); err != nil {
 		return dbErr(err)
 	}
-	snap, err := s.readSnapshot(ctx)
+	snap, err := s.readSnapshotFrom(ctx, e)
 	if err != nil {
 		return dbErr(err)
 	}
-	s.snapshot.Store(snap)
+	tenancy.OnCommit(ctx, func() { s.snapshot.Store(snap) })
 	return nil
 }
 
@@ -463,8 +482,10 @@ func (s *Store) SetTenant(ctx context.Context, e executor, tenantID uuid.UUID, k
 		tenantID, key, value); err != nil {
 		return dbErr(err)
 	}
-	s.tenants.Delete(tenantID.String())
-	slog.Info("tenant config updated", standard.LogTenantID, tenantID, "key", key)
+	tenancy.OnCommit(ctx, func() {
+		s.tenants.Delete(tenantID.String())
+		slog.Info("tenant config updated", standard.LogTenantID, tenantID, "key", key)
+	})
 	return nil
 }
 
@@ -477,7 +498,7 @@ func (s *Store) ResetTenant(ctx context.Context, e executor, tenantID uuid.UUID,
 	if _, err := e.Exec(ctx, "DELETE FROM metadata.tenant_configs WHERE tenant_id = $1 AND key = $2", tenantID, key); err != nil {
 		return dbErr(err)
 	}
-	s.tenants.Delete(tenantID.String())
+	tenancy.OnCommit(ctx, func() { s.tenants.Delete(tenantID.String()) })
 	return nil
 }
 

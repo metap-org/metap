@@ -46,18 +46,24 @@ func parseStrategy(strategyCol string, schemaName, dsnSecretRef *string) (Tenant
 }
 
 type PostgresTenantRegistry struct {
-	pool *pgxpool.Pool
+	db DBTX
 }
 
 func NewPostgresTenantRegistry(pool *pgxpool.Pool) *PostgresTenantRegistry {
-	return &PostgresTenantRegistry{pool: pool}
+	return &PostgresTenantRegistry{db: pool}
+}
+
+// In is the registry over db instead of the pool it was made with: the transaction of a unit of work,
+// so a change to the registry commits or rolls back with the rest of the work in it.
+func (r *PostgresTenantRegistry) In(db DBTX) *PostgresTenantRegistry {
+	return &PostgresTenantRegistry{db: db}
 }
 
 // Provision writes a new control.tenants row — the provisioning-side counterpart to Get.
 // schemaName/dsnSecretRef are mutually exclusive depending on strategy, same shape TenantStrategy
 // enforces on the read side.
 func (r *PostgresTenantRegistry) Provision(ctx context.Context, id uuid.UUID, tier, strategy string, schemaName, dsnSecretRef *string, status string) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.db.Exec(ctx,
 		"INSERT INTO control.tenants (id, tier, strategy, schema_name, dsn_secret_ref, status) VALUES ($1, $2, $3, $4, $5, $6)",
 		id, tier, strategy, schemaName, dsnSecretRef, status)
 	return err
@@ -66,7 +72,7 @@ func (r *PostgresTenantRegistry) Provision(ctx context.Context, id uuid.UUID, ti
 // SetStatus flips status on an existing tenant. Returns (false, nil) when id doesn't match any
 // row, so the caller can turn that into a clean 404.
 func (r *PostgresTenantRegistry) SetStatus(ctx context.Context, id uuid.UUID, status string) (bool, error) {
-	tag, err := r.pool.Exec(ctx, "UPDATE control.tenants SET status = $2 WHERE id = $1", id, status)
+	tag, err := r.db.Exec(ctx, "UPDATE control.tenants SET status = $2 WHERE id = $1", id, status)
 	if err != nil {
 		return false, err
 	}
@@ -75,7 +81,7 @@ func (r *PostgresTenantRegistry) SetStatus(ctx context.Context, id uuid.UUID, st
 
 // SetProduct sets which downstream product/app a tenant belongs to.
 func (r *PostgresTenantRegistry) SetProduct(ctx context.Context, id uuid.UUID, product string) (bool, error) {
-	tag, err := r.pool.Exec(ctx, "UPDATE control.tenants SET product = $2 WHERE id = $1", id, product)
+	tag, err := r.db.Exec(ctx, "UPDATE control.tenants SET product = $2 WHERE id = $1", id, product)
 	if err != nil {
 		return false, err
 	}
@@ -86,7 +92,7 @@ func (r *PostgresTenantRegistry) SetProduct(ctx context.Context, id uuid.UUID, p
 // has one but never had a product set.
 func (r *PostgresTenantRegistry) GetProduct(ctx context.Context, id uuid.UUID) (*string, error) {
 	var product *string
-	err := r.pool.QueryRow(ctx, "SELECT product FROM control.tenants WHERE id = $1", id).Scan(&product)
+	err := r.db.QueryRow(ctx, "SELECT product FROM control.tenants WHERE id = $1", id).Scan(&product)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -99,7 +105,7 @@ func (r *PostgresTenantRegistry) GetProduct(ctx context.Context, id uuid.UUID) (
 // Deprovision sets status = 'deleted'. Idempotent: deprovisioning an already-deleted tenant is a
 // no-op, still returns true. Returns (false, nil) when id doesn't match any row.
 func (r *PostgresTenantRegistry) Deprovision(ctx context.Context, id uuid.UUID) (bool, error) {
-	tag, err := r.pool.Exec(ctx, "UPDATE control.tenants SET status = 'deleted' WHERE id = $1", id)
+	tag, err := r.db.Exec(ctx, "UPDATE control.tenants SET status = 'deleted' WHERE id = $1", id)
 	if err != nil {
 		return false, err
 	}
@@ -109,7 +115,7 @@ func (r *PostgresTenantRegistry) Deprovision(ctx context.Context, id uuid.UUID) 
 // List returns every control.tenants row, newest first. A row whose strategy/status value
 // doesn't parse is skipped with a warning rather than failing the whole listing.
 func (r *PostgresTenantRegistry) List(ctx context.Context) ([]TenantSummary, error) {
-	rows, err := r.pool.Query(ctx,
+	rows, err := r.db.Query(ctx,
 		"SELECT id, tier, strategy, schema_name, dsn_secret_ref, status, created_at, trial_expires_at, product FROM control.tenants ORDER BY created_at DESC")
 	if err != nil {
 		return nil, err
@@ -144,7 +150,7 @@ func (r *PostgresTenantRegistry) List(ctx context.Context) ([]TenantSummary, err
 func (r *PostgresTenantRegistry) Get(ctx context.Context, tenantID uuid.UUID) (*TenantRouting, error) {
 	var strategyCol, statusCol string
 	var schemaName, dsnSecretRef *string
-	err := r.pool.QueryRow(ctx,
+	err := r.db.QueryRow(ctx,
 		"SELECT strategy, schema_name, dsn_secret_ref, status FROM control.tenants WHERE id = $1", tenantID).
 		Scan(&strategyCol, &schemaName, &dsnSecretRef, &statusCol)
 	if err != nil {
