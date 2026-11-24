@@ -12,7 +12,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/internal/admin/kernel"
-	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/action"
+	"github.com/metap-org/metap/pkg/auth/identity"
 )
 
 // AuditEntityUsers is the audit entity a member's own account changes are recorded under.
@@ -21,7 +22,32 @@ const AuditEntityUsers = "metadata.users"
 type Service struct {
 	store Store
 	audit kernel.Auditor
-	now   func() time.Time
+	// sink, when set, makes a change and its audit entry one transaction on the shared database; nil
+	// keeps "change, then record best-effort".
+	sink action.Sink
+	now  func() time.Time
+}
+
+// WithSink makes every change atomic with its audit entry and returns s.
+func (s *Service) WithSink(sink action.Sink) *Service {
+	s.sink = sink
+	return s
+}
+
+// change runs one change that checks a code. A wrong code is refused but its attempt count is kept
+// (kernel.CommitDespite), or nothing would ever stop guessing.
+func (s *Service) change(ctx context.Context, c kernel.Caller, fn func(ctx context.Context) (map[string][2]any, error)) error {
+	return kernel.Change(ctx, s.sink, s.audit, s.now, c, AuditEntityUsers, c.Self, func(ctx context.Context) (map[string][2]any, error) {
+		diff, err := fn(ctx)
+		switch {
+		case err == nil:
+			return diff, nil
+		case identity.MFAAttemptCounts(err):
+			return nil, kernel.CommitDespite{Err: kernel.IdentityErr(err)}
+		default:
+			return nil, kernel.IdentityErr(err)
+		}
+	})
 }
 
 // New is the service over store. auditor records the changes (nil records nothing); now is the clock
@@ -44,12 +70,6 @@ func (s *Service) own(ctx context.Context) (kernel.Caller, uuid.UUID, error) {
 		return kernel.Caller{}, uuid.Nil, kernel.IdentityErr(err)
 	}
 	return c, id, nil
-}
-
-func (s *Service) record(ctx context.Context, c kernel.Caller, diff map[string][2]any) {
-	if s.audit != nil {
-		s.audit.Record(ctx, c, AuditEntityUsers, c.Self, audit.ActionUpdate, diff)
-	}
 }
 
 // Status is whether two-step sign-in is on and how many recovery codes are left.
@@ -89,11 +109,15 @@ func (s *Service) Confirm(ctx context.Context, req *MfaCodeRequest) (*MfaRecover
 	if err != nil {
 		return nil, err
 	}
-	codes, err := s.store.Confirm(ctx, id, req.Code, s.now())
+	var codes []string
+	err = s.change(ctx, c, func(ctx context.Context) (map[string][2]any, error) {
+		var err error
+		codes, err = s.store.Confirm(ctx, id, req.Code, s.now())
+		return map[string][2]any{"mfa": {"off", "on"}}, err
+	})
 	if err != nil {
-		return nil, kernel.IdentityErr(err)
+		return nil, err
 	}
-	s.record(ctx, c, map[string][2]any{"mfa": {"off", "on"}})
 	return &MfaRecoveryCodes{Codes: codes}, nil
 }
 
@@ -103,11 +127,9 @@ func (s *Service) Disable(ctx context.Context, req *MfaCodeRequest) error {
 	if err != nil {
 		return err
 	}
-	if err := s.store.Disable(ctx, id, req.Code, s.now()); err != nil {
-		return kernel.IdentityErr(err)
-	}
-	s.record(ctx, c, map[string][2]any{"mfa": {"on", "off"}})
-	return nil
+	return s.change(ctx, c, func(ctx context.Context) (map[string][2]any, error) {
+		return map[string][2]any{"mfa": {"on", "off"}}, s.store.Disable(ctx, id, req.Code, s.now())
+	})
 }
 
 // RegenerateRecoveryCodes replaces every recovery code; it needs a current or recovery code. It is
@@ -118,10 +140,14 @@ func (s *Service) RegenerateRecoveryCodes(ctx context.Context, req *MfaCodeReque
 	if err != nil {
 		return nil, err
 	}
-	codes, err := s.store.Regenerate(ctx, id, req.Code, s.now())
+	var codes []string
+	err = s.change(ctx, c, func(ctx context.Context) (map[string][2]any, error) {
+		var err error
+		codes, err = s.store.Regenerate(ctx, id, req.Code, s.now())
+		return map[string][2]any{"recoveryCodes": {"replaced", "regenerated"}}, err
+	})
 	if err != nil {
-		return nil, kernel.IdentityErr(err)
+		return nil, err
 	}
-	s.record(ctx, c, map[string][2]any{"recoveryCodes": {"replaced", "regenerated"}})
 	return &MfaRecoveryCodes{Codes: codes}, nil
 }

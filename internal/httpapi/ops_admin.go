@@ -577,7 +577,7 @@ func registerAccountOperations(api huma.API, state *AppState, s *admin.AccountSe
 		func(ctx context.Context, in *tenantUsersIn) (*admin.ListTenantUsersResponse, error) {
 			return s.ListTenantUsers(ctx, &admin.ListTenantUsersRequest{Search: in.Search, Limit: in.Limit})
 		})
-	mfaSvc := mfa.New(mfa.NewPgStore(state.Identity.Shared), kernel.StoreAuditor{Store: state.Identity.Audit}, nil)
+	mfaSvc := mfa.New(mfa.NewPgStore(kernel.IdentityDB{Pool: state.Identity.Shared}), kernel.StoreAuditor{Store: state.Identity.Audit}, nil).WithSink(action.NewSink(state.Router))
 	adminOp(api, state, opOf("getMyMfa", http.MethodGet, "/me/mfa", "The caller's two-step sign-in status", tag),
 		func(ctx context.Context, _ *struct{}) (*mfa.MfaStatus, error) { return mfaSvc.Status(ctx) })
 	adminOp(api, state, opOf("beginMfaEnrollment", http.MethodPost, "/me/mfa/enrollment", "Start turning on two-step sign-in", tag),
