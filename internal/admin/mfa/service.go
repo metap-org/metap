@@ -110,11 +110,11 @@ func (s *Service) Disable(ctx context.Context, req *MfaCodeRequest) error {
 	return nil
 }
 
-// RegenerateRecoveryCodes replaces every recovery code; it needs a current or recovery code. (It is
-// not audited, as it was not before this slice; whether it should be is a question for the owner of
-// the audit trail, not for a move.)
+// RegenerateRecoveryCodes replaces every recovery code; it needs a current or recovery code. It is
+// audited (the old codes stop working, which is a change to how the account can be recovered), and
+// the entry says that it happened, never what the codes are.
 func (s *Service) RegenerateRecoveryCodes(ctx context.Context, req *MfaCodeRequest) (*MfaRecoveryCodes, error) {
-	_, id, err := s.own(ctx)
+	c, id, err := s.own(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -122,5 +122,6 @@ func (s *Service) RegenerateRecoveryCodes(ctx context.Context, req *MfaCodeReque
 	if err != nil {
 		return nil, kernel.IdentityErr(err)
 	}
+	s.record(ctx, c, map[string][2]any{"recoveryCodes": {"replaced", "regenerated"}})
 	return &MfaRecoveryCodes{Codes: codes}, nil
 }

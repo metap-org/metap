@@ -147,6 +147,33 @@ func TestDisablingNeedsACodeAndIsAudited(t *testing.T) {
 	require.Equal(t, [2]any{"on", "off"}, w.audit.entries[0].diff["mfa"])
 }
 
+func TestRegeneratingRecoveryCodesIsAuditedWithoutTheCodes(t *testing.T) {
+	w := newWorld()
+	ctx := w.as(w.store.person(w.tenant))
+	w.turnOn(t, ctx)
+	w.audit.entries = nil
+
+	_, err := w.svc.RegenerateRecoveryCodes(ctx, &MfaCodeRequest{Code: "wrong"})
+	require.Equal(t, http.StatusUnauthorized, status(err))
+	require.Empty(t, w.audit.entries, "a refused regenerate is not a change")
+
+	got, err := w.svc.RegenerateRecoveryCodes(ctx, &MfaCodeRequest{Code: goodCode})
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Codes)
+	require.Len(t, w.audit.entries, 1)
+	e := w.audit.entries[0]
+	require.Equal(t, AuditEntityUsers, e.entity)
+	require.Equal(t, audit.ActionUpdate, e.action)
+	require.Contains(t, e.diff, "recoveryCodes")
+	for _, pair := range e.diff {
+		for _, v := range pair {
+			for _, c := range got.Codes {
+				require.NotEqual(t, c, v, "no recovery code reaches the audit trail")
+			}
+		}
+	}
+}
+
 func TestTooManyWrongCodesLockItWithTooManyRequests(t *testing.T) {
 	w := newWorld()
 	ctx := w.as(w.store.person(w.tenant))
@@ -159,7 +186,7 @@ func TestTooManyWrongCodesLockItWithTooManyRequests(t *testing.T) {
 	require.Equal(t, "account_locked", code(err))
 }
 
-func TestRegeneratingGivesANewSetAndIsNotAudited(t *testing.T) {
+func TestRegeneratingGivesANewSet(t *testing.T) {
 	w := newWorld()
 	ctx := w.as(w.store.person(w.tenant))
 	first := w.turnOn(t, ctx)
@@ -171,7 +198,6 @@ func TestRegeneratingGivesANewSetAndIsNotAudited(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got.Codes, 10)
 	require.NotEqual(t, first, got.Codes)
-	require.Empty(t, w.audit.entries, "as before this slice; see RegenerateRecoveryCodes")
 }
 
 func TestRegeneratingWhileOffIsConflict(t *testing.T) {
