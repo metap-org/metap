@@ -11,6 +11,7 @@ import (
 
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/sessions"
+	"github.com/metap-org/metap/pkg/action"
 )
 
 type listSessionsOutput struct {
@@ -32,7 +33,7 @@ type revokeOthersOutput struct {
 func registerSessionOperations(api huma.API, state *AppState) {
 	mw := huma.Middlewares{authed(state)}
 	tags := []string{"Account"}
-	svc := sessions.New(sessions.NewPgStore(kernel.IdentityDB{Pool: state.Pool}), kernel.StoreAuditor{Store: state.Audit}, nil)
+	svc := sessions.New(sessions.NewPgStore(kernel.IdentityDB{Pool: state.Pool}), kernel.StoreAuditor{Store: state.Audit}, nil).WithSink(action.NewSink(state.Router))
 	// The service reads its caller from the context the way the administrative services do.
 	as := func(ctx context.Context) context.Context { return kernel.WithCaller(ctx, callerOf(ctx)) }
 

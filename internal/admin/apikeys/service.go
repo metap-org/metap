@@ -52,34 +52,8 @@ func (s *Service) WithSink(sink action.Sink) *Service {
 	return s
 }
 
-// change runs one administrative change and records it: change returns what to audit, and when there
-// is a sink both happen in one transaction, so there is never a key without its entry or an entry
-// for a key that was not made.
-func (s *Service) change(ctx context.Context, c kernel.Caller, member uuid.UUID, change func(ctx context.Context) (map[string][2]any, error)) error {
-	if s.sink == nil {
-		diff, err := change(ctx)
-		if err != nil {
-			return err
-		}
-		s.record(ctx, c, member, diff)
-		return nil
-	}
-	unit, err := action.NewSharedUnit(s.sink, c.RC)
-	if err != nil {
-		return err
-	}
-	err = unit.Step(ctx, "api key", func(ctx context.Context) error {
-		diff, err := change(ctx)
-		if err != nil {
-			return err
-		}
-		unit.AuditPrepared(kernel.AuditEntryOf(c.Tenant, c.Self, AuditEntityUsers, member, audit.ActionUpdate, diff, s.now()))
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	return unit.Close(ctx)
+func (s *Service) change(ctx context.Context, c kernel.Caller, member uuid.UUID, fn func(ctx context.Context) (map[string][2]any, error)) error {
+	return kernel.Change(ctx, s.sink, s.audit, s.now, c, AuditEntityUsers, member, fn)
 }
 
 func (s *Service) record(ctx context.Context, c kernel.Caller, member uuid.UUID, diff map[string][2]any) {

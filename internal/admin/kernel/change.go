@@ -1,0 +1,67 @@
+package kernel
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/metap-org/metap/pkg/action"
+	"github.com/metap-org/metap/pkg/audit"
+)
+
+// CommitDespite wraps the error of a change that must still be committed: a wrong MFA code, whose
+// attempt count has to survive the refusal or nothing would ever stop guessing. Change commits the
+// work done so far (with no audit entry, as nothing changed) and returns Err.
+type CommitDespite struct{ Err error }
+
+func (c CommitDespite) Error() string { return c.Err.Error() }
+func (c CommitDespite) Unwrap() error { return c.Err }
+
+// Change runs one administrative change and records it. fn does the work (with the context it is given)
+// and returns what to audit as a before/after pair per field.
+//
+// With a sink, the work and its audit entry are one transaction on the shared database: there is never
+// a change without its entry or an entry for a change that was not made, whatever the tenant's
+// strategy. Without one it is the older "change, then record best-effort" through fallback (nil
+// records nothing). The entry is the one WriteAudit records, in the form the audit trail shows.
+func Change(ctx context.Context, sink action.Sink, fallback Auditor, now func() time.Time, c Caller,
+	entity string, id uuid.UUID, fn func(ctx context.Context) (map[string][2]any, error)) error {
+	if now == nil {
+		now = time.Now
+	}
+	if sink == nil {
+		diff, err := fn(ctx)
+		if err != nil {
+			return err
+		}
+		if fallback != nil {
+			fallback.Record(ctx, c, entity, id, audit.ActionUpdate, diff)
+		}
+		return nil
+	}
+	unit, err := action.NewSharedUnit(sink, c.RC)
+	if err != nil {
+		return err
+	}
+	var refused error
+	err = unit.Step(ctx, "change", func(ctx context.Context) error {
+		diff, err := fn(ctx)
+		if err != nil {
+			if cd, ok := err.(CommitDespite); ok {
+				refused = cd.Err
+				return nil
+			}
+			return err
+		}
+		unit.AuditPrepared(AuditEntryOf(c.Tenant, c.Self, entity, id, audit.ActionUpdate, diff, now()))
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if err := unit.Close(ctx); err != nil {
+		return err
+	}
+	return refused
+}

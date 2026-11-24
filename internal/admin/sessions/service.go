@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/internal/admin/kernel"
-	"github.com/metap-org/metap/pkg/audit"
+	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 )
@@ -24,7 +24,20 @@ const AuditEntityUsers = "metadata.users"
 type Service struct {
 	store Store
 	audit kernel.Auditor
-	now   func() time.Time
+	// sink, when set, makes a revocation and its audit entry one transaction on the shared database;
+	// nil keeps "change, then record best-effort".
+	sink action.Sink
+	now  func() time.Time
+}
+
+// WithSink makes every change atomic with its audit entry and returns s.
+func (s *Service) WithSink(sink action.Sink) *Service {
+	s.sink = sink
+	return s
+}
+
+func (s *Service) change(ctx context.Context, c kernel.Caller, fn func(ctx context.Context) (map[string][2]any, error)) error {
+	return kernel.Change(ctx, s.sink, s.audit, s.now, c, AuditEntityUsers, c.Self, fn)
 }
 
 // New is the service over store. auditor records the revocations (nil records nothing); now is the
@@ -52,12 +65,6 @@ func (s *Service) own(ctx context.Context) (kernel.Caller, uuid.UUID, error) {
 	return c, id, nil
 }
 
-func (s *Service) record(ctx context.Context, c kernel.Caller, diff map[string][2]any) {
-	if s.audit != nil {
-		s.audit.Record(ctx, c, AuditEntityUsers, c.Self, audit.ActionUpdate, diff)
-	}
-}
-
 // List is the caller's live sessions across tenants and devices; the one this request uses is marked.
 func (s *Service) List(ctx context.Context) ([]Session, error) {
 	c, id, err := s.own(ctx)
@@ -83,14 +90,15 @@ func (s *Service) Revoke(ctx context.Context, rawID string) error {
 	if !ok {
 		return notFound
 	}
-	if err := s.store.Revoke(ctx, id, sid, s.now()); err != nil {
-		if errors.Is(err, identity.ErrNotFound) {
-			return notFound
+	return s.change(ctx, c, func(ctx context.Context) (map[string][2]any, error) {
+		if err := s.store.Revoke(ctx, id, sid, s.now()); err != nil {
+			if errors.Is(err, identity.ErrNotFound) {
+				return nil, notFound
+			}
+			return nil, err
 		}
-		return err
-	}
-	s.record(ctx, c, map[string][2]any{"session": {sid.String(), "revoked"}})
-	return nil
+		return map[string][2]any{"session": {sid.String(), "revoked"}}, nil
+	})
 }
 
 // RevokeOthers signs out every session of the caller but the one this request uses, and says how
@@ -100,10 +108,16 @@ func (s *Service) RevokeOthers(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	n, err := s.store.RevokeOthers(ctx, id, keepSession(c.RC.SessionID), s.now())
+	var n int
+	err = s.change(ctx, c, func(ctx context.Context) (map[string][2]any, error) {
+		var err error
+		if n, err = s.store.RevokeOthers(ctx, id, keepSession(c.RC.SessionID), s.now()); err != nil {
+			return nil, err
+		}
+		return map[string][2]any{"sessions": {n, "revoked"}}, nil
+	})
 	if err != nil {
 		return 0, err
 	}
-	s.record(ctx, c, map[string][2]any{"sessions": {n, "revoked"}})
 	return n, nil
 }
