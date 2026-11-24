@@ -66,7 +66,7 @@ func scanTenantDetail(row pgx.Row) (*TenantDetail, error) {
 
 // GetDetail reads one tenant. ErrTenantNotFound when there is no such row.
 func (r *PostgresTenantRegistry) GetDetail(ctx context.Context, id uuid.UUID) (*TenantDetail, error) {
-	d, err := scanTenantDetail(r.pool.QueryRow(ctx, "SELECT "+tenantDetailColumns+" FROM control.tenants WHERE id = $1", id))
+	d, err := scanTenantDetail(r.db.QueryRow(ctx, "SELECT "+tenantDetailColumns+" FROM control.tenants WHERE id = $1", id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrTenantNotFound
 	}
@@ -83,10 +83,10 @@ func (r *PostgresTenantRegistry) Search(ctx context.Context, f TenantFilter) ([]
 		AND ($2 = '' OR status = $2) AND ($3 = '' OR tier = $3)`
 	q := strings.TrimSpace(f.Query)
 	var total int
-	if err := r.pool.QueryRow(ctx, "SELECT count(*) FROM control.tenants "+where, escapeLike(q), f.Status, f.Tier).Scan(&total); err != nil {
+	if err := r.db.QueryRow(ctx, "SELECT count(*) FROM control.tenants "+where, escapeLike(q), f.Status, f.Tier).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.pool.Query(ctx, "SELECT "+tenantDetailColumns+" FROM control.tenants "+where+
+	rows, err := r.db.Query(ctx, "SELECT "+tenantDetailColumns+" FROM control.tenants "+where+
 		" ORDER BY created_at DESC, id LIMIT $4 OFFSET $5", escapeLike(q), f.Status, f.Tier, limit, f.Offset)
 	if err != nil {
 		return nil, 0, err
@@ -112,7 +112,7 @@ func escapeLike(s string) string {
 // roles are the caller's to create; the tenant is visible to Router from this insert on.
 func (r *PostgresTenantRegistry) RegisterShared(ctx context.Context, id uuid.UUID, name, tier, status string) error {
 	public := "public"
-	_, err := r.pool.Exec(ctx,
+	_, err := r.db.Exec(ctx,
 		`INSERT INTO control.tenants (id, name, tier, strategy, schema_name, status) VALUES ($1, $2, $3, 'schema', $4, $5)`,
 		id, name, tier, public, status)
 	return err
@@ -120,7 +120,7 @@ func (r *PostgresTenantRegistry) RegisterShared(ctx context.Context, id uuid.UUI
 
 // Update renames a tenant and/or changes its tier; nil leaves a field alone.
 func (r *PostgresTenantRegistry) Update(ctx context.Context, id uuid.UUID, name, tier *string) error {
-	tag, err := r.pool.Exec(ctx,
+	tag, err := r.db.Exec(ctx,
 		`UPDATE control.tenants SET name = coalesce($2, name), tier = coalesce($3, tier) WHERE id = $1`, id, name, tier)
 	if err != nil {
 		return err
@@ -132,7 +132,7 @@ func (r *PostgresTenantRegistry) Update(ctx context.Context, id uuid.UUID, name,
 }
 
 func (r *PostgresTenantRegistry) transition(ctx context.Context, id uuid.UUID, sql string, args ...any) error {
-	tag, err := r.pool.Exec(ctx, sql, append([]any{id}, args...)...)
+	tag, err := r.db.Exec(ctx, sql, append([]any{id}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -181,7 +181,7 @@ func (r *PostgresTenantRegistry) CancelDeletion(ctx context.Context, id uuid.UUI
 // Deleting is the registry state only (Router refuses the tenant for good); physical data
 // removal is a separate, deliberate step.
 func (r *PostgresTenantRegistry) PurgeDue(ctx context.Context, now time.Time) ([]uuid.UUID, error) {
-	rows, err := r.pool.Query(ctx, `UPDATE control.tenants SET status = 'deleted'
+	rows, err := r.db.Query(ctx, `UPDATE control.tenants SET status = 'deleted'
 		WHERE status <> 'deleted' AND deletion_effective_at IS NOT NULL AND deletion_effective_at <= $1
 		RETURNING id`, now)
 	if err != nil {
