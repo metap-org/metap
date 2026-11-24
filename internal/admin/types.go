@@ -292,24 +292,6 @@ type ListTenantUsersResponse struct {
 	Users []*TenantUser `json:"users" required:"false"`
 }
 
-type MfaStatus struct {
-	Enabled           bool  `json:"enabled" required:"false"`
-	RecoveryCodesLeft int32 `json:"recoveryCodesLeft" required:"false"`
-}
-
-type MfaEnrollment struct {
-	Secret     string `json:"secret" required:"false"`
-	OtpauthUri string `json:"otpauthUri" required:"false"`
-}
-
-type MfaCodeRequest struct {
-	Code string `json:"code" required:"false"`
-}
-
-type MfaRecoveryCodes struct {
-	Codes []string `json:"codes" required:"false"`
-}
-
 type Tenant struct {
 	Id   string `json:"id" required:"false"`
 	Name string `json:"name" required:"false"`
@@ -1501,48 +1483,6 @@ func (x *TenantUser) GetDisplayName() string {
 func (x *ListTenantUsersResponse) GetUsers() []*TenantUser {
 	if x != nil {
 		return x.Users
-	}
-	return nil
-}
-
-func (x *MfaStatus) GetEnabled() bool {
-	if x != nil {
-		return x.Enabled
-	}
-	return false
-}
-
-func (x *MfaStatus) GetRecoveryCodesLeft() int32 {
-	if x != nil {
-		return x.RecoveryCodesLeft
-	}
-	return 0
-}
-
-func (x *MfaEnrollment) GetSecret() string {
-	if x != nil {
-		return x.Secret
-	}
-	return ""
-}
-
-func (x *MfaEnrollment) GetOtpauthUri() string {
-	if x != nil {
-		return x.OtpauthUri
-	}
-	return ""
-}
-
-func (x *MfaCodeRequest) GetCode() string {
-	if x != nil {
-		return x.Code
-	}
-	return ""
-}
-
-func (x *MfaRecoveryCodes) GetCodes() []string {
-	if x != nil {
-		return x.Codes
 	}
 	return nil
 }

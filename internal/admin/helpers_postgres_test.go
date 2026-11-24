@@ -11,6 +11,7 @@ import (
 	"errors"
 	"github.com/metap-org/metap/internal/admin/apikeys"
 	"github.com/metap-org/metap/internal/admin/kernel"
+	"github.com/metap-org/metap/internal/admin/mfa"
 	"github.com/metap-org/metap/internal/authctx"
 	"github.com/metap-org/metap/pkg/secrets"
 	"net/http"
@@ -42,6 +43,7 @@ type testClient struct {
 	Owner   *OwnerService
 	SSO     *SsoAdminService
 	Keys    *apikeys.Service
+	Mfa     *mfa.Service
 }
 
 func newTestClient(cfg IdentityConfig) *testClient {
@@ -49,6 +51,7 @@ func newTestClient(cfg IdentityConfig) *testClient {
 		Admin: NewUserAdminService(cfg), Roles: NewRoleAdminService(cfg), Account: NewAccountService(cfg),
 		Tenants: NewTenantAdminService(cfg), Audit: NewAuditAdminService(cfg), Support: NewSupportAccessService(cfg),
 		Owner: NewOwnerService(cfg), SSO: NewSsoAdminService(cfg),
+		Mfa:  mfa.New(mfa.NewPgStore(cfg.Shared), kernel.StoreAuditor{Store: cfg.Audit}, nil),
 		Keys: apikeys.New(apikeys.NewPgStore(cfg.Shared), kernel.StoreAuditor{Store: cfg.Audit}, cfg.APIKeyMaxDays, nil),
 	}
 }

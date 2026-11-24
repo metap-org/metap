@@ -13,6 +13,7 @@ import (
 	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/internal/admin/apikeys"
 	"github.com/metap-org/metap/internal/admin/kernel"
+	"github.com/metap-org/metap/internal/admin/mfa"
 	"github.com/metap-org/metap/internal/admin/preferences"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -575,23 +576,22 @@ func registerAccountOperations(api huma.API, state *AppState, s *admin.AccountSe
 		func(ctx context.Context, in *tenantUsersIn) (*admin.ListTenantUsersResponse, error) {
 			return s.ListTenantUsers(ctx, &admin.ListTenantUsersRequest{Search: in.Search, Limit: in.Limit})
 		})
+	mfaSvc := mfa.New(mfa.NewPgStore(state.Identity.Shared), kernel.StoreAuditor{Store: state.Identity.Audit}, nil)
 	adminOp(api, state, opOf("getMyMfa", http.MethodGet, "/me/mfa", "The caller's two-step sign-in status", tag),
-		func(ctx context.Context, _ *struct{}) (*admin.MfaStatus, error) { return s.GetMfaStatus(ctx, empty) })
+		func(ctx context.Context, _ *struct{}) (*mfa.MfaStatus, error) { return mfaSvc.Status(ctx) })
 	adminOp(api, state, opOf("beginMfaEnrollment", http.MethodPost, "/me/mfa/enrollment", "Start turning on two-step sign-in", tag),
-		func(ctx context.Context, _ *struct{}) (*admin.MfaEnrollment, error) {
-			return s.BeginMfaEnrollment(ctx, empty)
-		})
+		func(ctx context.Context, _ *struct{}) (*mfa.MfaEnrollment, error) { return mfaSvc.Begin(ctx) })
 	adminOp(api, state, opOf("confirmMfaEnrollment", http.MethodPost, "/me/mfa/enrollment/confirm", "Finish turning on two-step sign-in", tag),
-		func(ctx context.Context, in *bodyIn[admin.MfaCodeRequest]) (*admin.MfaRecoveryCodes, error) {
-			return s.ConfirmMfaEnrollment(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[mfa.MfaCodeRequest]) (*mfa.MfaRecoveryCodes, error) {
+			return mfaSvc.Confirm(ctx, &in.Body)
 		})
 	adminNoContent(api, state, opOf("disableMyMfa", http.MethodPost, "/me/mfa/disable", "Turn off two-step sign-in", tag),
-		func(ctx context.Context, in *bodyIn[admin.MfaCodeRequest]) (*admin.Empty, error) {
-			return s.DisableMfa(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[mfa.MfaCodeRequest]) (*admin.Empty, error) {
+			return &admin.Empty{}, mfaSvc.Disable(ctx, &in.Body)
 		})
 	adminOp(api, state, opOf("regenerateRecoveryCodes", http.MethodPost, "/me/mfa/recovery-codes", "Replace the caller's recovery codes", tag),
-		func(ctx context.Context, in *bodyIn[admin.MfaCodeRequest]) (*admin.MfaRecoveryCodes, error) {
-			return s.RegenerateRecoveryCodes(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[mfa.MfaCodeRequest]) (*mfa.MfaRecoveryCodes, error) {
+			return mfaSvc.RegenerateRecoveryCodes(ctx, &in.Body)
 		})
 }
 

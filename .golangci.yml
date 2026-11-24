@@ -54,6 +54,23 @@ linters:
               desc: routing belongs to the transport (internal/httpapi)
             - pkg: github.com/danielgtaylor/huma
               desc: typed-operation wiring belongs to the transport (internal/httpapi)
+        # Slices (roadmap 122): internal/admin/<slice> keeps decisions apart from I/O. rules.go has no
+        # database driver and no HTTP; service.go reaches the database only through its Store port, so
+        # only pgstore.go imports the driver. This is what lets a slice's rules and service be unit tested.
+        slice-rules-pure:
+          files:
+            - "**/internal/admin/*/rules.go"
+          deny:
+            - pkg: github.com/jackc/pgx
+              desc: a slice's rules are decisions without I/O; the database is pgstore.go's
+            - pkg: net/http
+              desc: a slice's rules know nothing of HTTP; the transport maps their answer to a status
+        slice-service-no-driver:
+          files:
+            - "**/internal/admin/*/service.go"
+          deny:
+            - pkg: github.com/jackc/pgx
+              desc: a slice's service reaches the database through its Store (store.go), implemented in pgstore.go
         # Handlers do not talk to the database (roadmap 118): internal/httpapi holds the pgx pool
         # as a handle (AppState.Pool) and passes it to a service, it never runs a query.
         transport-no-driver:
