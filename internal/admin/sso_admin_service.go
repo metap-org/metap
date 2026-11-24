@@ -21,7 +21,7 @@ import (
 // AuditEntitySSO is the audit-trail entity SSO configuration changes are recorded under (the record is the tenant).
 const AuditEntitySSO = "metadata.sso_config"
 
-// ssoSecretKey is the config key the OIDC client secret is stored under; keep in step with httpserver.SSOSecretKey.
+// ssoSecretKey is the config key the OIDC client secret is stored under; keep in step with httpapi.SSOSecretKey.
 const ssoSecretKey = "sso.clientSecret"
 
 var emailDomainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$`)

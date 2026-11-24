@@ -35,7 +35,7 @@ linters:
           deny:
             - pkg: github.com/go-chi
               desc: use pkg/kit/httpx/router (standard-library ServeMux), not chi
-        # Layers (roadmap 118): transport (pkg/httpserver, huma, the router) calls application
+        # Layers (roadmap 118): transport (internal/httpapi and its public face pkg/web, huma, the router) calls application
         # services (admin, signin, crud, identity, ...); never the other way round.
         application-below-transport:
           files:
@@ -46,17 +46,19 @@ linters:
             - "**/pkg/crud/**"
             - "!$test"
           deny:
-            - pkg: github.com/metap-org/metap/pkg/httpserver
+            - pkg: github.com/metap-org/metap/internal/httpapi
+              desc: an application service must not import the HTTP transport
+            - pkg: github.com/metap-org/metap/pkg/web
               desc: an application service must not import the HTTP transport
             - pkg: github.com/metap-org/metap/pkg/kit/httpx/router
-              desc: routing belongs to the transport (pkg/httpserver)
+              desc: routing belongs to the transport (internal/httpapi)
             - pkg: github.com/danielgtaylor/huma
-              desc: typed-operation wiring belongs to the transport (pkg/httpserver)
-        # Handlers do not talk to the database (roadmap 118): pkg/httpserver holds the pgx pool
+              desc: typed-operation wiring belongs to the transport (internal/httpapi)
+        # Handlers do not talk to the database (roadmap 118): internal/httpapi holds the pgx pool
         # as a handle (AppState.Pool) and passes it to a service, it never runs a query.
         transport-no-driver:
           files:
-            - "**/pkg/httpserver/**"
+            - "**/internal/httpapi/**"
             - "!$test"
           deny:
             - pkg: github.com/jackc/pgx/v5/pgconn

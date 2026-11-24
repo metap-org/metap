@@ -82,7 +82,7 @@ func (s *CrudService) Trusted() *CrudService {
 // the result of NewCrudService or WithAudit. cache should be the *same* ContextAttributesCache
 // instance ResolveRequestContext reads from — a separate instance would invalidate a cache
 // nothing actually reads.
-// ContextInvalidator drops what is cached about a caller's context attributes (httpserver's
+// ContextInvalidator drops what is cached about a caller's context attributes (httpapi's
 // ContextAttributesCache is the one implementation).
 type ContextInvalidator interface {
 	Invalidate(tenantID, userID uuid.UUID)
