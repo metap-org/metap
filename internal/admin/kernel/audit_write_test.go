@@ -1,4 +1,4 @@
-package admin
+package kernel
 
 import (
 	"context"
@@ -23,20 +23,20 @@ func (c *capturedAudit) Record(_ context.Context, _ uuid.UUID, e audit.Entry) er
 }
 
 func TestANamedIDIsStableAndDependsOnItsKind(t *testing.T) {
-	require.Equal(t, namedID("config", "auth.passwordMinLength"), namedID("config", "auth.passwordMinLength"))
-	require.NotEqual(t, namedID("config", "x"), namedID("policies", "x"))
-	require.NotEqual(t, namedID("config", "x"), namedID("config", "y"))
+	require.Equal(t, NamedID("config", "auth.passwordMinLength"), NamedID("config", "auth.passwordMinLength"))
+	require.NotEqual(t, NamedID("config", "x"), NamedID("policies", "x"))
+	require.NotEqual(t, NamedID("config", "x"), NamedID("config", "y"))
 }
 
 func TestANilAuditStoreRecordsNothingAndDoesNotFail(t *testing.T) {
-	writeAdminAudit(context.Background(), nil, uuid.New(), uuid.New(), "metadata.x", uuid.New(), audit.ActionUpdate,
+	WriteAudit(context.Background(), nil, uuid.New(), uuid.New(), "metadata.x", uuid.New(), audit.ActionUpdate,
 		map[string][2]any{"a": {1, 2}}, testNow)
 }
 
 func TestAnAdminChangeIsRecordedWithItsActorAndBeforeAfter(t *testing.T) {
 	store := &capturedAudit{}
 	tenant, actor, id := uuid.New(), uuid.New(), uuid.New()
-	writeAdminAudit(context.Background(), store, tenant, actor, "metadata.policies", id, audit.ActionCreate,
+	WriteAudit(context.Background(), store, tenant, actor, "metadata.policies", id, audit.ActionCreate,
 		map[string][2]any{"entity": {nil, "waf.zones"}}, testNow)
 
 	require.Len(t, store.entries, 1)

@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/internal/admin/users"
 	"net/http"
 	"testing"
 	"time"
@@ -62,9 +63,9 @@ func TestAccountMFALifecycleAndAdminReset(t *testing.T) {
 	assert.Error(t, err, "old recovery codes died with the regeneration")
 
 	// A non-admin cannot reset; an admin can, for a person of this tenant alone.
-	_, err = h.client.Admin.ResetMfa(asBob, &UserIdRequest{Id: bob.ID.String()})
+	_, err = h.client.Admin.ResetMfa(asBob, &users.UserIdRequest{Id: bob.ID.String()})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
-	_, err = h.client.Admin.ResetMfa(asAdmin, &UserIdRequest{Id: bob.ID.String()})
+	_, err = h.client.Admin.ResetMfa(asAdmin, &users.UserIdRequest{Id: bob.ID.String()})
 	require.NoError(t, err)
 	st, _ = h.client.Mfa.Status(asBob)
 	assert.False(t, st.Enabled)
@@ -73,7 +74,7 @@ func TestAccountMFALifecycleAndAdminReset(t *testing.T) {
 	other := uuid.New()
 	_, _, err = identity.AddMember(context.Background(), h.pool, identity.NewMember{TenantID: other, Email: "bob@acme.io"})
 	require.NoError(t, err)
-	_, err = h.client.Admin.ResetMfa(asAdmin, &UserIdRequest{Id: bob.ID.String()})
+	_, err = h.client.Admin.ResetMfa(asAdmin, &users.UserIdRequest{Id: bob.ID.String()})
 	assert.Error(t, err)
 }
 

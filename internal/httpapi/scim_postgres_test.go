@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/metap-org/metap/internal/admin/trail"
+	"github.com/metap-org/metap/internal/admin/users"
 	"github.com/metap-org/metap/pkg/auth/jwks"
 	"io"
 	"net/http"
@@ -40,13 +41,13 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 	require.NoError(t, err)
 	testkit.SeedRole(t, pool, tenant, adminMember.ID, "admin")
 	// The admin's own service calls, as the HTTP layer makes them once it has authenticated the caller.
-	users := admin.NewUserAdminService(idCfg)
+	userSvc := admin.NewUserService(idCfg)
 	keys := apikeys.New(apikeys.NewPgStore(idCfg.Shared), kernel.StoreAuditor{Store: idCfg.Audit}, idCfg.APIKeyMaxDays, nil)
 	asAdmin := admin.WithCaller(context.Background(), &permission.RequestContext{
 		TenantID: tenant.String(), UserID: adminMember.ID.String(), Roles: []string{"admin"}, HasRoles: true})
-	sa, err := users.CreateServiceAccount(asAdmin, &admin.CreateServiceAccountRequest{Name: "entra"})
+	sa, err := userSvc.CreateServiceAccount(asAdmin, &users.CreateServiceAccountRequest{Name: "entra"})
 	require.NoError(t, err)
-	_, err = users.AssignRole(asAdmin, &admin.RoleRequest{Id: sa.GetId(), Role: "admin"})
+	_, err = userSvc.AssignRole(asAdmin, &users.RoleRequest{Id: sa.GetId(), Role: "admin"})
 	require.NoError(t, err)
 	key, err := keys.Create(asAdmin, &apikeys.CreateApiKeyRequest{UserId: sa.GetId(), Name: "scim", ExpiresInDays: 30})
 	require.NoError(t, err)

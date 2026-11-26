@@ -7,6 +7,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/apikeys"
 	"github.com/metap-org/metap/internal/admin/support"
 	"github.com/metap-org/metap/internal/admin/trail"
+	"github.com/metap-org/metap/internal/admin/users"
 	"net/http"
 	"testing"
 
@@ -54,7 +55,7 @@ func TestSupportAccessLifecycle(t *testing.T) {
 
 	// The key works as the support account: it holds the granted role only — not admin.
 	asSupport := CallContext(context.Background(), session.GetToken())
-	_, err = h.client.Admin.ListUsers(asSupport, &ListUsersRequest{})
+	_, err = h.client.Admin.List(asSupport, &users.ListUsersRequest{})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "support holds the granted role, not admin")
 	sas, err := h.client.Admin.ListServiceAccounts(asAdmin, &Empty{})
 	require.NoError(t, err)
@@ -123,23 +124,23 @@ func TestSupportSessionCannotCreateDurableAccess(t *testing.T) {
 	require.NoError(t, err)
 	asSupport := CallContext(context.Background(), session.GetToken())
 
-	_, err = h.client.Admin.ListUsers(asSupport, &ListUsersRequest{})
+	_, err = h.client.Admin.List(asSupport, &users.ListUsersRequest{})
 	assert.NoError(t, err, "it can look around and do the admin's ordinary work")
 
-	_, err = h.client.Admin.CreateServiceAccount(asSupport, &CreateServiceAccountRequest{Name: "backdoor"})
+	_, err = h.client.Admin.CreateServiceAccount(asSupport, &users.CreateServiceAccountRequest{Name: "backdoor"})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "no service account")
 	_, err = h.client.Keys.Create(asSupport, &apikeys.CreateApiKeyRequest{UserId: bob.ID.String(), Name: "k", ExpiresInDays: 30})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "no key")
-	_, err = h.client.Admin.InviteUser(asSupport, &InviteUserRequest{Email: "mallory@evil.test", Roles: []string{"admin"}})
+	_, err = h.client.Admin.Invite(asSupport, &users.InviteUserRequest{Email: "mallory@evil.test", Roles: []string{"admin"}})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "no invitation")
-	_, err = h.client.Admin.AssignRole(asSupport, &RoleRequest{Id: bob.ID.String(), Role: "admin"})
+	_, err = h.client.Admin.AssignRole(asSupport, &users.RoleRequest{Id: bob.ID.String(), Role: "admin"})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "no role")
-	_, err = h.client.Admin.ResetPassword(asSupport, &ResetPasswordRequest{Id: bob.ID.String(), Password: "a-new-password-123"})
+	_, err = h.client.Admin.ResetPassword(asSupport, &users.ResetPasswordRequest{Id: bob.ID.String(), Password: "a-new-password-123"})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "no password reset")
-	_, err = h.client.Admin.ResetMfa(asSupport, &UserIdRequest{Id: bob.ID.String()})
+	_, err = h.client.Admin.ResetMfa(asSupport, &users.UserIdRequest{Id: bob.ID.String()})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "no MFA reset")
 
 	// The tenant's own admin is unaffected.
-	_, err = h.client.Admin.CreateServiceAccount(asAdmin, &CreateServiceAccountRequest{Name: "ci"})
+	_, err = h.client.Admin.CreateServiceAccount(asAdmin, &users.CreateServiceAccountRequest{Name: "ci"})
 	assert.NoError(t, err)
 }

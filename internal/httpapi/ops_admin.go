@@ -11,6 +11,7 @@ import (
 
 	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/admin"
+	"github.com/metap-org/metap/internal/admin/account"
 	"github.com/metap-org/metap/internal/admin/apikeys"
 	"github.com/metap-org/metap/internal/admin/credentials"
 	"github.com/metap-org/metap/internal/admin/kernel"
@@ -24,6 +25,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/support"
 	"github.com/metap-org/metap/internal/admin/tenants"
 	"github.com/metap-org/metap/internal/admin/trail"
+	"github.com/metap-org/metap/internal/admin/users"
 	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -259,7 +261,7 @@ func registerAdminOperations(api huma.API, state *AppState) {
 		return
 	}
 	cfg := *state.Identity
-	registerUserOperations(api, state, admin.NewUserAdminService(cfg))
+	registerUserOperations(api, state, admin.NewUserService(cfg))
 	roleDeps := kernel.Deps{Cfg: cfg}
 	registerRoleOperations(api, state, roles.New(roles.NewPgStore(roleDeps), roleDeps))
 	registerAccountOperations(api, state, admin.NewAccountService(cfg))
@@ -430,73 +432,73 @@ type scopeMembersIn struct {
 	ScopeID   string `query:"scopeId"`
 }
 
-func registerUserOperations(api huma.API, state *AppState, s *admin.UserAdminService) {
+func registerUserOperations(api huma.API, state *AppState, s *users.Service) {
 	const tag = "Users"
-	id := func(v string) *admin.UserIdRequest { return &admin.UserIdRequest{Id: v} }
+	id := func(v string) *users.UserIdRequest { return &users.UserIdRequest{Id: v} }
 
 	adminOp(api, state, opOf("listUsers", http.MethodGet, "/admin/users", "Members of the caller's tenant", tag),
-		func(ctx context.Context, in *listUsersIn) (*admin.ListUsersResponse, error) {
-			return s.ListUsers(ctx, &admin.ListUsersRequest{Search: in.Search, Status: in.Status, Role: in.Role, Offset: in.Offset, Limit: in.Limit})
+		func(ctx context.Context, in *listUsersIn) (*users.ListUsersResponse, error) {
+			return s.List(ctx, &users.ListUsersRequest{Search: in.Search, Status: in.Status, Role: in.Role, Offset: in.Offset, Limit: in.Limit})
 		})
 	createUser := opOf("createUser", http.MethodPost, "/admin/users", "Add a member with a password", tag)
 	createUser.DefaultStatus = http.StatusCreated
-	adminOp(api, state, createUser, func(ctx context.Context, in *bodyIn[admin.CreateUserRequest]) (*admin.CreateUserResponse, error) {
-		return s.CreateUser(ctx, &in.Body)
+	adminOp(api, state, createUser, func(ctx context.Context, in *bodyIn[users.CreateUserRequest]) (*users.CreateUserResponse, error) {
+		return s.Create(ctx, &in.Body)
 	})
 	invite := opOf("inviteUser", http.MethodPost, "/admin/invitations", "Invite someone by email", tag)
 	invite.DefaultStatus = http.StatusCreated
-	adminOp(api, state, invite, func(ctx context.Context, in *bodyIn[admin.InviteUserRequest]) (*admin.InviteUserResponse, error) {
-		return s.InviteUser(ctx, &in.Body)
+	adminOp(api, state, invite, func(ctx context.Context, in *bodyIn[users.InviteUserRequest]) (*users.InviteUserResponse, error) {
+		return s.Invite(ctx, &in.Body)
 	})
 	adminOp(api, state, opOf("getUser", http.MethodGet, "/admin/users/{id}", "One member", tag),
-		func(ctx context.Context, in *idPath) (*admin.User, error) { return s.GetUser(ctx, id(in.ID)) })
+		func(ctx context.Context, in *idPath) (*users.User, error) { return s.Get(ctx, id(in.ID)) })
 	adminOp(api, state, opOf("updateUser", http.MethodPatch, "/admin/users/{id}", "Change a member's display name", tag),
-		func(ctx context.Context, in *idBodyIn[admin.UpdateUserRequest]) (*admin.User, error) {
+		func(ctx context.Context, in *idBodyIn[users.UpdateUserRequest]) (*users.User, error) {
 			in.Body.Id = in.ID
-			return s.UpdateUser(ctx, &in.Body)
+			return s.Update(ctx, &in.Body)
 		})
 	adminNoContent(api, state, opOf("removeUser", http.MethodDelete, "/admin/users/{id}", "Remove a member from the tenant", tag),
-		func(ctx context.Context, in *idPath) (*admin.Empty, error) { return s.RemoveUser(ctx, id(in.ID)) })
+		func(ctx context.Context, in *idPath) (*admin.Empty, error) { return s.Remove(ctx, id(in.ID)) })
 	adminOp(api, state, opOf("disableUser", http.MethodPost, "/admin/users/{id}/disable", "Disable a member", tag),
-		func(ctx context.Context, in *idPath) (*admin.User, error) { return s.DisableUser(ctx, id(in.ID)) })
+		func(ctx context.Context, in *idPath) (*users.User, error) { return s.Disable(ctx, id(in.ID)) })
 	adminOp(api, state, opOf("enableUser", http.MethodPost, "/admin/users/{id}/enable", "Enable a member (also unlocks)", tag),
-		func(ctx context.Context, in *idPath) (*admin.User, error) { return s.EnableUser(ctx, id(in.ID)) })
+		func(ctx context.Context, in *idPath) (*users.User, error) { return s.Enable(ctx, id(in.ID)) })
 	adminNoContent(api, state, opOf("resetUserPassword", http.MethodPost, "/admin/users/{id}/password", "Set a member's password", tag),
-		func(ctx context.Context, in *idBodyIn[admin.ResetPasswordRequest]) (*admin.Empty, error) {
+		func(ctx context.Context, in *idBodyIn[users.ResetPasswordRequest]) (*admin.Empty, error) {
 			in.Body.Id = in.ID
 			return s.ResetPassword(ctx, &in.Body)
 		})
 	adminNoContent(api, state, opOf("resetUserMfa", http.MethodPost, "/admin/users/{id}/mfa/reset", "Turn off a member's two-step sign-in", tag),
 		func(ctx context.Context, in *idPath) (*admin.Empty, error) { return s.ResetMfa(ctx, id(in.ID)) })
 	adminOp(api, state, opOf("resendInvitation", http.MethodPost, "/admin/users/{id}/invitation/resend", "Send an invited member a fresh link", tag),
-		func(ctx context.Context, in *idPath) (*admin.InviteUserResponse, error) {
+		func(ctx context.Context, in *idPath) (*users.InviteUserResponse, error) {
 			return s.ResendInvitation(ctx, id(in.ID))
 		})
 	adminOp(api, state, opOf("assignRole", http.MethodPost, "/admin/users/{id}/roles", "Grant a role, tenant-wide or inside a scope", tag),
-		func(ctx context.Context, in *idBodyIn[roleBody]) (*admin.User, error) {
-			return s.AssignRole(ctx, &admin.RoleRequest{Id: in.ID, Role: in.Body.Role, ScopeType: in.Body.ScopeType, ScopeId: in.Body.ScopeID})
+		func(ctx context.Context, in *idBodyIn[roleBody]) (*users.User, error) {
+			return s.AssignRole(ctx, &users.RoleRequest{Id: in.ID, Role: in.Body.Role, ScopeType: in.Body.ScopeType, ScopeId: in.Body.ScopeID})
 		})
 	adminOp(api, state, opOf("revokeRole", http.MethodDelete, "/admin/users/{id}/roles/{role}", "Take a role away", tag),
-		func(ctx context.Context, in *revokeRoleIn) (*admin.User, error) {
-			return s.RevokeRole(ctx, &admin.RoleRequest{Id: in.ID, Role: in.Role, ScopeType: in.ScopeType, ScopeId: in.ScopeID})
+		func(ctx context.Context, in *revokeRoleIn) (*users.User, error) {
+			return s.RevokeRole(ctx, &users.RoleRequest{Id: in.ID, Role: in.Role, ScopeType: in.ScopeType, ScopeId: in.ScopeID})
 		})
 	adminOp(api, state, opOf("listUserAudit", http.MethodGet, "/admin/users/{id}/audit", "Changes made to a member", tag),
 		func(ctx context.Context, in *userAuditIn) (*admin.ListUserAuditResponse, error) {
-			return s.ListUserAudit(ctx, &admin.ListUserAuditRequest{Id: in.ID, Cursor: in.Cursor, Limit: in.Limit})
+			return s.ListAudit(ctx, &users.ListUserAuditRequest{Id: in.ID, Cursor: in.Cursor, Limit: in.Limit})
 		})
 	adminOp(api, state, opOf("listScopeMembers", http.MethodGet, "/admin/scope-members", "Who holds a role inside one scope", tag),
-		func(ctx context.Context, in *scopeMembersIn) (*admin.ListScopeMembersResponse, error) {
-			return s.ListScopeMembers(ctx, &admin.ScopeRequest{ScopeType: in.ScopeType, ScopeId: in.ScopeID})
+		func(ctx context.Context, in *scopeMembersIn) (*users.ListScopeMembersResponse, error) {
+			return s.ListScopeMembers(ctx, &users.ScopeRequest{ScopeType: in.ScopeType, ScopeId: in.ScopeID})
 		})
 
 	// Service accounts and API keys (roadmap 115 M5).
 	adminOp(api, state, opOf("listServiceAccounts", http.MethodGet, "/admin/service-accounts", "The tenant's service accounts", tag),
-		func(ctx context.Context, _ *struct{}) (*admin.ListUsersResponse, error) {
+		func(ctx context.Context, _ *struct{}) (*users.ListUsersResponse, error) {
 			return s.ListServiceAccounts(ctx, &admin.Empty{})
 		})
 	createSA := opOf("createServiceAccount", http.MethodPost, "/admin/service-accounts", "Add a service account", tag)
 	createSA.DefaultStatus = http.StatusCreated
-	adminOp(api, state, createSA, func(ctx context.Context, in *bodyIn[admin.CreateServiceAccountRequest]) (*admin.User, error) {
+	adminOp(api, state, createSA, func(ctx context.Context, in *bodyIn[users.CreateServiceAccountRequest]) (*users.User, error) {
 		return s.CreateServiceAccount(ctx, &in.Body)
 	})
 	cfg := state.Identity
@@ -577,23 +579,23 @@ type tenantUsersIn struct {
 	Limit  int32  `query:"limit"`
 }
 
-func registerAccountOperations(api huma.API, state *AppState, s *admin.AccountService) {
+func registerAccountOperations(api huma.API, state *AppState, s *account.Service) {
 	const tag = "Account"
 	empty := &admin.Empty{}
 
 	adminOp(api, state, opOf("getMe", http.MethodGet, "/me", "The caller", tag),
-		func(ctx context.Context, _ *struct{}) (*admin.Me, error) { return s.GetMe(ctx, empty) })
+		func(ctx context.Context, _ *struct{}) (*account.Me, error) { return s.Get(ctx, empty) })
 	adminOp(api, state, opOf("updateMyProfile", http.MethodPatch, "/me", "Change the caller's display name", tag),
-		func(ctx context.Context, in *bodyIn[admin.UpdateProfileRequest]) (*admin.Me, error) {
+		func(ctx context.Context, in *bodyIn[account.UpdateProfileRequest]) (*account.Me, error) {
 			return s.UpdateProfile(ctx, &in.Body)
 		})
 	adminOp(api, state, opOf("listMyTenants", http.MethodGet, "/me/tenants", "Tenants the caller is a member of", tag),
-		func(ctx context.Context, _ *struct{}) (*admin.ListMyTenantsResponse, error) {
+		func(ctx context.Context, _ *struct{}) (*account.ListMyTenantsResponse, error) {
 			return s.ListMyTenants(ctx, empty)
 		})
 	adminOp(api, state, opOf("listTenantUsers", http.MethodGet, "/tenant-users", "Active members of the caller's tenant (for pickers)", tag),
-		func(ctx context.Context, in *tenantUsersIn) (*admin.ListTenantUsersResponse, error) {
-			return s.ListTenantUsers(ctx, &admin.ListTenantUsersRequest{Search: in.Search, Limit: in.Limit})
+		func(ctx context.Context, in *tenantUsersIn) (*account.ListTenantUsersResponse, error) {
+			return s.ListTenantUsers(ctx, &account.ListTenantUsersRequest{Search: in.Search, Limit: in.Limit})
 		})
 	mfaSvc := mfa.New(mfa.NewPgStore(kernel.IdentityDB{Pool: state.Identity.Shared}), kernel.StoreAuditor{Store: state.Identity.Audit}, nil).WithSink(action.NewSink(state.Router))
 	adminOp(api, state, opOf("getMyMfa", http.MethodGet, "/me/mfa", "The caller's two-step sign-in status", tag),

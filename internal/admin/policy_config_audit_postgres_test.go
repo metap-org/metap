@@ -107,7 +107,7 @@ func TestPolicyAndConfigChangesAreAudited(t *testing.T) {
 	changes := trail(settings.AuditEntityTenant)
 	require.Len(t, changes, 2, "the set and the reset")
 	for _, c := range changes {
-		assert.Equal(t, namedID("config", key), c.RecordID)
+		assert.Equal(t, kernel.NamedID("config", key), c.RecordID)
 		assert.Contains(t, string(c.Diff), "before")
 	}
 }

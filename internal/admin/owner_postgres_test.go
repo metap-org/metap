@@ -5,6 +5,7 @@ package admin
 import (
 	"context"
 	ownerslice "github.com/metap-org/metap/internal/admin/owner"
+	"github.com/metap-org/metap/internal/admin/users"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -35,26 +36,26 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	st, err := h.client.Owner.GetStatus(asOther, &Empty{})
 	require.NoError(t, err)
 	assert.Equal(t, owner.ID.String(), st.GetOwnerMemberId())
-	users, err := h.client.Admin.ListUsers(asOwner, &ListUsersRequest{})
+	listed, err := h.client.Admin.List(asOwner, &users.ListUsersRequest{})
 	require.NoError(t, err)
-	for _, u := range users.GetUsers() {
+	for _, u := range listed.GetUsers() {
 		assert.Equal(t, u.GetId() == owner.ID.String(), u.GetIsOwner(), u.GetEmail())
 	}
 
 	// Another admin cannot touch the owner.
-	oid := &UserIdRequest{Id: owner.ID.String()}
-	_, err = h.client.Admin.DisableUser(asOther, oid)
+	oid := &users.UserIdRequest{Id: owner.ID.String()}
+	_, err = h.client.Admin.Disable(asOther, oid)
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
-	_, err = h.client.Admin.RemoveUser(asOther, oid)
+	_, err = h.client.Admin.Remove(asOther, oid)
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
-	_, err = h.client.Admin.RevokeRole(asOther, &RoleRequest{Id: owner.ID.String(), Role: "admin"})
+	_, err = h.client.Admin.RevokeRole(asOther, &users.RoleRequest{Id: owner.ID.String(), Role: "admin"})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
-	_, err = h.client.Admin.ResetPassword(asOther, &ResetPasswordRequest{Id: owner.ID.String(), Password: "Another-Passw0rd!"})
+	_, err = h.client.Admin.ResetPassword(asOther, &users.ResetPasswordRequest{Id: owner.ID.String(), Password: "Another-Passw0rd!"})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 	_, err = h.client.Admin.ResetMfa(asOther, oid)
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 	// Ordinary members are still administered as before.
-	_, err = h.client.Admin.DisableUser(asOther, &UserIdRequest{Id: viewer.ID.String()})
+	_, err = h.client.Admin.Disable(asOther, &users.UserIdRequest{Id: viewer.ID.String()})
 	assert.NoError(t, err)
 
 	// Only the owner transfers, and only to an active admin.
@@ -114,7 +115,7 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, other.ID.String(), st.GetOwnerMemberId())
 	// The old owner is now an ordinary admin, and the new owner is protected from them.
-	_, err = h.client.Admin.DisableUser(asOwner, &UserIdRequest{Id: other.ID.String()})
+	_, err = h.client.Admin.Disable(asOwner, &users.UserIdRequest{Id: other.ID.String()})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 
 	// The new owner can hand it back.

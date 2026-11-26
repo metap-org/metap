@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"github.com/metap-org/metap/internal/admin/account"
 	"github.com/metap-org/metap/internal/admin/apikeys"
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
@@ -18,6 +19,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/support"
 	"github.com/metap-org/metap/internal/admin/tenants"
 	"github.com/metap-org/metap/internal/admin/trail"
+	"github.com/metap-org/metap/internal/admin/users"
 	"github.com/metap-org/metap/internal/authctx"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/secrets"
@@ -41,9 +43,9 @@ import (
 
 // testClient groups the services the way the tests address them (they were gRPC clients).
 type testClient struct {
-	Admin   *UserAdminService
+	Admin   *users.Service
 	Roles   *roles.Service
-	Account *AccountService
+	Account *account.Service
 	Tenants *tenants.Service
 	Trail   *trail.Service
 	Support *support.Service
@@ -55,7 +57,7 @@ type testClient struct {
 
 func newTestClient(cfg IdentityConfig) *testClient {
 	return &testClient{
-		Admin: NewUserAdminService(cfg), Roles: roles.New(roles.NewPgStore(kernel.Deps{Cfg: cfg}), kernel.Deps{Cfg: cfg}), Account: NewAccountService(cfg),
+		Admin: NewUserService(cfg), Roles: roles.New(roles.NewPgStore(kernel.Deps{Cfg: cfg}), kernel.Deps{Cfg: cfg}), Account: NewAccountService(cfg),
 		Tenants: newTenantsService(cfg), Trail: trail.New(cfg.Audit), Support: support.New(support.NewPgStore(kernel.Deps{Cfg: cfg}), kernel.Deps{Cfg: cfg}),
 		Owner: NewOwnerService(cfg), SSO: NewSsoService(cfg),
 		Mfa:  mfa.New(mfa.NewPgStore(cfg.Shared), kernel.StoreAuditor{Store: cfg.Audit}, nil),
