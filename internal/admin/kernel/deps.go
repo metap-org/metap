@@ -87,6 +87,9 @@ type Config struct {
 type Deps struct {
 	Cfg    Config
 	NowFor func() time.Time
+	// IsSupport says whether a member is a vendor's support session; nil asks the shared database.
+	// A unit test with no database sets it.
+	IsSupport SupportCheck
 }
 
 // Now is the clock (NowFor, else time.Now).
@@ -110,6 +113,9 @@ func (d Deps) At(ctx context.Context, level access.Level) (Caller, error) { retu
 // account, a key, a role, a password or MFA reset, a sign-in provider. A support session (vendor
 // access, time-boxed by a grant) is refused, so revoking or lapsing the grant really ends it.
 func (d Deps) AdminDurable(ctx context.Context) (Caller, error) {
+	if d.IsSupport != nil {
+		return Durable(ctx, d.IsSupport)
+	}
 	return Durable(ctx, func(ctx context.Context, tenant, member uuid.UUID) (bool, error) {
 		return identity.IsSupportSessionMember(ctx, d.Cfg.Shared, tenant, member)
 	})

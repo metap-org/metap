@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"github.com/metap-org/metap/internal/admin/ssoconfig"
 	"github.com/metap-org/metap/internal/admin/trail"
 	"math/big"
 	"net/http"
@@ -53,47 +54,47 @@ func TestSsoAdminConfig(t *testing.T) {
 	asOwner, asOther := h.as(tenant, owner.ID), h.as(tenant, other.ID)
 	issuer := discoveryOnly(t)
 
-	cfg, err := h.client.SSO.GetSsoConfig(asOwner, &Empty{})
+	cfg, err := h.client.SSO.GetOidc(asOwner, &Empty{})
 	require.NoError(t, err)
 	assert.False(t, cfg.GetConfigured())
 	assert.Equal(t, "http://portal.test/auth/sso/callback", cfg.GetRedirectUri(), "what to register at the IdP")
 
-	valid := func() *SetSsoConfigRequest {
-		return &SetSsoConfigRequest{IssuerUrl: issuer, ClientId: "c1", ClientSecret: "s3cret", EmailDomains: []string{"Acme.io"},
+	valid := func() *ssoconfig.SetSsoConfigRequest {
+		return &ssoconfig.SetSsoConfigRequest{IssuerUrl: issuer, ClientId: "c1", ClientSecret: "s3cret", EmailDomains: []string{"Acme.io"},
 			DefaultRole: "viewer", Enabled: true, PostLoginRedirect: "http://portal.test/home"}
 	}
-	code := func(mut func(*SetSsoConfigRequest)) int {
+	code := func(mut func(*ssoconfig.SetSsoConfigRequest)) int {
 		r := valid()
 		mut(r)
-		_, err := h.client.SSO.SetSsoConfig(asOwner, r)
+		_, err := h.client.SSO.SetOidc(asOwner, r)
 		return statusOf(err)
 	}
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.IssuerUrl = "http://idp.example.com" }), "https only")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.IssuerUrl = "https://idp.invalid" }), "must be a reachable OIDC issuer")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.ClientId = "" }))
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.PostLoginRedirect = "https://evil.example.com/" }), "landing page must be on the service's own origin")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.DefaultRole = "admin" }), "SSO never mints admins")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.DefaultRole = "no-such-role" }))
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.EmailDomains = []string{"not a domain"} }))
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) { r.IssuerUrl = "http://idp.example.com" }), "https only")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) { r.IssuerUrl = "https://idp.invalid" }), "must be a reachable OIDC issuer")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) { r.ClientId = "" }))
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) { r.PostLoginRedirect = "https://evil.example.com/" }), "landing page must be on the service's own origin")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) { r.DefaultRole = "admin" }), "SSO never mints admins")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) { r.DefaultRole = "no-such-role" }))
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) { r.EmailDomains = []string{"not a domain"} }))
 	// Group to role mapping: needs a claim, never admin, only roles the tenant has.
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.RoleMap = map[string]string{"g": "viewer"} }), "a map needs a claim to read")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) {
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) { r.RoleMap = map[string]string{"g": "viewer"} }), "a map needs a claim to read")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) {
 		r.RoleClaim, r.RoleMap = "groups", map[string]string{"g": "admin"}
 	}), "a provider group never makes an admin")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) {
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) {
 		r.RoleClaim, r.RoleMap = "groups", map[string]string{"g": "platform_admin"}
 	}))
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) {
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) {
 		r.RoleClaim, r.RoleMap = "groups", map[string]string{"g": "no-such-role"}
 	}))
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) {
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) {
 		r.RoleClaim, r.RoleMap = "groups", map[string]string{"": "viewer"}
 	}))
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSsoConfigRequest) { r.ClientSecret = "" }), "the first setup needs a secret")
-	_, err = h.client.SSO.SetSsoConfig(h.as(tenant, uuid.New()), valid())
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSsoConfigRequest) { r.ClientSecret = "" }), "the first setup needs a secret")
+	_, err = h.client.SSO.SetOidc(h.as(tenant, uuid.New()), valid())
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "admins only")
 
-	set, err := h.client.SSO.SetSsoConfig(asOther, valid())
+	set, err := h.client.SSO.SetOidc(asOther, valid())
 	require.NoError(t, err)
 	assert.True(t, set.GetConfigured() && set.GetEnabled() && set.GetHasClientSecret())
 	assert.Equal(t, []string{"acme.io"}, set.GetEmailDomains(), "domains are normalised")
@@ -102,11 +103,11 @@ func TestSsoAdminConfig(t *testing.T) {
 	// A valid mapping is stored and read back (never null).
 	mapped := valid()
 	mapped.RoleClaim, mapped.RoleMap = " groups ", map[string]string{"sec-team": "viewer"}
-	set, err = h.client.SSO.SetSsoConfig(asOther, mapped)
+	set, err = h.client.SSO.SetOidc(asOther, mapped)
 	require.NoError(t, err)
 	assert.Equal(t, "groups", set.RoleClaim)
 	assert.Equal(t, map[string]string{"sec-team": "viewer"}, set.RoleMap)
-	plain, err := h.client.SSO.SetSsoConfig(asOther, valid())
+	plain, err := h.client.SSO.SetOidc(asOther, valid())
 	require.NoError(t, err)
 	assert.NotNil(t, plain.RoleMap, "no mapping reads back as {}, not null")
 	assert.Empty(t, plain.RoleMap)
@@ -114,7 +115,7 @@ func TestSsoAdminConfig(t *testing.T) {
 	// A later update without a secret keeps the stored one.
 	upd := valid()
 	upd.ClientSecret, upd.ClientId = "", "c2"
-	set, err = h.client.SSO.SetSsoConfig(asOther, upd)
+	set, err = h.client.SSO.SetOidc(asOther, upd)
 	require.NoError(t, err)
 	assert.Equal(t, "c2", set.GetClientId())
 	assert.True(t, set.GetHasClientSecret())
@@ -122,24 +123,24 @@ func TestSsoAdminConfig(t *testing.T) {
 	// Only the owner can enforce SSO, and only while it is enabled.
 	enforce := valid()
 	enforce.ClientSecret, enforce.Enforced = "", true
-	_, err = h.client.SSO.SetSsoConfig(asOther, enforce)
+	_, err = h.client.SSO.SetOidc(asOther, enforce)
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 	disabledEnforce := valid()
 	disabledEnforce.ClientSecret, disabledEnforce.Enforced, disabledEnforce.Enabled = "", true, false
-	_, err = h.client.SSO.SetSsoConfig(asOwner, disabledEnforce)
+	_, err = h.client.SSO.SetOidc(asOwner, disabledEnforce)
 	assert.Equal(t, http.StatusBadRequest, statusOf(err))
-	set, err = h.client.SSO.SetSsoConfig(asOwner, enforce)
+	set, err = h.client.SSO.SetOidc(asOwner, enforce)
 	require.NoError(t, err)
 	assert.True(t, set.GetEnforced())
 
 	// Removing it restores password sign-in and drops the secret.
-	_, err = h.client.SSO.DeleteSsoConfig(asOther, &Empty{})
+	_, err = h.client.SSO.DeleteOidc(asOther, &Empty{})
 	require.NoError(t, err)
-	cfg, err = h.client.SSO.GetSsoConfig(asOwner, &Empty{})
+	cfg, err = h.client.SSO.GetOidc(asOwner, &Empty{})
 	require.NoError(t, err)
 	assert.False(t, cfg.GetConfigured())
 	h.drainAudit()
-	trail, err := h.client.Trail.Search(asOwner, &trail.SearchAuditRequest{Entity: AuditEntitySSO})
+	trail, err := h.client.Trail.Search(asOwner, &trail.SearchAuditRequest{Entity: ssoconfig.AuditEntity})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(trail.GetEntries()), 3, "every change is audited")
 }
@@ -157,18 +158,18 @@ func TestSsoDomainOwnershipIsProvedByDNS(t *testing.T) {
 		}
 		return nil, errors.New("no such host")
 	}
-	h.client.SSO = NewSsoAdminService(withLookup)
+	h.client.SSO = NewSsoService(withLookup)
 	setup := func(tenant uuid.UUID, email string) context.Context {
 		admin := h.member(tenant, email, "admin")
 		return h.as(tenant, admin.ID)
 	}
-	save := func(ctx context.Context, domains ...string) *SsoConfig {
-		cfg, err := h.client.SSO.SetSsoConfig(ctx, &SetSsoConfigRequest{IssuerUrl: issuer, ClientId: "c1", ClientSecret: "s3cret",
+	save := func(ctx context.Context, domains ...string) *ssoconfig.SsoConfig {
+		cfg, err := h.client.SSO.SetOidc(ctx, &ssoconfig.SetSsoConfigRequest{IssuerUrl: issuer, ClientId: "c1", ClientSecret: "s3cret",
 			EmailDomains: domains, Enabled: true, PostLoginRedirect: "http://portal.test/home"})
 		require.NoError(t, err)
 		return cfg
 	}
-	byName := func(cfg *SsoConfig, domain string) *SsoDomain {
+	byName := func(cfg *ssoconfig.SsoConfig, domain string) *ssoconfig.SsoDomain {
 		for _, d := range cfg.Domains {
 			if d.Domain == domain {
 				return d
@@ -188,14 +189,14 @@ func TestSsoDomainOwnershipIsProvedByDNS(t *testing.T) {
 	assert.NotEmpty(t, d.VerifyValue)
 
 	// No record yet, and a record with the wrong value, both leave it pending.
-	_, err := h.client.SSO.VerifySsoDomain(asAcme, &VerifySsoDomainRequest{Domain: "acme.io"})
+	_, err := h.client.SSO.VerifyDomain(asAcme, &ssoconfig.VerifySsoDomainRequest{Domain: "acme.io"})
 	assert.Equal(t, http.StatusConflict, statusOf(err))
 	records["_metap-verify.acme.io"] = []string{"something-else"}
-	_, err = h.client.SSO.VerifySsoDomain(asAcme, &VerifySsoDomainRequest{Domain: "acme.io"})
+	_, err = h.client.SSO.VerifyDomain(asAcme, &ssoconfig.VerifySsoDomainRequest{Domain: "acme.io"})
 	assert.Equal(t, http.StatusConflict, statusOf(err))
 
 	records["_metap-verify.acme.io"] = []string{"unrelated", d.VerifyValue}
-	cfg, err = h.client.SSO.VerifySsoDomain(asAcme, &VerifySsoDomainRequest{Domain: "acme.io"})
+	cfg, err = h.client.SSO.VerifyDomain(asAcme, &ssoconfig.VerifySsoDomainRequest{Domain: "acme.io"})
 	require.NoError(t, err)
 	assert.Equal(t, "verified", byName(cfg, "acme.io").Status)
 	assert.Equal(t, "pending", byName(cfg, "acme.org").Status, "each domain is proved on its own")
@@ -206,15 +207,15 @@ func TestSsoDomainOwnershipIsProvedByDNS(t *testing.T) {
 	assert.Equal(t, d.VerifyValue, byName(cfg, "acme.io").VerifyValue)
 
 	// A domain the workspace did not name cannot be checked.
-	_, err = h.client.SSO.VerifySsoDomain(asAcme, &VerifySsoDomainRequest{Domain: "unnamed.io"})
+	_, err = h.client.SSO.VerifyDomain(asAcme, &ssoconfig.VerifySsoDomainRequest{Domain: "unnamed.io"})
 	assert.Equal(t, http.StatusNotFound, statusOf(err))
 
 	// Another workspace can name it, but cannot verify what acme already owns.
 	rcfg := save(asRival, "acme.io")
 	records["_metap-verify.acme.io"] = []string{byName(rcfg, "acme.io").VerifyValue}
-	_, err = h.client.SSO.VerifySsoDomain(asRival, &VerifySsoDomainRequest{Domain: "acme.io"})
+	_, err = h.client.SSO.VerifyDomain(asRival, &ssoconfig.VerifySsoDomainRequest{Domain: "acme.io"})
 	assert.Equal(t, http.StatusConflict, statusOf(err))
-	rcfg, err = h.client.SSO.GetSsoConfig(asRival, &Empty{})
+	rcfg, err = h.client.SSO.GetOidc(asRival, &Empty{})
 	require.NoError(t, err)
 	assert.Equal(t, "pending", byName(rcfg, "acme.io").Status)
 
@@ -253,32 +254,34 @@ func TestSamlAdminConfig(t *testing.T) {
 	asOwner, asOther := h.as(tenant, owner.ID), h.as(tenant, other.ID)
 	metadata := samlMetadataXML(t)
 
-	cfg, err := h.client.SSO.GetSamlConfig(asOwner, &Empty{})
+	cfg, err := h.client.SSO.GetSaml(asOwner, &Empty{})
 	require.NoError(t, err)
 	assert.False(t, cfg.Configured)
 	assert.Equal(t, "http://portal.test/auth/saml/"+tenant.String()+"/acs", cfg.AcsUrl, "what to register at the provider")
 	assert.Equal(t, "http://portal.test/auth/saml/"+tenant.String()+"/metadata", cfg.EntityId)
 
-	valid := func() *SetSamlConfigRequest {
-		return &SetSamlConfigRequest{IdpMetadataXml: metadata, EmailDomains: []string{"Acme.io"}, DefaultRole: "viewer", Enabled: true,
+	valid := func() *ssoconfig.SetSamlConfigRequest {
+		return &ssoconfig.SetSamlConfigRequest{IdpMetadataXml: metadata, EmailDomains: []string{"Acme.io"}, DefaultRole: "viewer", Enabled: true,
 			PostLoginRedirect: "http://portal.test/home"}
 	}
-	code := func(mut func(*SetSamlConfigRequest)) int {
+	code := func(mut func(*ssoconfig.SetSamlConfigRequest)) int {
 		r := valid()
 		mut(r)
-		_, err := h.client.SSO.SetSamlConfig(asOwner, r)
+		_, err := h.client.SSO.SetSaml(asOwner, r)
 		return statusOf(err)
 	}
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.IdpMetadataXml = "<nope/>" }), "must be SAML metadata")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.IdpMetadataXml = "" }), "the first setup needs metadata")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.IdpMetadataXml, r.IdpMetadataUrl = "", "http://idp.example.com/m" }), "https only")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.DefaultRole = "admin" }), "SSO never mints admins")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.RoleMap = map[string]string{"g": "viewer"} }), "a map needs an attribute")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) {
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSamlConfigRequest) { r.IdpMetadataXml = "<nope/>" }), "must be SAML metadata")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSamlConfigRequest) { r.IdpMetadataXml = "" }), "the first setup needs metadata")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSamlConfigRequest) {
+		r.IdpMetadataXml, r.IdpMetadataUrl = "", "http://idp.example.com/m"
+	}), "https only")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSamlConfigRequest) { r.DefaultRole = "admin" }), "SSO never mints admins")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSamlConfigRequest) { r.RoleMap = map[string]string{"g": "viewer"} }), "a map needs an attribute")
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSamlConfigRequest) {
 		r.RoleAttribute, r.RoleMap = "groups", map[string]string{"g": "admin"}
 	}), "a provider group never makes an admin")
-	assert.Equal(t, http.StatusBadRequest, code(func(r *SetSamlConfigRequest) { r.PostLoginRedirect = "https://evil.example.com/" }))
-	_, err = h.client.SSO.SetSamlConfig(h.as(tenant, uuid.New()), valid())
+	assert.Equal(t, http.StatusBadRequest, code(func(r *ssoconfig.SetSamlConfigRequest) { r.PostLoginRedirect = "https://evil.example.com/" }))
+	_, err = h.client.SSO.SetSaml(h.as(tenant, uuid.New()), valid())
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "admins only")
 
 	// Metadata fetched from a URL is stored.
@@ -286,7 +289,7 @@ func TestSamlAdminConfig(t *testing.T) {
 	t.Cleanup(served.Close)
 	byURL := valid()
 	byURL.IdpMetadataXml, byURL.IdpMetadataUrl = "", served.URL
-	set, err := h.client.SSO.SetSamlConfig(asOther, byURL)
+	set, err := h.client.SSO.SetSaml(asOther, byURL)
 	require.NoError(t, err, "plain http is accepted for a loopback provider")
 	assert.True(t, set.Configured && set.Enabled)
 	assert.Equal(t, "https://idp.example.com/metadata", set.IdpEntityId)
@@ -298,31 +301,31 @@ func TestSamlAdminConfig(t *testing.T) {
 	// A later save without metadata keeps what is stored.
 	keep := valid()
 	keep.IdpMetadataXml, keep.DefaultRole = "", ""
-	set, err = h.client.SSO.SetSamlConfig(asOther, keep)
+	set, err = h.client.SSO.SetSaml(asOther, keep)
 	require.NoError(t, err)
 	assert.Equal(t, "https://idp.example.com/metadata", set.IdpEntityId)
 
 	// Only the owner enforces.
 	enforce := valid()
 	enforce.IdpMetadataXml, enforce.Enforced = "", true
-	_, err = h.client.SSO.SetSamlConfig(asOther, enforce)
+	_, err = h.client.SSO.SetSaml(asOther, enforce)
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
-	set, err = h.client.SSO.SetSamlConfig(asOwner, enforce)
+	set, err = h.client.SSO.SetSaml(asOwner, enforce)
 	require.NoError(t, err)
 	assert.True(t, set.Enforced)
 
 	// One protocol at a time.
-	oidc := &SetSsoConfigRequest{IssuerUrl: discoveryOnly(t), ClientId: "c1", ClientSecret: "s3cret", Enabled: true}
-	_, err = h.client.SSO.SetSsoConfig(asOwner, oidc)
+	oidc := &ssoconfig.SetSsoConfigRequest{IssuerUrl: discoveryOnly(t), ClientId: "c1", ClientSecret: "s3cret", Enabled: true}
+	_, err = h.client.SSO.SetOidc(asOwner, oidc)
 	assert.Equal(t, http.StatusBadRequest, statusOf(err), "SAML is on")
 
-	_, err = h.client.SSO.DeleteSamlConfig(asOther, &Empty{})
+	_, err = h.client.SSO.DeleteSaml(asOther, &Empty{})
 	require.NoError(t, err)
-	cfg, err = h.client.SSO.GetSamlConfig(asOwner, &Empty{})
+	cfg, err = h.client.SSO.GetSaml(asOwner, &Empty{})
 	require.NoError(t, err)
 	assert.False(t, cfg.Configured)
-	_, err = h.client.SSO.SetSsoConfig(asOwner, oidc)
+	_, err = h.client.SSO.SetOidc(asOwner, oidc)
 	assert.NoError(t, err, "with SAML removed, OpenID Connect can be turned on")
-	_, err = h.client.SSO.SetSamlConfig(asOwner, valid())
+	_, err = h.client.SSO.SetSaml(asOwner, valid())
 	assert.Equal(t, http.StatusBadRequest, statusOf(err), "and now OpenID Connect is on")
 }

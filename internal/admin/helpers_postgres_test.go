@@ -13,6 +13,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
 	"github.com/metap-org/metap/internal/admin/roles"
+	"github.com/metap-org/metap/internal/admin/ssoconfig"
 	"github.com/metap-org/metap/internal/admin/support"
 	"github.com/metap-org/metap/internal/admin/tenants"
 	"github.com/metap-org/metap/internal/admin/trail"
@@ -46,7 +47,7 @@ type testClient struct {
 	Trail   *trail.Service
 	Support *support.Service
 	Owner   *OwnerService
-	SSO     *SsoAdminService
+	SSO     *ssoconfig.Service
 	Keys    *apikeys.Service
 	Mfa     *mfa.Service
 }
@@ -55,7 +56,7 @@ func newTestClient(cfg IdentityConfig) *testClient {
 	return &testClient{
 		Admin: NewUserAdminService(cfg), Roles: roles.New(roles.NewPgStore(kernel.Deps{Cfg: cfg}), kernel.Deps{Cfg: cfg}), Account: NewAccountService(cfg),
 		Tenants: newTenantsService(cfg), Trail: trail.New(cfg.Audit), Support: support.New(support.NewPgStore(kernel.Deps{Cfg: cfg}), kernel.Deps{Cfg: cfg}),
-		Owner: NewOwnerService(cfg), SSO: NewSsoAdminService(cfg),
+		Owner: NewOwnerService(cfg), SSO: NewSsoService(cfg),
 		Mfa:  mfa.New(mfa.NewPgStore(cfg.Shared), kernel.StoreAuditor{Store: cfg.Audit}, nil),
 		Keys: apikeys.New(apikeys.NewPgStore(cfg.Shared), kernel.StoreAuditor{Store: cfg.Audit}, cfg.APIKeyMaxDays, nil),
 	}

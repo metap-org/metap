@@ -19,6 +19,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/preferences"
 	"github.com/metap-org/metap/internal/admin/roles"
 	"github.com/metap-org/metap/internal/admin/settings"
+	"github.com/metap-org/metap/internal/admin/ssoconfig"
 	"github.com/metap-org/metap/internal/admin/support"
 	"github.com/metap-org/metap/internal/admin/tenants"
 	"github.com/metap-org/metap/internal/admin/trail"
@@ -680,7 +681,7 @@ func registerWorkspaceOperations(api huma.API, state *AppState, cfg admin.Identi
 	trailSvc := trail.New(cfg.Audit)
 	supportSvc := support.New(support.NewPgStore(kernel.Deps{Cfg: cfg}), kernel.Deps{Cfg: cfg})
 	owner := admin.NewOwnerService(cfg)
-	sso := admin.NewSsoAdminService(cfg)
+	sso := admin.NewSsoService(cfg)
 	empty := &admin.Empty{}
 
 	adminOp(api, state, opOf("searchAudit", http.MethodGet, "/admin/audit", "Search the tenant's audit trail", "Audit"),
@@ -741,34 +742,34 @@ func registerWorkspaceOperations(api huma.API, state *AppState, cfg admin.Identi
 		})
 
 	adminOp(api, state, opOf("getSsoConfig", http.MethodGet, "/admin/sso", "The tenant's single sign-on setup", "SSO"),
-		func(ctx context.Context, _ *struct{}) (*admin.SsoConfig, error) {
-			return sso.GetSsoConfig(ctx, empty)
+		func(ctx context.Context, _ *struct{}) (*ssoconfig.SsoConfig, error) {
+			return sso.GetOidc(ctx, empty)
 		})
 	adminOp(api, state, opOf("setSsoConfig", http.MethodPut, "/admin/sso", "Set up single sign-on", "SSO"),
-		func(ctx context.Context, in *bodyIn[admin.SetSsoConfigRequest]) (*admin.SsoConfig, error) {
-			return sso.SetSsoConfig(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[ssoconfig.SetSsoConfigRequest]) (*ssoconfig.SsoConfig, error) {
+			return sso.SetOidc(ctx, &in.Body)
 		})
 	adminOp(api, state, opOf("getSamlConfig", http.MethodGet, "/admin/sso/saml", "The tenant's SAML single sign-on setup", "SSO"),
-		func(ctx context.Context, _ *struct{}) (*admin.SamlConfig, error) {
-			return sso.GetSamlConfig(ctx, empty)
+		func(ctx context.Context, _ *struct{}) (*ssoconfig.SamlConfig, error) {
+			return sso.GetSaml(ctx, empty)
 		})
 	adminOp(api, state, opOf("setSamlConfig", http.MethodPut, "/admin/sso/saml", "Set up SAML single sign-on", "SSO"),
-		func(ctx context.Context, in *bodyIn[admin.SetSamlConfigRequest]) (*admin.SamlConfig, error) {
-			return sso.SetSamlConfig(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[ssoconfig.SetSamlConfigRequest]) (*ssoconfig.SamlConfig, error) {
+			return sso.SetSaml(ctx, &in.Body)
 		})
 	adminNoContent(api, state, opOf("deleteSamlConfig", http.MethodDelete, "/admin/sso/saml", "Remove SAML single sign-on", "SSO"),
 		func(ctx context.Context, _ *struct{}) (*admin.Empty, error) {
-			return sso.DeleteSamlConfig(ctx, empty)
+			return sso.DeleteSaml(ctx, empty)
 		})
 	adminOp(api, state, opOf("verifySsoDomain", http.MethodPost, "/admin/sso/domains/{domain}/verify", "Check the DNS record that proves a domain is owned", "SSO"),
 		func(ctx context.Context, in *struct {
 			Domain string `path:"domain"`
-		}) (*admin.SsoConfig, error) {
-			return sso.VerifySsoDomain(ctx, &admin.VerifySsoDomainRequest{Domain: in.Domain})
+		}) (*ssoconfig.SsoConfig, error) {
+			return sso.VerifyDomain(ctx, &ssoconfig.VerifySsoDomainRequest{Domain: in.Domain})
 		})
 	adminNoContent(api, state, opOf("deleteSsoConfig", http.MethodDelete, "/admin/sso", "Remove single sign-on", "SSO"),
 		func(ctx context.Context, _ *struct{}) (*admin.Empty, error) {
-			return sso.DeleteSsoConfig(ctx, empty)
+			return sso.DeleteOidc(ctx, empty)
 		})
 }
 
