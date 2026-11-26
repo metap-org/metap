@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/metap-org/metap/internal/admin/credentials"
+	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/pkg/secrets"
 	"net/http"
 	"testing"
@@ -49,7 +51,7 @@ func (f *fakeCredentials) Remove(_ context.Context, ref string) error {
 	return nil
 }
 
-func credentialNamed(v *CredentialsView, name string) *Credential {
+func credentialNamed(v *credentials.CredentialsView, name string) *credentials.Credential {
 	for _, c := range v.Credentials {
 		if c.Name == name {
 			return c
@@ -69,9 +71,9 @@ func TestCredentialsAdmin(t *testing.T) {
 
 	fake := newFakeCredentials(CredentialCapabilities{Database: true, External: true, ExternalKind: "vault"})
 	h.cfg.Credentials = fake
-	svc := NewCredentialsService(h.cfg)
+	svc := credentials.New(credentials.NewPgStore(kernel.Deps{Cfg: h.cfg}), h.cfg.Credentials, kernel.Deps{Cfg: h.cfg})
 
-	view, err := svc.ListCredentials(asAdmin, &Empty{})
+	view, err := svc.List(asAdmin, &Empty{})
 	require.NoError(t, err)
 	assert.Empty(t, view.Credentials)
 	assert.True(t, view.DatabaseAvailable)
@@ -79,58 +81,58 @@ func TestCredentialsAdmin(t *testing.T) {
 	assert.Equal(t, "vault", view.ExternalKind)
 
 	// Two credentials, in different homes; the value goes to the store, never into the view.
-	view, err = svc.CreateCredential(asAdmin, &CreateCredentialRequest{Name: "CRM webhook", Description: "Auth for the CRM",
-		Kind: CredentialKindAuthorization, Source: CredentialSourceDatabase, Value: "Bearer abc"})
+	view, err = svc.Create(asAdmin, &credentials.CreateCredentialRequest{Name: "CRM webhook", Description: "Auth for the CRM",
+		Kind: credentials.KindAuthorization, Source: credentials.SourceDatabase, Value: "Bearer abc"})
 	require.NoError(t, err)
-	view, err = svc.CreateCredential(asAdmin, &CreateCredentialRequest{Name: "Billing API key", Kind: CredentialKindSecret,
-		Source: CredentialSourceExternal, Value: "key-123"})
+	view, err = svc.Create(asAdmin, &credentials.CreateCredentialRequest{Name: "Billing API key", Kind: credentials.KindSecret,
+		Source: credentials.SourceExternal, Value: "key-123"})
 	require.NoError(t, err)
 	require.Len(t, view.Credentials, 2)
 	crm := credentialNamed(view, "CRM webhook")
 	require.NotNil(t, crm)
 	crmID := uuid.MustParse(crm.Id)
 	crmRef := secrets.TenantCredentialRef(tenant, crmID)
-	assert.Equal(t, CredentialSourceDatabase, crm.Source)
+	assert.Equal(t, credentials.SourceDatabase, crm.Source)
 	assert.Equal(t, "Bearer abc", fake.value[crmRef])
 	assert.Equal(t, "database", fake.source[crmRef])
-	assert.Equal(t, CredentialSourceExternal, credentialNamed(view, "Billing API key").Source)
+	assert.Equal(t, credentials.SourceExternal, credentialNamed(view, "Billing API key").Source)
 
 	// Checks: unique name (case-insensitive), kind/value rules, role.
-	_, err = svc.CreateCredential(asAdmin, &CreateCredentialRequest{Name: "crm WEBHOOK", Kind: CredentialKindSecret, Source: CredentialSourceDatabase, Value: "x"})
+	_, err = svc.Create(asAdmin, &credentials.CreateCredentialRequest{Name: "crm WEBHOOK", Kind: credentials.KindSecret, Source: credentials.SourceDatabase, Value: "x"})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err), "names are unique per workspace")
-	_, err = svc.CreateCredential(asAdmin, &CreateCredentialRequest{Name: "Bad header", Kind: CredentialKindAuthorization, Source: CredentialSourceDatabase, Value: "a\nb"})
+	_, err = svc.Create(asAdmin, &credentials.CreateCredentialRequest{Name: "Bad header", Kind: credentials.KindAuthorization, Source: credentials.SourceDatabase, Value: "a\nb"})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err), "an Authorization value is a one-line header value")
-	_, err = svc.CreateCredential(asAdmin, &CreateCredentialRequest{Name: "Any secret", Kind: CredentialKindSecret, Source: CredentialSourceDatabase, Value: "line1\nline2"})
+	_, err = svc.Create(asAdmin, &credentials.CreateCredentialRequest{Name: "Any secret", Kind: credentials.KindSecret, Source: credentials.SourceDatabase, Value: "line1\nline2"})
 	assert.NoError(t, err, "a generic secret may hold anything")
-	_, err = svc.CreateCredential(asAdmin, &CreateCredentialRequest{Name: "n", Kind: "weird", Source: CredentialSourceDatabase, Value: "x"})
+	_, err = svc.Create(asAdmin, &credentials.CreateCredentialRequest{Name: "n", Kind: "weird", Source: credentials.SourceDatabase, Value: "x"})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err))
-	_, err = svc.ListCredentials(h.as(tenant, plain.ID), &Empty{})
+	_, err = svc.List(h.as(tenant, plain.ID), &Empty{})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 
 	// Rename and replace the value (same home).
 	newName, newValue := "CRM webhook (prod)", "Bearer rotated"
-	view, err = svc.UpdateCredential(asAdmin, &UpdateCredentialRequest{Id: crm.Id, Name: &newName, Value: &newValue})
+	view, err = svc.Update(asAdmin, &credentials.UpdateCredentialRequest{Id: crm.Id, Name: &newName, Value: &newValue})
 	require.NoError(t, err)
 	assert.NotNil(t, credentialNamed(view, newName))
 	assert.Equal(t, "Bearer rotated", fake.value[crmRef])
 
 	// Moving needs a value; with one it lands in the new home.
-	external := CredentialSourceExternal
-	_, err = svc.UpdateCredential(asAdmin, &UpdateCredentialRequest{Id: crm.Id, Source: &external})
+	external := credentials.SourceExternal
+	_, err = svc.Update(asAdmin, &credentials.UpdateCredentialRequest{Id: crm.Id, Source: &external})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err), "a stored value is never read back, so a move needs one")
 	moved := "Bearer moved"
-	view, err = svc.UpdateCredential(asAdmin, &UpdateCredentialRequest{Id: crm.Id, Source: &external, Value: &moved})
+	view, err = svc.Update(asAdmin, &credentials.UpdateCredentialRequest{Id: crm.Id, Source: &external, Value: &moved})
 	require.NoError(t, err)
-	assert.Equal(t, CredentialSourceExternal, credentialNamed(view, newName).Source)
+	assert.Equal(t, credentials.SourceExternal, credentialNamed(view, newName).Source)
 	assert.Equal(t, "external", fake.source[crmRef])
 
 	// Another tenant cannot see or touch it.
 	other := uuid.New()
 	otherAdmin := h.member(other, "admin@other.io", "admin")
-	otherView, err := svc.ListCredentials(h.as(other, otherAdmin.ID), &Empty{})
+	otherView, err := svc.List(h.as(other, otherAdmin.ID), &Empty{})
 	require.NoError(t, err)
 	assert.Empty(t, otherView.Credentials)
-	_, err = svc.DeleteCredential(h.as(other, otherAdmin.ID), &CredentialIdRequest{Id: crm.Id})
+	_, err = svc.Delete(h.as(other, otherAdmin.ID), &credentials.CredentialIdRequest{Id: crm.Id})
 	assert.Equal(t, http.StatusNotFound, statusOf(err))
 
 	// A job that uses it blocks removal, and is listed as a user.
@@ -138,32 +140,32 @@ func TestCredentialsAdmin(t *testing.T) {
 		CronExpr: strPtr("0 * * * *"), Timezone: "UTC", TargetType: "webhook", DispatchMode: "direct", MaxAttempts: 1, Enabled: true,
 		TargetConfig: json.RawMessage(`{"url":"https://example.com/hook","credentialId":"` + crm.Id + `"}`)}, nil)
 	require.NoError(t, err)
-	view, err = svc.ListCredentials(asAdmin, &Empty{})
+	view, err = svc.List(asAdmin, &Empty{})
 	require.NoError(t, err)
 	used := credentialNamed(view, newName).UsedBy
 	require.Len(t, used, 1)
 	assert.Equal(t, "notify CRM", used[0].Name)
 	assert.Equal(t, job.ID.String(), used[0].Id)
 	assert.Empty(t, credentialNamed(view, "Billing API key").UsedBy)
-	_, err = svc.DeleteCredential(asAdmin, &CredentialIdRequest{Id: crm.Id})
+	_, err = svc.Delete(asAdmin, &credentials.CredentialIdRequest{Id: crm.Id})
 	require.Error(t, err)
 	assert.Equal(t, http.StatusConflict, statusOf(err))
 	assert.Equal(t, []string{"notify CRM"}, asServiceError(err).FieldErrors["usedBy"])
 
 	require.NoError(t, cron.DeleteJob(context.Background(), h.pool, tenant, job.ID))
-	view, err = svc.DeleteCredential(asAdmin, &CredentialIdRequest{Id: crm.Id})
+	view, err = svc.Delete(asAdmin, &credentials.CredentialIdRequest{Id: crm.Id})
 	require.NoError(t, err)
 	assert.Nil(t, credentialNamed(view, newName))
 	assert.NotContains(t, fake.value, crmRef, "removing deletes the stored value too")
 
 	// A home the deployment does not offer is refused.
 	fake.caps = CredentialCapabilities{Database: false, External: false, ExternalKind: "env"}
-	_, err = svc.CreateCredential(asAdmin, &CreateCredentialRequest{Name: "No home", Kind: CredentialKindSecret, Source: CredentialSourceDatabase, Value: "x"})
+	_, err = svc.Create(asAdmin, &credentials.CreateCredentialRequest{Name: "No home", Kind: credentials.KindSecret, Source: credentials.SourceDatabase, Value: "x"})
 	assert.Equal(t, http.StatusConflict, statusOf(err))
 
 	// The audit trail names credentials and their homes, never a value.
 	require.NoError(t, audit.DrainAll(context.Background(), h.pool, audit.NewPostgresStore(h.pool)))
-	rows, err := audit.NewPostgresStore(h.pool).Search(context.Background(), tenant, audit.SearchQuery{Entity: AuditEntityCredentials})
+	rows, err := audit.NewPostgresStore(h.pool).Search(context.Background(), tenant, audit.SearchQuery{Entity: credentials.AuditEntity})
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)
 	for _, row := range rows {
@@ -182,7 +184,7 @@ func TestCredentialsUnavailableWithoutStore(t *testing.T) {
 	tenant := uuid.New()
 	admin := h.member(tenant, "admin@acme.io", "admin")
 	h.cfg.Credentials = nil
-	_, err := NewCredentialsService(h.cfg).ListCredentials(h.as(tenant, admin.ID), &Empty{})
+	_, err := credentials.New(credentials.NewPgStore(kernel.Deps{Cfg: h.cfg}), h.cfg.Credentials, kernel.Deps{Cfg: h.cfg}).List(h.as(tenant, admin.ID), &Empty{})
 	assert.Equal(t, http.StatusNotImplemented, statusOf(err))
 }
 
@@ -195,14 +197,14 @@ func TestCredentialsUserPass(t *testing.T) {
 	asAdmin := h.as(tenant, admin.ID)
 	fake := newFakeCredentials(CredentialCapabilities{Database: true, External: true, ExternalKind: "vault"})
 	h.cfg.Credentials = fake
-	svc := NewCredentialsService(h.cfg)
+	svc := credentials.New(credentials.NewPgStore(kernel.Deps{Cfg: h.cfg}), h.cfg.Credentials, kernel.Deps{Cfg: h.cfg})
 
-	view, err := svc.CreateCredential(asAdmin, &CreateCredentialRequest{Name: "Partner API", Kind: CredentialKindUserPass,
-		Username: "svc-user", Source: CredentialSourceDatabase, Value: "p@ss:word"})
+	view, err := svc.Create(asAdmin, &credentials.CreateCredentialRequest{Name: "Partner API", Kind: credentials.KindUserPass,
+		Username: "svc-user", Source: credentials.SourceDatabase, Value: "p@ss:word"})
 	require.NoError(t, err)
 	cred := credentialNamed(view, "Partner API")
 	require.NotNil(t, cred)
-	assert.Equal(t, CredentialKindUserPass, cred.Kind)
+	assert.Equal(t, credentials.KindUserPass, cred.Kind)
 	assert.Equal(t, "svc-user", cred.Username, "the username is shown")
 	ref := secrets.TenantCredentialRef(tenant, uuid.MustParse(cred.Id))
 	user, pass, ok := secrets.DecodeUserPass(fake.value[ref])
@@ -211,32 +213,32 @@ func TestCredentialsUserPass(t *testing.T) {
 	assert.Equal(t, "Basic "+"c3ZjLXVzZXI6cEBzczp3b3Jk", secrets.AuthorizationFromCredential(fake.value[ref]), "a webhook sends Basic")
 
 	// Input rules.
-	for name, req := range map[string]*CreateCredentialRequest{
-		"no username":      {Name: "a", Kind: CredentialKindUserPass, Source: CredentialSourceDatabase, Value: "x"},
-		"colon in user":    {Name: "b", Kind: CredentialKindUserPass, Username: "a:b", Source: CredentialSourceDatabase, Value: "x"},
-		"username on kind": {Name: "c", Kind: CredentialKindSecret, Username: "u", Source: CredentialSourceDatabase, Value: "x"},
-		"reserved prefix":  {Name: "d", Kind: CredentialKindSecret, Source: CredentialSourceDatabase, Value: "userpass:{}"},
+	for name, req := range map[string]*credentials.CreateCredentialRequest{
+		"no username":      {Name: "a", Kind: credentials.KindUserPass, Source: credentials.SourceDatabase, Value: "x"},
+		"colon in user":    {Name: "b", Kind: credentials.KindUserPass, Username: "a:b", Source: credentials.SourceDatabase, Value: "x"},
+		"username on kind": {Name: "c", Kind: credentials.KindSecret, Username: "u", Source: credentials.SourceDatabase, Value: "x"},
+		"reserved prefix":  {Name: "d", Kind: credentials.KindSecret, Source: credentials.SourceDatabase, Value: "userpass:{}"},
 	} {
-		_, err := svc.CreateCredential(asAdmin, req)
+		_, err := svc.Create(asAdmin, req)
 		assert.Equal(t, http.StatusBadRequest, statusOf(err), name)
 	}
 
 	// A new username keeps the password; a new password keeps the username.
 	rename := "renamed-user"
-	view, err = svc.UpdateCredential(asAdmin, &UpdateCredentialRequest{Id: cred.Id, Username: &rename})
+	view, err = svc.Update(asAdmin, &credentials.UpdateCredentialRequest{Id: cred.Id, Username: &rename})
 	require.NoError(t, err)
 	assert.Equal(t, rename, credentialNamed(view, "Partner API").Username)
 	user, pass, _ = secrets.DecodeUserPass(fake.value[ref])
 	assert.Equal(t, []string{rename, "p@ss:word"}, []string{user, pass})
 	newPass := "n3w-pass"
-	_, err = svc.UpdateCredential(asAdmin, &UpdateCredentialRequest{Id: cred.Id, Value: &newPass})
+	_, err = svc.Update(asAdmin, &credentials.UpdateCredentialRequest{Id: cred.Id, Value: &newPass})
 	require.NoError(t, err)
 	user, pass, _ = secrets.DecodeUserPass(fake.value[ref])
 	assert.Equal(t, []string{rename, "n3w-pass"}, []string{user, pass})
 
 	// A username on another kind is refused.
-	secret, err := svc.CreateCredential(asAdmin, &CreateCredentialRequest{Name: "Plain", Kind: CredentialKindSecret, Source: CredentialSourceDatabase, Value: "s"})
+	secret, err := svc.Create(asAdmin, &credentials.CreateCredentialRequest{Name: "Plain", Kind: credentials.KindSecret, Source: credentials.SourceDatabase, Value: "s"})
 	require.NoError(t, err)
-	_, err = svc.UpdateCredential(asAdmin, &UpdateCredentialRequest{Id: credentialNamed(secret, "Plain").Id, Username: &rename})
+	_, err = svc.Update(asAdmin, &credentials.UpdateCredentialRequest{Id: credentialNamed(secret, "Plain").Id, Username: &rename})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err))
 }

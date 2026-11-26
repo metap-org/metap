@@ -12,6 +12,7 @@ import (
 	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/admin"
 	"github.com/metap-org/metap/internal/admin/apikeys"
+	"github.com/metap-org/metap/internal/admin/credentials"
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
 	"github.com/metap-org/metap/internal/admin/policies"
@@ -267,7 +268,8 @@ func registerAdminOperations(api huma.API, state *AppState) {
 	}
 	registerTenantOperations(api, state, tenants.New(tenants.NewPgStore(tenantDeps), tenantMailer, tenantDeps))
 	registerWorkspaceOperations(api, state, cfg)
-	registerCredentialOperations(api, state, admin.NewCredentialsService(cfg))
+	credDeps := kernel.Deps{Cfg: cfg}
+	registerCredentialOperations(api, state, credentials.New(credentials.NewPgStore(credDeps), cfg.Credentials, credDeps))
 }
 
 // registerCredentialOperations: the Credentials tab (named tenant credentials, stored encrypted in
@@ -373,25 +375,25 @@ func registerConfigOperations(api huma.API, state *AppState) {
 		})
 }
 
-func registerCredentialOperations(api huma.API, state *AppState, s *admin.CredentialsService) {
+func registerCredentialOperations(api huma.API, state *AppState, s *credentials.Service) {
 	const tag = "Credentials"
 	adminOp(api, state, opOf("listCredentials", http.MethodGet, "/admin/credentials", "The tenant's credentials, where they are used, and where this deployment can store them", tag),
-		func(ctx context.Context, _ *struct{}) (*admin.CredentialsView, error) {
-			return s.ListCredentials(ctx, &admin.Empty{})
+		func(ctx context.Context, _ *struct{}) (*credentials.CredentialsView, error) {
+			return s.List(ctx, &admin.Empty{})
 		})
 	create := opOf("createCredential", http.MethodPost, "/admin/credentials", "Add a credential (write-only value)", tag)
 	create.DefaultStatus = http.StatusCreated
-	adminOp(api, state, create, func(ctx context.Context, in *bodyIn[admin.CreateCredentialRequest]) (*admin.CredentialsView, error) {
-		return s.CreateCredential(ctx, &in.Body)
+	adminOp(api, state, create, func(ctx context.Context, in *bodyIn[credentials.CreateCredentialRequest]) (*credentials.CredentialsView, error) {
+		return s.Create(ctx, &in.Body)
 	})
 	adminOp(api, state, opOf("updateCredential", http.MethodPatch, "/admin/credentials/{id}", "Rename a credential, replace its value, or move it to the other store", tag),
-		func(ctx context.Context, in *idBodyIn[admin.UpdateCredentialRequest]) (*admin.CredentialsView, error) {
+		func(ctx context.Context, in *idBodyIn[credentials.UpdateCredentialRequest]) (*credentials.CredentialsView, error) {
 			in.Body.Id = in.ID
-			return s.UpdateCredential(ctx, &in.Body)
+			return s.Update(ctx, &in.Body)
 		})
 	adminOp(api, state, opOf("deleteCredential", http.MethodDelete, "/admin/credentials/{id}", "Remove a credential no job uses", tag),
-		func(ctx context.Context, in *idPath) (*admin.CredentialsView, error) {
-			return s.DeleteCredential(ctx, &admin.CredentialIdRequest{Id: in.ID})
+		func(ctx context.Context, in *idPath) (*credentials.CredentialsView, error) {
+			return s.Delete(ctx, &credentials.CredentialIdRequest{Id: in.ID})
 		})
 }
 
