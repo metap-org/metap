@@ -1,7 +1,6 @@
 package ssoconfig
 
 import (
-	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -24,7 +23,7 @@ const SecretKey = "sso.clientSecret"
 
 var emailDomainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$`)
 
-func bad(msg string) error { return kernel.Err(http.StatusBadRequest, errcode.ValidationFailed, msg) }
+func bad(msg string) error { return kernel.Err(kernel.StatusBadRequest, errcode.ValidationFailed, msg) }
 
 // sameOrigin is true when raw is an http(s) URL on base's scheme and host. Pure.
 func sameOrigin(raw, base string) bool {

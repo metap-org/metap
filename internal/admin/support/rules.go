@@ -2,7 +2,6 @@ package support
 
 import (
 	"errors"
-	"net/http"
 	"time"
 
 	"github.com/metap-org/metap/internal/admin/kernel"
@@ -40,11 +39,11 @@ func sessionExpiry(grantEnds, now time.Time) time.Time {
 func mapErr(err error) error {
 	switch {
 	case errors.Is(err, identity.ErrNotFound):
-		return kernel.Err(http.StatusNotFound, errcode.NotFound, "Support grant not found.")
+		return kernel.Err(kernel.StatusNotFound, errcode.NotFound, "Support grant not found.")
 	case errors.Is(err, identity.ErrSupportGrantInactive):
-		return kernel.Err(http.StatusConflict, errcode.Forbidden, "The tenant has no active support grant.")
+		return kernel.Err(kernel.StatusConflict, errcode.Forbidden, "The tenant has no active support grant.")
 	case errors.Is(err, identity.ErrSupportReason):
-		return kernel.Err(http.StatusBadRequest, errcode.ValidationFailed, err.Error())
+		return kernel.Err(kernel.StatusBadRequest, errcode.ValidationFailed, err.Error())
 	}
 	return err
 }

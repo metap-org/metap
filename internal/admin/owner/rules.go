@@ -2,7 +2,6 @@ package owner
 
 import (
 	"errors"
-	"net/http"
 
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/pkg/auth/identity"
@@ -37,31 +36,31 @@ func fail(status uint16, code, msg string) error { return kernel.Err(status, cod
 func storeErr(err error) error {
 	switch {
 	case errors.Is(err, identity.ErrRecoveryPending):
-		return fail(http.StatusConflict, errcode.ValidationFailed, err.Error())
+		return fail(kernel.StatusConflict, errcode.ValidationFailed, err.Error())
 	case errors.Is(err, identity.ErrRecoveryNotReady):
-		return fail(http.StatusConflict, errcode.Forbidden, err.Error())
+		return fail(kernel.StatusConflict, errcode.Forbidden, err.Error())
 	case errors.Is(err, identity.ErrNoRecovery), errors.Is(err, identity.ErrNotFound):
-		return fail(http.StatusNotFound, errcode.NotFound, err.Error())
+		return fail(kernel.StatusNotFound, errcode.NotFound, err.Error())
 	case errors.Is(err, identity.ErrSupportReason):
-		return fail(http.StatusBadRequest, errcode.ValidationFailed, "A reason of 1-500 characters is required.")
+		return fail(kernel.StatusBadRequest, errcode.ValidationFailed, "A reason of 1-500 characters is required.")
 	}
 	return err
 }
 
 func tenantIDErr() error {
-	return fail(http.StatusBadRequest, errcode.ValidationFailed, "`tenantId` must be a tenant id.")
+	return fail(kernel.StatusBadRequest, errcode.ValidationFailed, "`tenantId` must be a tenant id.")
 }
 
 // fieldRequired is the 400 for a missing confirmation field. Pure.
 func fieldRequired(field, msg string) error {
-	return &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed, Message: msg,
+	return &crud.ServiceError{Status: kernel.StatusBadRequest, Code: errcode.ValidationFailed, Message: msg,
 		FieldErrors: map[string][]string{field: {"required"}}}
 }
 
 // stepUpErr maps a failed re-authentication onto the API's. Pure.
 func stepUpErr(err error) error {
 	if errors.Is(err, identity.ErrInvalidCredentials) {
-		return fail(http.StatusBadRequest, errcode.WrongPassword, "The password is wrong.")
+		return fail(kernel.StatusBadRequest, errcode.WrongPassword, "The password is wrong.")
 	}
 	return kernel.IdentityErr(err)
 }

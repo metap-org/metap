@@ -1,7 +1,6 @@
 package users
 
 import (
-	"net/http"
 	"slices"
 
 	"github.com/google/uuid"
@@ -76,23 +75,23 @@ func otherAdmins(admins []uuid.UUID, id uuid.UUID) (others []uuid.UUID, wasAdmin
 
 // passwordRequired is the 400 for a new account made without a password. Pure.
 func passwordRequired() error {
-	return &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.WeakPassword,
+	return &crud.ServiceError{Status: kernel.StatusBadRequest, Code: errcode.WeakPassword,
 		Message: "A password is required for a new account, or invite the person instead.", FieldErrors: map[string][]string{"password": {"required for a new account"}}}
 }
 
 func selfModification(what string) error {
-	return fail(http.StatusConflict, errcode.SelfModification, "You cannot "+what+" yourself.")
+	return fail(kernel.StatusConflict, errcode.SelfModification, "You cannot "+what+" yourself.")
 }
 
 func lastAdmin() error {
-	return fail(http.StatusConflict, errcode.LastAdmin, "The tenant must keep at least one active admin.")
+	return fail(kernel.StatusConflict, errcode.LastAdmin, "The tenant must keep at least one active admin.")
 }
 
 func sharedPerson(what string) error {
-	return fail(http.StatusConflict, errcode.Forbidden, "This person also belongs to another tenant; only they can change their "+what+".")
+	return fail(kernel.StatusConflict, errcode.Forbidden, "This person also belongs to another tenant; only they can change their "+what+".")
 }
 
 func scopeInvalid(err error) error {
-	return &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed,
+	return &crud.ServiceError{Status: kernel.StatusBadRequest, Code: errcode.ValidationFailed,
 		Message: err.Error(), FieldErrors: map[string][]string{"scope": {err.Error()}}}
 }

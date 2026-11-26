@@ -1,7 +1,6 @@
 package credentials
 
 import (
-	"net/http"
 	"strings"
 	"unicode/utf8"
 
@@ -35,7 +34,7 @@ const (
 )
 
 func fieldInvalid(field, message string) error {
-	return &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed,
+	return &crud.ServiceError{Status: kernel.StatusBadRequest, Code: errcode.ValidationFailed,
 		Message: message, FieldErrors: map[string][]string{field: {message}}}
 }
 
@@ -112,11 +111,11 @@ func checkHome(caps kernel.CredentialCapabilities, source string) error {
 	switch source {
 	case SourceDatabase:
 		if !caps.Database {
-			return kernel.Err(http.StatusConflict, errcode.Forbidden, "Storing credentials in the database is not enabled on this deployment.")
+			return kernel.Err(kernel.StatusConflict, errcode.Forbidden, "Storing credentials in the database is not enabled on this deployment.")
 		}
 	case SourceExternal:
 		if !caps.External {
-			return kernel.Err(http.StatusConflict, errcode.Forbidden, "No external secret manager (Vault, AWS or GCP) is configured on this deployment.")
+			return kernel.Err(kernel.StatusConflict, errcode.Forbidden, "No external secret manager (Vault, AWS or GCP) is configured on this deployment.")
 		}
 	default:
 		return fieldInvalid("source", "`source` must be database or external.")
@@ -139,7 +138,7 @@ func inUseError(uses []*CredentialUse) error {
 	for i, u := range uses {
 		names[i] = u.Name
 	}
-	return &crud.ServiceError{Status: http.StatusConflict, Code: errcode.RecordReferenced,
+	return &crud.ServiceError{Status: kernel.StatusConflict, Code: errcode.RecordReferenced,
 		Message:     "This credential is still used by " + strings.Join(names, ", ") + ". Point those at another credential first.",
 		FieldErrors: map[string][]string{"usedBy": names}}
 }

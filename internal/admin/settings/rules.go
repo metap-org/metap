@@ -3,7 +3,6 @@ package settings
 import (
 	"encoding/json"
 	"errors"
-	"net/http"
 
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/pkg/config"
@@ -52,13 +51,13 @@ func mapErr(err error) error {
 	switch ce.Kind {
 	case config.ErrUnknownKey:
 		// 404, not 400: an unknown key is an addressing mistake, and the route is keyed by path.
-		return kernel.Err(http.StatusNotFound, "unknown_config_key", "No config key named \""+ce.Key+"\".")
+		return kernel.Err(kernel.StatusNotFound, "unknown_config_key", "No config key named \""+ce.Key+"\".")
 	case config.ErrNotWritable:
 		// 403 rather than 400: the value may well have been fine; the caller may not set this key
 		// at all, and saying so plainly is what makes the tier boundary legible.
-		return kernel.Err(http.StatusForbidden, "config_key_not_writable", "Config key \""+ce.Key+"\" cannot be set here: "+ce.Reason)
+		return kernel.Err(kernel.StatusForbidden, "config_key_not_writable", "Config key \""+ce.Key+"\" cannot be set here: "+ce.Reason)
 	case config.ErrInvalid:
-		return kernel.Err(http.StatusUnprocessableEntity, errcode.InvalidConfigValue, "Invalid value for \""+ce.Key+"\": "+ce.Reason)
+		return kernel.Err(kernel.StatusUnprocessableEntity, errcode.InvalidConfigValue, "Invalid value for \""+ce.Key+"\": "+ce.Reason)
 	}
 	return ce.Cause
 }

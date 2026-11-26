@@ -2,7 +2,6 @@ package policies
 
 import (
 	"encoding/json"
-	"net/http"
 	"sort"
 	"strings"
 
@@ -93,7 +92,7 @@ func views(rows []permission.PolicyRow) []*Policy {
 }
 
 func validationErr(msg string) error {
-	return kernel.Err(http.StatusBadRequest, errcode.ValidationFailed, msg)
+	return kernel.Err(kernel.StatusBadRequest, errcode.ValidationFailed, msg)
 }
 
 func unknownAction(action string) error {

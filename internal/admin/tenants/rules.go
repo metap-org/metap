@@ -1,7 +1,6 @@
 package tenants
 
 import (
-	"net/http"
 	"strings"
 
 	"github.com/metap-org/metap/internal/admin/kernel"
@@ -20,7 +19,7 @@ const (
 )
 
 func invalid(fe map[string][]string) error {
-	return &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed, Message: "Invalid tenant.", FieldErrors: fe}
+	return &crud.ServiceError{Status: kernel.StatusBadRequest, Code: errcode.ValidationFailed, Message: "Invalid tenant.", FieldErrors: fe}
 }
 
 // newTenant checks a creation request and returns the trimmed name and the tier (the default when

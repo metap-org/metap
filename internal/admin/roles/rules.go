@@ -3,7 +3,6 @@ package roles
 import (
 	"errors"
 	"fmt"
-	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -34,7 +33,7 @@ const maxGrants = 5000
 var workflowActionPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,100}$`)
 
 func validationErr(msg string, fe map[string][]string) error {
-	return &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed, Message: msg, FieldErrors: fe}
+	return &crud.ServiceError{Status: kernel.StatusBadRequest, Code: errcode.ValidationFailed, Message: msg, FieldErrors: fe}
 }
 
 // checkName is the 400 for a name a new role may not have, else nil. Pure.
@@ -50,9 +49,9 @@ func checkName(name string) error {
 func storeErr(err error, name string) error {
 	switch {
 	case errors.Is(err, rolestore.ErrRoleNotFound):
-		return kernel.Err(http.StatusNotFound, errcode.NotFound, "Role "+name+" not found.")
+		return kernel.Err(kernel.StatusNotFound, errcode.NotFound, "Role "+name+" not found.")
 	case errors.Is(err, rolestore.ErrRoleExists):
-		return &crud.ServiceError{Status: http.StatusConflict, Code: errcode.RoleExists,
+		return &crud.ServiceError{Status: kernel.StatusConflict, Code: errcode.RoleExists,
 			Message: "A role named " + name + " already exists.", FieldErrors: map[string][]string{"name": {"already exists"}}}
 	}
 	return err
@@ -163,7 +162,7 @@ func inUseError(name string, holders int, emails []string, policies []rolestore.
 		}
 		fields["policies"] = append(fields["policies"], p.Entity+" "+p.Action)
 	}
-	return &crud.ServiceError{Status: http.StatusConflict, Code: errcode.RoleInUse,
+	return &crud.ServiceError{Status: kernel.StatusConflict, Code: errcode.RoleInUse,
 		Message: fmt.Sprintf("Role %s is still in use: %d member(s) hold it and %d polic(ies) name it.",
 			name, holders, len(policies)),
 		FieldErrors: fields}
