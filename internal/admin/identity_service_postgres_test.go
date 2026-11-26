@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/internal/admin/roles"
 	"github.com/metap-org/metap/internal/admin/trail"
 	"github.com/metap-org/metap/internal/authctx"
 	"github.com/metap-org/metap/pkg/permission/policypg"
@@ -153,7 +154,7 @@ func TestUserAdminLifecycle(t *testing.T) {
 	h.policyRole(tenant, "analyst")
 	ctx := h.as(tenant, admin.ID)
 
-	roles, err := h.client.Roles.ListRoles(ctx, &ListRolesRequest{})
+	roles, err := h.client.Roles.List(ctx, &roles.ListRolesRequest{})
 	require.NoError(t, err)
 	names := map[string]int32{}
 	for _, r := range roles.GetRoles() {
@@ -305,17 +306,17 @@ func TestRoleAdminLifecycle(t *testing.T) {
 
 	for _, bad := range []string{"Analyst", "1st", "has space", "__everyone__", ""} {
 		assert.Equal(t, "validation_failed", errCode(t, func() error {
-			_, err := h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: bad})
+			_, err := h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: bad})
 			return err
 		}), "name %q", bad)
 	}
 
-	created, err := h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: "analyst", Label: "Analyst", Description: "Reads incidents"})
+	created, err := h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: "analyst", Label: "Analyst", Description: "Reads incidents"})
 	require.NoError(t, err)
 	assert.Equal(t, "Analyst", created.GetLabel())
 	assert.False(t, created.GetBuiltin())
 	assert.Equal(t, "role_exists", errCode(t, func() error {
-		_, err := h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: "analyst"})
+		_, err := h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: "analyst"})
 		return err
 	}))
 
@@ -323,9 +324,9 @@ func TestRoleAdminLifecycle(t *testing.T) {
 	bob, err := h.client.Admin.CreateUser(ctx, &CreateUserRequest{Email: "bob@acme.io", Password: "bob-password", Roles: []string{"analyst"}})
 	require.NoError(t, err)
 
-	list, err := h.client.Roles.ListRoles(ctx, &ListRolesRequest{})
+	list, err := h.client.Roles.List(ctx, &roles.ListRolesRequest{})
 	require.NoError(t, err)
-	byName := map[string]*Role{}
+	byName := map[string]*roles.Role{}
 	for _, r := range list.GetRoles() {
 		byName[r.GetName()] = r
 	}
@@ -333,17 +334,17 @@ func TestRoleAdminLifecycle(t *testing.T) {
 	assert.True(t, byName["admin"].GetBuiltin())
 	assert.EqualValues(t, 1, byName["analyst"].GetUserCount())
 	assert.EqualValues(t, 0, byName["analyst"].GetPolicyCount())
-	found, err := h.client.Roles.ListRoles(ctx, &ListRolesRequest{Search: "incident"})
+	found, err := h.client.Roles.List(ctx, &roles.ListRolesRequest{Search: "incident"})
 	require.NoError(t, err)
 	require.Len(t, found.GetRoles(), 1, "search matches the description")
 
-	updated, err := h.client.Roles.UpdateRole(ctx, &UpdateRoleRequest{Name: "analyst", Label: "SOC analyst"})
+	updated, err := h.client.Roles.Update(ctx, &roles.UpdateRoleRequest{Name: "analyst", Label: "SOC analyst"})
 	require.NoError(t, err)
 	assert.Equal(t, "SOC analyst", updated.GetLabel())
 	assert.Empty(t, updated.GetDescription(), "update sets both fields")
 
 	// Delete is refused while a member holds the role, then while a policy names it.
-	_, err = h.client.Roles.DeleteRole(ctx, &RoleNameRequest{Name: "analyst"})
+	_, err = h.client.Roles.Delete(ctx, &roles.RoleNameRequest{Name: "analyst"})
 	require.Error(t, err)
 	se := asServiceError(err)
 	assert.Equal(t, "role_in_use", se.Code)
@@ -352,7 +353,7 @@ func TestRoleAdminLifecycle(t *testing.T) {
 	_, err = h.client.Admin.RevokeRole(ctx, &RoleRequest{Id: bob.GetUser().GetId(), Role: "analyst"})
 	require.NoError(t, err)
 	h.policyRole(tenant, "analyst")
-	_, err = h.client.Roles.DeleteRole(ctx, &RoleNameRequest{Name: "analyst"})
+	_, err = h.client.Roles.Delete(ctx, &roles.RoleNameRequest{Name: "analyst"})
 	require.Error(t, err)
 	se = asServiceError(err)
 	assert.Equal(t, "role_in_use", se.Code)
@@ -361,22 +362,22 @@ func TestRoleAdminLifecycle(t *testing.T) {
 
 	_, err = h.pool.Exec(bg, `DELETE FROM metadata.policies WHERE tenant_id = $1`, tenant)
 	require.NoError(t, err)
-	_, err = h.client.Roles.DeleteRole(ctx, &RoleNameRequest{Name: "analyst"})
+	_, err = h.client.Roles.Delete(ctx, &roles.RoleNameRequest{Name: "analyst"})
 	require.NoError(t, err)
 	assert.Equal(t, "not_found", errCode(t, func() error {
-		_, err := h.client.Roles.GetRole(ctx, &RoleNameRequest{Name: "analyst"})
+		_, err := h.client.Roles.Get(ctx, &roles.RoleNameRequest{Name: "analyst"})
 		return err
 	}))
 	assert.Equal(t, "role_in_use", errCode(t, func() error {
-		_, err := h.client.Roles.DeleteRole(ctx, &RoleNameRequest{Name: "admin"})
+		_, err := h.client.Roles.Delete(ctx, &roles.RoleNameRequest{Name: "admin"})
 		return err
 	}), "a built-in role is never deleted")
 
 	// Recreated under the same name, the role starts a fresh audit trail (a new id).
-	_, err = h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: "analyst"})
+	_, err = h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: "analyst"})
 	require.NoError(t, err)
 	h.drainAudit()
-	trail, err := h.client.Roles.ListRoleAudit(ctx, &ListRoleAuditRequest{Name: "analyst"})
+	trail, err := h.client.Roles.ListAudit(ctx, &roles.ListRoleAuditRequest{Name: "analyst"})
 	require.NoError(t, err)
 	require.Len(t, trail.GetEvents(), 1)
 	assert.Equal(t, "create", trail.GetEvents()[0].GetAction())
@@ -385,12 +386,12 @@ func TestRoleAdminLifecycle(t *testing.T) {
 	_, err = h.client.Admin.AssignRole(ctx, &RoleRequest{Id: bob.GetUser().GetId(), Role: "ghost"})
 	assert.Error(t, err, "the admin API still refuses an unknown role")
 	require.NoError(t, rolestore.AssignRole(bg, h.pool, tenant, uuid.MustParse(bob.GetUser().GetId()), "auditor", nil))
-	_, err = h.client.Roles.GetRole(ctx, &RoleNameRequest{Name: "auditor"})
+	_, err = h.client.Roles.Get(ctx, &roles.RoleNameRequest{Name: "auditor"})
 	require.NoError(t, err)
 
 	outsider := h.member(tenant, "viewer@acme.io")
 	assert.Equal(t, http.StatusForbidden, statusOf(func() error {
-		_, err := h.client.Roles.ListRoles(h.as(tenant, outsider.ID), &ListRolesRequest{})
+		_, err := h.client.Roles.List(h.as(tenant, outsider.ID), &roles.ListRolesRequest{})
 		return err
 	}()))
 }
@@ -402,7 +403,7 @@ func TestRolePermissionsReplaceBasicGrantsOnly(t *testing.T) {
 	ctx := h.as(tenant, admin.ID)
 	bg := context.Background()
 
-	_, err := h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: "analyst"})
+	_, err := h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: "analyst"})
 	require.NoError(t, err)
 	// Not this call's to touch: an advanced row naming the role, and a basic row it shares.
 	_, err = h.pool.Exec(bg, `INSERT INTO metadata.policies (tenant_id, entity, action, roles, condition)
@@ -412,14 +413,14 @@ func TestRolePermissionsReplaceBasicGrantsOnly(t *testing.T) {
 		VALUES ($1, 'waf.rules', 'read', '["analyst","viewer"]')`, tenant)
 	require.NoError(t, err)
 
-	got, err := h.client.Roles.GetRolePermissions(ctx, &RoleNameRequest{Name: "analyst"})
+	got, err := h.client.Roles.GetPermissions(ctx, &roles.RoleNameRequest{Name: "analyst"})
 	require.NoError(t, err)
 	require.Len(t, got.GetGrants(), 1, "a shared basic row counts as the role's grant")
 	require.Len(t, got.GetAdvanced(), 1)
 	assert.Equal(t, "waf.zones", got.GetAdvanced()[0].GetEntity())
 	assert.NotEmpty(t, string(got.GetAdvanced()[0].GetCondition()))
 
-	set, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "analyst", Grants: []*RoleGrant{
+	set, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "analyst", Grants: []*roles.RoleGrant{
 		{Entity: "waf.zones", Action: "read"},
 		{Entity: "waf.zones", Action: "update"},
 		{Entity: "waf.zones", Action: "transition:pause"},
@@ -453,31 +454,31 @@ func TestRolePermissionsReplaceBasicGrantsOnly(t *testing.T) {
 	assert.False(t, allowed(perms.CanReadEntity(bg, rc, "waf.rules")))
 
 	assert.Equal(t, "validation_failed", errCode(t, func() error {
-		_, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "analyst",
-			Grants: []*RoleGrant{{Entity: "waf.zones", Action: "approve"}}})
+		_, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "analyst",
+			Grants: []*roles.RoleGrant{{Entity: "waf.zones", Action: "approve"}}})
 		return err
 	}), "an action outside the policy grammar")
 	assert.Equal(t, "validation_failed", errCode(t, func() error {
-		_, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "admin"})
+		_, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "admin"})
 		return err
 	}), "admin bypasses policies")
 	assert.Equal(t, "not_found", errCode(t, func() error {
-		_, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "ghost"})
+		_, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "ghost"})
 		return err
 	}))
 
 	// copyFrom starts a role with the source's basic grants (not its advanced rows).
-	copied, err := h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: "analyst_two", CopyFrom: "analyst"})
+	copied, err := h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: "analyst_two", CopyFrom: "analyst"})
 	require.NoError(t, err)
 	assert.EqualValues(t, 4, copied.GetPolicyCount())
-	two, err := h.client.Roles.GetRolePermissions(ctx, &RoleNameRequest{Name: "analyst_two"})
+	two, err := h.client.Roles.GetPermissions(ctx, &roles.RoleNameRequest{Name: "analyst_two"})
 	require.NoError(t, err)
 	assert.Len(t, two.GetGrants(), 4)
 	assert.Empty(t, two.GetAdvanced())
 
 	h.drainAudit()
 
-	trail, err := h.client.Roles.ListRoleAudit(ctx, &ListRoleAuditRequest{Name: "analyst"})
+	trail, err := h.client.Roles.ListAudit(ctx, &roles.ListRoleAuditRequest{Name: "analyst"})
 	require.NoError(t, err)
 	require.NotEmpty(t, trail.GetEvents())
 	assert.Contains(t, string(trail.GetEvents()[0].GetDiff()), "granted")
@@ -584,9 +585,9 @@ func TestVirtualResourceGrantsAreValidatedAndEnforced(t *testing.T) {
 	ctx := h.as(tenant, admin.ID)
 	key := permission.ResourceKey("test.requestdata")
 
-	list, err := h.client.Roles.ListPermissionResources(ctx, &Empty{})
+	list, err := h.client.Roles.ListResources(ctx, &Empty{})
 	require.NoError(t, err)
-	var found *PermissionResource
+	var found *roles.PermissionResource
 	for _, r := range list.GetResources() {
 		if r.GetName() == "test.requestdata" {
 			found = r
@@ -595,22 +596,22 @@ func TestVirtualResourceGrantsAreValidatedAndEnforced(t *testing.T) {
 	require.NotNil(t, found)
 	assert.Equal(t, key, found.GetKey())
 	assert.Len(t, found.GetActions(), 2)
-	_, err = h.client.Roles.ListPermissionResources(h.as(tenant, bob.ID), &Empty{})
+	_, err = h.client.Roles.ListResources(h.as(tenant, bob.ID), &Empty{})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "admins only")
 
 	// Only declared actions of declared resources are grantable.
-	for _, bad := range []*RoleGrant{
+	for _, bad := range []*roles.RoleGrant{
 		{Entity: key, Action: "read"}, // an entity action is not one of this resource's
 		{Entity: key, Action: "nope"},
 		{Entity: permission.ResourceKey("test.ghost"), Action: "view"},
 	} {
 		bad := bad
 		assert.Equal(t, "validation_failed", errCode(t, func() error {
-			_, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "reviewer", Grants: []*RoleGrant{bad}})
+			_, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "reviewer", Grants: []*roles.RoleGrant{bad}})
 			return err
 		}), "%+v", bad)
 	}
-	set, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "reviewer", Grants: []*RoleGrant{
+	set, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "reviewer", Grants: []*roles.RoleGrant{
 		{Entity: key, Action: "view"}, {Entity: "waf.zones", Action: "read"}}})
 	require.NoError(t, err)
 	assert.Len(t, set.GetGrants(), 2)

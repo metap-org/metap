@@ -684,39 +684,7 @@ func (s *UserAdminService) ListUserAudit(ctx context.Context, req *ListUserAudit
 
 // listAudit pages entity record id's audit trail, newest first.
 func (d identityDeps) listAudit(ctx context.Context, c caller, entity string, id uuid.UUID, cursor string, limit32 int32) (*ListUserAuditResponse, error) {
-	if d.cfg.Audit == nil {
-		return &ListUserAuditResponse{}, nil
-	}
-	limit := int(limit32)
-	if limit <= 0 || limit > audit.MaxPageSize {
-		limit = 50
-	}
-	q := audit.Query{Entity: entity, RecordID: id, Limit: limit}
-	if cursor != "" {
-		cur, ok := audit.DecodeCursor(cursor)
-		if !ok {
-			return nil, svcErr(ctx, http.StatusBadRequest, errcode.InvalidCursor, "Invalid cursor.")
-		}
-		q.After = &cur
-	}
-	rows, err := d.cfg.Audit.Query(ctx, c.Tenant, q)
-	if err != nil {
-		return nil, rpcError(ctx, err)
-	}
-	resp := &ListUserAuditResponse{}
-	if len(rows) > limit {
-		rows = rows[:limit]
-		last := rows[len(rows)-1]
-		resp.NextCursor = audit.EncodeCursor(audit.Cursor{OccurredAt: last.OccurredAt, ID: last.ID})
-	}
-	for _, r := range rows {
-		ev := &AuditEvent{Id: r.ID.String(), Action: r.Action, OccurredAt: formatTime(&r.OccurredAt), Diff: jsonOr(r.Diff, "{}")}
-		if r.ActorUserID != nil {
-			ev.ActorUserId = r.ActorUserID.String()
-		}
-		resp.Events = append(resp.Events, ev)
-	}
-	return resp, nil
+	return d.k().ListAudit(ctx, c, entity, id, cursor, limit32)
 }
 
 func dedupe(in []string) []string { return kernel.Dedupe(in) }

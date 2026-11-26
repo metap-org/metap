@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -262,4 +263,49 @@ func (d Deps) ChangeInTenantNew(ctx context.Context, c Caller, entity string, ac
 // RecordFor writes one audit entry for a change that has already been made (the no-Sink path).
 func (d Deps) RecordFor(ctx context.Context, c Caller, entity string, id uuid.UUID, act audit.AuditAction, diff map[string][2]any) {
 	WriteAudit(ctx, d.Cfg.Audit, c.Tenant, c.Self, entity, id, act, diff, d.Now())
+}
+
+// JSONOr is raw when it holds valid JSON, else fallback ("null", "{}").
+func JSONOr(raw []byte, fallback string) json.RawMessage {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return json.RawMessage(fallback)
+	}
+	return json.RawMessage(raw)
+}
+
+// ListAudit pages the audit trail of one record of entity in the caller's tenant, newest first.
+func (d Deps) ListAudit(ctx context.Context, c Caller, entity string, id uuid.UUID, cursor string, limit32 int32) (*ListUserAuditResponse, error) {
+	if d.Cfg.Audit == nil {
+		return &ListUserAuditResponse{}, nil
+	}
+	limit := int(limit32)
+	if limit <= 0 || limit > audit.MaxPageSize {
+		limit = 50
+	}
+	q := audit.Query{Entity: entity, RecordID: id, Limit: limit}
+	if cursor != "" {
+		cur, ok := audit.DecodeCursor(cursor)
+		if !ok {
+			return nil, Err(http.StatusBadRequest, errcode.InvalidCursor, "Invalid cursor.")
+		}
+		q.After = &cur
+	}
+	rows, err := d.Cfg.Audit.Query(ctx, c.Tenant, q)
+	if err != nil {
+		return nil, err
+	}
+	resp := &ListUserAuditResponse{}
+	if len(rows) > limit {
+		rows = rows[:limit]
+		last := rows[len(rows)-1]
+		resp.NextCursor = audit.EncodeCursor(audit.Cursor{OccurredAt: last.OccurredAt, ID: last.ID})
+	}
+	for _, r := range rows {
+		ev := &AuditEvent{Id: r.ID.String(), Action: r.Action, OccurredAt: FormatTime(&r.OccurredAt), Diff: JSONOr(r.Diff, "{}")}
+		if r.ActorUserID != nil {
+			ev.ActorUserId = r.ActorUserID.String()
+		}
+		resp.Events = append(resp.Events, ev)
+	}
+	return resp, nil
 }

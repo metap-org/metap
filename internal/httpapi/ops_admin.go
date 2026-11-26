@@ -15,6 +15,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
 	"github.com/metap-org/metap/internal/admin/preferences"
+	"github.com/metap-org/metap/internal/admin/roles"
 	"github.com/metap-org/metap/internal/admin/settings"
 	"github.com/metap-org/metap/internal/admin/support"
 	"github.com/metap-org/metap/internal/admin/tenants"
@@ -255,7 +256,8 @@ func registerAdminOperations(api huma.API, state *AppState) {
 	}
 	cfg := *state.Identity
 	registerUserOperations(api, state, admin.NewUserAdminService(cfg))
-	registerRoleOperations(api, state, admin.NewRoleAdminService(cfg))
+	roleDeps := kernel.Deps{Cfg: cfg}
+	registerRoleOperations(api, state, roles.New(roles.NewPgStore(roleDeps), roleDeps))
 	registerAccountOperations(api, state, admin.NewAccountService(cfg))
 	tenantDeps := kernel.Deps{Cfg: cfg}
 	var tenantMailer tenants.Mailer
@@ -519,48 +521,48 @@ type roleAuditIn struct {
 }
 
 type grantsBody struct {
-	Grants []*admin.RoleGrant `json:"grants"`
+	Grants []*roles.RoleGrant `json:"grants"`
 }
 
-func registerRoleOperations(api huma.API, state *AppState, s *admin.RoleAdminService) {
+func registerRoleOperations(api huma.API, state *AppState, s *roles.Service) {
 	const tag = "Roles"
-	name := func(v string) *admin.RoleNameRequest { return &admin.RoleNameRequest{Name: v} }
+	name := func(v string) *roles.RoleNameRequest { return &roles.RoleNameRequest{Name: v} }
 
 	adminOp(api, state, opOf("listRoles", http.MethodGet, "/admin/roles", "The tenant's roles", tag),
-		func(ctx context.Context, in *listRolesIn) (*admin.ListRolesResponse, error) {
-			return s.ListRoles(ctx, &admin.ListRolesRequest{Search: in.Search})
+		func(ctx context.Context, in *listRolesIn) (*roles.ListRolesResponse, error) {
+			return s.List(ctx, &roles.ListRolesRequest{Search: in.Search})
 		})
 	create := opOf("createRole", http.MethodPost, "/admin/roles", "Add a role (optionally copying another's permissions)", tag)
 	create.DefaultStatus = http.StatusCreated
-	adminOp(api, state, create, func(ctx context.Context, in *bodyIn[admin.CreateRoleRequest]) (*admin.Role, error) {
-		return s.CreateRole(ctx, &in.Body)
+	adminOp(api, state, create, func(ctx context.Context, in *bodyIn[roles.CreateRoleRequest]) (*roles.Role, error) {
+		return s.Create(ctx, &in.Body)
 	})
 	adminOp(api, state, opOf("getRole", http.MethodGet, "/admin/roles/{name}", "One role", tag),
-		func(ctx context.Context, in *namePath) (*admin.Role, error) { return s.GetRole(ctx, name(in.Name)) })
+		func(ctx context.Context, in *namePath) (*roles.Role, error) { return s.Get(ctx, name(in.Name)) })
 	adminOp(api, state, opOf("updateRole", http.MethodPatch, "/admin/roles/{name}", "Change a role's label or description", tag),
-		func(ctx context.Context, in *nameBodyIn[admin.UpdateRoleRequest]) (*admin.Role, error) {
+		func(ctx context.Context, in *nameBodyIn[roles.UpdateRoleRequest]) (*roles.Role, error) {
 			in.Body.Name = in.Name
-			return s.UpdateRole(ctx, &in.Body)
+			return s.Update(ctx, &in.Body)
 		})
 	adminNoContent(api, state, opOf("deleteRole", http.MethodDelete, "/admin/roles/{name}", "Delete a role", tag),
 		func(ctx context.Context, in *namePath) (*admin.Empty, error) {
-			return s.DeleteRole(ctx, name(in.Name))
+			return s.Delete(ctx, name(in.Name))
 		})
 	adminOp(api, state, opOf("getRolePermissions", http.MethodGet, "/admin/roles/{name}/permissions", "What a role may do", tag),
-		func(ctx context.Context, in *namePath) (*admin.RolePermissions, error) {
-			return s.GetRolePermissions(ctx, name(in.Name))
+		func(ctx context.Context, in *namePath) (*roles.RolePermissions, error) {
+			return s.GetPermissions(ctx, name(in.Name))
 		})
 	adminOp(api, state, opOf("setRolePermissions", http.MethodPut, "/admin/roles/{name}/permissions", "Replace what a role may do", tag),
-		func(ctx context.Context, in *nameBodyIn[grantsBody]) (*admin.RolePermissions, error) {
-			return s.SetRolePermissions(ctx, &admin.SetRolePermissionsRequest{Role: in.Name, Grants: in.Body.Grants})
+		func(ctx context.Context, in *nameBodyIn[grantsBody]) (*roles.RolePermissions, error) {
+			return s.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: in.Name, Grants: in.Body.Grants})
 		})
 	adminOp(api, state, opOf("listRoleAudit", http.MethodGet, "/admin/roles/{name}/audit", "Changes made to a role", tag),
 		func(ctx context.Context, in *roleAuditIn) (*admin.ListUserAuditResponse, error) {
-			return s.ListRoleAudit(ctx, &admin.ListRoleAuditRequest{Name: in.Name, Cursor: in.Cursor, Limit: in.Limit})
+			return s.ListAudit(ctx, &roles.ListRoleAuditRequest{Name: in.Name, Cursor: in.Cursor, Limit: in.Limit})
 		})
 	adminOp(api, state, opOf("listPermissionResources", http.MethodGet, "/admin/permission-resources", "Everything a role can be granted", tag),
-		func(ctx context.Context, _ *struct{}) (*admin.ListPermissionResourcesResponse, error) {
-			return s.ListPermissionResources(ctx, &admin.Empty{})
+		func(ctx context.Context, _ *struct{}) (*roles.ListPermissionResourcesResponse, error) {
+			return s.ListResources(ctx, &admin.Empty{})
 		})
 }
 

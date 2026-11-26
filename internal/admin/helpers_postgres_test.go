@@ -12,6 +12,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/apikeys"
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
+	"github.com/metap-org/metap/internal/admin/roles"
 	"github.com/metap-org/metap/internal/admin/support"
 	"github.com/metap-org/metap/internal/admin/tenants"
 	"github.com/metap-org/metap/internal/admin/trail"
@@ -39,7 +40,7 @@ import (
 // testClient groups the services the way the tests address them (they were gRPC clients).
 type testClient struct {
 	Admin   *UserAdminService
-	Roles   *RoleAdminService
+	Roles   *roles.Service
 	Account *AccountService
 	Tenants *tenants.Service
 	Trail   *trail.Service
@@ -52,7 +53,7 @@ type testClient struct {
 
 func newTestClient(cfg IdentityConfig) *testClient {
 	return &testClient{
-		Admin: NewUserAdminService(cfg), Roles: NewRoleAdminService(cfg), Account: NewAccountService(cfg),
+		Admin: NewUserAdminService(cfg), Roles: roles.New(roles.NewPgStore(kernel.Deps{Cfg: cfg}), kernel.Deps{Cfg: cfg}), Account: NewAccountService(cfg),
 		Tenants: newTenantsService(cfg), Trail: trail.New(cfg.Audit), Support: support.New(support.NewPgStore(kernel.Deps{Cfg: cfg}), kernel.Deps{Cfg: cfg}),
 		Owner: NewOwnerService(cfg), SSO: NewSsoAdminService(cfg),
 		Mfa:  mfa.New(mfa.NewPgStore(cfg.Shared), kernel.StoreAuditor{Store: cfg.Audit}, nil),
