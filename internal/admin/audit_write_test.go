@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/permission"
 )
 
 // capturedAudit keeps what is recorded; everything else on the Store is not used here.
@@ -49,17 +48,6 @@ func TestAnAdminChangeIsRecordedWithItsActorAndBeforeAfter(t *testing.T) {
 	require.NotNil(t, e.ActorUserID)
 	require.Equal(t, actor, *e.ActorUserID)
 	require.JSONEq(t, `{"before":null,"after":"waf.zones"}`, string(e.Diff["entity"]))
-}
-
-func TestBasicGrantsListsOnlyWhatTheMatrixOwns(t *testing.T) {
-	rows := []permission.PolicyRow{
-		{Action: "read", Roles: []string{"viewer"}, HasRoles: true, Subject: "context", Effect: permission.EffectAllow},
-		{Action: "update", HasRoles: false, Subject: "context", Effect: permission.EffectAllow},
-		{Action: "delete", Roles: []string{"viewer"}, HasRoles: true, Subject: "context", Effect: permission.EffectDeny},                  // deny: advanced
-		{Action: "read", Roles: []string{"analyst"}, HasRoles: true, Subject: "record", Effect: permission.EffectAllow},                   // record subject: advanced
-		{Action: "read", Roles: []string{"analyst"}, HasRoles: true, Subject: "context", Field: "secret", Effect: permission.EffectAllow}, // field: advanced
-	}
-	require.Equal(t, []string{"*:update", "viewer:read"}, basicGrants(rows))
 }
 
 var testNow = time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)

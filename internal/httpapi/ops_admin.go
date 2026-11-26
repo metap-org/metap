@@ -14,6 +14,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/apikeys"
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
+	"github.com/metap-org/metap/internal/admin/policies"
 	"github.com/metap-org/metap/internal/admin/preferences"
 	"github.com/metap-org/metap/internal/admin/roles"
 	"github.com/metap-org/metap/internal/admin/settings"
@@ -283,37 +284,38 @@ type userIDPath struct {
 // identity database (PermissionService only), so a verify-only service serves them too.
 func registerPolicyOperations(api huma.API, state *AppState) {
 	const tag = "Policies"
-	s := admin.NewPolicyAdminService(state.Permissions, state.ContextAttributesCache, state.Audit).WithSink(action.NewSink(state.Router))
+	deps := kernel.Deps{Cfg: kernel.Config{Audit: state.Audit, Sink: action.NewSink(state.Router)}}
+	s := policies.New(policies.NewPgStore(state.Permissions), state.ContextAttributesCache, deps)
 
 	adminOp(api, state, opOf("listPolicies", http.MethodGet, "/admin/policies", "The tenant's policies", tag),
-		func(ctx context.Context, in *policiesIn) (*admin.PolicyList, error) {
-			return s.ListPolicies(ctx, &admin.ListPoliciesRequest{Entity: in.Entity})
+		func(ctx context.Context, in *policiesIn) (*policies.PolicyList, error) {
+			return s.List(ctx, &policies.ListPoliciesRequest{Entity: in.Entity})
 		})
 	create := opOf("createPolicy", http.MethodPost, "/admin/policies", "Add a policy", tag)
 	create.DefaultStatus = http.StatusCreated
-	adminOp(api, state, create, func(ctx context.Context, in *bodyIn[admin.CreatePolicyRequest]) (*admin.PolicyOne, error) {
-		return s.CreatePolicy(ctx, &in.Body)
+	adminOp(api, state, create, func(ctx context.Context, in *bodyIn[policies.CreatePolicyRequest]) (*policies.PolicyOne, error) {
+		return s.Create(ctx, &in.Body)
 	})
 	seed := opOf("seedDefaultPolicies", http.MethodPost, "/admin/policies/seed-defaults", "Grant roles every action on an entity", tag)
 	seed.DefaultStatus = http.StatusCreated
-	adminOp(api, state, seed, func(ctx context.Context, in *bodyIn[admin.SeedDefaultPoliciesRequest]) (*admin.PolicyList, error) {
-		return s.SeedDefaultPolicies(ctx, &in.Body)
+	adminOp(api, state, seed, func(ctx context.Context, in *bodyIn[policies.SeedDefaultPoliciesRequest]) (*policies.PolicyList, error) {
+		return s.Seed(ctx, &in.Body)
 	})
 	adminOp(api, state, opOf("syncMatrixPolicies", http.MethodPut, "/admin/policies/matrix", "Replace an entity's basic policies with the matrix", tag),
-		func(ctx context.Context, in *bodyIn[admin.SyncMatrixRequest]) (*admin.PolicyList, error) {
-			return s.SyncMatrixPolicies(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[policies.SyncMatrixRequest]) (*policies.PolicyList, error) {
+			return s.SyncMatrix(ctx, &in.Body)
 		})
 	adminOp(api, state, opOf("explainPolicy", http.MethodPost, "/admin/policies/explain", "Which policies decide an action for the caller", tag),
-		func(ctx context.Context, in *bodyIn[admin.ExplainPolicyRequest]) (*admin.ExplainResponse, error) {
-			return s.ExplainPolicy(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[policies.ExplainPolicyRequest]) (*policies.ExplainResponse, error) {
+			return s.Explain(ctx, &in.Body)
 		})
 	adminNoContent(api, state, opOf("deletePolicy", http.MethodDelete, "/admin/policies/{id}", "Delete a policy", tag),
 		func(ctx context.Context, in *idPath) (*admin.Empty, error) {
-			return s.DeletePolicy(ctx, &admin.PolicyIDRequest{ID: in.ID})
+			return s.Delete(ctx, &policies.PolicyIDRequest{ID: in.ID})
 		})
 	adminNoContent(api, state, opOf("invalidateUserContext", http.MethodPost, "/admin/users/{userId}/context/invalidate", "Drop a member's cached context attributes", tag),
 		func(ctx context.Context, in *userIDPath) (*admin.Empty, error) {
-			return s.InvalidateContext(ctx, &admin.UserIDRequest{UserID: in.UserID})
+			return s.InvalidateContext(ctx, &policies.UserIDRequest{UserID: in.UserID})
 		})
 }
 

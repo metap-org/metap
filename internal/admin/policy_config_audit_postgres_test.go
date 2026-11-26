@@ -5,6 +5,7 @@ package admin
 import (
 	"context"
 	"github.com/metap-org/metap/internal/admin/kernel"
+	"github.com/metap-org/metap/internal/admin/policies"
 	"github.com/metap-org/metap/internal/admin/settings"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestPolicyAndConfigChangesAreAudited(t *testing.T) {
 	ctx := context.Background()
 
 	perms := permission.NewPermissionService(policypg.NewPostgresPolicyStore(h.cfg.Router))
-	policies := NewPolicyAdminService(perms, nil, h.cfg.Audit).WithSink(h.cfg.Sink)
+	polSvc := policies.New(policies.NewPgStore(perms), nil, kernel.Deps{Cfg: kernel.Config{Audit: h.cfg.Audit, Sink: h.cfg.Sink}})
 
 	trail := func(entity string) []audit.Row {
 		h.drainAudit()
@@ -49,14 +50,14 @@ func TestPolicyAndConfigChangesAreAudited(t *testing.T) {
 	}
 
 	// A non-admin changes nothing, and nothing is recorded for the attempt.
-	_, err := policies.CreatePolicy(h.as(tenant, viewer.ID), &CreatePolicyRequest{Entity: "test.things", Action: "read", Roles: []string{"viewer"}})
+	_, err := polSvc.Create(h.as(tenant, viewer.ID), &policies.CreatePolicyRequest{Entity: "test.things", Action: "read", Roles: []string{"viewer"}})
 	require.Error(t, err)
-	assert.Empty(t, trail(AuditEntityPolicies))
+	assert.Empty(t, trail(policies.AuditEntity))
 
 	// Create.
-	created, err := policies.CreatePolicy(asAdmin, &CreatePolicyRequest{Entity: "test.things", Action: "read", Roles: []string{"viewer"}})
+	created, err := polSvc.Create(asAdmin, &policies.CreatePolicyRequest{Entity: "test.things", Action: "read", Roles: []string{"viewer"}})
 	require.NoError(t, err)
-	rows := byEntity(AuditEntityPolicies, "create")
+	rows := byEntity(policies.AuditEntity, "create")
 	require.Len(t, rows, 1)
 	assert.Equal(t, created.Data.ID, rows[0].RecordID.String())
 	assert.Equal(t, boss.ID, *rows[0].ActorUserID, "attributed to the admin who made it")
@@ -64,24 +65,24 @@ func TestPolicyAndConfigChangesAreAudited(t *testing.T) {
 	assert.Contains(t, string(rows[0].Diff), "viewer")
 
 	// Seed defaults: one entry per policy created.
-	seeded, err := policies.SeedDefaultPolicies(asAdmin, &SeedDefaultPoliciesRequest{Entity: "test.other", Roles: []string{"analyst"}, Actions: []string{"read", "update"}})
+	seeded, err := polSvc.Seed(asAdmin, &policies.SeedDefaultPoliciesRequest{Entity: "test.other", Roles: []string{"analyst"}, Actions: []string{"read", "update"}})
 	require.NoError(t, err)
 	assert.Len(t, seeded.Data, 2)
-	assert.Len(t, byEntity(AuditEntityPolicies, "create"), 3, "the one above and the two seeded")
+	assert.Len(t, byEntity(policies.AuditEntity, "create"), 3, "the one above and the two seeded")
 
 	// The matrix save: one entry saying what the entity's grants were and are.
 	analyst := "analyst"
-	_, err = policies.SyncMatrixPolicies(asAdmin, &SyncMatrixRequest{Entity: "test.other", Grants: []MatrixGrant{{Role: &analyst, Action: "delete"}}})
+	_, err = polSvc.SyncMatrix(asAdmin, &policies.SyncMatrixRequest{Entity: "test.other", Grants: []policies.MatrixGrant{{Role: &analyst, Action: "delete"}}})
 	require.NoError(t, err)
-	synced := byEntity(AuditEntityPolicies, "update")
+	synced := byEntity(policies.AuditEntity, "update")
 	require.Len(t, synced, 1)
 	assert.Contains(t, string(synced[0].Diff), "analyst:read", "before")
 	assert.Contains(t, string(synced[0].Diff), "analyst:delete", "after")
 
 	// Delete: the entry says what was removed.
-	_, err = policies.DeletePolicy(asAdmin, &PolicyIDRequest{ID: created.Data.ID})
+	_, err = polSvc.Delete(asAdmin, &policies.PolicyIDRequest{ID: created.Data.ID})
 	require.NoError(t, err)
-	gone := byEntity(AuditEntityPolicies, "delete")
+	gone := byEntity(policies.AuditEntity, "delete")
 	require.Len(t, gone, 1)
 	assert.Equal(t, created.Data.ID, gone[0].RecordID.String())
 	assert.Contains(t, string(gone[0].Diff), "test.things")
