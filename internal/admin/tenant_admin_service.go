@@ -178,7 +178,7 @@ func (s *TenantAdminService) CreateTenant(ctx context.Context, req *CreateTenant
 			return nil, fail(rpcError(ctx, err))
 		}
 	}
-	invitedBy := c.selfPtr()
+	invitedBy := c.SelfPtr()
 	var m *identity.Member
 	var token string
 	var inv *identity.Invitation

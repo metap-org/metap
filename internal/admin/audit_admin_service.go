@@ -102,7 +102,7 @@ func (s *AuditAdminService) SearchAudit(ctx context.Context, req *SearchAuditReq
 		q.Limit = 50
 	}
 	limit := q.Limit
-	rows, err := s.d.cfg.Audit.Search(ctx, c.tenant, q)
+	rows, err := s.d.cfg.Audit.Search(ctx, c.Tenant, q)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -126,7 +126,7 @@ func (s *AuditAdminService) VerifyAuditChain(ctx context.Context, _ *Empty) (*Au
 	if s.d.cfg.Audit == nil {
 		return &AuditChainReport{Ok: true}, nil
 	}
-	rep, err := s.d.cfg.Audit.VerifyChain(ctx, c.tenant)
+	rep, err := s.d.cfg.Audit.VerifyChain(ctx, c.Tenant)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}

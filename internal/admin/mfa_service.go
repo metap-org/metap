@@ -26,11 +26,11 @@ func (s *UserAdminService) ResetMfa(ctx context.Context, req *UserIdRequest) (*E
 	if err := s.d.guardOwner(ctx, c, id, "reset the MFA of"); err != nil {
 		return nil, err
 	}
-	m, err := identity.GetMember(ctx, s.d.cfg.Shared, c.tenant, id)
+	m, err := identity.GetMember(ctx, s.d.cfg.Shared, c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
-	shared, err := identity.SharedIdentities(ctx, s.d.cfg.Shared, c.tenant, []uuid.UUID{m.IdentityID})
+	shared, err := identity.SharedIdentities(ctx, s.d.cfg.Shared, c.Tenant, []uuid.UUID{m.IdentityID})
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}

@@ -71,7 +71,7 @@ func (s *SsoAdminService) GetSsoConfig(ctx context.Context, _ *Empty) (*SsoConfi
 	if err != nil {
 		return nil, err
 	}
-	return s.view(ctx, c.tenant)
+	return s.view(ctx, c.Tenant)
 }
 
 func sameOrigin(raw, base string) bool {
@@ -110,13 +110,13 @@ func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *SetSsoConfigReq
 		return nil, err
 	}
 	domains, role, roleClaim, roleMap := access.domains, access.defaultRole, access.roleClaim, access.roleMap
-	if other, err := sso.SamlConfigFor(ctx, s.d.db(), c.tenant); err != nil {
+	if other, err := sso.SamlConfigFor(ctx, s.d.db(), c.Tenant); err != nil {
 		return nil, rpcError(ctx, err)
 	} else if other != nil && req.GetEnabled() {
 		return bad("SAML single sign-on is on for this workspace: turn it off before enabling OpenID Connect.")
 	}
 
-	ref := secrets.TenantSecretRef(c.tenant, ssoSecretKey)
+	ref := secrets.TenantSecretRef(c.Tenant, ssoSecretKey)
 	secret := req.GetClientSecret()
 	store := s.d.cfg.Router.Secrets()
 	if secret == "" {
@@ -137,17 +137,17 @@ func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *SetSsoConfigReq
 	if _, _, _, _, err := sso.OidcAuthorizeURL(ctx, cfg, secret); err != nil {
 		return bad("The identity provider could not be reached or is not an OpenID Connect issuer.")
 	}
-	before, _, _ := sso.StoredOidcConfig(ctx, s.d.db(), c.tenant)
+	before, _, _ := sso.StoredOidcConfig(ctx, s.d.db(), c.Tenant)
 	if req.GetClientSecret() != "" {
 		if err := store.PutSecret(ctx, ref, req.GetClientSecret()); err != nil {
 			return nil, svcErr(ctx, http.StatusConflict, errcode.Forbidden, err.Error())
 		}
 	}
-	err = s.d.change(ctx, c, AuditEntitySSO, c.tenant, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
-		if err := sso.SaveOidcConfig(ctx, s.d.db(), c.tenant, cfg, req.GetEnabled()); err != nil {
+	err = s.d.change(ctx, c, AuditEntitySSO, c.Tenant, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+		if err := sso.SaveOidcConfig(ctx, s.d.db(), c.Tenant, cfg, req.GetEnabled()); err != nil {
 			return nil, err
 		}
-		if err := sso.SyncDomains(ctx, s.d.db(), c.tenant, domains); err != nil {
+		if err := sso.SyncDomains(ctx, s.d.db(), c.Tenant, domains); err != nil {
 			return nil, err
 		}
 		diff := map[string][2]any{"issuerUrl": {nil, issuer}, "enabled": {nil, req.GetEnabled()}, "enforced": {nil, req.GetEnforced()}}
@@ -159,7 +159,7 @@ func (s *SsoAdminService) SetSsoConfig(ctx context.Context, req *SetSsoConfigReq
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	return s.view(ctx, c.tenant)
+	return s.view(ctx, c.Tenant)
 }
 
 // accessInput is what both protocols share: who may sign in, what they start as, which provider
@@ -209,7 +209,7 @@ func (s *SsoAdminService) validateAccess(ctx context.Context, c caller, in acces
 		return bad("People provisioned by single sign-on cannot start as admin.")
 	}
 	if role != "" {
-		if err := s.d.checkRoles(ctx, c.tenant, []string{role}); err != nil {
+		if err := s.d.checkRoles(ctx, c.Tenant, []string{role}); err != nil {
 			return bad("`defaultRole` must be a role of this tenant.")
 		}
 	}
@@ -233,7 +233,7 @@ func (s *SsoAdminService) validateAccess(ctx context.Context, c caller, in acces
 		if mapped == permission.RoleAdmin || mapped == RolePlatformAdmin {
 			return bad("A provider group cannot be mapped to " + mapped + ".")
 		}
-		if err := s.d.checkRoles(ctx, c.tenant, []string{mapped}); err != nil {
+		if err := s.d.checkRoles(ctx, c.Tenant, []string{mapped}); err != nil {
 			return bad("`roleMap` names a role this tenant does not have: " + mapped + ".")
 		}
 	}
@@ -241,11 +241,11 @@ func (s *SsoAdminService) validateAccess(ctx context.Context, c caller, in acces
 		if !in.Enabled {
 			return bad("Single sign-on must be enabled to be enforced.")
 		}
-		owner, err := s.d.ensureOwner(ctx, c.tenant)
+		owner, err := s.d.ensureOwner(ctx, c.Tenant)
 		if err != nil {
 			return nil, rpcError(ctx, err)
 		}
-		if owner == uuid.Nil || c.self != owner {
+		if owner == uuid.Nil || c.Self != owner {
 			return nil, svcErr(ctx, http.StatusForbidden, errcode.OwnerProtected,
 				"Only the tenant owner can require single sign-on: the owner keeps password sign-in as the way back.")
 		}
@@ -259,13 +259,13 @@ func (s *SsoAdminService) DeleteSsoConfig(ctx context.Context, _ *Empty) (*Empty
 		return nil, err
 	}
 	// Removing an enforced configuration is how the owner (or an admin) restores password sign-in.
-	err = s.d.change(ctx, c, AuditEntitySSO, c.tenant, audit.ActionDelete, func(ctx context.Context) (map[string][2]any, error) {
-		return map[string][2]any{"sso": {"configured", nil}}, sso.DeleteOidcConfig(ctx, s.d.db(), c.tenant)
+	err = s.d.change(ctx, c, AuditEntitySSO, c.Tenant, audit.ActionDelete, func(ctx context.Context) (map[string][2]any, error) {
+		return map[string][2]any{"sso": {"configured", nil}}, sso.DeleteOidcConfig(ctx, s.d.db(), c.Tenant)
 	})
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	_ = s.d.cfg.Router.Secrets().DeleteSecret(ctx, secrets.TenantSecretRef(c.tenant, ssoSecretKey))
+	_ = s.d.cfg.Router.Secrets().DeleteSecret(ctx, secrets.TenantSecretRef(c.Tenant, ssoSecretKey))
 	return &Empty{}, nil
 }
 
@@ -277,7 +277,7 @@ func (s *SsoAdminService) VerifySsoDomain(ctx context.Context, req *VerifySsoDom
 		return nil, err
 	}
 	domain := strings.ToLower(strings.TrimSpace(req.GetDomain()))
-	domains, err := sso.Domains(ctx, s.d.db(), c.tenant)
+	domains, err := sso.Domains(ctx, s.d.db(), c.Tenant)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -294,7 +294,7 @@ func (s *SsoAdminService) VerifySsoDomain(ctx context.Context, req *VerifySsoDom
 	if lookup == nil {
 		lookup = net.DefaultResolver.LookupTXT
 	}
-	ok, err := sso.CheckDomain(ctx, s.d.db(), lookup, c.tenant, *found, s.d.now())
+	ok, err := sso.CheckDomain(ctx, s.d.db(), lookup, c.Tenant, *found, s.d.now())
 	switch {
 	case errors.Is(err, sso.ErrDomainClaimed):
 		return nil, svcErr(ctx, http.StatusConflict, errcode.UniqueViolation, "Another workspace has already verified this domain.")
@@ -304,8 +304,8 @@ func (s *SsoAdminService) VerifySsoDomain(ctx context.Context, req *VerifySsoDom
 		return nil, svcErr(ctx, http.StatusConflict, errcode.DomainNotVerified,
 			"The record "+found.VerifyHost()+" was not found with the expected value yet. DNS changes can take a while; try again shortly.")
 	}
-	s.d.recordFor(ctx, c, AuditEntitySSO, c.tenant, audit.ActionUpdate, map[string][2]any{"verifiedDomain": {nil, domain}})
-	return s.view(ctx, c.tenant)
+	s.d.recordFor(ctx, c, AuditEntitySSO, c.Tenant, audit.ActionUpdate, map[string][2]any{"verifiedDomain": {nil, domain}})
+	return s.view(ctx, c.Tenant)
 }
 
 // domainsView lists the tenant's domains with what each still needs (shared by both protocols).
@@ -362,7 +362,7 @@ func (s *SsoAdminService) GetSamlConfig(ctx context.Context, _ *Empty) (*SamlCon
 	if err != nil {
 		return nil, err
 	}
-	return s.samlView(ctx, c.tenant)
+	return s.samlView(ctx, c.Tenant)
 }
 
 func (s *SsoAdminService) SetSamlConfig(ctx context.Context, req *SetSamlConfigRequest) (*SamlConfig, error) {
@@ -382,13 +382,13 @@ func (s *SsoAdminService) SetSamlConfig(ctx context.Context, req *SetSamlConfigR
 	if err != nil {
 		return nil, err
 	}
-	if other, err := sso.OidcConfigFor(ctx, s.d.db(), c.tenant); err != nil {
+	if other, err := sso.OidcConfigFor(ctx, s.d.db(), c.Tenant); err != nil {
 		return nil, rpcError(ctx, err)
 	} else if other != nil && req.Enabled {
 		return bad("OpenID Connect single sign-on is on for this workspace: turn it off before enabling SAML.")
 	}
 
-	before, _, _ := sso.StoredSamlConfig(ctx, s.d.db(), c.tenant)
+	before, _, _ := sso.StoredSamlConfig(ctx, s.d.db(), c.Tenant)
 	format := strings.TrimSpace(req.NameIdFormat)
 	if !sso.ValidNameIDFormat(format) {
 		return bad("`nameIdFormat` is `emailAddress` or `persistent`.")
@@ -418,11 +418,11 @@ func (s *SsoAdminService) SetSamlConfig(ctx context.Context, req *SetSamlConfigR
 	default:
 		return bad("Give the identity provider's metadata, as a URL or as XML.")
 	}
-	err = s.d.change(ctx, c, AuditEntitySSO, c.tenant, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
-		if err := sso.SaveSamlConfig(ctx, s.d.db(), c.tenant, cfg, req.Enabled); err != nil {
+	err = s.d.change(ctx, c, AuditEntitySSO, c.Tenant, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+		if err := sso.SaveSamlConfig(ctx, s.d.db(), c.Tenant, cfg, req.Enabled); err != nil {
 			return nil, err
 		}
-		if err := sso.SyncDomains(ctx, s.d.db(), c.tenant, access.domains); err != nil {
+		if err := sso.SyncDomains(ctx, s.d.db(), c.Tenant, access.domains); err != nil {
 			return nil, err
 		}
 		diff := map[string][2]any{"saml": {nil, "configured"}, "enabled": {nil, req.Enabled}, "enforced": {nil, req.Enforced}}
@@ -434,7 +434,7 @@ func (s *SsoAdminService) SetSamlConfig(ctx context.Context, req *SetSamlConfigR
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	return s.samlView(ctx, c.tenant)
+	return s.samlView(ctx, c.Tenant)
 }
 
 func (s *SsoAdminService) DeleteSamlConfig(ctx context.Context, _ *Empty) (*Empty, error) {
@@ -443,8 +443,8 @@ func (s *SsoAdminService) DeleteSamlConfig(ctx context.Context, _ *Empty) (*Empt
 		return nil, err
 	}
 	// Removing an enforced configuration is how the owner (or an admin) restores password sign-in.
-	err = s.d.change(ctx, c, AuditEntitySSO, c.tenant, audit.ActionDelete, func(ctx context.Context) (map[string][2]any, error) {
-		return map[string][2]any{"saml": {"configured", nil}}, sso.DeleteSamlConfig(ctx, s.d.db(), c.tenant)
+	err = s.d.change(ctx, c, AuditEntitySSO, c.Tenant, audit.ActionDelete, func(ctx context.Context) (map[string][2]any, error) {
+		return map[string][2]any{"saml": {"configured", nil}}, sso.DeleteSamlConfig(ctx, s.d.db(), c.Tenant)
 	})
 	if err != nil {
 		return nil, rpcError(ctx, err)

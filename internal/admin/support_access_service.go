@@ -56,11 +56,11 @@ func (s *SupportAccessService) GrantSupportAccess(ctx context.Context, req *Gran
 	if err != nil {
 		return nil, err
 	}
-	if c.self == uuid.Nil {
+	if c.Self == uuid.Nil {
 		return nil, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, "Support access is granted by a person, not a service account.")
 	}
 	role := req.GetRole()
-	if err := s.d.checkRoles(ctx, c.tenant, []string{role}); err != nil || role == "" {
+	if err := s.d.checkRoles(ctx, c.Tenant, []string{role}); err != nil || role == "" {
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, "`role` must be a role of this tenant.")
 	}
 	now := s.d.now()
@@ -69,7 +69,7 @@ func (s *SupportAccessService) GrantSupportAccess(ctx context.Context, req *Gran
 	var g *identity.SupportGrant
 	err = s.d.changeNew(ctx, c, AuditEntitySupportGrants, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
 		var err error
-		if g, err = identity.CreateSupportGrant(ctx, s.d.db(), c.tenant, c.self, req.GetReason(), role, int(req.GetHours()), now); err != nil {
+		if g, err = identity.CreateSupportGrant(ctx, s.d.db(), c.Tenant, c.Self, req.GetReason(), role, int(req.GetHours()), now); err != nil {
 			return uuid.Nil, nil, supportErr(ctx, err)
 		}
 		return g.ID, map[string][2]any{
@@ -88,10 +88,10 @@ func (s *SupportAccessService) ListSupportGrants(ctx context.Context, _ *Empty) 
 	}
 	now := s.d.now()
 	// Lapsed sessions leave no stale "Support" member behind.
-	if removed, err := identity.ExpireSupportSessions(ctx, s.d.db(), c.tenant, now); err == nil {
-		s.clearRoles(ctx, c.tenant, removed)
+	if removed, err := identity.ExpireSupportSessions(ctx, s.d.db(), c.Tenant, now); err == nil {
+		s.clearRoles(ctx, c.Tenant, removed)
 	}
-	grants, err := identity.ListSupportGrants(ctx, s.d.db(), c.tenant)
+	grants, err := identity.ListSupportGrants(ctx, s.d.db(), c.Tenant)
 	if err != nil {
 		return nil, supportErr(ctx, err)
 	}
@@ -115,7 +115,7 @@ func (s *SupportAccessService) RevokeSupportGrant(ctx context.Context, req *Supp
 	var members []uuid.UUID
 	err = s.d.change(ctx, c, AuditEntitySupportGrants, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
 		var err error
-		if members, err = identity.RevokeSupportGrant(ctx, s.d.db(), c.tenant, id, now); err != nil {
+		if members, err = identity.RevokeSupportGrant(ctx, s.d.db(), c.Tenant, id, now); err != nil {
 			return nil, supportErr(ctx, err)
 		}
 		return map[string][2]any{"revoked": {false, true}, "sessionsEnded": {nil, len(members)}}, nil
@@ -124,8 +124,8 @@ func (s *SupportAccessService) RevokeSupportGrant(ctx context.Context, req *Supp
 		return nil, err
 	}
 	// The roles live in the tenant's own database, outside the change (see identityDeps.change).
-	s.clearRoles(ctx, c.tenant, members)
-	g, err := identity.GetSupportGrant(ctx, s.d.db(), c.tenant, id)
+	s.clearRoles(ctx, c.Tenant, members)
+	g, err := identity.GetSupportGrant(ctx, s.d.db(), c.Tenant, id)
 	if err != nil {
 		return nil, supportErr(ctx, err)
 	}
@@ -180,7 +180,7 @@ func (s *SupportAccessService) StartSupportSession(ctx context.Context, req *Sta
 	if _, err := tenancy.NewPostgresTenantRegistry(s.d.cfg.Shared).Get(ctx, tenant); err != nil {
 		return nil, tenantErr(ctx, err)
 	}
-	person, err := identity.GetMember(ctx, s.d.db(), tenancy.PlatformTenantID, c.self)
+	person, err := identity.GetMember(ctx, s.d.db(), tenancy.PlatformTenantID, c.Self)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -208,7 +208,7 @@ func (s *SupportAccessService) StartSupportSession(ctx context.Context, req *Sta
 		return fail(err)
 	}
 	// Recorded in the tenant's own trail, under the support person.
-	err = s.d.change(ctx, caller{rc: c.rc, tenant: tenant, self: c.self}, AuditEntitySupportGrants, grant.ID, audit.ActionUpdate,
+	err = s.d.change(ctx, caller{RC: c.RC, Tenant: tenant, Self: c.Self}, AuditEntitySupportGrants, grant.ID, audit.ActionUpdate,
 		func(ctx context.Context) (map[string][2]any, error) {
 			var key *identity.APIKey
 			var err error
@@ -216,7 +216,7 @@ func (s *SupportAccessService) StartSupportSession(ctx context.Context, req *Sta
 				return nil, err
 			}
 			if err := identity.RecordSupportSession(ctx, s.d.db(), identity.SupportSession{GrantID: grant.ID, MemberID: member.ID,
-				KeyID: key.ID, StartedBy: c.self, StartedByEmail: person.Email, StartedAt: now}, tenant); err != nil {
+				KeyID: key.ID, StartedBy: c.Self, StartedByEmail: person.Email, StartedAt: now}, tenant); err != nil {
 				return nil, err
 			}
 			return map[string][2]any{"sessionStarted": {nil, person.Email + " as " + grant.Role}}, nil

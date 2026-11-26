@@ -24,33 +24,33 @@ func (s *UserAdminService) InviteUser(ctx context.Context, req *InviteUserReques
 		return nil, err
 	}
 	roles := dedupe(req.GetRoles())
-	if err := s.d.checkRoles(ctx, c.tenant, roles); err != nil {
+	if err := s.d.checkRoles(ctx, c.Tenant, roles); err != nil {
 		return nil, err
 	}
-	invitedBy := c.selfPtr()
+	invitedBy := c.SelfPtr()
 	m, _, err := identity.AddMember(ctx, s.d.cfg.Shared, identity.NewMember{
-		TenantID: c.tenant, Email: req.GetEmail(), DisplayName: req.GetDisplayName(), InvitedBy: invitedBy,
+		TenantID: c.Tenant, Email: req.GetEmail(), DisplayName: req.GetDisplayName(), InvitedBy: invitedBy,
 		Status: identity.StatusInvited,
 	})
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
 	if len(roles) > 0 {
-		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+		if err := s.d.withTenantTx(ctx, c.Tenant, func(db rolestore.DBTX) error {
 			for _, r := range roles {
-				if err := rolestore.AssignRole(ctx, db, c.tenant, m.ID, r, invitedBy); err != nil {
+				if err := rolestore.AssignRole(ctx, db, c.Tenant, m.ID, r, invitedBy); err != nil {
 					return err
 				}
 			}
 			return nil
 		}); err != nil {
-			_ = identity.RemoveMember(ctx, s.d.cfg.Shared, c.tenant, m.ID, s.d.now())
+			_ = identity.RemoveMember(ctx, s.d.cfg.Shared, c.Tenant, m.ID, s.d.now())
 			return nil, rpcError(ctx, err)
 		}
 	}
 	resp, err := s.issueInvitation(ctx, c, m.ID)
 	if err != nil {
-		_ = identity.RemoveMember(ctx, s.d.cfg.Shared, c.tenant, m.ID, s.d.now())
+		_ = identity.RemoveMember(ctx, s.d.cfg.Shared, c.Tenant, m.ID, s.d.now())
 		return nil, err
 	}
 	s.d.record(ctx, c, m.ID, audit.ActionCreate, map[string][2]any{
@@ -80,7 +80,7 @@ func (s *UserAdminService) ResendInvitation(ctx context.Context, req *UserIdRequ
 // issueInvitation creates a fresh link for invited member id and emails it. A relay failure is not
 // an error: the invitation stands and the link comes back for the admin to pass on.
 func (s *UserAdminService) issueInvitation(ctx context.Context, c caller, id uuid.UUID) (*InviteUserResponse, error) {
-	m, err := identity.GetMember(ctx, s.d.cfg.Shared, c.tenant, id)
+	m, err := identity.GetMember(ctx, s.d.cfg.Shared, c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -92,7 +92,7 @@ func (s *UserAdminService) issueInvitation(ctx context.Context, c caller, id uui
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	token, inv, err := identity.CreateInvitation(ctx, s.d.cfg.Shared, c.tenant, m.ID, m.IdentityID, newAccount, c.selfPtr(), now)
+	token, inv, err := identity.CreateInvitation(ctx, s.d.cfg.Shared, c.Tenant, m.ID, m.IdentityID, newAccount, c.SelfPtr(), now)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -105,7 +105,7 @@ func (s *UserAdminService) issueInvitation(ctx context.Context, c caller, id uui
 	if sendErr != nil && !errors.Is(sendErr, mail.ErrNotConfigured) {
 		slog.Warn("invitation email not sent", "member_id", m.ID, standard.LogError, sendErr)
 	}
-	u, err := s.d.user(ctx, c.tenant, m.ID)
+	u, err := s.d.user(ctx, c.Tenant, m.ID)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -118,10 +118,10 @@ func (s *UserAdminService) issueInvitation(ctx context.Context, c caller, id uui
 
 // displayNameOf is how the caller signs an invitation: their display name, else their email.
 func (d identityDeps) displayNameOf(ctx context.Context, c caller) string {
-	if c.self == uuid.Nil {
+	if c.Self == uuid.Nil {
 		return ""
 	}
-	m, err := identity.GetMember(ctx, d.cfg.Shared, c.tenant, c.self)
+	m, err := identity.GetMember(ctx, d.cfg.Shared, c.Tenant, c.Self)
 	if err != nil {
 		return ""
 	}
@@ -129,12 +129,4 @@ func (d identityDeps) displayNameOf(ctx context.Context, c caller) string {
 		return m.DisplayName
 	}
 	return m.Email
-}
-
-func (c caller) selfPtr() *uuid.UUID {
-	if c.self == uuid.Nil {
-		return nil
-	}
-	self := c.self
-	return &self
 }

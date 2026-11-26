@@ -82,6 +82,15 @@ type Caller struct {
 	Self   uuid.UUID
 }
 
+// SelfPtr is the caller's own member id, or nil for a subject that is not a person (a service token).
+func (c Caller) SelfPtr() *uuid.UUID {
+	if c.Self == uuid.Nil {
+		return nil
+	}
+	self := c.Self
+	return &self
+}
+
 // Authenticated is the caller in ctx when there is one and it carries a tenant.
 func Authenticated(ctx context.Context) (Caller, error) {
 	rc, err := Resolve(ctx)

@@ -85,7 +85,7 @@ func (s *RoleAdminService) GetRolePermissions(ctx context.Context, req *RoleName
 		return nil, err
 	}
 	name := strings.TrimSpace(req.GetName())
-	out, err := s.permissions(ctx, c.tenant, name)
+	out, err := s.permissions(ctx, c.Tenant, name)
 	if err != nil {
 		return nil, roleErr(ctx, err, name)
 	}
@@ -122,29 +122,29 @@ func (s *RoleAdminService) SetRolePermissions(ctx context.Context, req *SetRoleP
 		grants = append(grants, rolestore.RoleGrant{Entity: entity, Action: action})
 	}
 	var by *uuid.UUID
-	if c.self != uuid.Nil {
-		self := c.self
+	if c.Self != uuid.Nil {
+		self := c.Self
 		by = &self
 	}
 	var out *RolePermissions
 	err = s.d.changeInTenantNew(ctx, c, AuditEntityRoles, audit.ActionUpdate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
 		var role rolestore.Role
 		var before []rolestore.RoleGrant
-		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+		if err := s.d.withTenantTx(ctx, c.Tenant, func(db rolestore.DBTX) error {
 			var err error
-			if role, err = rolestore.GetRoleByName(ctx, db, c.tenant, name); err != nil {
+			if role, err = rolestore.GetRoleByName(ctx, db, c.Tenant, name); err != nil {
 				return err
 			}
-			if before, err = rolestore.RoleBasicGrants(ctx, db, c.tenant, name); err != nil {
+			if before, err = rolestore.RoleBasicGrants(ctx, db, c.Tenant, name); err != nil {
 				return err
 			}
-			_, err = rolestore.ReplaceRoleBasicGrants(ctx, db, c.tenant, name, grants, by)
+			_, err = rolestore.ReplaceRoleBasicGrants(ctx, db, c.Tenant, name, grants, by)
 			return err
 		}); err != nil {
 			return uuid.Nil, nil, err
 		}
 		var err error
-		if out, err = s.permissions(ctx, c.tenant, name); err != nil {
+		if out, err = s.permissions(ctx, c.Tenant, name); err != nil {
 			return uuid.Nil, nil, err
 		}
 		added, removed := grantDiff(before, out.GetGrants())

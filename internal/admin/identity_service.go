@@ -14,65 +14,34 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/admin/kernel"
-	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
-	"github.com/metap-org/metap/pkg/auth/mail"
-	"github.com/metap-org/metap/pkg/auth/sso"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // AuditEntityUsers is the audit-trail entity name user administration records under.
-const AuditEntityUsers = "metadata.users"
+const AuditEntityUsers = kernel.AuditEntityUsers
 
 // RolePlatformAdmin is the built-in role of the platform tenant.
 const RolePlatformAdmin = access.RolePlatformAdmin
 
-// IdentityConfig turns on UserAdminService and AccountService on a gRPC listener.
-type IdentityConfig struct {
-	Shared *pgxpool.Pool
-	Router *tenancy.Router
-	// Audit records every administrative change; nil records nothing.
-	Audit audit.Store
-	// Sink, when set, makes an administrative change and its audit entry one transaction on the shared
-	// database (kernel.Change); nil keeps "change, then record best-effort through Audit".
-	Sink action.Sink
-	// PublicURL is the origin people reach the service at; the SSO redirect URI is built from it.
-	PublicURL string
-	// Mailer sends invitation emails; nil sends none (the admin gets the link back instead).
-	Mailer *mail.Mailer
-	// PasswordPolicy is each tenant's minimum password length; nil means the platform minimum.
-	PasswordPolicy identity.PasswordPolicy
-	// APIKeyMaxDays is the tenant's cap on an API key's lifetime in days (auth.apiKeyMaxLifetimeDays);
-	// nil or 0 means no tenant cap.
-	APIKeyMaxDays func(ctx context.Context, tenant uuid.UUID) int
-	// Credentials stores the tenant credentials the Credentials tab manages; nil serves none.
-	Credentials CredentialManager
-	// HTTPClient fetches a SAML provider's metadata from the URL an admin gives (nil: a plain client
-	// with a timeout); a deployment can put its outbound-request guard here.
-	HTTPClient *http.Client
-	// TXTLookup resolves the DNS record that proves a domain is owned; nil uses the system resolver.
-	TXTLookup sso.TXTLookup
-}
+// IdentityConfig is what the administrative services are built from (kernel.Config).
+type IdentityConfig = kernel.Config
 
 type identityDeps struct {
 	cfg    IdentityConfig
 	nowFor func() time.Time
 }
 
-func (d identityDeps) now() time.Time {
-	if d.nowFor != nil {
-		return d.nowFor()
-	}
-	return time.Now()
-}
+func (d identityDeps) now() time.Time { return d.k().Now() }
+
+// k is the shared half of the deps (kernel.Deps), where the logic lives.
+func (d identityDeps) k() kernel.Deps { return kernel.Deps{Cfg: d.cfg, NowFor: d.nowFor} }
 
 // UserAdminService manages the members of the caller's tenant. Every call needs the admin role.
 type UserAdminService struct {
@@ -94,86 +63,30 @@ func NewAccountService(cfg IdentityConfig) *AccountService {
 
 // caller is an authenticated request's identity: tenant, own member id (uuid.Nil for a
 // non-person subject) and the request context.
-type caller struct {
-	rc     *permission.RequestContext
-	tenant uuid.UUID
-	self   uuid.UUID
-}
+type caller = kernel.Caller
 
-func (d identityDeps) caller(ctx context.Context) (caller, error) {
-	rc, err := resolveCaller(ctx)
-	if err != nil {
-		return caller{}, err
-	}
-	if rc == nil {
-		return caller{}, svcErr(ctx, http.StatusUnauthorized, errcode.Unauthorized, "Missing or invalid authorization header.")
-	}
-	tenant, err := uuid.Parse(rc.TenantID)
-	if err != nil {
-		return caller{}, svcErr(ctx, http.StatusUnauthorized, errcode.Unauthorized, "token is missing required claims")
-	}
-	self, _ := uuid.Parse(rc.UserID)
-	return caller{rc: rc, tenant: tenant, self: self}, nil
-}
+func (d identityDeps) caller(ctx context.Context) (caller, error) { return d.k().Caller(ctx) }
 
 func (s *UserAdminService) admin(ctx context.Context) (caller, error) { return s.d.admin(ctx) }
 
 // admin authenticates a caller that must hold the admin role (and the admin OAuth2 scope).
-func (d identityDeps) admin(ctx context.Context) (caller, error) {
-	return d.at(ctx, access.Admin)
-}
+func (d identityDeps) admin(ctx context.Context) (caller, error) { return d.k().Admin(ctx) }
 
 // at authenticates a caller and checks that level lets them in.
 func (d identityDeps) at(ctx context.Context, level access.Level) (caller, error) {
-	c, err := d.caller(ctx)
-	if err != nil {
-		return caller{}, err
-	}
-	if why := access.Refusal(level, c.rc); why != "" {
-		return caller{}, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, why)
-	}
-	return c, nil
+	return d.k().At(ctx, level)
 }
 
-// adminDurable is admin for an action that creates access outliving the moment: a person, a service
-// account, a key, a role, a password or MFA reset, a sign-in provider. A support session (vendor
-// access, time-boxed by a grant) is refused, so revoking or lapsing the grant really ends it; the
-// tenant's own admins make these changes.
+// adminDurable is admin for an action that creates access outliving the moment (see
+// kernel.Deps.AdminDurable).
 func adminDurable(d identityDeps, ctx context.Context) (caller, error) {
-	c, err := d.at(ctx, access.Durable)
-	if err != nil {
-		return caller{}, err
-	}
-	why, err := SupportSessionRefusal(ctx, d.cfg, c.rc)
-	if err != nil {
-		return caller{}, rpcError(ctx, err)
-	}
-	if why != "" {
-		return caller{}, svcErr(ctx, http.StatusForbidden, errcode.Forbidden, why)
-	}
-	return c, nil
+	return d.k().AdminDurable(ctx)
 }
 
 // SupportSessionRefusal says why rc may not use an access.Durable operation because it is a
-// vendor's support session ("" when it may). It needs the database, so it is not part of
-// access.Refusal; the route gate and adminDurable both ask it.
+// vendor's support session ("" when it may); see kernel.SupportSessionRefusal.
 func SupportSessionRefusal(ctx context.Context, cfg IdentityConfig, rc *permission.RequestContext) (string, error) {
-	tenant, err := uuid.Parse(rc.TenantID)
-	if err != nil {
-		return "", nil
-	}
-	self, err := uuid.Parse(rc.UserID)
-	if err != nil || self == uuid.Nil {
-		return "", nil
-	}
-	support, err := identity.IsSupportSessionMember(ctx, cfg.Shared, tenant, self)
-	if err != nil {
-		return "", err
-	}
-	if support {
-		return kernel.SupportRefusal, nil
-	}
-	return "", nil
+	return kernel.SupportSessionRefusal(ctx, cfg, rc)
 }
 
 func svcErr(ctx context.Context, httpStatus uint16, code, message string) error {
@@ -185,15 +98,7 @@ func identityErr(_ context.Context, err error) error { return kernel.IdentityErr
 
 // withTenantTx runs fn in a transaction on tenant's own database (where user_roles live).
 func (d identityDeps) withTenantTx(ctx context.Context, tenant uuid.UUID, fn func(db rolestore.DBTX) error) error {
-	tx, err := d.cfg.Router.Begin(ctx, tenant)
-	if err != nil {
-		return err
-	}
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback(ctx)
-		return err
-	}
-	return tx.Commit(ctx)
+	return d.k().WithTenantTx(ctx, tenant, fn)
 }
 
 func formatTime(t *time.Time) string {
@@ -275,52 +180,32 @@ func (d identityDeps) record(ctx context.Context, c caller, id uuid.UUID, action
 	d.recordFor(ctx, c, AuditEntityUsers, id, action, diff)
 }
 
-// db is the shared identity database as the statements of pkg/auth/identity take it: each runs on the
-// transaction of the unit of work in its context when there is one on the shared database, else on
-// the pool, so it can sit inside a change without asking the pool for a second connection.
-func (d identityDeps) db() kernel.IdentityDB { return kernel.IdentityDB{Pool: d.cfg.Shared} }
+// db is the shared identity database (kernel.Deps.DB).
+func (d identityDeps) db() kernel.IdentityDB { return d.k().DB() }
 
-// change runs one administrative change and records it as one transaction when a Sink is configured
-// (kernel.Change). Nothing inside fn may open the tenant's own database: it would take a second
-// connection while the change holds the first, so work on user_roles goes before or after.
 func (d identityDeps) change(ctx context.Context, c caller, entity string, id uuid.UUID, act audit.AuditAction,
 	fn func(ctx context.Context) (map[string][2]any, error)) error {
-	kc := kernel.Caller{RC: c.rc, Tenant: c.tenant, Self: c.self}
-	return kernel.Change(ctx, d.cfg.Sink, adminAuditor{d}, d.nowFor, kc, entity, id, act, fn)
+	return d.k().Change(ctx, c, entity, id, act, fn)
 }
 
-// changeNew is change for a change that creates the thing it audits: fn returns its id.
 func (d identityDeps) changeNew(ctx context.Context, c caller, entity string, act audit.AuditAction,
 	fn func(ctx context.Context) (uuid.UUID, map[string][2]any, error)) error {
-	kc := kernel.Caller{RC: c.rc, Tenant: c.tenant, Self: c.self}
-	return kernel.ChangeNew(ctx, d.cfg.Sink, adminAuditor{d}, d.nowFor, kc, entity, act, fn)
+	return d.k().ChangeNew(ctx, c, entity, act, fn)
 }
 
-// changeInTenant is change for work on the tenant's own database (its roles, its policies): the work
-// and the entry are one transaction there, and what opens a transaction through the router joins it.
 func (d identityDeps) changeInTenant(ctx context.Context, c caller, entity string, id uuid.UUID, act audit.AuditAction,
 	fn func(ctx context.Context) (map[string][2]any, error)) error {
-	kc := kernel.Caller{RC: c.rc, Tenant: c.tenant, Self: c.self}
-	return kernel.ChangeInTenant(ctx, d.cfg.Sink, adminAuditor{d}, d.nowFor, kc, entity, id, act, fn)
+	return d.k().ChangeInTenant(ctx, c, entity, id, act, fn)
 }
 
-// changeInTenantNew is changeInTenant for a change that creates the thing it audits.
 func (d identityDeps) changeInTenantNew(ctx context.Context, c caller, entity string, act audit.AuditAction,
 	fn func(ctx context.Context) (uuid.UUID, map[string][2]any, error)) error {
-	kc := kernel.Caller{RC: c.rc, Tenant: c.tenant, Self: c.self}
-	return kernel.ChangeInTenantNew(ctx, d.cfg.Sink, adminAuditor{d}, d.nowFor, kc, entity, act, fn)
-}
-
-// adminAuditor is the older best-effort record, for the no-Sink path of change.
-type adminAuditor struct{ d identityDeps }
-
-func (a adminAuditor) Record(ctx context.Context, c kernel.Caller, entity string, id uuid.UUID, act audit.AuditAction, diff map[string][2]any) {
-	a.d.recordFor(ctx, caller{rc: c.RC, tenant: c.Tenant, self: c.Self}, entity, id, act, diff)
+	return d.k().ChangeInTenantNew(ctx, c, entity, act, fn)
 }
 
 // recordFor is record for any administered entity (metadata.users, metadata.roles).
 func (d identityDeps) recordFor(ctx context.Context, c caller, entity string, id uuid.UUID, action audit.AuditAction, diff map[string][2]any) {
-	writeAdminAudit(ctx, d.cfg.Audit, c.tenant, c.self, entity, id, action, diff, d.now())
+	d.k().RecordFor(ctx, c, entity, id, action, diff)
 }
 
 func parseID(id string) (uuid.UUID, error) { return kernel.ParseID(id) }
@@ -332,18 +217,18 @@ func (s *UserAdminService) ListUsers(ctx context.Context, req *ListUsersRequest)
 	}
 	q := identity.ListQuery{Search: req.GetSearch(), Status: req.GetStatus(), Offset: int(req.GetOffset()), Limit: int(req.GetLimit())}
 	if role := strings.TrimSpace(req.GetRole()); role != "" {
-		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
-			q.IDs, err = rolestore.UsersWithRole(ctx, db, c.tenant, role)
+		if err := s.d.withTenantTx(ctx, c.Tenant, func(db rolestore.DBTX) error {
+			q.IDs, err = rolestore.UsersWithRole(ctx, db, c.Tenant, role)
 			return err
 		}); err != nil {
 			return nil, rpcError(ctx, err)
 		}
 	}
-	ms, total, err := identity.ListMembers(ctx, s.d.db(), c.tenant, q)
+	ms, total, err := identity.ListMembers(ctx, s.d.db(), c.Tenant, q)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	users, err := s.d.toUsers(ctx, c.tenant, ms)
+	users, err := s.d.toUsers(ctx, c.Tenant, ms)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -359,7 +244,7 @@ func (s *UserAdminService) GetUser(ctx context.Context, req *UserIdRequest) (*Us
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.d.user(ctx, c.tenant, id)
+	u, err := s.d.user(ctx, c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -401,17 +286,17 @@ func (s *UserAdminService) CreateUser(ctx context.Context, req *CreateUserReques
 		return nil, err
 	}
 	roles := dedupe(req.GetRoles())
-	if err := s.d.checkRoles(ctx, c.tenant, roles); err != nil {
+	if err := s.d.checkRoles(ctx, c.Tenant, roles); err != nil {
 		return nil, err
 	}
 	if req.GetPassword() != "" {
 		// The password only applies to a new account, which belongs to this tenant alone.
-		if err := identity.CheckPasswordPolicy(ctx, s.d.db(), uuid.Nil, req.GetPassword(), s.d.cfg.PasswordPolicy, c.tenant); err != nil {
+		if err := identity.CheckPasswordPolicy(ctx, s.d.db(), uuid.Nil, req.GetPassword(), s.d.cfg.PasswordPolicy, c.Tenant); err != nil {
 			return nil, identityErr(ctx, err)
 		}
 	}
-	invitedBy := &c.self
-	if c.self == uuid.Nil {
+	invitedBy := &c.Self
+	if c.Self == uuid.Nil {
 		invitedBy = nil
 	}
 	var m *identity.Member
@@ -421,7 +306,7 @@ func (s *UserAdminService) CreateUser(ctx context.Context, req *CreateUserReques
 	err = s.d.changeNew(ctx, c, AuditEntityUsers, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
 		var err error
 		if m, created, err = identity.AddMember(ctx, s.d.db(), identity.NewMember{
-			TenantID: c.tenant, Email: req.GetEmail(), Password: req.GetPassword(), DisplayName: req.GetDisplayName(), InvitedBy: invitedBy,
+			TenantID: c.Tenant, Email: req.GetEmail(), Password: req.GetPassword(), DisplayName: req.GetDisplayName(), InvitedBy: invitedBy,
 		}); err != nil {
 			return uuid.Nil, nil, identityErr(ctx, err)
 		}
@@ -435,9 +320,9 @@ func (s *UserAdminService) CreateUser(ctx context.Context, req *CreateUserReques
 		return nil, err
 	}
 	if len(roles) > 0 {
-		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+		if err := s.d.withTenantTx(ctx, c.Tenant, func(db rolestore.DBTX) error {
 			for _, r := range roles {
-				if err := rolestore.AssignRole(ctx, db, c.tenant, m.ID, r, invitedBy); err != nil {
+				if err := rolestore.AssignRole(ctx, db, c.Tenant, m.ID, r, invitedBy); err != nil {
 					return err
 				}
 			}
@@ -447,12 +332,12 @@ func (s *UserAdminService) CreateUser(ctx context.Context, req *CreateUserReques
 			// trail: the entry above was written when the membership was.
 			_ = s.d.change(ctx, c, AuditEntityUsers, m.ID, audit.ActionDelete, func(ctx context.Context) (map[string][2]any, error) {
 				return map[string][2]any{"email": {m.Email, nil}, "undone": {nil, "the roles could not be assigned"}},
-					identity.RemoveMember(ctx, s.d.db(), c.tenant, m.ID, s.d.now())
+					identity.RemoveMember(ctx, s.d.db(), c.Tenant, m.ID, s.d.now())
 			})
 			return nil, rpcError(ctx, err)
 		}
 	}
-	u, err := s.d.user(ctx, c.tenant, m.ID)
+	u, err := s.d.user(ctx, c.Tenant, m.ID)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -468,15 +353,15 @@ func (s *UserAdminService) UpdateUser(ctx context.Context, req *UpdateUserReques
 	if err != nil {
 		return nil, err
 	}
-	before, err := identity.GetMember(ctx, s.d.db(), c.tenant, id)
+	before, err := identity.GetMember(ctx, s.d.db(), c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
 	err = s.d.change(ctx, c, AuditEntityUsers, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
-		if err := identity.UpdateMember(ctx, s.d.db(), c.tenant, id, req.GetDisplayName()); err != nil {
+		if err := identity.UpdateMember(ctx, s.d.db(), c.Tenant, id, req.GetDisplayName()); err != nil {
 			return nil, err
 		}
-		after, err := identity.GetMember(ctx, s.d.db(), c.tenant, id)
+		after, err := identity.GetMember(ctx, s.d.db(), c.Tenant, id)
 		if err != nil {
 			return nil, err
 		}
@@ -488,7 +373,7 @@ func (s *UserAdminService) UpdateUser(ctx context.Context, req *UpdateUserReques
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
-	u, err := s.d.user(ctx, c.tenant, id)
+	u, err := s.d.user(ctx, c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -519,10 +404,10 @@ func (d identityDeps) wouldOrphanAdmins(ctx context.Context, tenant, id uuid.UUI
 // guardTakingAway refuses an action on id that the caller may not take on themselves, or that
 // would leave the tenant without an admin.
 func (s *UserAdminService) guardTakingAway(ctx context.Context, c caller, id uuid.UUID, what string) error {
-	if id == c.self {
+	if id == c.Self {
 		return svcErr(ctx, http.StatusConflict, errcode.SelfModification, "You cannot "+what+" yourself.")
 	}
-	orphan, err := s.d.wouldOrphanAdmins(ctx, c.tenant, id)
+	orphan, err := s.d.wouldOrphanAdmins(ctx, c.Tenant, id)
 	if err != nil {
 		return rpcError(ctx, err)
 	}
@@ -541,7 +426,7 @@ func (s *UserAdminService) setStatus(ctx context.Context, req *UserIdRequest, ne
 	if err != nil {
 		return nil, err
 	}
-	before, err := identity.GetMember(ctx, s.d.db(), c.tenant, id)
+	before, err := identity.GetMember(ctx, s.d.db(), c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -552,13 +437,13 @@ func (s *UserAdminService) setStatus(ctx context.Context, req *UserIdRequest, ne
 	}
 	if before.Status != next {
 		err := s.d.change(ctx, c, AuditEntityUsers, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
-			return map[string][2]any{"status": {before.Status, next}}, identity.SetMemberStatus(ctx, s.d.db(), c.tenant, id, next, s.d.now())
+			return map[string][2]any{"status": {before.Status, next}}, identity.SetMemberStatus(ctx, s.d.db(), c.Tenant, id, next, s.d.now())
 		})
 		if err != nil {
 			return nil, identityErr(ctx, err)
 		}
 	}
-	u, err := s.d.user(ctx, c.tenant, id)
+	u, err := s.d.user(ctx, c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -582,7 +467,7 @@ func (s *UserAdminService) RemoveUser(ctx context.Context, req *UserIdRequest) (
 	if err != nil {
 		return nil, err
 	}
-	before, err := s.d.user(ctx, c.tenant, id)
+	before, err := s.d.user(ctx, c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -591,14 +476,14 @@ func (s *UserAdminService) RemoveUser(ctx context.Context, req *UserIdRequest) (
 	}
 	err = s.d.change(ctx, c, AuditEntityUsers, id, audit.ActionDelete, func(ctx context.Context) (map[string][2]any, error) {
 		return map[string][2]any{"email": {before.Email, nil}, "roles": {before.Roles, nil}},
-			identity.RemoveMember(ctx, s.d.db(), c.tenant, id, s.d.now())
+			identity.RemoveMember(ctx, s.d.db(), c.Tenant, id, s.d.now())
 	})
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
 	// The roles live in the tenant's own database, outside the change (see identityDeps.change).
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
-		return rolestore.RevokeAllRoles(ctx, db, c.tenant, id)
+	if err := s.d.withTenantTx(ctx, c.Tenant, func(db rolestore.DBTX) error {
+		return rolestore.RevokeAllRoles(ctx, db, c.Tenant, id)
 	}); err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -617,11 +502,11 @@ func (s *UserAdminService) ResetPassword(ctx context.Context, req *ResetPassword
 	if err := s.d.guardOwner(ctx, c, id, "reset the password of"); err != nil {
 		return nil, err
 	}
-	m, err := identity.GetMember(ctx, s.d.db(), c.tenant, id)
+	m, err := identity.GetMember(ctx, s.d.db(), c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
-	shared, err := identity.SharedIdentities(ctx, s.d.db(), c.tenant, []uuid.UUID{m.IdentityID})
+	shared, err := identity.SharedIdentities(ctx, s.d.db(), c.Tenant, []uuid.UUID{m.IdentityID})
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -654,7 +539,7 @@ func (s *UserAdminService) changeRole(ctx context.Context, req *RoleRequest, ass
 		return nil, err
 	}
 	role := strings.TrimSpace(req.GetRole())
-	before, err := s.d.user(ctx, c.tenant, id)
+	before, err := s.d.user(ctx, c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -662,7 +547,7 @@ func (s *UserAdminService) changeRole(ctx context.Context, req *RoleRequest, ass
 		return s.changeScopedRole(ctx, c, id, role, req.GetScopeType(), req.GetScopeId(), assign, before)
 	}
 	if assign {
-		if err := s.d.checkRoles(ctx, c.tenant, []string{role}); err != nil {
+		if err := s.d.checkRoles(ctx, c.Tenant, []string{role}); err != nil {
 			return nil, err
 		}
 	} else if role == permission.RoleAdmin {
@@ -673,21 +558,21 @@ func (s *UserAdminService) changeRole(ctx context.Context, req *RoleRequest, ass
 	// The role and its entry are one change on the tenant's own database, where user_roles live.
 	err = s.d.changeInTenant(ctx, c, AuditEntityUsers, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
 		var roles []string
-		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+		if err := s.d.withTenantTx(ctx, c.Tenant, func(db rolestore.DBTX) error {
 			var err error
 			if assign {
-				by := &c.self
-				if c.self == uuid.Nil {
+				by := &c.Self
+				if c.Self == uuid.Nil {
 					by = nil
 				}
-				err = rolestore.AssignRole(ctx, db, c.tenant, id, role, by)
+				err = rolestore.AssignRole(ctx, db, c.Tenant, id, role, by)
 			} else {
-				err = rolestore.RevokeRole(ctx, db, c.tenant, id, role)
+				err = rolestore.RevokeRole(ctx, db, c.Tenant, id, role)
 			}
 			if err != nil {
 				return err
 			}
-			held, err := rolestore.RolesForUsers(ctx, db, c.tenant, []uuid.UUID{id})
+			held, err := rolestore.RolesForUsers(ctx, db, c.Tenant, []uuid.UUID{id})
 			roles = held[id]
 			return err
 		}); err != nil {
@@ -704,7 +589,7 @@ func (s *UserAdminService) changeRole(ctx context.Context, req *RoleRequest, ass
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	after, err := s.d.user(ctx, c.tenant, id)
+	after, err := s.d.user(ctx, c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -719,23 +604,23 @@ func (s *UserAdminService) changeScopedRole(ctx context.Context, c caller, id uu
 			Message: err.Error(), FieldErrors: map[string][]string{"scope": {err.Error()}}})
 	}
 	if assign {
-		if err := s.d.checkRoles(ctx, c.tenant, []string{role}); err != nil {
+		if err := s.d.checkRoles(ctx, c.Tenant, []string{role}); err != nil {
 			return nil, err
 		}
 	}
 	err := s.d.changeInTenant(ctx, c, AuditEntityUsers, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
 		var now []*ScopedRole
-		if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+		if err := s.d.withTenantTx(ctx, c.Tenant, func(db rolestore.DBTX) error {
 			var err error
 			if assign {
-				err = rolestore.AssignScopedRole(ctx, db, c.tenant, id, role, scopeType, scopeID, c.selfPtr())
+				err = rolestore.AssignScopedRole(ctx, db, c.Tenant, id, role, scopeType, scopeID, c.SelfPtr())
 			} else {
-				err = rolestore.RevokeScopedRole(ctx, db, c.tenant, id, role, scopeType, scopeID)
+				err = rolestore.RevokeScopedRole(ctx, db, c.Tenant, id, role, scopeType, scopeID)
 			}
 			if err != nil {
 				return err
 			}
-			held, err := rolestore.ScopedRolesForUsers(ctx, db, c.tenant, []uuid.UUID{id})
+			held, err := rolestore.ScopedRolesForUsers(ctx, db, c.Tenant, []uuid.UUID{id})
 			for _, sr := range held[id] {
 				now = append(now, &ScopedRole{Role: sr.Role, ScopeType: sr.ScopeType, ScopeId: sr.ScopeID})
 			}
@@ -753,7 +638,7 @@ func (s *UserAdminService) changeScopedRole(ctx context.Context, c caller, id uu
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
-	after, err := s.d.user(ctx, c.tenant, id)
+	after, err := s.d.user(ctx, c.Tenant, id)
 	if err != nil {
 		return nil, identityErr(ctx, err)
 	}
@@ -778,16 +663,16 @@ func (s *UserAdminService) ListScopeMembers(ctx context.Context, req *ScopeReque
 		return nil, svcErr(ctx, http.StatusBadRequest, errcode.ValidationFailed, err.Error())
 	}
 	var members []rolestore.ScopeMember
-	if err := s.d.withTenantTx(ctx, c.tenant, func(db rolestore.DBTX) error {
+	if err := s.d.withTenantTx(ctx, c.Tenant, func(db rolestore.DBTX) error {
 		var err error
-		members, err = rolestore.MembersOfScope(ctx, db, c.tenant, req.GetScopeType(), req.GetScopeId())
+		members, err = rolestore.MembersOfScope(ctx, db, c.Tenant, req.GetScopeType(), req.GetScopeId())
 		return err
 	}); err != nil {
 		return nil, rpcError(ctx, err)
 	}
 	resp := &ListScopeMembersResponse{Members: []*ScopeMember{}}
 	for _, m := range members {
-		mem, err := identity.GetMember(ctx, s.d.db(), c.tenant, m.UserID)
+		mem, err := identity.GetMember(ctx, s.d.db(), c.Tenant, m.UserID)
 		if err != nil {
 			continue // removed since: the assignment is stale and shows no one
 		}
@@ -834,7 +719,7 @@ func (d identityDeps) listAudit(ctx context.Context, c caller, entity string, id
 		}
 		q.After = &cur
 	}
-	rows, err := d.cfg.Audit.Query(ctx, c.tenant, q)
+	rows, err := d.cfg.Audit.Query(ctx, c.Tenant, q)
 	if err != nil {
 		return nil, rpcError(ctx, err)
 	}
@@ -868,11 +753,11 @@ func dedupe(in []string) []string {
 // --- AccountService ---
 
 func (s *AccountService) me(ctx context.Context, c caller) (*Me, error) {
-	me := &Me{UserId: c.rc.UserID, TenantId: c.rc.TenantID, Roles: c.rc.Roles}
+	me := &Me{UserId: c.RC.UserID, TenantId: c.RC.TenantID, Roles: c.RC.Roles}
 	if me.Roles == nil {
 		me.Roles = []string{}
 	}
-	m, err := identity.GetMember(ctx, s.d.db(), c.tenant, c.self)
+	m, err := identity.GetMember(ctx, s.d.db(), c.Tenant, c.Self)
 	if err == nil {
 		me.Email, me.DisplayName = m.Email, m.DisplayName
 	} else if !errors.Is(err, identity.ErrNotFound) {
@@ -894,7 +779,7 @@ func (s *AccountService) UpdateProfile(ctx context.Context, req *UpdateProfileRe
 	if err != nil {
 		return nil, err
 	}
-	if err := identity.UpdateMember(ctx, s.d.db(), c.tenant, c.self, req.GetDisplayName()); err != nil {
+	if err := identity.UpdateMember(ctx, s.d.db(), c.Tenant, c.Self, req.GetDisplayName()); err != nil {
 		return nil, identityErr(ctx, err)
 	}
 	return s.me(ctx, c)
@@ -905,7 +790,7 @@ func (s *AccountService) ListMyTenants(ctx context.Context, _ *Empty) (*ListMyTe
 	if err != nil {
 		return nil, err
 	}
-	identityID, err := identity.IdentityOf(ctx, s.d.db(), c.tenant, c.self)
+	identityID, err := identity.IdentityOf(ctx, s.d.db(), c.Tenant, c.Self)
 	if errors.Is(err, identity.ErrNotFound) {
 		return &ListMyTenantsResponse{Tenants: []*MyTenant{}}, nil
 	}
@@ -918,7 +803,7 @@ func (s *AccountService) ListMyTenants(ctx context.Context, _ *Empty) (*ListMyTe
 	}
 	out := make([]*MyTenant, len(ms))
 	for i, m := range ms {
-		out[i] = &MyTenant{TenantId: m.TenantID.String(), Name: m.TenantName, Current: m.TenantID == c.tenant}
+		out[i] = &MyTenant{TenantId: m.TenantID.String(), Name: m.TenantName, Current: m.TenantID == c.Tenant}
 	}
 	return &ListMyTenantsResponse{Tenants: out}, nil
 }
@@ -931,7 +816,7 @@ func (s *AccountService) ListTenantUsers(ctx context.Context, req *ListTenantUse
 	out := &ListTenantUsersResponse{Users: []*TenantUser{}}
 	want := int(req.GetLimit())
 	for offset := 0; ; offset += identity.MaxListLimit {
-		page, total, err := identity.ListMembers(ctx, s.d.db(), c.tenant, identity.ListQuery{
+		page, total, err := identity.ListMembers(ctx, s.d.db(), c.Tenant, identity.ListQuery{
 			Search: req.GetSearch(), Status: identity.StatusActive, Offset: offset, Limit: identity.MaxListLimit,
 		})
 		if err != nil {
