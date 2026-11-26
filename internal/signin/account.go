@@ -14,22 +14,7 @@ import (
 	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/tenancy"
 )
-
-// InvitationError maps pkg/identity's invitation and password-reset errors onto the platform error
-// envelope; the sign-in errors fall through to IdentityError.
-func InvitationError(err error) error {
-	switch {
-	case errors.Is(err, identity.ErrInvitationInvalid):
-		return serviceErr(http.StatusBadRequest, errcode.InvitationInvalid, err.Error(), nil)
-	case errors.Is(err, identity.ErrInvitationNeedsSignIn):
-		return serviceErr(http.StatusConflict, errcode.InvitationNeedsSignIn, err.Error(), nil)
-	case errors.Is(err, identity.ErrResetInvalid):
-		return serviceErr(http.StatusBadRequest, errcode.ResetTokenInvalid, err.Error(), nil)
-	}
-	return IdentityError(err)
-}
 
 // InvitationView is what the accept page needs to know about an open invitation.
 type InvitationView struct {
@@ -44,29 +29,18 @@ type InvitationView struct {
 	MinPasswordLength int
 }
 
-func passwordMode(setsPassword, hasPassword bool) string {
-	switch {
-	case setsPassword:
-		return "set"
-	case hasPassword:
-		return "confirm"
-	default:
-		return "provider"
-	}
-}
-
 // LookupInvitation tells the accept page what to ask for: a new password (a brand-new account) or
 // the current one (an existing account), and the policy it must meet.
 func (s *Service) LookupInvitation(ctx context.Context, token string) (*InvitationView, error) {
-	inv, err := identity.FindInvitation(ctx, s.d.Pool, strings.TrimSpace(token), s.now())
+	inv, err := s.store.FindInvitation(ctx, strings.TrimSpace(token), s.now())
 	if err != nil {
 		return nil, InvitationError(err)
 	}
-	setsPassword, err := identity.CanSetPasswordOnAccept(ctx, s.d.Pool, inv.IdentityID, inv.MemberID)
+	setsPassword, err := s.store.CanSetPasswordOnAccept(ctx, inv.IdentityID, inv.MemberID)
 	if err != nil {
 		return nil, err
 	}
-	minLength, err := identity.RequiredPasswordLength(ctx, s.d.Pool, inv.IdentityID, s.d.PasswordPolicy, inv.TenantID)
+	minLength, err := s.store.RequiredPasswordLength(ctx, inv.IdentityID, inv.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -79,21 +53,21 @@ func (s *Service) LookupInvitation(ctx context.Context, token string) (*Invitati
 // toward the lockout like a sign-in), because the inviting admin can see the link too.
 func (s *Service) AcceptInvitation(ctx context.Context, token, password, displayName string, c Client) (*Grant, error) {
 	now := s.now()
-	inv, err := identity.FindInvitation(ctx, s.d.Pool, strings.TrimSpace(token), now)
+	inv, err := s.store.FindInvitation(ctx, strings.TrimSpace(token), now)
 	if err != nil {
 		return nil, InvitationError(err)
 	}
-	setsPassword, err := identity.CanSetPasswordOnAccept(ctx, s.d.Pool, inv.IdentityID, inv.MemberID)
+	setsPassword, err := s.store.CanSetPasswordOnAccept(ctx, inv.IdentityID, inv.MemberID)
 	if err != nil {
 		return nil, err
 	}
 	switch {
 	case setsPassword:
-		if err := identity.CheckPasswordPolicy(ctx, s.d.Pool, inv.IdentityID, password, s.d.PasswordPolicy, inv.TenantID); err != nil {
+		if err := s.store.CheckPassword(ctx, inv.IdentityID, password, inv.TenantID); err != nil {
 			return nil, InvitationError(err)
 		}
 	case inv.HasPassword:
-		ident, err := identity.Authenticate(ctx, s.d.Pool, inv.Email, password, now)
+		ident, err := s.store.Authenticate(ctx, inv.Email, password, now)
 		if err != nil {
 			return nil, IdentityError(err)
 		}
@@ -104,29 +78,11 @@ func (s *Service) AcceptInvitation(ctx context.Context, token, password, display
 		return nil, InvitationError(identity.ErrInvitationNeedsSignIn)
 	}
 
-	tx, err := s.d.Pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-	if err := identity.AcceptInvitation(ctx, tx, inv, now); err != nil {
+	if err := s.store.AcceptInvitation(ctx, inv, setsPassword, password, strings.TrimSpace(displayName), now); err != nil {
 		return nil, InvitationError(err)
 	}
-	if setsPassword {
-		if err := identity.SetPassword(ctx, tx, inv.IdentityID, password, now); err != nil {
-			return nil, err
-		}
-	}
-	if name := strings.TrimSpace(displayName); name != "" {
-		if err := identity.UpdateMember(ctx, tx, inv.TenantID, inv.MemberID, name); err != nil {
-			return nil, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
 
-	memberships, err := identity.Memberships(ctx, s.d.Pool, inv.IdentityID)
+	memberships, err := s.store.Memberships(ctx, inv.IdentityID)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +108,7 @@ func (s *Service) AcceptInvitation(ctx context.Context, token, password, display
 // links per account and hour.
 func (s *Service) RequestPasswordReset(ctx context.Context, email string) {
 	now := s.now()
-	ident, err := identity.FindIdentityByEmail(ctx, s.d.Pool, strings.TrimSpace(email))
+	ident, err := s.store.FindIdentityByEmail(ctx, strings.TrimSpace(email))
 	if err != nil {
 		if !errors.Is(err, identity.ErrNotFound) {
 			slog.Error("password reset: looking up identity", standard.LogError, err)
@@ -162,7 +118,7 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) {
 	if ident.Status != identity.StatusActive {
 		return
 	}
-	token, err := identity.CreatePasswordReset(ctx, s.d.Pool, ident.ID, now)
+	token, err := s.store.CreatePasswordReset(ctx, ident.ID, now)
 	if err != nil {
 		slog.Error("password reset: issuing link", standard.LogError, err)
 		return
@@ -181,10 +137,8 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) {
 // ResetPassword sets the new password from a reset link. It signs nobody in (every session of the
 // account is revoked): the person signs in with the new password next.
 func (s *Service) ResetPassword(ctx context.Context, token, password string) error {
-	_, err := identity.ResetPasswordWithToken(ctx, s.d.Pool, strings.TrimSpace(token), password, s.now(),
-		func(identityID uuid.UUID) error {
-			return identity.CheckPasswordPolicy(ctx, s.d.Pool, identityID, password, s.d.PasswordPolicy)
-		})
+	err := s.store.ResetPassword(ctx, strings.TrimSpace(token), password, s.now(),
+		func(person uuid.UUID) error { return s.store.CheckPassword(ctx, person, password, uuid.Nil) })
 	if err != nil {
 		return InvitationError(err)
 	}
@@ -195,7 +149,7 @@ func (s *Service) ResetPassword(ctx context.Context, token, password string) err
 // it (UC-81). A token works once and only until the deletion would have taken effect.
 func (s *Service) CancelWorkspaceDeletion(ctx context.Context, token string) error {
 	now := s.now()
-	tenant, err := identity.ConsumeDeletionCancelToken(ctx, s.d.Pool, strings.TrimSpace(token), now)
+	tenant, err := s.store.ConsumeDeletionCancelToken(ctx, strings.TrimSpace(token), now)
 	if errors.Is(err, identity.ErrCancelInvalid) {
 		return serviceErr(http.StatusBadRequest, errcode.ValidationFailed, err.Error(), nil)
 	}
@@ -203,7 +157,7 @@ func (s *Service) CancelWorkspaceDeletion(ctx context.Context, token string) err
 		slog.Error("cancel workspace deletion: using token", standard.LogError, err)
 		return serviceErr(http.StatusInternalServerError, errcode.InternalError, "Something went wrong.", nil)
 	}
-	if err := tenancy.NewPostgresTenantRegistry(s.d.Pool).CancelDeletion(ctx, tenant, now); err != nil {
+	if err := s.store.CancelDeletion(ctx, tenant, now); err != nil {
 		// Already cancelled by a platform admin, or past the point of no return: the link is spent
 		// either way, and saying "invalid" matches what the person would find.
 		return serviceErr(http.StatusBadRequest, errcode.ValidationFailed, identity.ErrCancelInvalid.Error(), nil)

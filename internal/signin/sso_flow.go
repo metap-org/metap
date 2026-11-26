@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -17,36 +16,6 @@ import (
 
 // SSOProviderOIDC is the external-subject namespace of members provisioned through OIDC.
 const SSOProviderOIDC = "oidc"
-
-// SameOrigin reports whether raw is an absolute http(s) URL on the same scheme, host and port as base.
-func SameOrigin(raw, base string) bool {
-	u, err := url.Parse(raw)
-	b, err2 := url.Parse(base)
-	if err != nil || err2 != nil || u.Host == "" || b.Host == "" {
-		return false
-	}
-	return (u.Scheme == "https" || u.Scheme == "http") && u.Scheme == b.Scheme && strings.EqualFold(u.Host, b.Host)
-}
-
-func errSSONotSetUp() error {
-	return serviceErr(http.StatusNotFound, errcode.NotFound, "Single sign-on is not set up for this workspace.", nil)
-}
-
-func errSSOUnavailable() error {
-	return serviceErr(http.StatusServiceUnavailable, errcode.SSOFailed, "Single sign-on is not available right now.", nil)
-}
-
-func errSSOUnreachable() error {
-	return serviceErr(http.StatusBadGateway, errcode.SSOFailed, "The identity provider could not be reached.", nil)
-}
-
-func errSSOUnverified() error {
-	return serviceErr(http.StatusForbidden, errcode.SSOFailed, "The identity provider's answer could not be verified.", nil)
-}
-
-func errSSOState() error {
-	return serviceErr(http.StatusBadRequest, errcode.SSOFailed, "The sign-in link is unknown, used or expired. Start again.", nil)
-}
 
 // SSODiscovery says which sign-in route an email address should use.
 type SSODiscovery struct {
@@ -64,14 +33,14 @@ func (s *Service) SSODiscover(ctx context.Context, email string) (*SSODiscovery,
 	if at <= 0 || at == len(email)-1 {
 		return nil, serviceErr(http.StatusBadRequest, errcode.ValidationFailed, "`email` must be an email address.", nil)
 	}
-	tenants, err := sso.TenantsForEmailDomain(ctx, s.d.Pool, email[at+1:])
+	tenants, err := s.store.TenantsForEmailDomain(ctx, email[at+1:])
 	if err != nil {
 		return nil, err
 	}
 	if len(tenants) != 1 || s.d.PublicURL == "" {
 		return &SSODiscovery{}, nil
 	}
-	kind, err := sso.ProviderOf(ctx, s.d.Pool, tenants[0])
+	kind, err := s.store.ProviderOf(ctx, tenants[0])
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +56,7 @@ func (s *Service) oidcRedirectURI() string {
 }
 
 func (s *Service) oidcSecret(ctx context.Context, cfg *sso.OidcConfig) (string, error) {
-	return s.d.Router.Secrets().GetSecret(ctx, cfg.ClientSecretRef)
+	return s.store.ClientSecret(ctx, cfg.ClientSecretRef)
 }
 
 // SSOStart is where to send the browser to sign in at the tenant's OIDC provider, and the state it
@@ -99,7 +68,7 @@ type SSOStart struct {
 
 // OIDCStart begins an OIDC sign-in: PKCE and nonce, kept in a single-use state row.
 func (s *Service) OIDCStart(ctx context.Context, tenant uuid.UUID) (*SSOStart, error) {
-	cfg, err := sso.OidcConfigFor(ctx, s.d.Pool, tenant)
+	cfg, err := s.store.OidcConfigFor(ctx, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +84,7 @@ func (s *Service) OIDCStart(ctx context.Context, tenant uuid.UUID) (*SSOStart, e
 	if err != nil {
 		return nil, errSSOUnreachable()
 	}
-	if err := sso.CreateSSOState(ctx, s.d.Pool, tenant, csrf, nonce, verifier, s.now()); err != nil {
+	if err := s.store.CreateSSOState(ctx, tenant, csrf, nonce, verifier, s.now()); err != nil {
 		return nil, err
 	}
 	return &SSOStart{RedirectURL: authURL, State: csrf}, nil
@@ -147,7 +116,7 @@ func (s *Service) OIDCCallback(ctx context.Context, req OIDCCallbackRequest, c C
 	if req.IdPError {
 		return nil, serviceErr(http.StatusForbidden, errcode.SSOFailed, "The identity provider refused the sign-in.", nil)
 	}
-	st, err := sso.ConsumeSSOState(ctx, s.d.Pool, req.State, s.now())
+	st, err := s.store.ConsumeSSOState(ctx, req.State, s.now())
 	if err != nil {
 		return nil, errSSOState()
 	}
@@ -155,7 +124,7 @@ func (s *Service) OIDCCallback(ctx context.Context, req OIDCCallbackRequest, c C
 	if !req.SameBrowser {
 		return nil, serviceErr(http.StatusBadRequest, errcode.SSOFailed, "This sign-in was started in another browser. Start again here.", nil)
 	}
-	cfg, err := sso.OidcConfigFor(ctx, s.d.Pool, st.Tenant)
+	cfg, err := s.store.OidcConfigFor(ctx, st.Tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +151,7 @@ func (s *Service) OIDCCallback(ctx context.Context, req OIDCCallbackRequest, c C
 
 // samlProvider loads the tenant's enabled SAML settings and builds the service provider for them.
 func (s *Service) samlProvider(ctx context.Context, tenant uuid.UUID) (*sso.SamlConfig, *saml2.SAMLServiceProvider, error) {
-	cfg, err := sso.SamlConfigFor(ctx, s.d.Pool, tenant)
+	cfg, err := s.store.SamlConfigFor(ctx, tenant)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -221,7 +190,7 @@ func (s *Service) SAMLStart(ctx context.Context, tenant uuid.UUID) (string, erro
 		slog.Error("saml: building the sign-in request", "tenant_id", tenant, "error", err)
 		return "", errSSOUnreachable()
 	}
-	if err := sso.CreateSSOState(ctx, s.d.Pool, tenant, relay, requestID, "", s.now()); err != nil {
+	if err := s.store.CreateSSOState(ctx, tenant, relay, requestID, "", s.now()); err != nil {
 		return "", err
 	}
 	return target.String(), nil
@@ -234,7 +203,7 @@ func (s *Service) SAMLACS(ctx context.Context, tenant uuid.UUID, relayState, sam
 	if err != nil {
 		return nil, err
 	}
-	st, err := sso.ConsumeSSOState(ctx, s.d.Pool, relayState, time.Now())
+	st, err := s.store.ConsumeSSOState(ctx, relayState, time.Now())
 	if err != nil || st.Tenant != tenant {
 		return nil, serviceErr(http.StatusBadRequest, errcode.SSOFailed, "The sign-in is unknown, used or expired. Start again.", nil)
 	}

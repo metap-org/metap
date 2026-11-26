@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/internal/admin/users"
 	"net/http"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestServiceAccountAndAPIKeyLifecycle(t *testing.T) {
 	asAdmin := h.as(tenant, admin.ID)
 
 	// A service account: listed apart from people, with its roles, no password.
-	sa, err := h.client.Admin.CreateServiceAccount(asAdmin, &CreateServiceAccountRequest{Name: "ci-bot", Roles: []string{"admin"}})
+	sa, err := h.client.Admin.CreateServiceAccount(asAdmin, &users.CreateServiceAccountRequest{Name: "ci-bot", Roles: []string{"admin"}})
 	require.NoError(t, err)
 	assert.Equal(t, "ci-bot", sa.GetDisplayName())
 	assert.Equal(t, identity.ServiceAccountProvider, sa.GetAuthProvider())
@@ -33,12 +34,12 @@ func TestServiceAccountAndAPIKeyLifecycle(t *testing.T) {
 	sas, err := h.client.Admin.ListServiceAccounts(asAdmin, &Empty{})
 	require.NoError(t, err)
 	require.Len(t, sas.GetUsers(), 1)
-	people, err := h.client.Admin.ListUsers(asAdmin, &ListUsersRequest{})
+	people, err := h.client.Admin.List(asAdmin, &users.ListUsersRequest{})
 	require.NoError(t, err)
 	for _, u := range people.GetUsers() {
 		assert.NotEqual(t, sa.GetId(), u.GetId(), "service accounts are not listed among users")
 	}
-	_, err = h.client.Admin.CreateServiceAccount(asAdmin, &CreateServiceAccountRequest{Name: ""})
+	_, err = h.client.Admin.CreateServiceAccount(asAdmin, &users.CreateServiceAccountRequest{Name: ""})
 	require.Error(t, err, "a name is required")
 
 	// A key authenticates as the account, with its roles, and the secret is only in the response.
@@ -48,10 +49,10 @@ func TestServiceAccountAndAPIKeyLifecycle(t *testing.T) {
 	assert.NotEmpty(t, created.ApiKey.ExpiresAt)
 	assert.Contains(t, created.Token, created.ApiKey.Prefix)
 	asKey := CallContext(context.Background(), created.Token)
-	me, err := h.client.Account.GetMe(asKey, &Empty{})
+	me, err := h.client.Account.Get(asKey, &Empty{})
 	require.NoError(t, err)
 	assert.Equal(t, sa.GetId(), me.GetUserId())
-	_, err = h.client.Admin.ListUsers(asKey, &ListUsersRequest{})
+	_, err = h.client.Admin.List(asKey, &users.ListUsersRequest{})
 	require.NoError(t, err, "the account's admin role applies to its key")
 
 	keys, err := h.client.Keys.List(asAdmin, sa.GetId())
@@ -61,7 +62,7 @@ func TestServiceAccountAndAPIKeyLifecycle(t *testing.T) {
 	assert.Empty(t, keys.ApiKeys[0].RevokedAt)
 
 	// Unknown, malformed and cross-tenant: refused.
-	_, err = h.client.Account.GetMe(CallContext(context.Background(), "mk_not-a-real-key"), &Empty{})
+	_, err = h.client.Account.Get(CallContext(context.Background(), "mk_not-a-real-key"), &Empty{})
 	assert.Equal(t, http.StatusUnauthorized, statusOf(err))
 	other := uuid.New()
 	otherAdmin := h.member(other, "admin@other.io", "admin")
@@ -79,17 +80,17 @@ func TestServiceAccountAndAPIKeyLifecycle(t *testing.T) {
 	// backdated to keep the test off a second boundary). A key made afterwards works.
 	_, err = h.pool.Exec(context.Background(), `UPDATE metadata.api_keys SET created_at = now() - interval '1 hour' WHERE id = $1`, created.ApiKey.Id)
 	require.NoError(t, err)
-	_, err = h.client.Admin.DisableUser(asAdmin, &UserIdRequest{Id: sa.GetId()})
+	_, err = h.client.Admin.Disable(asAdmin, &users.UserIdRequest{Id: sa.GetId()})
 	require.NoError(t, err)
-	_, err = h.client.Account.GetMe(asKey, &Empty{})
+	_, err = h.client.Account.Get(asKey, &Empty{})
 	assert.Error(t, err)
-	_, err = h.client.Admin.EnableUser(asAdmin, &UserIdRequest{Id: sa.GetId()})
+	_, err = h.client.Admin.Enable(asAdmin, &users.UserIdRequest{Id: sa.GetId()})
 	require.NoError(t, err)
-	_, err = h.client.Account.GetMe(asKey, &Empty{})
+	_, err = h.client.Account.Get(asKey, &Empty{})
 	assert.Error(t, err, "a key issued before the disable stays revoked after the account is enabled again")
 	fresh, err := h.client.Keys.Create(asAdmin, &apikeys.CreateApiKeyRequest{UserId: sa.GetId(), Name: "after"})
 	require.NoError(t, err)
-	_, err = h.client.Account.GetMe(CallContext(context.Background(), fresh.Token), &Empty{})
+	_, err = h.client.Account.Get(CallContext(context.Background(), fresh.Token), &Empty{})
 	require.NoError(t, err)
 
 	// Revoking kills it, idempotently.
@@ -97,14 +98,14 @@ func TestServiceAccountAndAPIKeyLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	err = h.client.Keys.Revoke(asAdmin, created.ApiKey.Id)
 	require.NoError(t, err)
-	_, err = h.client.Account.GetMe(asKey, &Empty{})
+	_, err = h.client.Account.Get(asKey, &Empty{})
 	assert.Equal(t, http.StatusUnauthorized, statusOf(err))
 
 	// An expired key is refused.
 	past := time.Now().Add(-time.Hour)
 	tok, _, err := identity.CreateAPIKey(context.Background(), h.pool, tenant, uuid.MustParse(sa.GetId()), "old", &past, nil, past.Add(-time.Hour))
 	require.NoError(t, err)
-	_, err = h.client.Account.GetMe(CallContext(context.Background(), tok), &Empty{})
+	_, err = h.client.Account.Get(CallContext(context.Background(), tok), &Empty{})
 	assert.Equal(t, http.StatusUnauthorized, statusOf(err))
 }
 
@@ -114,7 +115,7 @@ func TestAPIKeyLifetimeIsCappedByTheTenant(t *testing.T) {
 	tenant := uuid.New()
 	admin := h.member(tenant, "admin@acme.io", "admin")
 	asAdmin := h.as(tenant, admin.ID)
-	sa, err := h.client.Admin.CreateServiceAccount(asAdmin, &CreateServiceAccountRequest{Name: "ci"})
+	sa, err := h.client.Admin.CreateServiceAccount(asAdmin, &users.CreateServiceAccountRequest{Name: "ci"})
 	require.NoError(t, err)
 
 	// No cap: a key that never expires is fine.
@@ -134,7 +135,7 @@ func TestAPIKeyLifetimeIsCappedByTheTenant(t *testing.T) {
 	// Another tenant is unaffected.
 	otherTenant := uuid.New()
 	otherAdmin := h.member(otherTenant, "admin@beta.io", "admin")
-	otherSA, err := h.client.Admin.CreateServiceAccount(h.as(otherTenant, otherAdmin.ID), &CreateServiceAccountRequest{Name: "ci"})
+	otherSA, err := h.client.Admin.CreateServiceAccount(h.as(otherTenant, otherAdmin.ID), &users.CreateServiceAccountRequest{Name: "ci"})
 	require.NoError(t, err)
 	_, err = h.client.Keys.Create(h.as(otherTenant, otherAdmin.ID), &apikeys.CreateApiKeyRequest{UserId: otherSA.GetId(), Name: "forever"})
 	require.NoError(t, err)

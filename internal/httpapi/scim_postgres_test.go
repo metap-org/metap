@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/metap-org/metap/internal/admin/trail"
+	"github.com/metap-org/metap/internal/admin/users"
 	"github.com/metap-org/metap/pkg/auth/jwks"
 	"io"
 	"net/http"
@@ -39,13 +41,13 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 	require.NoError(t, err)
 	testkit.SeedRole(t, pool, tenant, adminMember.ID, "admin")
 	// The admin's own service calls, as the HTTP layer makes them once it has authenticated the caller.
-	users := admin.NewUserAdminService(idCfg)
+	userSvc := admin.NewUserService(idCfg)
 	keys := apikeys.New(apikeys.NewPgStore(idCfg.Shared), kernel.StoreAuditor{Store: idCfg.Audit}, idCfg.APIKeyMaxDays, nil)
 	asAdmin := admin.WithCaller(context.Background(), &permission.RequestContext{
 		TenantID: tenant.String(), UserID: adminMember.ID.String(), Roles: []string{"admin"}, HasRoles: true})
-	sa, err := users.CreateServiceAccount(asAdmin, &admin.CreateServiceAccountRequest{Name: "entra"})
+	sa, err := userSvc.CreateServiceAccount(asAdmin, &users.CreateServiceAccountRequest{Name: "entra"})
 	require.NoError(t, err)
-	_, err = users.AssignRole(asAdmin, &admin.RoleRequest{Id: sa.GetId(), Role: "admin"})
+	_, err = userSvc.AssignRole(asAdmin, &users.RoleRequest{Id: sa.GetId(), Role: "admin"})
 	require.NoError(t, err)
 	key, err := keys.Create(asAdmin, &apikeys.CreateApiKeyRequest{UserId: sa.GetId(), Name: "scim", ExpiresInDays: 30})
 	require.NoError(t, err)
@@ -126,9 +128,9 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 	assert.Equal(t, "Carol B", got["displayName"])
 
 	// The change is in the audit trail, attributed to the service account.
-	trail, err := admin.NewAuditAdminService(idCfg).SearchAudit(asAdmin, &admin.SearchAuditRequest{ActorUserId: sa.GetId(), RecordId: id})
+	entries, err := trail.New(idCfg.Audit).Search(asAdmin, &trail.SearchAuditRequest{ActorUserId: sa.GetId(), RecordId: id})
 	require.NoError(t, err)
-	assert.NotEmpty(t, trail.GetEntries())
+	assert.NotEmpty(t, entries.GetEntries())
 
 	code, _ = call("DELETE", "/Users/"+id, token, "")
 	assert.Equal(t, 204, code)

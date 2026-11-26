@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/internal/admin/users"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"net/http"
 	"testing"
@@ -24,7 +25,7 @@ func TestScopedRoleAdministration(t *testing.T) {
 	zone := uuid.NewString()
 
 	// Assign on a scope: the user shows it, apart from tenant-wide roles.
-	u, err := h.client.Admin.AssignRole(asAdmin, &RoleRequest{Id: bob.ID.String(), Role: "analyst", ScopeType: "zone", ScopeId: zone})
+	u, err := h.client.Admin.AssignRole(asAdmin, &users.RoleRequest{Id: bob.ID.String(), Role: "analyst", ScopeType: "zone", ScopeId: zone})
 	require.NoError(t, err)
 	assert.Empty(t, u.GetRoles(), "a scoped role is not a tenant-wide one")
 	require.Len(t, u.GetScopedRoles(), 1)
@@ -40,16 +41,16 @@ func TestScopedRoleAdministration(t *testing.T) {
 	assert.Empty(t, roles)
 
 	// A duplicate is a no-op.
-	u, err = h.client.Admin.AssignRole(asAdmin, &RoleRequest{Id: bob.ID.String(), Role: "analyst", ScopeType: "zone", ScopeId: zone})
+	u, err = h.client.Admin.AssignRole(asAdmin, &users.RoleRequest{Id: bob.ID.String(), Role: "analyst", ScopeType: "zone", ScopeId: zone})
 	require.NoError(t, err)
 	assert.Len(t, u.GetScopedRoles(), 1)
 
 	// Validation: the role must exist, the scope must be well formed, both scope fields together.
 	assert.Equal(t, "validation_failed", errCode(t, func() error {
-		_, err := h.client.Admin.AssignRole(asAdmin, &RoleRequest{Id: bob.ID.String(), Role: "ghost", ScopeType: "zone", ScopeId: zone})
+		_, err := h.client.Admin.AssignRole(asAdmin, &users.RoleRequest{Id: bob.ID.String(), Role: "ghost", ScopeType: "zone", ScopeId: zone})
 		return err
 	}))
-	for _, bad := range []*RoleRequest{
+	for _, bad := range []*users.RoleRequest{
 		{Id: bob.ID.String(), Role: "analyst", ScopeType: "Zone!", ScopeId: zone},
 		{Id: bob.ID.String(), Role: "analyst", ScopeType: "zone"},
 		{Id: bob.ID.String(), Role: "analyst", ScopeId: zone},
@@ -62,7 +63,7 @@ func TestScopedRoleAdministration(t *testing.T) {
 	}
 
 	// Who can see the zone.
-	members, err := h.client.Admin.ListScopeMembers(asAdmin, &ScopeRequest{ScopeType: "zone", ScopeId: zone})
+	members, err := h.client.Admin.ListScopeMembers(asAdmin, &users.ScopeRequest{ScopeType: "zone", ScopeId: zone})
 	require.NoError(t, err)
 	require.Len(t, members.GetMembers(), 1)
 	assert.Equal(t, "bob@acme.io", members.GetMembers()[0].GetEmail())
@@ -70,16 +71,16 @@ func TestScopedRoleAdministration(t *testing.T) {
 
 	// A scoped admin role is not the tenant's last admin: revoking it needs no guard, and the
 	// real admin is untouched either way.
-	_, err = h.client.Admin.AssignRole(asAdmin, &RoleRequest{Id: bob.ID.String(), Role: "admin", ScopeType: "zone", ScopeId: zone})
+	_, err = h.client.Admin.AssignRole(asAdmin, &users.RoleRequest{Id: bob.ID.String(), Role: "admin", ScopeType: "zone", ScopeId: zone})
 	require.NoError(t, err)
-	_, err = h.client.Admin.RevokeRole(asAdmin, &RoleRequest{Id: bob.ID.String(), Role: "admin", ScopeType: "zone", ScopeId: zone})
+	_, err = h.client.Admin.RevokeRole(asAdmin, &users.RoleRequest{Id: bob.ID.String(), Role: "admin", ScopeType: "zone", ScopeId: zone})
 	require.NoError(t, err)
 
 	// Not an admin: forbidden.
 	asBob := h.as(tenant, bob.ID)
-	_, err = h.client.Admin.AssignRole(asBob, &RoleRequest{Id: bob.ID.String(), Role: "analyst", ScopeType: "zone", ScopeId: "z"})
+	_, err = h.client.Admin.AssignRole(asBob, &users.RoleRequest{Id: bob.ID.String(), Role: "analyst", ScopeType: "zone", ScopeId: "z"})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "a user cannot hand themselves a role")
-	_, err = h.client.Admin.ListScopeMembers(asBob, &ScopeRequest{ScopeType: "zone", ScopeId: zone})
+	_, err = h.client.Admin.ListScopeMembers(asBob, &users.ScopeRequest{ScopeType: "zone", ScopeId: zone})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 
 	// Audited, and revoking works.
@@ -88,14 +89,14 @@ func TestScopedRoleAdministration(t *testing.T) {
 	require.NoError(t, h.pool.QueryRow(ctx, `SELECT count(*) FROM metadata.audit_trail_entries
 		WHERE entity = $1 AND record_id = $2 AND diff ? 'scopedRoles'`, AuditEntityUsers, bob.ID).Scan(&n))
 	assert.GreaterOrEqual(t, n, 3, "assign, assign admin, revoke admin")
-	u, err = h.client.Admin.RevokeRole(asAdmin, &RoleRequest{Id: bob.ID.String(), Role: "analyst", ScopeType: "zone", ScopeId: zone})
+	u, err = h.client.Admin.RevokeRole(asAdmin, &users.RoleRequest{Id: bob.ID.String(), Role: "analyst", ScopeType: "zone", ScopeId: zone})
 	require.NoError(t, err)
 	assert.Empty(t, u.GetScopedRoles())
 
 	// Removing a user takes their scoped roles with them.
-	_, err = h.client.Admin.AssignRole(asAdmin, &RoleRequest{Id: bob.ID.String(), Role: "analyst", ScopeType: "zone", ScopeId: zone})
+	_, err = h.client.Admin.AssignRole(asAdmin, &users.RoleRequest{Id: bob.ID.String(), Role: "analyst", ScopeType: "zone", ScopeId: zone})
 	require.NoError(t, err)
-	_, err = h.client.Admin.RemoveUser(asAdmin, &UserIdRequest{Id: bob.ID.String()})
+	_, err = h.client.Admin.Remove(asAdmin, &users.UserIdRequest{Id: bob.ID.String()})
 	require.NoError(t, err)
 	sr, _ = rolestore.ScopedRolesForUser(ctx, h.pool, tenant, bob.ID)
 	assert.Empty(t, sr)

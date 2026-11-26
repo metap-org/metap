@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,6 +82,15 @@ type Caller struct {
 	RC     *permission.RequestContext
 	Tenant uuid.UUID
 	Self   uuid.UUID
+}
+
+// SelfPtr is the caller's own member id, or nil for a subject that is not a person (a service token).
+func (c Caller) SelfPtr() *uuid.UUID {
+	if c.Self == uuid.Nil {
+		return nil
+	}
+	self := c.Self
+	return &self
 }
 
 // Authenticated is the caller in ctx when there is one and it carries a tenant.
@@ -223,4 +234,41 @@ func AuditEntryOf(tenant, actor uuid.UUID, entity string, id uuid.UUID,
 		entry.ActorUserID = &actor
 	}
 	return entry
+}
+
+// Dedupe is in without blanks and repeats, in order.
+func Dedupe(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s != "" && !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// FormatTime is t as the API shows a moment ("" for none).
+func FormatTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// NamedID is a stable id for something an audit entry is about that has no uuid of its own (a
+// configuration key, the policy set of one entity): the same name always gives the same id, so its
+// history reads as one record's.
+func NamedID(kind, name string) uuid.UUID {
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(kind+":"+name))
+}
+
+// CallerOf is the Caller for a request context whose tenant claim is a uuid.
+func CallerOf(rc *permission.RequestContext) (Caller, error) {
+	tenant, err := uuid.Parse(rc.TenantID)
+	if err != nil {
+		return Caller{}, err
+	}
+	self, _ := uuid.Parse(rc.UserID)
+	return Caller{RC: rc, Tenant: tenant, Self: self}, nil
 }

@@ -17,9 +17,7 @@ import (
 	"github.com/metap-org/metap/pkg/auth/captcha"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/auth/mail"
-	"github.com/metap-org/metap/pkg/auth/sso"
 	"github.com/metap-org/metap/pkg/config"
-	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/tenancy"
@@ -30,7 +28,10 @@ var ErrNotTokenIssuer = errors.New("this service does not issue tokens; log in a
 
 // Deps is what the service needs from the process that hosts it.
 type Deps struct {
-	Pool *pgxpool.Pool
+	// Pool is the shared identity database; Store, when set, replaces what is built on it (a test
+	// with no database).
+	Pool  *pgxpool.Pool
+	Store Store
 	// Effective is the cache-first read of a tenant's effective configuration.
 	Effective func(ctx context.Context, tenant uuid.UUID) *config.EffectiveConfig
 	// MintSession signs a session token (ErrNotTokenIssuer when this service cannot).
@@ -52,9 +53,19 @@ type Deps struct {
 	Now func() time.Time
 }
 
-type Service struct{ d Deps }
+type Service struct {
+	d     Deps
+	store Store
+}
 
-func New(d Deps) *Service { return &Service{d: d} }
+// New is the sign-in service. Its store is d.Store, else the Postgres one over d.Pool and d.Router.
+func New(d Deps) *Service {
+	store := d.Store
+	if store == nil {
+		store = NewPgStore(d.Pool, d.Router, d.PasswordPolicy)
+	}
+	return &Service{d: d, store: store}
+}
 
 func (s *Service) now() time.Time {
 	if s.d.Now != nil {
@@ -87,10 +98,10 @@ type Grant struct {
 // what every sign-in path ends in; a fresh session's absolute-lifetime clock starts now.
 func (s *Service) Issue(ctx context.Context, identityID uuid.UUID, m identity.Membership, c Client) (*Grant, error) {
 	now := s.now()
-	_ = identity.PurgeSessions(ctx, s.d.Pool, now)
+	_ = s.store.PurgeSessions(ctx, now)
 	cfg := s.d.Effective(ctx, m.TenantID)
 	ttl := cfg.GetU64(config.AuthSessionTTLSeconds)
-	sessionID, err := identity.CreateSession(ctx, s.d.Pool, identityID, m.MemberID, m.TenantID,
+	sessionID, err := s.store.CreateSession(ctx, identityID, m.MemberID, m.TenantID,
 		time.Duration(ttl)*time.Second, c.IP, c.UserAgent, now)
 	if err != nil {
 		return nil, err
@@ -102,7 +113,7 @@ func (s *Service) Issue(ctx context.Context, identityID uuid.UUID, m identity.Me
 		}
 		return nil, err
 	}
-	if err := identity.RecordSignIn(ctx, s.d.Pool, identityID, m.MemberID, m.TenantID, now); err != nil {
+	if err := s.store.RecordSignIn(ctx, identityID, m.MemberID, m.TenantID, now); err != nil {
 		return nil, err
 	}
 	return &Grant{Token: token, TenantID: m.TenantID, TTLSeconds: ttl,
@@ -136,11 +147,11 @@ type LoginRequest struct {
 // then lands in one tenant: the one asked for, else the person's only or last used tenant.
 func (s *Service) Login(ctx context.Context, req LoginRequest, c Client) (*Outcome, error) {
 	now := s.now()
-	ident, err := identity.Authenticate(ctx, s.d.Pool, req.Email, req.Password, now)
+	ident, err := s.store.Authenticate(ctx, req.Email, req.Password, now)
 	if err != nil {
 		return nil, IdentityError(err)
 	}
-	memberships, err := identity.Memberships(ctx, s.d.Pool, ident.ID)
+	memberships, err := s.store.Memberships(ctx, ident.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -186,14 +197,14 @@ func (s *Service) LoginAfterPassword(ctx context.Context, ident *identity.Identi
 // RequirePasswordAllowed refuses a password sign-in (or tenant switch) into a tenant that enforces
 // SSO, unless the member is the tenant's owner: the way back in when the identity provider is broken.
 func (s *Service) RequirePasswordAllowed(ctx context.Context, m identity.Membership) error {
-	enforced, err := sso.SSOEnforced(ctx, s.d.Pool, m.TenantID)
+	enforced, err := s.store.SSOEnforced(ctx, m.TenantID)
 	if err != nil {
 		return err
 	}
 	if !enforced {
 		return nil
 	}
-	owner, err := identity.OwnerID(ctx, s.d.Pool, m.TenantID)
+	owner, err := s.store.OwnerID(ctx, m.TenantID)
 	if err != nil {
 		return err
 	}
@@ -210,7 +221,7 @@ func (s *Service) SwitchTenant(ctx context.Context, caller *permission.RequestCo
 	if err != nil {
 		return nil, err
 	}
-	memberships, err := identity.Memberships(ctx, s.d.Pool, identityID)
+	memberships, err := s.store.Memberships(ctx, identityID)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +244,7 @@ func (s *Service) callerIdentity(ctx context.Context, rc *permission.RequestCont
 	if err1 != nil || err2 != nil {
 		return uuid.Nil, notPerson
 	}
-	id, err := identity.IdentityOf(ctx, s.d.Pool, tenantID, userID)
+	id, err := s.store.IdentityOf(ctx, tenantID, userID)
 	if errors.Is(err, identity.ErrNotFound) {
 		return uuid.Nil, notPerson
 	}
@@ -249,16 +260,16 @@ func (s *Service) ChangePassword(ctx context.Context, caller *permission.Request
 	}
 	// A wrong current password counts toward the same lockout as a sign-in: a stolen session must
 	// not be a way to guess the password.
-	switch err := identity.VerifyCurrentPassword(ctx, s.d.Pool, identityID, current, s.now()); {
+	switch err := s.store.VerifyCurrentPassword(ctx, identityID, current, s.now()); {
 	case errors.Is(err, identity.ErrInvalidCredentials):
 		return nil, serviceErr(http.StatusBadRequest, errcode.WrongPassword, "The current password is wrong.", nil)
 	case err != nil:
 		return nil, IdentityError(err)
 	}
-	if err := identity.CheckPasswordPolicy(ctx, s.d.Pool, identityID, next, s.d.PasswordPolicy); err != nil {
+	if err := s.store.CheckPassword(ctx, identityID, next, uuid.Nil); err != nil {
 		return nil, IdentityError(err)
 	}
-	if err := identity.SetPassword(ctx, s.d.Pool, identityID, next, s.now()); err != nil {
+	if err := s.store.SetPassword(ctx, identityID, next, s.now()); err != nil {
 		return nil, IdentityError(err)
 	}
 	tenantID, _ := uuid.Parse(caller.TenantID)
@@ -278,32 +289,12 @@ func (s *Service) EndSession(ctx context.Context, caller *permission.RequestCont
 	}
 	tenant, _ := uuid.Parse(caller.TenantID)
 	user, _ := uuid.Parse(caller.UserID)
-	if ident, err := identity.IdentityOf(ctx, s.d.Pool, tenant, user); err == nil {
-		_ = identity.RevokeSession(ctx, s.d.Pool, ident, sid, s.now())
+	if ident, err := s.store.IdentityOf(ctx, tenant, user); err == nil {
+		_ = s.store.RevokeSession(ctx, ident, sid, s.now())
 	}
 }
 
-func serviceErr(status uint16, code, message string, fieldErrors map[string][]string) error {
-	return &crud.ServiceError{Status: status, Code: code, Message: message, FieldErrors: fieldErrors}
-}
-
-// IdentityError maps pkg/identity's sign-in and password errors onto the platform error envelope;
-// anything else is returned as it is (an internal error).
-func IdentityError(err error) error {
-	switch {
-	case errors.Is(err, identity.ErrInvalidCredentials):
-		return serviceErr(http.StatusUnauthorized, errcode.InvalidCredentials, "Invalid email or password.", nil)
-	case errors.Is(err, identity.ErrLocked):
-		return serviceErr(http.StatusTooManyRequests, errcode.AccountLocked, err.Error(), nil)
-	case errors.Is(err, identity.ErrDisabled):
-		return serviceErr(http.StatusForbidden, errcode.AccountDisabled, err.Error(), nil)
-	case errors.Is(err, identity.ErrWeakPassword):
-		return serviceErr(http.StatusBadRequest, errcode.WeakPassword, err.Error(), map[string][]string{"password": {err.Error()}})
-	}
-	return err
-}
+func isNotIssuer(err error) bool { return errors.Is(err, ErrNotTokenIssuer) }
 
 // Pool is the database the service reads and writes, for tests and tools that set people up.
 func (s *Service) Pool() *pgxpool.Pool { return s.d.Pool }
-
-func isNotIssuer(err error) bool { return errors.Is(err, ErrNotTokenIssuer) }

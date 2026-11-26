@@ -9,9 +9,17 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"github.com/metap-org/metap/internal/admin/account"
 	"github.com/metap-org/metap/internal/admin/apikeys"
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
+	"github.com/metap-org/metap/internal/admin/owner"
+	"github.com/metap-org/metap/internal/admin/roles"
+	"github.com/metap-org/metap/internal/admin/ssoconfig"
+	"github.com/metap-org/metap/internal/admin/support"
+	"github.com/metap-org/metap/internal/admin/tenants"
+	"github.com/metap-org/metap/internal/admin/trail"
+	"github.com/metap-org/metap/internal/admin/users"
 	"github.com/metap-org/metap/internal/authctx"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/secrets"
@@ -35,23 +43,23 @@ import (
 
 // testClient groups the services the way the tests address them (they were gRPC clients).
 type testClient struct {
-	Admin   *UserAdminService
-	Roles   *RoleAdminService
-	Account *AccountService
-	Tenants *TenantAdminService
-	Audit   *AuditAdminService
-	Support *SupportAccessService
-	Owner   *OwnerService
-	SSO     *SsoAdminService
+	Admin   *users.Service
+	Roles   *roles.Service
+	Account *account.Service
+	Tenants *tenants.Service
+	Trail   *trail.Service
+	Support *support.Service
+	Owner   *owner.Service
+	SSO     *ssoconfig.Service
 	Keys    *apikeys.Service
 	Mfa     *mfa.Service
 }
 
 func newTestClient(cfg IdentityConfig) *testClient {
 	return &testClient{
-		Admin: NewUserAdminService(cfg), Roles: NewRoleAdminService(cfg), Account: NewAccountService(cfg),
-		Tenants: NewTenantAdminService(cfg), Audit: NewAuditAdminService(cfg), Support: NewSupportAccessService(cfg),
-		Owner: NewOwnerService(cfg), SSO: NewSsoAdminService(cfg),
+		Admin: NewUserService(cfg), Roles: roles.New(roles.NewPgStore(kernel.Deps{Cfg: cfg}), kernel.Deps{Cfg: cfg}), Account: NewAccountService(cfg),
+		Tenants: newTenantsService(cfg), Trail: trail.New(cfg.Audit), Support: support.New(support.NewPgStore(kernel.Deps{Cfg: cfg}), kernel.Deps{Cfg: cfg}),
+		Owner: NewOwnerService(cfg), SSO: NewSsoService(cfg),
 		Mfa:  mfa.New(mfa.NewPgStore(cfg.Shared), kernel.StoreAuditor{Store: cfg.Audit}, nil),
 		Keys: apikeys.New(apikeys.NewPgStore(cfg.Shared), kernel.StoreAuditor{Store: cfg.Audit}, cfg.APIKeyMaxDays, nil),
 	}
@@ -174,4 +182,13 @@ func asServiceError(err error) *crud.ServiceError {
 func (h *identityHarness) drainAudit() {
 	h.t.Helper()
 	require.NoError(h.t, audit.DrainAll(context.Background(), h.pool, audit.NewPostgresStore(h.pool)))
+}
+
+func newTenantsService(cfg IdentityConfig) *tenants.Service {
+	deps := kernel.Deps{Cfg: cfg}
+	var m tenants.Mailer
+	if cfg.Mailer != nil {
+		m = cfg.Mailer
+	}
+	return tenants.New(tenants.NewPgStore(deps), m, deps)
 }

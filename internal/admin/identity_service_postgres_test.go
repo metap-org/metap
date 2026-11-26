@@ -4,6 +4,10 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/internal/admin/account"
+	"github.com/metap-org/metap/internal/admin/roles"
+	"github.com/metap-org/metap/internal/admin/trail"
+	"github.com/metap-org/metap/internal/admin/users"
 	"github.com/metap-org/metap/internal/authctx"
 	"github.com/metap-org/metap/pkg/permission/policypg"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
@@ -152,7 +156,7 @@ func TestUserAdminLifecycle(t *testing.T) {
 	h.policyRole(tenant, "analyst")
 	ctx := h.as(tenant, admin.ID)
 
-	roles, err := h.client.Roles.ListRoles(ctx, &ListRolesRequest{})
+	roles, err := h.client.Roles.List(ctx, &roles.ListRolesRequest{})
 	require.NoError(t, err)
 	names := map[string]int32{}
 	for _, r := range roles.GetRoles() {
@@ -161,19 +165,19 @@ func TestUserAdminLifecycle(t *testing.T) {
 	assert.Equal(t, map[string]int32{"admin": 1, "analyst": 0}, names)
 
 	assert.Equal(t, "validation_failed", errCode(t, func() error {
-		_, err := h.client.Admin.CreateUser(ctx, &CreateUserRequest{Email: "x@acme.io", Password: "password-1", Roles: []string{"ghost"}})
+		_, err := h.client.Admin.Create(ctx, &users.CreateUserRequest{Email: "x@acme.io", Password: "password-1", Roles: []string{"ghost"}})
 		return err
 	}), "a role outside the catalog is a typo")
 	assert.Equal(t, "weak_password", errCode(t, func() error {
-		_, err := h.client.Admin.CreateUser(ctx, &CreateUserRequest{Email: "x@acme.io", Password: "short"})
+		_, err := h.client.Admin.Create(ctx, &users.CreateUserRequest{Email: "x@acme.io", Password: "short"})
 		return err
 	}))
 	assert.Equal(t, "weak_password", errCode(t, func() error {
-		_, err := h.client.Admin.CreateUser(ctx, &CreateUserRequest{Email: "x@acme.io"})
+		_, err := h.client.Admin.Create(ctx, &users.CreateUserRequest{Email: "x@acme.io"})
 		return err
 	}), "a brand-new account needs a password until invitations exist")
 
-	created, err := h.client.Admin.CreateUser(ctx, &CreateUserRequest{
+	created, err := h.client.Admin.Create(ctx, &users.CreateUserRequest{
 		Email: "bob@acme.io", Password: "bob-password", DisplayName: "Bob", Roles: []string{"analyst"},
 	})
 	require.NoError(t, err)
@@ -185,15 +189,15 @@ func TestUserAdminLifecycle(t *testing.T) {
 	bobID := uuid.MustParse(bob.GetId())
 
 	assert.Equal(t, "already_member", errCode(t, func() error {
-		_, err := h.client.Admin.CreateUser(ctx, &CreateUserRequest{Email: "BOB@acme.io", Password: "bob-password"})
+		_, err := h.client.Admin.Create(ctx, &users.CreateUserRequest{Email: "BOB@acme.io", Password: "bob-password"})
 		return err
 	}))
 
-	list, err := h.client.Admin.ListUsers(ctx, &ListUsersRequest{Role: "analyst"})
+	list, err := h.client.Admin.List(ctx, &users.ListUsersRequest{Role: "analyst"})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, list.GetTotal())
 	assert.Equal(t, "bob@acme.io", list.GetUsers()[0].GetEmail())
-	list, err = h.client.Admin.ListUsers(ctx, &ListUsersRequest{Search: "acme", Limit: 1})
+	list, err = h.client.Admin.List(ctx, &users.ListUsersRequest{Search: "acme", Limit: 1})
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, list.GetTotal())
 	assert.Len(t, list.GetUsers(), 1)
@@ -201,14 +205,14 @@ func TestUserAdminLifecycle(t *testing.T) {
 	// Bob in a second tenant: still one person, and now this tenant may not reset his password.
 	other := uuid.New()
 	otherAdmin := h.member(other, "boss@other.io", "admin")
-	again, err := h.client.Admin.CreateUser(h.as(other, otherAdmin.ID), &CreateUserRequest{Email: "bob@acme.io", Password: "ignored-pass"})
+	again, err := h.client.Admin.Create(h.as(other, otherAdmin.ID), &users.CreateUserRequest{Email: "bob@acme.io", Password: "ignored-pass"})
 	require.NoError(t, err)
 	assert.False(t, again.GetCreatedIdentity())
-	bobGot, err := h.client.Admin.GetUser(ctx, &UserIdRequest{Id: bob.GetId()})
+	bobGot, err := h.client.Admin.Get(ctx, &users.UserIdRequest{Id: bob.GetId()})
 	require.NoError(t, err)
 	assert.True(t, bobGot.GetSharedIdentity())
 	assert.Equal(t, "forbidden", errCode(t, func() error {
-		_, err := h.client.Admin.ResetPassword(ctx, &ResetPasswordRequest{Id: bob.GetId(), Password: "taken-over"})
+		_, err := h.client.Admin.ResetPassword(ctx, &users.ResetPasswordRequest{Id: bob.GetId(), Password: "taken-over"})
 		return err
 	}))
 	_, err = identity.Authenticate(context.Background(), h.pool, "bob@acme.io", "bob-password", time.Now())
@@ -220,44 +224,44 @@ func TestUserAdminLifecycle(t *testing.T) {
 
 	// Guards: no self-harm.
 	assert.Equal(t, "self_modification", errCode(t, func() error {
-		_, err := h.client.Admin.DisableUser(ctx, &UserIdRequest{Id: admin.ID.String()})
+		_, err := h.client.Admin.Disable(ctx, &users.UserIdRequest{Id: admin.ID.String()})
 		return err
 	}))
 	assert.Equal(t, "self_modification", errCode(t, func() error {
-		_, err := h.client.Admin.RevokeRole(ctx, &RoleRequest{Id: admin.ID.String(), Role: "admin"})
+		_, err := h.client.Admin.RevokeRole(ctx, &users.RoleRequest{Id: admin.ID.String(), Role: "admin"})
 		return err
 	}))
 	// A non-person admin (service principal) cannot take away the last person admin either.
 	svc := uuid.New()
 	testkit.SeedRole(t, h.pool, tenant, svc, "admin")
 	assert.Equal(t, "last_admin", errCode(t, func() error {
-		_, err := h.client.Admin.RemoveUser(h.as(tenant, svc), &UserIdRequest{Id: admin.ID.String()})
+		_, err := h.client.Admin.Remove(h.as(tenant, svc), &users.UserIdRequest{Id: admin.ID.String()})
 		return err
 	}))
 
 	// Disable: Bob's existing session dies at once; enable does not resurrect it.
 	bobCtx := h.as(tenant, bobID)
-	_, err = h.client.Account.GetMe(bobCtx, &Empty{})
+	_, err = h.client.Account.Get(bobCtx, &Empty{})
 	require.NoError(t, err)
-	disabled, err := h.client.Admin.DisableUser(ctx, &UserIdRequest{Id: bob.GetId()})
+	disabled, err := h.client.Admin.Disable(ctx, &users.UserIdRequest{Id: bob.GetId()})
 	require.NoError(t, err)
 	assert.Equal(t, "disabled", disabled.GetStatus())
-	_, err = h.client.Account.GetMe(bobCtx, &Empty{})
+	_, err = h.client.Account.Get(bobCtx, &Empty{})
 	require.Error(t, err)
-	_, err = h.client.Admin.EnableUser(ctx, &UserIdRequest{Id: bob.GetId()})
+	_, err = h.client.Admin.Enable(ctx, &users.UserIdRequest{Id: bob.GetId()})
 	require.NoError(t, err)
 
-	_, err = h.client.Admin.AssignRole(ctx, &RoleRequest{Id: bob.GetId(), Role: "admin"})
+	_, err = h.client.Admin.AssignRole(ctx, &users.RoleRequest{Id: bob.GetId(), Role: "admin"})
 	require.NoError(t, err)
-	updated, err := h.client.Admin.UpdateUser(ctx, &UpdateUserRequest{Id: bob.GetId(), DisplayName: "Robert"})
+	updated, err := h.client.Admin.Update(ctx, &users.UpdateUserRequest{Id: bob.GetId(), DisplayName: "Robert"})
 	require.NoError(t, err)
 	assert.Equal(t, "Robert", updated.GetDisplayName())
 	assert.ElementsMatch(t, []string{"admin", "analyst"}, updated.GetRoles())
 
-	_, err = h.client.Admin.RemoveUser(ctx, &UserIdRequest{Id: bob.GetId()})
+	_, err = h.client.Admin.Remove(ctx, &users.UserIdRequest{Id: bob.GetId()})
 	require.NoError(t, err)
 	assert.Equal(t, "not_found", errCode(t, func() error {
-		_, err := h.client.Admin.GetUser(ctx, &UserIdRequest{Id: bob.GetId()})
+		_, err := h.client.Admin.Get(ctx, &users.UserIdRequest{Id: bob.GetId()})
 		return err
 	}))
 	gone, err := rolestore.GetRolesForUser(context.Background(), h.pool, tenant, bobID)
@@ -266,14 +270,14 @@ func TestUserAdminLifecycle(t *testing.T) {
 
 	h.drainAudit()
 
-	hist, err := h.client.Admin.ListUserAudit(ctx, &ListUserAuditRequest{Id: bob.GetId(), Limit: 3})
+	hist, err := h.client.Admin.ListAudit(ctx, &users.ListUserAuditRequest{Id: bob.GetId(), Limit: 3})
 	require.NoError(t, err)
 	require.Len(t, hist.GetEvents(), 3)
 	assert.Equal(t, "delete", hist.GetEvents()[0].GetAction(), "newest first")
 	assert.Equal(t, admin.ID.String(), hist.GetEvents()[0].GetActorUserId())
 	assert.NotEmpty(t, hist.GetNextCursor())
 	h.drainAudit()
-	rest, err := h.client.Admin.ListUserAudit(ctx, &ListUserAuditRequest{Id: bob.GetId(), Cursor: hist.GetNextCursor()})
+	rest, err := h.client.Admin.ListAudit(ctx, &users.ListUserAuditRequest{Id: bob.GetId(), Cursor: hist.GetNextCursor()})
 	require.NoError(t, err)
 	// create, disable, enable, assign admin, rename, remove = 6 entries.
 	assert.Len(t, rest.GetEvents(), 3)
@@ -284,12 +288,12 @@ func TestUserAdminNeedsTheAdminRole(t *testing.T) {
 	h := newIdentityHarness(t)
 	tenant := uuid.New()
 	plain := h.member(tenant, "plain@acme.io")
-	_, err := h.client.Admin.ListUsers(h.as(tenant, plain.ID), &ListUsersRequest{})
+	_, err := h.client.Admin.List(h.as(tenant, plain.ID), &users.ListUsersRequest{})
 	require.Error(t, err)
 	se := asServiceError(err)
 	assert.EqualValues(t, 403, se.Status)
 
-	me, err := h.client.Account.UpdateProfile(h.as(tenant, plain.ID), &UpdateProfileRequest{DisplayName: "Plain Person"})
+	me, err := h.client.Account.UpdateProfile(h.as(tenant, plain.ID), &account.UpdateProfileRequest{DisplayName: "Plain Person"})
 	require.NoError(t, err)
 	assert.Equal(t, "Plain Person", me.GetDisplayName())
 	assert.Equal(t, "plain@acme.io", me.GetEmail())
@@ -304,27 +308,27 @@ func TestRoleAdminLifecycle(t *testing.T) {
 
 	for _, bad := range []string{"Analyst", "1st", "has space", "__everyone__", ""} {
 		assert.Equal(t, "validation_failed", errCode(t, func() error {
-			_, err := h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: bad})
+			_, err := h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: bad})
 			return err
 		}), "name %q", bad)
 	}
 
-	created, err := h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: "analyst", Label: "Analyst", Description: "Reads incidents"})
+	created, err := h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: "analyst", Label: "Analyst", Description: "Reads incidents"})
 	require.NoError(t, err)
 	assert.Equal(t, "Analyst", created.GetLabel())
 	assert.False(t, created.GetBuiltin())
 	assert.Equal(t, "role_exists", errCode(t, func() error {
-		_, err := h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: "analyst"})
+		_, err := h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: "analyst"})
 		return err
 	}))
 
 	// An empty role is assignable at once: the catalog, not the policies, decides what exists.
-	bob, err := h.client.Admin.CreateUser(ctx, &CreateUserRequest{Email: "bob@acme.io", Password: "bob-password", Roles: []string{"analyst"}})
+	bob, err := h.client.Admin.Create(ctx, &users.CreateUserRequest{Email: "bob@acme.io", Password: "bob-password", Roles: []string{"analyst"}})
 	require.NoError(t, err)
 
-	list, err := h.client.Roles.ListRoles(ctx, &ListRolesRequest{})
+	list, err := h.client.Roles.List(ctx, &roles.ListRolesRequest{})
 	require.NoError(t, err)
-	byName := map[string]*Role{}
+	byName := map[string]*roles.Role{}
 	for _, r := range list.GetRoles() {
 		byName[r.GetName()] = r
 	}
@@ -332,26 +336,26 @@ func TestRoleAdminLifecycle(t *testing.T) {
 	assert.True(t, byName["admin"].GetBuiltin())
 	assert.EqualValues(t, 1, byName["analyst"].GetUserCount())
 	assert.EqualValues(t, 0, byName["analyst"].GetPolicyCount())
-	found, err := h.client.Roles.ListRoles(ctx, &ListRolesRequest{Search: "incident"})
+	found, err := h.client.Roles.List(ctx, &roles.ListRolesRequest{Search: "incident"})
 	require.NoError(t, err)
 	require.Len(t, found.GetRoles(), 1, "search matches the description")
 
-	updated, err := h.client.Roles.UpdateRole(ctx, &UpdateRoleRequest{Name: "analyst", Label: "SOC analyst"})
+	updated, err := h.client.Roles.Update(ctx, &roles.UpdateRoleRequest{Name: "analyst", Label: "SOC analyst"})
 	require.NoError(t, err)
 	assert.Equal(t, "SOC analyst", updated.GetLabel())
 	assert.Empty(t, updated.GetDescription(), "update sets both fields")
 
 	// Delete is refused while a member holds the role, then while a policy names it.
-	_, err = h.client.Roles.DeleteRole(ctx, &RoleNameRequest{Name: "analyst"})
+	_, err = h.client.Roles.Delete(ctx, &roles.RoleNameRequest{Name: "analyst"})
 	require.Error(t, err)
 	se := asServiceError(err)
 	assert.Equal(t, "role_in_use", se.Code)
 	assert.Equal(t, []string{"bob@acme.io"}, se.FieldErrors["members"])
 
-	_, err = h.client.Admin.RevokeRole(ctx, &RoleRequest{Id: bob.GetUser().GetId(), Role: "analyst"})
+	_, err = h.client.Admin.RevokeRole(ctx, &users.RoleRequest{Id: bob.GetUser().GetId(), Role: "analyst"})
 	require.NoError(t, err)
 	h.policyRole(tenant, "analyst")
-	_, err = h.client.Roles.DeleteRole(ctx, &RoleNameRequest{Name: "analyst"})
+	_, err = h.client.Roles.Delete(ctx, &roles.RoleNameRequest{Name: "analyst"})
 	require.Error(t, err)
 	se = asServiceError(err)
 	assert.Equal(t, "role_in_use", se.Code)
@@ -360,36 +364,36 @@ func TestRoleAdminLifecycle(t *testing.T) {
 
 	_, err = h.pool.Exec(bg, `DELETE FROM metadata.policies WHERE tenant_id = $1`, tenant)
 	require.NoError(t, err)
-	_, err = h.client.Roles.DeleteRole(ctx, &RoleNameRequest{Name: "analyst"})
+	_, err = h.client.Roles.Delete(ctx, &roles.RoleNameRequest{Name: "analyst"})
 	require.NoError(t, err)
 	assert.Equal(t, "not_found", errCode(t, func() error {
-		_, err := h.client.Roles.GetRole(ctx, &RoleNameRequest{Name: "analyst"})
+		_, err := h.client.Roles.Get(ctx, &roles.RoleNameRequest{Name: "analyst"})
 		return err
 	}))
 	assert.Equal(t, "role_in_use", errCode(t, func() error {
-		_, err := h.client.Roles.DeleteRole(ctx, &RoleNameRequest{Name: "admin"})
+		_, err := h.client.Roles.Delete(ctx, &roles.RoleNameRequest{Name: "admin"})
 		return err
 	}), "a built-in role is never deleted")
 
 	// Recreated under the same name, the role starts a fresh audit trail (a new id).
-	_, err = h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: "analyst"})
+	_, err = h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: "analyst"})
 	require.NoError(t, err)
 	h.drainAudit()
-	trail, err := h.client.Roles.ListRoleAudit(ctx, &ListRoleAuditRequest{Name: "analyst"})
+	trail, err := h.client.Roles.ListAudit(ctx, &roles.ListRoleAuditRequest{Name: "analyst"})
 	require.NoError(t, err)
 	require.Len(t, trail.GetEvents(), 1)
 	assert.Equal(t, "create", trail.GetEvents()[0].GetAction())
 
 	// A role named only by a write outside the admin API (a policy, an assignment) joins the catalog.
-	_, err = h.client.Admin.AssignRole(ctx, &RoleRequest{Id: bob.GetUser().GetId(), Role: "ghost"})
+	_, err = h.client.Admin.AssignRole(ctx, &users.RoleRequest{Id: bob.GetUser().GetId(), Role: "ghost"})
 	assert.Error(t, err, "the admin API still refuses an unknown role")
 	require.NoError(t, rolestore.AssignRole(bg, h.pool, tenant, uuid.MustParse(bob.GetUser().GetId()), "auditor", nil))
-	_, err = h.client.Roles.GetRole(ctx, &RoleNameRequest{Name: "auditor"})
+	_, err = h.client.Roles.Get(ctx, &roles.RoleNameRequest{Name: "auditor"})
 	require.NoError(t, err)
 
 	outsider := h.member(tenant, "viewer@acme.io")
 	assert.Equal(t, http.StatusForbidden, statusOf(func() error {
-		_, err := h.client.Roles.ListRoles(h.as(tenant, outsider.ID), &ListRolesRequest{})
+		_, err := h.client.Roles.List(h.as(tenant, outsider.ID), &roles.ListRolesRequest{})
 		return err
 	}()))
 }
@@ -401,7 +405,7 @@ func TestRolePermissionsReplaceBasicGrantsOnly(t *testing.T) {
 	ctx := h.as(tenant, admin.ID)
 	bg := context.Background()
 
-	_, err := h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: "analyst"})
+	_, err := h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: "analyst"})
 	require.NoError(t, err)
 	// Not this call's to touch: an advanced row naming the role, and a basic row it shares.
 	_, err = h.pool.Exec(bg, `INSERT INTO metadata.policies (tenant_id, entity, action, roles, condition)
@@ -411,14 +415,14 @@ func TestRolePermissionsReplaceBasicGrantsOnly(t *testing.T) {
 		VALUES ($1, 'waf.rules', 'read', '["analyst","viewer"]')`, tenant)
 	require.NoError(t, err)
 
-	got, err := h.client.Roles.GetRolePermissions(ctx, &RoleNameRequest{Name: "analyst"})
+	got, err := h.client.Roles.GetPermissions(ctx, &roles.RoleNameRequest{Name: "analyst"})
 	require.NoError(t, err)
 	require.Len(t, got.GetGrants(), 1, "a shared basic row counts as the role's grant")
 	require.Len(t, got.GetAdvanced(), 1)
 	assert.Equal(t, "waf.zones", got.GetAdvanced()[0].GetEntity())
 	assert.NotEmpty(t, string(got.GetAdvanced()[0].GetCondition()))
 
-	set, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "analyst", Grants: []*RoleGrant{
+	set, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "analyst", Grants: []*roles.RoleGrant{
 		{Entity: "waf.zones", Action: "read"},
 		{Entity: "waf.zones", Action: "update"},
 		{Entity: "waf.zones", Action: "transition:pause"},
@@ -452,31 +456,31 @@ func TestRolePermissionsReplaceBasicGrantsOnly(t *testing.T) {
 	assert.False(t, allowed(perms.CanReadEntity(bg, rc, "waf.rules")))
 
 	assert.Equal(t, "validation_failed", errCode(t, func() error {
-		_, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "analyst",
-			Grants: []*RoleGrant{{Entity: "waf.zones", Action: "approve"}}})
+		_, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "analyst",
+			Grants: []*roles.RoleGrant{{Entity: "waf.zones", Action: "approve"}}})
 		return err
 	}), "an action outside the policy grammar")
 	assert.Equal(t, "validation_failed", errCode(t, func() error {
-		_, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "admin"})
+		_, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "admin"})
 		return err
 	}), "admin bypasses policies")
 	assert.Equal(t, "not_found", errCode(t, func() error {
-		_, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "ghost"})
+		_, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "ghost"})
 		return err
 	}))
 
 	// copyFrom starts a role with the source's basic grants (not its advanced rows).
-	copied, err := h.client.Roles.CreateRole(ctx, &CreateRoleRequest{Name: "analyst_two", CopyFrom: "analyst"})
+	copied, err := h.client.Roles.Create(ctx, &roles.CreateRoleRequest{Name: "analyst_two", CopyFrom: "analyst"})
 	require.NoError(t, err)
 	assert.EqualValues(t, 4, copied.GetPolicyCount())
-	two, err := h.client.Roles.GetRolePermissions(ctx, &RoleNameRequest{Name: "analyst_two"})
+	two, err := h.client.Roles.GetPermissions(ctx, &roles.RoleNameRequest{Name: "analyst_two"})
 	require.NoError(t, err)
 	assert.Len(t, two.GetGrants(), 4)
 	assert.Empty(t, two.GetAdvanced())
 
 	h.drainAudit()
 
-	trail, err := h.client.Roles.ListRoleAudit(ctx, &ListRoleAuditRequest{Name: "analyst"})
+	trail, err := h.client.Roles.ListAudit(ctx, &roles.ListRoleAuditRequest{Name: "analyst"})
 	require.NoError(t, err)
 	require.NotEmpty(t, trail.GetEvents())
 	assert.Contains(t, string(trail.GetEvents()[0].GetDiff()), "granted")
@@ -505,7 +509,7 @@ func TestInviteUserEmailsALinkAndResendReplacesIt(t *testing.T) {
 	bg := context.Background()
 	email := uuid.NewString() + "@example.com"
 
-	res, err := h.client.Admin.InviteUser(ctx, &InviteUserRequest{Email: email, DisplayName: "Bob", Roles: []string{"analyst"}})
+	res, err := h.client.Admin.Invite(ctx, &users.InviteUserRequest{Email: email, DisplayName: "Bob", Roles: []string{"analyst"}})
 	require.NoError(t, err)
 	assert.True(t, res.GetEmailSent())
 	assert.Empty(t, res.GetAcceptUrl(), "the link only goes to the invitee once the email went out")
@@ -521,29 +525,29 @@ func TestInviteUserEmailsALinkAndResendReplacesIt(t *testing.T) {
 	assert.True(t, inv.NewIdentity)
 
 	assert.Equal(t, "already_member", errCode(t, func() error {
-		_, err := h.client.Admin.InviteUser(ctx, &InviteUserRequest{Email: email})
+		_, err := h.client.Admin.Invite(ctx, &users.InviteUserRequest{Email: email})
 		return err
 	}))
 	assert.Equal(t, "already_member", errCode(t, func() error {
-		_, err := h.client.Admin.ResendInvitation(ctx, &UserIdRequest{Id: admin.ID.String()})
+		_, err := h.client.Admin.ResendInvitation(ctx, &users.UserIdRequest{Id: admin.ID.String()})
 		return err
 	}), "only an invited member gets a link")
 
-	_, err = h.client.Admin.ResendInvitation(ctx, &UserIdRequest{Id: u.GetId()})
+	_, err = h.client.Admin.ResendInvitation(ctx, &users.UserIdRequest{Id: u.GetId()})
 	require.NoError(t, err)
 	second := tokenFrom(t, h.mail.last(t, email))
 	assert.NotEqual(t, first, second)
 	_, err = identity.FindInvitation(bg, h.pool, first, time.Now())
 	assert.ErrorIs(t, err, identity.ErrInvitationInvalid, "a resend retires the previous link")
 
-	_, err = h.client.Admin.RemoveUser(ctx, &UserIdRequest{Id: u.GetId()})
+	_, err = h.client.Admin.Remove(ctx, &users.UserIdRequest{Id: u.GetId()})
 	require.NoError(t, err)
 	_, err = identity.FindInvitation(bg, h.pool, second, time.Now())
 	assert.ErrorIs(t, err, identity.ErrInvitationInvalid, "removing the member withdraws the invitation")
 
 	h.drainAudit()
 
-	trail, err := h.client.Admin.ListUserAudit(ctx, &ListUserAuditRequest{Id: u.GetId()})
+	trail, err := h.client.Admin.ListAudit(ctx, &users.ListUserAuditRequest{Id: u.GetId()})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(trail.GetEvents()), 3, "invite, resend, remove")
 }
@@ -557,16 +561,16 @@ func TestInviteWithoutEmailReturnsTheLinkAndPolicyAppliesToAdminPasswords(t *tes
 		VALUES ($1, 'auth.passwordMinLength', '12')`, tenant)
 	require.NoError(t, err)
 
-	res, err := h.client.Admin.InviteUser(ctx, &InviteUserRequest{Email: uuid.NewString() + "@example.com"})
+	res, err := h.client.Admin.Invite(ctx, &users.InviteUserRequest{Email: uuid.NewString() + "@example.com"})
 	require.NoError(t, err)
 	assert.False(t, res.GetEmailSent())
 	require.Contains(t, res.GetAcceptUrl(), "/accept-invite?token=", "no SMTP: the admin passes the link on")
 
 	assert.Equal(t, "weak_password", errCode(t, func() error {
-		_, err := h.client.Admin.CreateUser(ctx, &CreateUserRequest{Email: uuid.NewString() + "@example.com", Password: "ten-chars!"})
+		_, err := h.client.Admin.Create(ctx, &users.CreateUserRequest{Email: uuid.NewString() + "@example.com", Password: "ten-chars!"})
 		return err
 	}), "the tenant's 12-character policy")
-	_, err = h.client.Admin.CreateUser(ctx, &CreateUserRequest{Email: uuid.NewString() + "@example.com", Password: "twelve-chars"})
+	_, err = h.client.Admin.Create(ctx, &users.CreateUserRequest{Email: uuid.NewString() + "@example.com", Password: "twelve-chars"})
 	require.NoError(t, err)
 }
 
@@ -583,9 +587,9 @@ func TestVirtualResourceGrantsAreValidatedAndEnforced(t *testing.T) {
 	ctx := h.as(tenant, admin.ID)
 	key := permission.ResourceKey("test.requestdata")
 
-	list, err := h.client.Roles.ListPermissionResources(ctx, &Empty{})
+	list, err := h.client.Roles.ListResources(ctx, &Empty{})
 	require.NoError(t, err)
-	var found *PermissionResource
+	var found *roles.PermissionResource
 	for _, r := range list.GetResources() {
 		if r.GetName() == "test.requestdata" {
 			found = r
@@ -594,22 +598,22 @@ func TestVirtualResourceGrantsAreValidatedAndEnforced(t *testing.T) {
 	require.NotNil(t, found)
 	assert.Equal(t, key, found.GetKey())
 	assert.Len(t, found.GetActions(), 2)
-	_, err = h.client.Roles.ListPermissionResources(h.as(tenant, bob.ID), &Empty{})
+	_, err = h.client.Roles.ListResources(h.as(tenant, bob.ID), &Empty{})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "admins only")
 
 	// Only declared actions of declared resources are grantable.
-	for _, bad := range []*RoleGrant{
+	for _, bad := range []*roles.RoleGrant{
 		{Entity: key, Action: "read"}, // an entity action is not one of this resource's
 		{Entity: key, Action: "nope"},
 		{Entity: permission.ResourceKey("test.ghost"), Action: "view"},
 	} {
 		bad := bad
 		assert.Equal(t, "validation_failed", errCode(t, func() error {
-			_, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "reviewer", Grants: []*RoleGrant{bad}})
+			_, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "reviewer", Grants: []*roles.RoleGrant{bad}})
 			return err
 		}), "%+v", bad)
 	}
-	set, err := h.client.Roles.SetRolePermissions(ctx, &SetRolePermissionsRequest{Role: "reviewer", Grants: []*RoleGrant{
+	set, err := h.client.Roles.SetPermissions(ctx, &roles.SetRolePermissionsRequest{Role: "reviewer", Grants: []*roles.RoleGrant{
 		{Entity: key, Action: "view"}, {Entity: "waf.zones", Action: "read"}}})
 	require.NoError(t, err)
 	assert.Len(t, set.GetGrants(), 2)
@@ -635,14 +639,14 @@ func TestAuditAdminSearchAndVerify(t *testing.T) {
 	ctx := h.as(tenant, admin.ID)
 
 	// Two audited admin changes by the admin.
-	_, err := h.client.Admin.DisableUser(ctx, &UserIdRequest{Id: bob.ID.String()})
+	_, err := h.client.Admin.Disable(ctx, &users.UserIdRequest{Id: bob.ID.String()})
 	require.NoError(t, err)
-	_, err = h.client.Admin.EnableUser(ctx, &UserIdRequest{Id: bob.ID.String()})
+	_, err = h.client.Admin.Enable(ctx, &users.UserIdRequest{Id: bob.ID.String()})
 	require.NoError(t, err)
 
 	h.drainAudit()
 
-	res, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{ActorUserId: admin.ID.String()})
+	res, err := h.client.Trail.Search(ctx, &trail.SearchAuditRequest{ActorUserId: admin.ID.String()})
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(res.GetEntries()), 2)
 	for _, e := range res.GetEntries() {
@@ -651,33 +655,33 @@ func TestAuditAdminSearchAndVerify(t *testing.T) {
 		assert.NotEmpty(t, e.GetHash())
 	}
 	h.drainAudit()
-	byObject, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{Entity: AuditEntityUsers, RecordId: bob.ID.String()})
+	byObject, err := h.client.Trail.Search(ctx, &trail.SearchAuditRequest{Entity: AuditEntityUsers, RecordId: bob.ID.String()})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(byObject.GetEntries()), 2)
 	h.drainAudit()
-	none, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{ActorUserId: uuid.NewString()})
+	none, err := h.client.Trail.Search(ctx, &trail.SearchAuditRequest{ActorUserId: uuid.NewString()})
 	require.NoError(t, err)
 	assert.Empty(t, none.GetEntries())
 	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	h.drainAudit()
-	late, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{From: future})
+	late, err := h.client.Trail.Search(ctx, &trail.SearchAuditRequest{From: future})
 	require.NoError(t, err)
 	assert.Empty(t, late.GetEntries())
 	h.drainAudit()
-	_, err = h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{From: "yesterday"})
+	_, err = h.client.Trail.Search(ctx, &trail.SearchAuditRequest{From: "yesterday"})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err))
 
 	h.drainAudit()
 
-	_, err = h.client.Audit.SearchAudit(h.as(tenant, bob.ID), &SearchAuditRequest{})
+	_, err = h.client.Trail.Search(h.as(tenant, bob.ID), &trail.SearchAuditRequest{})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "admins only")
 	h.drainAudit()
-	_, err = h.client.Audit.VerifyAuditChain(h.as(tenant, bob.ID), &Empty{})
+	_, err = h.client.Trail.Verify(h.as(tenant, bob.ID))
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 
 	h.drainAudit()
 
-	rep, err := h.client.Audit.VerifyAuditChain(ctx, &Empty{})
+	rep, err := h.client.Trail.Verify(ctx)
 	require.NoError(t, err)
 	assert.True(t, rep.GetOk(), "%+v", rep)
 	assert.GreaterOrEqual(t, rep.GetChecked(), int64(2))
@@ -686,7 +690,7 @@ func TestAuditAdminSearchAndVerify(t *testing.T) {
 		`UPDATE metadata.audit_trail_entries SET diff = '{"x":1}' WHERE tenant_id = $1 AND seq = 1`, tenant)
 	require.NoError(t, err)
 	h.drainAudit()
-	rep, err = h.client.Audit.VerifyAuditChain(ctx, &Empty{})
+	rep, err = h.client.Trail.Verify(ctx)
 	require.NoError(t, err)
 	assert.False(t, rep.GetOk())
 	assert.EqualValues(t, 1, rep.GetBrokenSeq())

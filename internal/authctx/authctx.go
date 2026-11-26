@@ -1,26 +1,18 @@
-// Turns a verified access token's claims into a permission.RequestContext — the DB-touching
-// half of authentication that jwks.DecodeAccessToken (the pure JWT-verify half)
-// deliberately can't do itself, since it needs a tenant-scoped Router to open the transaction
-// GetRolesForUser/FetchContextAttributes run against.
+// Package authctx turns a verified access token's claims into a permission.RequestContext — the DB-touching
+// half of authentication that jwks.DecodeAccessToken (the pure JWT-verify half) deliberately can't do
+// itself. resolver.go is the logic (Resolver), store.go the port it reads through and its Postgres adapter,
+// and this file the two caches (a member's roles, their context attributes) and the notices that clear them.
 package authctx
 
 import (
 	"context"
-	"encoding/json"
-	"github.com/metap-org/metap/pkg/permission/rolestore"
-	"github.com/metap-org/metap/pkg/tenancy"
-	"log/slog"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	gocache "github.com/patrickmn/go-cache"
 	"golang.org/x/sync/singleflight"
 
-	"github.com/metap-org/metap/pkg/auth/identity"
-	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -72,8 +64,8 @@ func (c *ContextAttributesCache) Invalidate(tenantID, userID uuid.UUID) {
 	c.cache.Delete(tenantID.String() + "/" + userID.String())
 }
 
-// callerRoles is what the role lookup returns for one member: their tenant-wide roles and the roles
-// they hold only inside a scope.
+// callerRoles is what the cache holds for one member: their tenant-wide roles and the roles they hold only
+// inside a scope (Held, as the store returns it).
 type callerRoles struct {
 	roles  []string
 	scoped []permission.ScopedRole
@@ -150,145 +142,4 @@ func (c *RolesCache) InvalidateTenant(tenantID uuid.UUID) {
 // request for the same member reads.
 func (r callerRoles) clone() callerRoles {
 	return callerRoles{roles: append([]string(nil), r.roles...), scoped: append([]permission.ScopedRole(nil), r.scoped...)}
-}
-
-// ResolveRequestContext builds a RequestContext for an already-verified token: the session check
-// (always live), the roles (live, or reused for the RolesCache TTL) plus the AUTH_CONTEXT_ENTITY opt-in best-effort attributes lookup (cached via
-// contextAttributesCache). Any failure resolving roles propagates as an error (identity without
-// roles is unusable), while a failure resolving context attributes only logs and yields nil
-// (supplementary ABAC context, never blocks auth).
-// metadataRegistry is an *atomic.Pointer[metadata.MetadataRegistry].
-//
-// issuedAt is the token's iat: a token for a member who was disabled or removed, or issued before
-// their sessions were revoked, fails with identity.ErrDisabled / identity.ErrSessionRevoked.
-func ResolveRequestContext(ctx context.Context, router *tenancy.Router, tenantID, userID uuid.UUID, functionID string, issuedAt *time.Time,
-	authContextEntity string, metadataRegistry *atomic.Pointer[metadata.MetadataRegistry], contextAttributesCache *ContextAttributesCache,
-	rolesCache *RolesCache) (*permission.RequestContext, error) {
-	if err := identity.CheckSession(ctx, router.SharedPool(), tenantID, userID, issuedAt); err != nil {
-		return nil, err
-	}
-	// Routed through Router, not a bare pool — a DedicatedDb-strategy tenant's user_roles table
-	// lives only in that tenant's own database. The scoped roles (roadmap 115 M1) come from the same
-	// transaction, so they are exactly as fresh as the roles.
-	held, err := rolesCache.get(ctx, tenantID, userID, func(ctx context.Context) (callerRoles, error) {
-		tx, err := router.Begin(ctx, tenantID)
-		if err != nil {
-			return callerRoles{}, err
-		}
-		roles, err := rolestore.GetRolesForUser(ctx, tx, tenantID, userID)
-		if err != nil {
-			tx.Rollback(ctx)
-			return callerRoles{}, err
-		}
-		scoped, err := rolestore.ScopedRolesForUser(ctx, tx, tenantID, userID)
-		if err != nil {
-			tx.Rollback(ctx)
-			return callerRoles{}, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return callerRoles{}, err
-		}
-		return callerRoles{roles: roles, scoped: scoped}, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	roles, scopedRoles := held.roles, held.scoped
-	var authContextTable string
-	if authContextEntity != "" {
-		if reg := metadataRegistry.Load(); reg != nil {
-			if entity, ok := reg.GetEntity(authContextEntity); ok {
-				authContextTable = entity.TableName
-			} else {
-				slog.Warn("AUTH_CONTEXT_ENTITY does not resolve to a registered entity", "entity", authContextEntity)
-			}
-		}
-	}
-
-	var contextAttributes map[string]any
-	if authContextTable != "" {
-		contextAttributes, err = contextAttributesCache.GetWith(ctx, tenantID, userID, func(ctx context.Context) (map[string]any, error) {
-			tx, err := router.Begin(ctx, tenantID)
-			if err != nil {
-				return nil, err
-			}
-			result, err := identity.FetchContextAttributes(ctx, tx, tenantID, authContextTable, userID)
-			if err != nil {
-				tx.Rollback(ctx)
-				return nil, err
-			}
-			return result, tx.Commit(ctx)
-		})
-		if err != nil {
-			slog.Warn("failed to resolve context attributes", standard.LogTenantID, tenantID, "user_id", userID, standard.LogError, err)
-			contextAttributes = nil
-		}
-	}
-
-	var contextAttributesJSON map[string]json.RawMessage
-	if contextAttributes != nil {
-		contextAttributesJSON = make(map[string]json.RawMessage, len(contextAttributes))
-		for k, v := range contextAttributes {
-			b, err := json.Marshal(v)
-			if err != nil {
-				continue
-			}
-			contextAttributesJSON[k] = b
-		}
-	}
-
-	return &permission.RequestContext{
-		TenantID:          tenantID.String(),
-		UserID:            userID.String(),
-		Roles:             roles,
-		ScopedRoles:       scopedRoles,
-		HasRoles:          true,
-		FunctionID:        functionID,
-		ContextAttributes: contextAttributesJSON,
-		// Not a forwarding source — this is the shared server-side "decode a token, look up
-		// roles" path every static-verifier server runs, not a gateway's own inbound-request
-		// auth.
-		ForwardedBearerToken: "",
-	}, nil
-}
-
-// ResolveAPIKeyContext authenticates a presented API key ("mk_...") and resolves the request
-// context of the member it belongs to. The key counts as a session issued when it was created, so
-// "revoke sessions" on the member kills older keys too, and a disabled member's keys stop working.
-func ResolveAPIKeyContext(ctx context.Context, router *tenancy.Router, token string, now time.Time,
-	authContextEntity string, metadataRegistry *atomic.Pointer[metadata.MetadataRegistry], contextAttributesCache *ContextAttributesCache,
-	rolesCache *RolesCache) (*permission.RequestContext, error) {
-	key, err := identity.ResolveAPIKey(ctx, router.SharedPool(), token, now)
-	if err != nil {
-		return nil, err
-	}
-	created := key.CreatedAt
-	return ResolveRequestContext(ctx, router, key.TenantID, key.MemberID, "", &created,
-		authContextEntity, metadataRegistry, contextAttributesCache, rolesCache)
-}
-
-// ApplySessionClaim checks the login session behind a token's "sid" claim (roadmap 115 M4): a
-// revoked or unknown session fails with identity.ErrSessionRevoked. A token with no "sid" is not a
-// login session and passes untouched.
-func ApplySessionClaim(ctx context.Context, router *tenancy.Router, rc *permission.RequestContext, sessionID *string, now time.Time) error {
-	if sessionID == nil {
-		return nil
-	}
-	sid, err := uuid.Parse(*sessionID)
-	if err != nil {
-		return identity.ErrSessionRevoked
-	}
-	tenant, err := uuid.Parse(rc.TenantID)
-	if err != nil {
-		return identity.ErrSessionRevoked
-	}
-	user, err := uuid.Parse(rc.UserID)
-	if err != nil {
-		return identity.ErrSessionRevoked
-	}
-	if err := identity.CheckSessionID(ctx, router.SharedPool(), tenant, user, sid, now); err != nil {
-		return err
-	}
-	rc.SessionID = *sessionID
-	return nil
 }
