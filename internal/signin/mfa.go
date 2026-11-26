@@ -15,7 +15,7 @@ import (
 // with a second factor gets a challenge to answer, a person without one in a tenant that requires
 // MFA gets one to enrol through. setup says which. Both nil means no second step is needed.
 func (s *Service) mfaGate(ctx context.Context, ident *identity.Identity, m identity.Membership, now time.Time) (ch *Challenge, setup bool, err error) {
-	enabled, err := identity.MFAEnabled(ctx, s.d.Pool, ident.ID)
+	enabled, err := s.store.MFAEnabled(ctx, ident.ID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -28,36 +28,19 @@ func (s *Service) mfaGate(ctx context.Context, ident *identity.Identity, m ident
 	default:
 		return nil, false, nil
 	}
-	_ = identity.PurgeChallenges(ctx, s.d.Pool, now)
+	_ = s.store.PurgeChallenges(ctx, now)
 	tenant := m.TenantID
-	token, err := identity.CreateChallenge(ctx, s.d.Pool, ident.ID, &tenant, purpose, now)
+	token, err := s.store.CreateChallenge(ctx, ident.ID, &tenant, purpose, now)
 	if err != nil {
 		return nil, false, err
 	}
 	return &Challenge{Token: token, TenantID: m.TenantID}, setup, nil
 }
 
-// MFAError maps pkg/identity's second-factor errors onto the platform error envelope.
-func MFAError(err error) error {
-	switch {
-	case errors.Is(err, identity.ErrMFAChallenge):
-		return serviceErr(http.StatusUnauthorized, errcode.MFAChallenge, err.Error(), nil)
-	case errors.Is(err, identity.ErrMFAInvalidCode):
-		return serviceErr(http.StatusUnauthorized, errcode.MFAInvalidCode, err.Error(), nil)
-	case errors.Is(err, identity.ErrMFALocked):
-		return serviceErr(http.StatusTooManyRequests, errcode.AccountLocked, err.Error(), nil)
-	case errors.Is(err, identity.ErrMFAAlreadyOn):
-		return serviceErr(http.StatusConflict, errcode.MFAAlreadyOn, err.Error(), nil)
-	case errors.Is(err, identity.ErrMFANotEnrolled), errors.Is(err, identity.ErrMFAEnrollNotRun):
-		return serviceErr(http.StatusConflict, errcode.MFANotEnrolled, err.Error(), nil)
-	}
-	return err
-}
-
 // membershipFor finds the identity's membership in the challenge's tenant, still active.
 func (s *Service) membershipFor(ctx context.Context, c *identity.Challenge) (identity.Membership, error) {
 	noAccess := serviceErr(http.StatusForbidden, errcode.NoTenantAccess, "This account has no access to that tenant.", nil)
-	ms, err := identity.Memberships(ctx, s.d.Pool, c.IdentityID)
+	ms, err := s.store.Memberships(ctx, c.IdentityID)
 	if err != nil {
 		return identity.Membership{}, err
 	}
@@ -74,49 +57,36 @@ func (s *Service) membershipFor(ctx context.Context, c *identity.Challenge) (ide
 // LoginMFA is the second step of a sign-in: the challenge token plus a TOTP or recovery code.
 func (s *Service) LoginMFA(ctx context.Context, token, code string, c Client) (*Grant, error) {
 	now := s.now()
-	ch, err := identity.LookupChallenge(ctx, s.d.Pool, token, identity.ChallengeSignIn, now)
+	ch, err := s.store.LookupChallenge(ctx, token, identity.ChallengeSignIn, now)
 	if err != nil {
 		return nil, MFAError(err)
 	}
-	tx, err := s.d.Pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-	if err := identity.VerifyMFA(ctx, tx, ch.IdentityID, code, now); err != nil {
-		if identity.MFAAttemptCounts(err) {
-			_ = tx.Commit(ctx) // keep the wrong-code count across sign-in attempts
-		} else {
-			_ = tx.Rollback(ctx)
-		}
+	if err := s.store.VerifyMFA(ctx, ch.IdentityID, code, now); err != nil {
 		if errors.Is(err, identity.ErrMFAInvalidCode) {
-			_ = identity.FailChallenge(ctx, s.d.Pool, token)
+			_ = s.store.FailChallenge(ctx, token)
 		}
 		return nil, MFAError(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
 	}
 	m, err := s.membershipFor(ctx, ch)
 	if err != nil {
 		return nil, err
 	}
-	_ = identity.ConsumeChallenge(ctx, s.d.Pool, token)
+	_ = s.store.ConsumeChallenge(ctx, token)
 	return s.Issue(ctx, ch.IdentityID, m, c)
 }
 
 // MFASetupStart begins enrolment for a person the tenant forces to have a second factor.
 func (s *Service) MFASetupStart(ctx context.Context, token string) (secret, otpauthURI string, err error) {
 	now := s.now()
-	ch, err := identity.LookupChallenge(ctx, s.d.Pool, token, identity.ChallengeSetup, now)
+	ch, err := s.store.LookupChallenge(ctx, token, identity.ChallengeSetup, now)
 	if err != nil {
 		return "", "", MFAError(err)
 	}
-	ident, err := identity.FindIdentityByID(ctx, s.d.Pool, ch.IdentityID)
+	ident, err := s.store.FindIdentityByID(ctx, ch.IdentityID)
 	if err != nil {
 		return "", "", err
 	}
-	secret, otpauthURI, err = identity.BeginMFAEnrollment(ctx, s.d.Pool, ch.IdentityID, ident.Email, now)
+	secret, otpauthURI, err = s.store.BeginMFAEnrollment(ctx, ch.IdentityID, ident.Email, now)
 	if err != nil {
 		return "", "", MFAError(err)
 	}
@@ -127,31 +97,22 @@ func (s *Service) MFASetupStart(ctx context.Context, token string) (secret, otpa
 // waiting on it; the recovery codes come back once, in the Grant.
 func (s *Service) MFASetupConfirm(ctx context.Context, token, code string, c Client) (*Grant, error) {
 	now := s.now()
-	ch, err := identity.LookupChallenge(ctx, s.d.Pool, token, identity.ChallengeSetup, now)
+	ch, err := s.store.LookupChallenge(ctx, token, identity.ChallengeSetup, now)
 	if err != nil {
 		return nil, MFAError(err)
 	}
-	tx, err := s.d.Pool.Begin(ctx)
+	codes, err := s.store.ConfirmMFAEnrollment(ctx, ch.IdentityID, code, now)
 	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-	codes, err := identity.ConfirmMFAEnrollment(ctx, tx, ch.IdentityID, code, now)
-	if err != nil {
-		_ = tx.Rollback(ctx)
 		if errors.Is(err, identity.ErrMFAInvalidCode) {
-			_ = identity.FailChallenge(ctx, s.d.Pool, token)
+			_ = s.store.FailChallenge(ctx, token)
 		}
 		return nil, MFAError(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
 	}
 	m, err := s.membershipFor(ctx, ch)
 	if err != nil {
 		return nil, err
 	}
-	_ = identity.ConsumeChallenge(ctx, s.d.Pool, token)
+	_ = s.store.ConsumeChallenge(ctx, token)
 	g, err := s.Issue(ctx, ch.IdentityID, m, c)
 	if err != nil {
 		return nil, err

@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
@@ -42,7 +41,7 @@ func (s *Service) Renew(ctx context.Context, rc *permission.RequestContext, star
 		return nil, false
 	}
 	if sid, err := uuid.Parse(rc.SessionID); err == nil {
-		_ = identity.ExtendSession(ctx, s.d.Pool, sid, time.Duration(ttl)*time.Second, s.now())
+		_ = s.store.ExtendSession(ctx, sid, time.Duration(ttl)*time.Second, s.now())
 	}
 	return &Renewal{Token: token, TTLSeconds: ttl}, true
 }
@@ -78,14 +77,5 @@ func (s *Service) OwnEmail(ctx context.Context, rc *permission.RequestContext) s
 	if err != nil {
 		return ""
 	}
-	tx, err := s.d.Router.Begin(ctx, tenantID)
-	if err != nil {
-		return ""
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-	user, err := identity.FindUserByID(ctx, tx, tenantID, userID)
-	if err != nil || user == nil {
-		return ""
-	}
-	return user.Email
+	return s.store.UserEmail(ctx, tenantID, userID)
 }

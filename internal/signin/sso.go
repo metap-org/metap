@@ -3,7 +3,6 @@ package signin
 import (
 	"context"
 	"errors"
-	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"net/http"
 
@@ -68,7 +67,7 @@ func (s *Service) syncSSORoles(ctx context.Context, tenant uuid.UUID, member *id
 		return nil
 	}
 	want := mapping.MappedRoles(claimValues)
-	have, err := rolestore.GetRolesForUser(ctx, s.d.Pool, tenant, member.ID)
+	have, err := s.store.RolesOf(ctx, tenant, member.ID)
 	if err != nil {
 		return err
 	}
@@ -76,18 +75,18 @@ func (s *Service) syncSSORoles(ctx context.Context, tenant uuid.UUID, member *id
 	for _, role := range have {
 		held[role] = true
 	}
-	owner, err := identity.OwnerID(ctx, s.d.Pool, tenant)
+	owner, err := s.store.OwnerID(ctx, tenant)
 	if err != nil {
 		return err
 	}
 	for _, role := range managed {
 		switch {
 		case want[role] && !held[role]:
-			if err := rolestore.AssignRole(ctx, s.d.Pool, tenant, member.ID, role, nil); err != nil {
+			if err := s.store.AssignRole(ctx, tenant, member.ID, role); err != nil {
 				return err
 			}
 		case !want[role] && held[role] && owner != member.ID:
-			if err := rolestore.RevokeRole(ctx, s.d.Pool, tenant, member.ID, role); err != nil {
+			if err := s.store.RevokeRole(ctx, tenant, member.ID, role); err != nil {
 				return err
 			}
 		}
@@ -98,38 +97,32 @@ func (s *Service) syncSSORoles(ctx context.Context, tenant uuid.UUID, member *id
 // ssoMember finds the member an IdP identity signs in as: the one already tied to this subject, an
 // existing member with that address (tied now), or a new one provisioned with the default role.
 func (s *Service) ssoMember(ctx context.Context, tenant uuid.UUID, p SSOPolicy, who *sso.VerifiedIdentity) (*identity.Member, error) {
-	if m, err := identity.FindExternalMember(ctx, s.d.Pool, tenant, p.Provider, who.ExternalSubject); err != nil || m != nil {
+	if m, err := s.store.FindExternalMember(ctx, tenant, p.Provider, who.ExternalSubject); err != nil || m != nil {
 		return m, err
 	}
 	// From here on the address is what identifies the person, so the provider must vouch for it.
 	if !who.EmailVerified {
 		return nil, errSSOEmailUnverified
 	}
-	if ok, err := sso.DomainVerifiedFor(ctx, s.d.Pool, tenant, who.Email); err != nil {
+	if ok, err := s.store.DomainVerifiedFor(ctx, tenant, who.Email); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, errSSODomainUnverified
 	}
-	if m, err := identity.MemberByEmail(ctx, s.d.Pool, tenant, who.Email); err == nil {
+	if m, err := s.store.MemberByEmail(ctx, tenant, who.Email); err == nil {
 		if m.AuthProvider == identity.ServiceAccountProvider {
 			return nil, errors.New("not a person")
 		}
-		if err := identity.LinkExternalSubject(ctx, s.d.Pool, tenant, m.ID, p.Provider, who.ExternalSubject); err != nil {
+		if err := s.store.LinkExternalSubject(ctx, tenant, m.ID, p.Provider, who.ExternalSubject); err != nil {
 			return nil, err
 		}
 		return m, nil
 	} else if !errors.Is(err, identity.ErrNotFound) {
 		return nil, err
 	}
-	m, _, err := identity.AddMember(ctx, s.d.Pool, identity.NewMember{TenantID: tenant, Email: who.Email,
-		AuthProvider: p.Provider, ExternalSubject: who.ExternalSubject})
+	m, err := s.store.AddExternalMember(ctx, tenant, who.Email, p.Provider, who.ExternalSubject, p.DefaultRole)
 	if err != nil {
 		return nil, err
-	}
-	if p.DefaultRole != "" {
-		if err := rolestore.AssignRole(ctx, s.d.Pool, tenant, m.ID, p.DefaultRole, nil); err != nil {
-			return nil, err
-		}
 	}
 	return m, nil
 }

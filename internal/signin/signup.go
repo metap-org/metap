@@ -3,11 +3,9 @@ package signin
 import (
 	"context"
 	"errors"
-	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"net/http"
 	"strings"
-	"unicode"
 
 	"github.com/google/uuid"
 
@@ -17,8 +15,6 @@ import (
 	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/kit/standard"
-	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 const (
@@ -33,34 +29,6 @@ var reservedTenantNames = []string{
 	"admin", "administrator", "root", "system", "support", "security", "staff", "official", "billing",
 	"help", "helpdesk", "abuse", "postmaster", "webmaster", "noreply", "metap", "platform", "default",
 	"test", "null", "undefined", "api", "www", "mail", "status",
-}
-
-// normalizeTenantName folds a name to lower-case letters and digits, so punctuation, spacing and
-// case cannot be used to slip past the blocklist.
-func normalizeTenantName(name string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(name) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-// TenantNameBlocked reports whether name is reserved or in the operator's list.
-func TenantNameBlocked(name string, extra []string) bool {
-	n := normalizeTenantName(name)
-	if n == "" {
-		return true
-	}
-	for _, list := range [][]string{reservedTenantNames, extra} {
-		for _, b := range list {
-			if n == normalizeTenantName(b) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (s *Service) platform() *config.Snapshot {
@@ -82,10 +50,6 @@ func (s *Service) tenantNameBlocked(name string) bool {
 		extra = p.GetStrings(config.SignupBlockedTenantNames)
 	}
 	return TenantNameBlocked(name, extra)
-}
-
-func errSignupDisabled() error {
-	return serviceErr(http.StatusForbidden, errcode.SignupDisabled, "Self-service signup is not open on this deployment.", nil)
 }
 
 // SignupRequest is what a person typed to register a workspace.
@@ -139,8 +103,8 @@ func (s *Service) ValidateSignup(ctx context.Context, req SignupRequest, clientI
 // like any other.
 func (s *Service) DeliverSignup(ctx context.Context, req SignupRequest) {
 	now := s.now()
-	_ = identity.PurgeSignups(ctx, s.d.Pool, now)
-	token, err := identity.CreateSignup(ctx, s.d.Pool, req.Email, req.TenantName, req.DisplayName, req.Password, now)
+	_ = s.store.PurgeSignups(ctx, now)
+	token, err := s.store.CreateSignup(ctx, req.Email, req.TenantName, req.DisplayName, req.Password, now)
 	if err != nil {
 		slog.Error("signup: recording request", standard.LogError, err)
 		return
@@ -172,14 +136,14 @@ func (s *Service) VerifySignup(ctx context.Context, token string, c Client) (*Ou
 	// The link is claimed with one statement and no connection is held while the tenant is built:
 	// each step below takes its own pooled connection, so holding one open around them would need
 	// two per request. A failure puts the signup back so the link stays usable.
-	su, err := identity.ConsumeSignup(ctx, s.d.Pool, token, s.now())
+	su, err := s.store.ConsumeSignup(ctx, token, s.now())
 	if err != nil {
 		if errors.Is(err, identity.ErrSignupInvalid) {
 			return nil, serviceErr(http.StatusBadRequest, errcode.SignupInvalid, err.Error(), nil)
 		}
 		return nil, err
 	}
-	restore := func() { _ = identity.RestoreSignup(context.WithoutCancel(ctx), s.d.Pool, su) }
+	restore := func() { _ = s.store.RestoreSignup(context.WithoutCancel(ctx), su) }
 	// The blocklist may have grown since the link was sent: check again before creating anything.
 	// The signup goes back, so the link is not consumed.
 	if s.tenantNameBlocked(su.TenantName) {
@@ -188,34 +152,14 @@ func (s *Service) VerifySignup(ctx context.Context, token string, c Client) (*Ou
 			map[string][]string{"tenantName": {"This name is not available."}})
 	}
 	tenantID := uuid.New()
-	registry := tenancy.NewPostgresTenantRegistry(s.d.Pool)
-	// The registry owns its writes, so a failure after the tenant exists must undo it by hand.
-	if err := registry.RegisterShared(ctx, tenantID, su.TenantName, signupTier, "provisioning"); err != nil {
+	// The workspace is made whole or not at all; a failure puts the signup back so the link stays usable.
+	m, err := s.store.CreateWorkspace(ctx, tenantID, su, signupTier)
+	if err != nil {
 		restore()
 		return nil, err
 	}
-	fail := func(cause error) (*Outcome, error) {
-		_, _ = registry.Deprovision(context.WithoutCancel(ctx), tenantID)
-		restore()
-		return nil, cause
-	}
-	m, _, err := identity.AddMember(ctx, s.d.Pool, identity.NewMember{
-		TenantID: tenantID, Email: su.Email, DisplayName: su.DisplayName, PasswordHash: su.PasswordHash,
-	})
-	if err != nil {
-		return fail(err)
-	}
-	if err := rolestore.EnsureBuiltinRoles(ctx, s.d.Pool, tenantID); err != nil {
-		return fail(err)
-	}
-	if err := rolestore.AssignRole(ctx, s.d.Pool, tenantID, m.ID, permission.RoleAdmin, nil); err != nil {
-		return fail(err)
-	}
-	if ok, err := registry.SetStatus(ctx, tenantID, "active"); err != nil || !ok {
-		return fail(errors.Join(err, errors.New("could not activate the tenant")))
-	}
 	// Only now is the link used up: any failure above put it back for a retry.
-	ident, err := identity.FindIdentityByID(ctx, s.d.Pool, m.IdentityID)
+	ident, err := s.store.FindIdentityByID(ctx, m.IdentityID)
 	if err != nil {
 		return nil, err
 	}
