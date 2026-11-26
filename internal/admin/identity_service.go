@@ -72,6 +72,11 @@ func (s *UserAdminService) admin(ctx context.Context) (caller, error) { return s
 // admin authenticates a caller that must hold the admin role (and the admin OAuth2 scope).
 func (d identityDeps) admin(ctx context.Context) (caller, error) { return d.k().Admin(ctx) }
 
+// platformAdmin authenticates a caller that must be a platform_admin of the platform tenant.
+func (d identityDeps) platformAdmin(ctx context.Context) (caller, error) {
+	return d.k().PlatformAdmin(ctx)
+}
+
 // at authenticates a caller and checks that level lets them in.
 func (d identityDeps) at(ctx context.Context, level access.Level) (caller, error) {
 	return d.k().At(ctx, level)

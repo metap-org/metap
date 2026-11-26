@@ -202,6 +202,22 @@ func TenantErr(err error) error {
 	return IdentityErr(err)
 }
 
+// DisplayNameOf is how the caller signs an invitation: their display name, else their email ("" for a
+// subject that is not a person).
+func (d Deps) DisplayNameOf(ctx context.Context, c Caller) string {
+	if c.Self == uuid.Nil {
+		return ""
+	}
+	m, err := identity.GetMember(ctx, d.Cfg.Shared, c.Tenant, c.Self)
+	if err != nil {
+		return ""
+	}
+	if m.DisplayName != "" {
+		return m.DisplayName
+	}
+	return m.Email
+}
+
 // DB is the shared identity database as the statements of pkg/auth/identity take it: each runs on the
 // transaction of the unit of work in its context when there is one on the shared database, else on
 // the pool, so it can sit inside a change without asking the pool for a second connection.

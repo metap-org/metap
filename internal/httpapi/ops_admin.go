@@ -17,6 +17,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/preferences"
 	"github.com/metap-org/metap/internal/admin/settings"
 	"github.com/metap-org/metap/internal/admin/support"
+	"github.com/metap-org/metap/internal/admin/tenants"
 	"github.com/metap-org/metap/internal/admin/trail"
 	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/crud"
@@ -256,7 +257,12 @@ func registerAdminOperations(api huma.API, state *AppState) {
 	registerUserOperations(api, state, admin.NewUserAdminService(cfg))
 	registerRoleOperations(api, state, admin.NewRoleAdminService(cfg))
 	registerAccountOperations(api, state, admin.NewAccountService(cfg))
-	registerTenantOperations(api, state, admin.NewTenantAdminService(cfg))
+	tenantDeps := kernel.Deps{Cfg: cfg}
+	var tenantMailer tenants.Mailer
+	if cfg.Mailer != nil {
+		tenantMailer = cfg.Mailer
+	}
+	registerTenantOperations(api, state, tenants.New(tenants.NewPgStore(tenantDeps), tenantMailer, tenantDeps))
 	registerWorkspaceOperations(api, state, cfg)
 	registerCredentialOperations(api, state, admin.NewCredentialsService(cfg))
 }
@@ -612,39 +618,39 @@ type deletionBody struct {
 	RetentionDays int32 `json:"retentionDays,omitempty"`
 }
 
-func registerTenantOperations(api huma.API, state *AppState, s *admin.TenantAdminService) {
+func registerTenantOperations(api huma.API, state *AppState, s *tenants.Service) {
 	const tag = "Tenants"
-	id := func(v string) *admin.TenantIdRequest { return &admin.TenantIdRequest{Id: v} }
+	id := func(v string) *tenants.TenantIdRequest { return &tenants.TenantIdRequest{Id: v} }
 
 	adminOp(api, state, opOf("listTenants", http.MethodGet, "/platform/tenants", "Every tenant (platform admin)", tag),
-		func(ctx context.Context, in *listTenantsIn) (*admin.ListTenantsResponse, error) {
-			return s.ListTenants(ctx, &admin.ListTenantsRequest{Query: in.Query, Status: in.Status, Tier: in.Tier, Limit: in.Limit, Offset: in.Offset})
+		func(ctx context.Context, in *listTenantsIn) (*tenants.ListTenantsResponse, error) {
+			return s.List(ctx, &tenants.ListTenantsRequest{Query: in.Query, Status: in.Status, Tier: in.Tier, Limit: in.Limit, Offset: in.Offset})
 		})
 	create := opOf("createTenant", http.MethodPost, "/platform/tenants", "Create a tenant with its first admin", tag)
 	create.DefaultStatus = http.StatusCreated
-	adminOp(api, state, create, func(ctx context.Context, in *bodyIn[admin.CreateTenantRequest]) (*admin.CreateTenantResponse, error) {
-		return s.CreateTenant(ctx, &in.Body)
+	adminOp(api, state, create, func(ctx context.Context, in *bodyIn[tenants.CreateTenantRequest]) (*tenants.CreateTenantResponse, error) {
+		return s.Create(ctx, &in.Body)
 	})
 	adminOp(api, state, opOf("getTenant", http.MethodGet, "/platform/tenants/{id}", "One tenant", tag),
-		func(ctx context.Context, in *idPath) (*admin.Tenant, error) { return s.GetTenant(ctx, id(in.ID)) })
+		func(ctx context.Context, in *idPath) (*tenants.Tenant, error) { return s.Get(ctx, id(in.ID)) })
 	adminOp(api, state, opOf("updateTenant", http.MethodPatch, "/platform/tenants/{id}", "Rename a tenant or change its tier", tag),
-		func(ctx context.Context, in *idBodyIn[admin.UpdateTenantRequest]) (*admin.Tenant, error) {
+		func(ctx context.Context, in *idBodyIn[tenants.UpdateTenantRequest]) (*tenants.Tenant, error) {
 			in.Body.Id = in.ID
-			return s.UpdateTenant(ctx, &in.Body)
+			return s.Update(ctx, &in.Body)
 		})
 	adminOp(api, state, opOf("suspendTenant", http.MethodPost, "/platform/tenants/{id}/suspend", "Suspend a tenant", tag),
-		func(ctx context.Context, in *idPath) (*admin.Tenant, error) {
-			return s.SuspendTenant(ctx, id(in.ID))
+		func(ctx context.Context, in *idPath) (*tenants.Tenant, error) {
+			return s.Suspend(ctx, id(in.ID))
 		})
 	adminOp(api, state, opOf("resumeTenant", http.MethodPost, "/platform/tenants/{id}/resume", "Resume a suspended tenant", tag),
-		func(ctx context.Context, in *idPath) (*admin.Tenant, error) { return s.ResumeTenant(ctx, id(in.ID)) })
+		func(ctx context.Context, in *idPath) (*tenants.Tenant, error) { return s.Resume(ctx, id(in.ID)) })
 	adminOp(api, state, opOf("requestTenantDeletion", http.MethodPost, "/platform/tenants/{id}/deletion", "Schedule a tenant's deletion", tag),
-		func(ctx context.Context, in *idBodyIn[deletionBody]) (*admin.Tenant, error) {
-			return s.RequestTenantDeletion(ctx, &admin.RequestTenantDeletionRequest{Id: in.ID, RetentionDays: in.Body.RetentionDays})
+		func(ctx context.Context, in *idBodyIn[deletionBody]) (*tenants.Tenant, error) {
+			return s.RequestDeletion(ctx, &tenants.RequestTenantDeletionRequest{Id: in.ID, RetentionDays: in.Body.RetentionDays})
 		})
 	adminOp(api, state, opOf("cancelTenantDeletion", http.MethodDelete, "/platform/tenants/{id}/deletion", "Cancel a scheduled deletion", tag),
-		func(ctx context.Context, in *idPath) (*admin.Tenant, error) {
-			return s.CancelTenantDeletion(ctx, id(in.ID))
+		func(ctx context.Context, in *idPath) (*tenants.Tenant, error) {
+			return s.CancelDeletion(ctx, id(in.ID))
 		})
 }
 

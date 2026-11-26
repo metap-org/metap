@@ -116,17 +116,7 @@ func (s *UserAdminService) issueInvitation(ctx context.Context, c caller, id uui
 	return resp, nil
 }
 
-// displayNameOf is how the caller signs an invitation: their display name, else their email.
+// displayNameOf is how the caller signs an invitation (kernel.Deps.DisplayNameOf).
 func (d identityDeps) displayNameOf(ctx context.Context, c caller) string {
-	if c.Self == uuid.Nil {
-		return ""
-	}
-	m, err := identity.GetMember(ctx, d.cfg.Shared, c.Tenant, c.Self)
-	if err != nil {
-		return ""
-	}
-	if m.DisplayName != "" {
-		return m.DisplayName
-	}
-	return m.Email
+	return d.k().DisplayNameOf(ctx, c)
 }
