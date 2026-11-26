@@ -5,6 +5,7 @@ package admin
 import (
 	"context"
 	"github.com/metap-org/metap/internal/admin/apikeys"
+	"github.com/metap-org/metap/internal/admin/trail"
 	"net/http"
 	"testing"
 
@@ -66,11 +67,11 @@ func TestSupportAccessLifecycle(t *testing.T) {
 	require.Len(t, list.GetGrants()[0].GetSessions(), 1)
 	assert.Equal(t, "agent@vendor.io", list.GetGrants()[0].GetSessions()[0].GetStartedByEmail())
 	h.drainAudit()
-	trail, err := h.client.Audit.SearchAudit(asAdmin, &SearchAuditRequest{Entity: AuditEntitySupportGrants})
+	found, err := h.client.Trail.Search(asAdmin, &trail.SearchAuditRequest{Entity: AuditEntitySupportGrants})
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(trail.GetEntries()), 2, "grant + session start")
+	assert.GreaterOrEqual(t, len(found.GetEntries()), 2, "grant + session start")
 	h.drainAudit()
-	byVendor, err := h.client.Audit.SearchAudit(asAdmin, &SearchAuditRequest{ActorUserId: vendor.ID.String()})
+	byVendor, err := h.client.Trail.Search(asAdmin, &trail.SearchAuditRequest{ActorUserId: vendor.ID.String()})
 	require.NoError(t, err)
 	assert.NotEmpty(t, byVendor.GetEntries(), "the session start is attributed to the support person")
 

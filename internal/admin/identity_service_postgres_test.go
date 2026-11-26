@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/internal/admin/trail"
 	"github.com/metap-org/metap/internal/authctx"
 	"github.com/metap-org/metap/pkg/permission/policypg"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
@@ -642,7 +643,7 @@ func TestAuditAdminSearchAndVerify(t *testing.T) {
 
 	h.drainAudit()
 
-	res, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{ActorUserId: admin.ID.String()})
+	res, err := h.client.Trail.Search(ctx, &trail.SearchAuditRequest{ActorUserId: admin.ID.String()})
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(res.GetEntries()), 2)
 	for _, e := range res.GetEntries() {
@@ -651,33 +652,33 @@ func TestAuditAdminSearchAndVerify(t *testing.T) {
 		assert.NotEmpty(t, e.GetHash())
 	}
 	h.drainAudit()
-	byObject, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{Entity: AuditEntityUsers, RecordId: bob.ID.String()})
+	byObject, err := h.client.Trail.Search(ctx, &trail.SearchAuditRequest{Entity: AuditEntityUsers, RecordId: bob.ID.String()})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(byObject.GetEntries()), 2)
 	h.drainAudit()
-	none, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{ActorUserId: uuid.NewString()})
+	none, err := h.client.Trail.Search(ctx, &trail.SearchAuditRequest{ActorUserId: uuid.NewString()})
 	require.NoError(t, err)
 	assert.Empty(t, none.GetEntries())
 	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	h.drainAudit()
-	late, err := h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{From: future})
+	late, err := h.client.Trail.Search(ctx, &trail.SearchAuditRequest{From: future})
 	require.NoError(t, err)
 	assert.Empty(t, late.GetEntries())
 	h.drainAudit()
-	_, err = h.client.Audit.SearchAudit(ctx, &SearchAuditRequest{From: "yesterday"})
+	_, err = h.client.Trail.Search(ctx, &trail.SearchAuditRequest{From: "yesterday"})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err))
 
 	h.drainAudit()
 
-	_, err = h.client.Audit.SearchAudit(h.as(tenant, bob.ID), &SearchAuditRequest{})
+	_, err = h.client.Trail.Search(h.as(tenant, bob.ID), &trail.SearchAuditRequest{})
 	assert.Equal(t, http.StatusForbidden, statusOf(err), "admins only")
 	h.drainAudit()
-	_, err = h.client.Audit.VerifyAuditChain(h.as(tenant, bob.ID), &Empty{})
+	_, err = h.client.Trail.Verify(h.as(tenant, bob.ID))
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 
 	h.drainAudit()
 
-	rep, err := h.client.Audit.VerifyAuditChain(ctx, &Empty{})
+	rep, err := h.client.Trail.Verify(ctx)
 	require.NoError(t, err)
 	assert.True(t, rep.GetOk(), "%+v", rep)
 	assert.GreaterOrEqual(t, rep.GetChecked(), int64(2))
@@ -686,7 +687,7 @@ func TestAuditAdminSearchAndVerify(t *testing.T) {
 		`UPDATE metadata.audit_trail_entries SET diff = '{"x":1}' WHERE tenant_id = $1 AND seq = 1`, tenant)
 	require.NoError(t, err)
 	h.drainAudit()
-	rep, err = h.client.Audit.VerifyAuditChain(ctx, &Empty{})
+	rep, err = h.client.Trail.Verify(ctx)
 	require.NoError(t, err)
 	assert.False(t, rep.GetOk())
 	assert.EqualValues(t, 1, rep.GetBrokenSeq())

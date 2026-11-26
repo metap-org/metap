@@ -101,12 +101,7 @@ func (d identityDeps) withTenantTx(ctx context.Context, tenant uuid.UUID, fn fun
 	return d.k().WithTenantTx(ctx, tenant, fn)
 }
 
-func formatTime(t *time.Time) string {
-	if t == nil {
-		return ""
-	}
-	return t.UTC().Format(time.RFC3339Nano)
-}
+func formatTime(t *time.Time) string { return kernel.FormatTime(t) }
 
 // toUsers converts members, attaching their roles and the shared-identity flag.
 func (d identityDeps) toUsers(ctx context.Context, tenant uuid.UUID, ms []identity.Member) ([]*User, error) {
@@ -739,16 +734,7 @@ func (d identityDeps) listAudit(ctx context.Context, c caller, entity string, id
 	return resp, nil
 }
 
-func dedupe(in []string) []string {
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		s = strings.TrimSpace(s)
-		if s != "" && !slices.Contains(out, s) {
-			out = append(out, s)
-		}
-	}
-	return out
-}
+func dedupe(in []string) []string { return kernel.Dedupe(in) }
 
 // --- AccountService ---
 

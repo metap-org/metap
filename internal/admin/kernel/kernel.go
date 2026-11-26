@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -232,4 +234,24 @@ func AuditEntryOf(tenant, actor uuid.UUID, entity string, id uuid.UUID,
 		entry.ActorUserID = &actor
 	}
 	return entry
+}
+
+// Dedupe is in without blanks and repeats, in order.
+func Dedupe(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s != "" && !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// FormatTime is t as the API shows a moment ("" for none).
+func FormatTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"github.com/metap-org/metap/internal/admin/trail"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -138,7 +139,7 @@ func TestSsoAdminConfig(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, cfg.GetConfigured())
 	h.drainAudit()
-	trail, err := h.client.Audit.SearchAudit(asOwner, &SearchAuditRequest{Entity: AuditEntitySSO})
+	trail, err := h.client.Trail.Search(asOwner, &trail.SearchAuditRequest{Entity: AuditEntitySSO})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(trail.GetEntries()), 3, "every change is audited")
 }

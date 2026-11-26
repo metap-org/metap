@@ -14,7 +14,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
-	"github.com/metap-org/metap/internal/admin"
+	"github.com/metap-org/metap/internal/admin/trail"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 )
@@ -35,14 +35,14 @@ func exportAudit(w http.ResponseWriter, r *http.Request, state *AppState) {
 		return
 	}
 	values := r.URL.Query()
-	req := &admin.SearchAuditRequest{ActorUserId: values.Get("actor"), Entity: values.Get("entity"), RecordId: values.Get("record"),
+	req := &trail.SearchAuditRequest{ActorUserId: values.Get("actor"), Entity: values.Get("entity"), RecordId: values.Get("record"),
 		From: values.Get("from"), To: values.Get("to")}
 	for _, a := range strings.Split(values.Get("actions"), ",") {
 		if a = strings.TrimSpace(a); a != "" {
 			req.Actions = append(req.Actions, a)
 		}
 	}
-	q, bad := admin.AuditSearchFromRequest(req)
+	q, bad := trail.SearchFromRequest(req)
 	if bad != "" {
 		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, bad, nil)
 		return
@@ -65,7 +65,7 @@ func exportAudit(w http.ResponseWriter, r *http.Request, state *AppState) {
 		cw := csv.NewWriter(w)
 		_ = cw.Write(auditExportCSVHeader)
 		emit = func(row audit.Row) {
-			e := admin.ToPBAuditEntry(row)
+			e := trail.View(row)
 			seq := ""
 			if row.Seq != nil {
 				seq = strconv.FormatInt(*row.Seq, 10)

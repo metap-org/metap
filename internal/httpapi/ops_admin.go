@@ -15,6 +15,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
 	"github.com/metap-org/metap/internal/admin/preferences"
+	"github.com/metap-org/metap/internal/admin/trail"
 	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
@@ -661,20 +662,20 @@ type tenantIDBody struct {
 // registerWorkspaceOperations: the tenant's own security surface (audit search, support access,
 // ownership, SSO) — roadmap 115 M8-M11.
 func registerWorkspaceOperations(api huma.API, state *AppState, cfg admin.IdentityConfig) {
-	audit := admin.NewAuditAdminService(cfg)
+	trailSvc := trail.New(cfg.Audit)
 	support := admin.NewSupportAccessService(cfg)
 	owner := admin.NewOwnerService(cfg)
 	sso := admin.NewSsoAdminService(cfg)
 	empty := &admin.Empty{}
 
 	adminOp(api, state, opOf("searchAudit", http.MethodGet, "/admin/audit", "Search the tenant's audit trail", "Audit"),
-		func(ctx context.Context, in *searchAuditIn) (*admin.SearchAuditResponse, error) {
-			return audit.SearchAudit(ctx, &admin.SearchAuditRequest{ActorUserId: in.Actor, Entity: in.Entity, RecordId: in.Record,
+		func(ctx context.Context, in *searchAuditIn) (*trail.SearchAuditResponse, error) {
+			return trailSvc.Search(ctx, &trail.SearchAuditRequest{ActorUserId: in.Actor, Entity: in.Entity, RecordId: in.Record,
 				Actions: in.Actions, From: in.From, To: in.To, Cursor: in.Cursor, Limit: in.Limit})
 		})
 	adminOp(api, state, opOf("verifyAuditChain", http.MethodPost, "/admin/audit/verify", "Check the audit trail's hash chain", "Audit"),
-		func(ctx context.Context, _ *struct{}) (*admin.AuditChainReport, error) {
-			return audit.VerifyAuditChain(ctx, empty)
+		func(ctx context.Context, _ *struct{}) (*trail.AuditChainReport, error) {
+			return trailSvc.Verify(ctx)
 		})
 
 	adminOp(api, state, opOf("listSupportGrants", http.MethodGet, "/admin/support-grants", "Support access the tenant granted", "Support"),
