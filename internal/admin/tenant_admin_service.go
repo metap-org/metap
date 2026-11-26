@@ -5,6 +5,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"log/slog"
 	"net/http"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/auth/mail"
@@ -49,7 +49,7 @@ func (s *TenantAdminService) platformAdmin(ctx context.Context) (caller, error) 
 }
 
 func (d identityDeps) platformAdmin(ctx context.Context) (caller, error) {
-	return d.at(ctx, access.PlatformAdmin)
+	return d.k().PlatformAdmin(ctx)
 }
 
 func hasRole(rc *permission.RequestContext, role string) bool {
@@ -61,15 +61,7 @@ func hasRole(rc *permission.RequestContext, role string) bool {
 	return false
 }
 
-func tenantErr(ctx context.Context, err error) error {
-	switch {
-	case errors.Is(err, tenancy.ErrTenantNotFound):
-		return svcErr(ctx, http.StatusNotFound, errcode.NotFound, "Tenant not found.")
-	case errors.Is(err, tenancy.ErrTenantState):
-		return svcErr(ctx, http.StatusConflict, errcode.TenantInvalidState, "The tenant is not in a state that allows this.")
-	}
-	return identityErr(ctx, err)
-}
+func tenantErr(_ context.Context, err error) error { return kernel.TenantErr(err) }
 
 func (s *TenantAdminService) toTenant(ctx context.Context, d tenancy.TenantDetail) (*Tenant, error) {
 	var members int32

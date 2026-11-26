@@ -15,6 +15,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
 	"github.com/metap-org/metap/internal/admin/preferences"
+	"github.com/metap-org/metap/internal/admin/support"
 	"github.com/metap-org/metap/internal/admin/trail"
 	"github.com/metap-org/metap/pkg/action"
 	"github.com/metap-org/metap/pkg/crud"
@@ -203,7 +204,7 @@ func gateAccess(state *AppState, level access.Level) func(huma.Context, func(hum
 			return
 		}
 		if level == access.Durable && state.Identity != nil {
-			why, err := admin.SupportSessionRefusal(ctx.Context(), *state.Identity, rc)
+			why, err := kernel.SupportSessionRefusal(ctx.Context(), *state.Identity, rc)
 			if err != nil {
 				writeInternalError(w, err)
 				return
@@ -663,7 +664,7 @@ type tenantIDBody struct {
 // ownership, SSO) — roadmap 115 M8-M11.
 func registerWorkspaceOperations(api huma.API, state *AppState, cfg admin.IdentityConfig) {
 	trailSvc := trail.New(cfg.Audit)
-	support := admin.NewSupportAccessService(cfg)
+	supportSvc := support.New(support.NewPgStore(kernel.Deps{Cfg: cfg}), kernel.Deps{Cfg: cfg})
 	owner := admin.NewOwnerService(cfg)
 	sso := admin.NewSsoAdminService(cfg)
 	empty := &admin.Empty{}
@@ -679,21 +680,21 @@ func registerWorkspaceOperations(api huma.API, state *AppState, cfg admin.Identi
 		})
 
 	adminOp(api, state, opOf("listSupportGrants", http.MethodGet, "/admin/support-grants", "Support access the tenant granted", "Support"),
-		func(ctx context.Context, _ *struct{}) (*admin.ListSupportGrantsResponse, error) {
-			return support.ListSupportGrants(ctx, empty)
+		func(ctx context.Context, _ *struct{}) (*support.ListSupportGrantsResponse, error) {
+			return supportSvc.List(ctx)
 		})
 	grant := opOf("grantSupportAccess", http.MethodPost, "/admin/support-grants", "Let platform support in, for a while", "Support")
 	grant.DefaultStatus = http.StatusCreated
-	adminOp(api, state, grant, func(ctx context.Context, in *bodyIn[admin.GrantSupportAccessRequest]) (*admin.SupportGrant, error) {
-		return support.GrantSupportAccess(ctx, &in.Body)
+	adminOp(api, state, grant, func(ctx context.Context, in *bodyIn[support.GrantSupportAccessRequest]) (*support.SupportGrant, error) {
+		return supportSvc.Grant(ctx, &in.Body)
 	})
 	adminOp(api, state, opOf("revokeSupportGrant", http.MethodPost, "/admin/support-grants/{id}/revoke", "End a support grant early", "Support"),
-		func(ctx context.Context, in *idPath) (*admin.SupportGrant, error) {
-			return support.RevokeSupportGrant(ctx, &admin.SupportGrantIdRequest{Id: in.ID})
+		func(ctx context.Context, in *idPath) (*support.SupportGrant, error) {
+			return supportSvc.Revoke(ctx, &support.SupportGrantIdRequest{Id: in.ID})
 		})
 	adminOp(api, state, opOf("startSupportSession", http.MethodPost, "/platform/support-sessions", "Open a support session in a tenant that granted access (platform admin)", "Support"),
-		func(ctx context.Context, in *bodyIn[admin.StartSupportSessionRequest]) (*admin.SupportSessionToken, error) {
-			return support.StartSupportSession(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[support.StartSupportSessionRequest]) (*support.SupportSessionToken, error) {
+			return supportSvc.Start(ctx, &in.Body)
 		})
 
 	adminOp(api, state, opOf("getOwnerStatus", http.MethodGet, "/admin/owner", "Who owns the tenant, and any open recovery", "Owner"),

@@ -246,33 +246,13 @@ func (s *UserAdminService) GetUser(ctx context.Context, req *UserIdRequest) (*Us
 	return u, nil
 }
 
-// knownRoles is what a member may be given: the tenant's role catalog (roadmap 114), whose
-// built-in rows are created on first use. A name outside it is a typo, not a role.
+// knownRoles is what a member may be given (kernel.Deps.KnownRoles).
 func (d identityDeps) knownRoles(ctx context.Context, tenant uuid.UUID) ([]string, error) {
-	var roles []string
-	err := d.withTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
-		if err := rolestore.EnsureBuiltinRoles(ctx, db, tenant); err != nil {
-			return err
-		}
-		var err error
-		roles, err = rolestore.RoleNames(ctx, db, tenant)
-		return err
-	})
-	return roles, err
+	return d.k().KnownRoles(ctx, tenant)
 }
 
 func (d identityDeps) checkRoles(ctx context.Context, tenant uuid.UUID, roles []string) error {
-	known, err := d.knownRoles(ctx, tenant)
-	if err != nil {
-		return rpcError(ctx, err)
-	}
-	for _, r := range roles {
-		if !slices.Contains(known, r) {
-			return sendServiceError(ctx, &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed,
-				Message: "Unknown role " + r + ".", FieldErrors: map[string][]string{"roles": {"unknown role " + r}}})
-		}
-	}
-	return nil
+	return d.k().CheckRoles(ctx, tenant, roles)
 }
 
 func (s *UserAdminService) CreateUser(ctx context.Context, req *CreateUserRequest) (*CreateUserResponse, error) {

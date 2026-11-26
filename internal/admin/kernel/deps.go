@@ -2,7 +2,9 @@ package kernel
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +16,8 @@ import (
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/auth/mail"
 	"github.com/metap-org/metap/pkg/auth/sso"
+	"github.com/metap-org/metap/pkg/crud"
+	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/permission"
 	"github.com/metap-org/metap/pkg/permission/rolestore"
 	"github.com/metap-org/metap/pkg/tenancy"
@@ -143,6 +147,59 @@ func (d Deps) WithTenantTx(ctx context.Context, tenant uuid.UUID, fn func(db rol
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// PlatformAdmin is the caller, who must be a platform_admin of the platform tenant (and hold the
+// admin OAuth2 scope when the token is scoped).
+func (d Deps) PlatformAdmin(ctx context.Context) (Caller, error) {
+	return At(ctx, access.PlatformAdmin)
+}
+
+// KnownRoles is what a member may be given: the tenant's role catalog (roadmap 114), whose built-in
+// rows are created on first use. A name outside it is a typo, not a role.
+func (d Deps) KnownRoles(ctx context.Context, tenant uuid.UUID) ([]string, error) {
+	var roles []string
+	err := d.WithTenantTx(ctx, tenant, func(db rolestore.DBTX) error {
+		if err := rolestore.EnsureBuiltinRoles(ctx, db, tenant); err != nil {
+			return err
+		}
+		var err error
+		roles, err = rolestore.RoleNames(ctx, db, tenant)
+		return err
+	})
+	return roles, err
+}
+
+// CheckRoles is nil when every role is in the tenant's catalog, else the 400 that names the first
+// that is not.
+func (d Deps) CheckRoles(ctx context.Context, tenant uuid.UUID, roles []string) error {
+	known, err := d.KnownRoles(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	return UnknownRoles(known, roles)
+}
+
+// UnknownRoles is nil when every role is in known, else the 400 naming the first that is not. Pure.
+func UnknownRoles(known, roles []string) error {
+	for _, r := range roles {
+		if !slices.Contains(known, r) {
+			return &crud.ServiceError{Status: http.StatusBadRequest, Code: errcode.ValidationFailed,
+				Message: "Unknown role " + r + ".", FieldErrors: map[string][]string{"roles": {"unknown role " + r}}}
+		}
+	}
+	return nil
+}
+
+// TenantErr maps the tenant registry's errors (and identity's) onto the platform envelope.
+func TenantErr(err error) error {
+	switch {
+	case errors.Is(err, tenancy.ErrTenantNotFound):
+		return Err(http.StatusNotFound, errcode.NotFound, "Tenant not found.")
+	case errors.Is(err, tenancy.ErrTenantState):
+		return Err(http.StatusConflict, errcode.TenantInvalidState, "The tenant is not in a state that allows this.")
+	}
+	return IdentityErr(err)
 }
 
 // DB is the shared identity database as the statements of pkg/auth/identity take it: each runs on the
