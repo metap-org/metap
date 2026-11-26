@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/metap-org/metap/internal/admin/kernel"
+	"github.com/metap-org/metap/internal/admin/owner"
 	"github.com/metap-org/metap/internal/admin/ssoconfig"
 	"github.com/metap-org/metap/pkg/auth/sso"
 )
@@ -22,4 +23,14 @@ func NewSsoService(cfg IdentityConfig) *ssoconfig.Service {
 	var lookup sso.TXTLookup = cfg.TXTLookup
 	return ssoconfig.New(ssoconfig.NewPgStore(deps, lookup), cfg.Router.Secrets(), ssoconfig.NetProvider{Client: cfg.HTTPClient},
 		OwnerLookup(cfg), deps, cfg.PublicURL)
+}
+
+// NewOwnerService is the ownership slice wired to cfg's shared database and mailer.
+func NewOwnerService(cfg IdentityConfig) *owner.Service {
+	deps := kernel.Deps{Cfg: cfg}
+	var notify owner.Notifier
+	if cfg.Mailer != nil {
+		notify = cfg.Mailer
+	}
+	return owner.New(owner.NewPgStore(deps), notify, deps)
 }

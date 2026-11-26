@@ -12,6 +12,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/apikeys"
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
+	"github.com/metap-org/metap/internal/admin/owner"
 	"github.com/metap-org/metap/internal/admin/roles"
 	"github.com/metap-org/metap/internal/admin/ssoconfig"
 	"github.com/metap-org/metap/internal/admin/support"
@@ -46,7 +47,7 @@ type testClient struct {
 	Tenants *tenants.Service
 	Trail   *trail.Service
 	Support *support.Service
-	Owner   *OwnerService
+	Owner   *owner.Service
 	SSO     *ssoconfig.Service
 	Keys    *apikeys.Service
 	Mfa     *mfa.Service

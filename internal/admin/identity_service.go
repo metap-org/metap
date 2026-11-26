@@ -17,6 +17,7 @@ import (
 
 	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/admin/kernel"
+	"github.com/metap-org/metap/internal/admin/owner"
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/crud"
@@ -771,4 +772,14 @@ func (s *AccountService) ListTenantUsers(ctx context.Context, req *ListTenantUse
 			return out, nil
 		}
 	}
+}
+
+// ensureOwner is the tenant's owner, assigning one the first time anything asks (owner.Ensure).
+func (d identityDeps) ensureOwner(ctx context.Context, tenant uuid.UUID) (uuid.UUID, error) {
+	return owner.Ensure(ctx, owner.NewPgStore(d.k()), tenant)
+}
+
+// guardOwner refuses an action on the owner by anyone but the owner.
+func (d identityDeps) guardOwner(ctx context.Context, c caller, target uuid.UUID, what string) error {
+	return owner.Guard(ctx, owner.NewPgStore(d.k()), c, target, what)
 }

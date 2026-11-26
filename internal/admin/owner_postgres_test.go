@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	ownerslice "github.com/metap-org/metap/internal/admin/owner"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -31,7 +32,7 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	asVendor := h.as(tenancy.PlatformTenantID, vendor.ID)
 
 	// The oldest admin is the owner, and the user list says so.
-	st, err := h.client.Owner.GetOwnerStatus(asOther, &Empty{})
+	st, err := h.client.Owner.GetStatus(asOther, &Empty{})
 	require.NoError(t, err)
 	assert.Equal(t, owner.ID.String(), st.GetOwnerMemberId())
 	users, err := h.client.Admin.ListUsers(asOwner, &ListUsersRequest{})
@@ -57,32 +58,32 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Only the owner transfers, and only to an active admin.
-	_, err = h.client.Owner.TransferOwnership(asOther, &TransferOwnershipRequest{MemberId: other.ID.String()})
+	_, err = h.client.Owner.Transfer(asOther, &ownerslice.TransferOwnershipRequest{MemberId: other.ID.String()})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
-	_, err = h.client.Owner.TransferOwnership(asOwner, &TransferOwnershipRequest{MemberId: viewer.ID.String()})
+	_, err = h.client.Owner.Transfer(asOwner, &ownerslice.TransferOwnershipRequest{MemberId: viewer.ID.String()})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err), "not an admin")
 
 	// Recovery: platform admin only, needs a reason, announces and waits.
-	req := &RequestOwnerRecoveryRequest{TenantId: tenant.String(), NewOwnerMemberId: other.ID.String(), Reason: "owner left the company"}
-	_, err = h.client.Owner.RequestOwnerRecovery(asOwner, req)
+	req := &ownerslice.RequestOwnerRecoveryRequest{TenantId: tenant.String(), NewOwnerMemberId: other.ID.String(), Reason: "owner left the company"}
+	_, err = h.client.Owner.RequestRecovery(asOwner, req)
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
-	_, err = h.client.Owner.RequestOwnerRecovery(asVendor, &RequestOwnerRecoveryRequest{TenantId: tenant.String(), NewOwnerMemberId: other.ID.String()})
+	_, err = h.client.Owner.RequestRecovery(asVendor, &ownerslice.RequestOwnerRecoveryRequest{TenantId: tenant.String(), NewOwnerMemberId: other.ID.String()})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err), "a reason is required")
-	rec, err := h.client.Owner.RequestOwnerRecovery(asVendor, req)
+	rec, err := h.client.Owner.RequestRecovery(asVendor, req)
 	require.NoError(t, err)
 	assert.NotEmpty(t, rec.GetEffectiveAt())
-	_, err = h.client.Owner.RequestOwnerRecovery(asVendor, req)
+	_, err = h.client.Owner.RequestRecovery(asVendor, req)
 	assert.Equal(t, http.StatusConflict, statusOf(err), "one recovery at a time")
-	_, err = h.client.Owner.CompleteOwnerRecovery(asVendor, &TenantIdOnlyRequest{TenantId: tenant.String()})
+	_, err = h.client.Owner.CompleteRecovery(asVendor, &ownerslice.TenantIdOnlyRequest{TenantId: tenant.String()})
 	assert.Equal(t, http.StatusConflict, statusOf(err), "cannot complete during the 72-hour wait")
-	st, err = h.client.Owner.GetOwnerStatus(asOwner, &Empty{})
+	st, err = h.client.Owner.GetStatus(asOwner, &Empty{})
 	require.NoError(t, err)
 	assert.NotNil(t, st.GetPendingRecovery(), "the tenant sees the pending recovery")
 
 	// The platform admin sees the same, plus who could take over; nobody else may look.
-	_, err = h.client.Owner.PlatformTenantOwner(asOwner, &TenantIdOnlyRequest{TenantId: tenant.String()})
+	_, err = h.client.Owner.PlatformTenantOwner(asOwner, &ownerslice.TenantIdOnlyRequest{TenantId: tenant.String()})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
-	view, err := h.client.Owner.PlatformTenantOwner(asVendor, &TenantIdOnlyRequest{TenantId: tenant.String()})
+	view, err := h.client.Owner.PlatformTenantOwner(asVendor, &ownerslice.TenantIdOnlyRequest{TenantId: tenant.String()})
 	require.NoError(t, err)
 	assert.Equal(t, owner.ID.String(), view.GetOwner().GetOwnerMemberId())
 	assert.Equal(t, "owner@acme.io", view.GetOwner().GetOwnerEmail())
@@ -95,21 +96,21 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	assert.ElementsMatch(t, []string{"owner@acme.io", "admin2@acme.io"}, emails, "the disabled viewer is not offered")
 
 	// An admin cancels it: nothing changes.
-	st, err = h.client.Owner.CancelOwnerRecovery(asOther, &Empty{})
+	st, err = h.client.Owner.CancelRecovery(asOther, &Empty{})
 	require.NoError(t, err)
 	assert.Nil(t, st.GetPendingRecovery())
 	assert.Equal(t, owner.ID.String(), st.GetOwnerMemberId())
 
 	// A second recovery, left alone, completes after the wait and moves ownership.
-	_, err = h.client.Owner.RequestOwnerRecovery(asVendor, req)
+	_, err = h.client.Owner.RequestRecovery(asVendor, req)
 	require.NoError(t, err)
 	_, err = h.pool.Exec(context.Background(),
 		`UPDATE metadata.owner_recoveries SET effective_at = now() - interval '1 minute' WHERE tenant_id = $1 AND completed_at IS NULL AND cancelled_at IS NULL`, tenant)
 	require.NoError(t, err)
-	done, err := h.client.Owner.CompleteOwnerRecovery(asVendor, &TenantIdOnlyRequest{TenantId: tenant.String()})
+	done, err := h.client.Owner.CompleteRecovery(asVendor, &ownerslice.TenantIdOnlyRequest{TenantId: tenant.String()})
 	require.NoError(t, err)
 	assert.NotEmpty(t, done.GetCompletedAt())
-	st, err = h.client.Owner.GetOwnerStatus(asOther, &Empty{})
+	st, err = h.client.Owner.GetStatus(asOther, &Empty{})
 	require.NoError(t, err)
 	assert.Equal(t, other.ID.String(), st.GetOwnerMemberId())
 	// The old owner is now an ordinary admin, and the new owner is protected from them.
@@ -117,7 +118,7 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 
 	// The new owner can hand it back.
-	back, err := h.client.Owner.TransferOwnership(asOther, &TransferOwnershipRequest{MemberId: owner.ID.String()})
+	back, err := h.client.Owner.Transfer(asOther, &ownerslice.TransferOwnershipRequest{MemberId: owner.ID.String()})
 	require.NoError(t, err)
 	assert.Equal(t, owner.ID.String(), back.GetOwnerMemberId())
 }
@@ -135,16 +136,16 @@ func TestOwnerDeletesTheWorkspaceAndTheLinkCancelsIt(t *testing.T) {
 	ctx := context.Background()
 
 	// Not the owner; wrong name.
-	_, err := h.client.Owner.RequestWorkspaceDeletion(asOther, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd"})
+	_, err := h.client.Owner.RequestWorkspaceDeletion(asOther, &ownerslice.RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd"})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
-	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "acme"})
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &ownerslice.RequestWorkspaceDeletionRequest{ConfirmName: "acme"})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err))
 
 	// The name alone is not enough: the owner's password is asked for again, and a wrong one counts
 	// toward the sign-in lockout (audit 07 #5).
-	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd"})
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &ownerslice.RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd"})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err), "no password")
-	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "not-it"})
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &ownerslice.RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "not-it"})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err), "wrong password")
 
 	// With a second factor set up, a code is asked for too.
@@ -154,14 +155,14 @@ func TestOwnerDeletesTheWorkspaceAndTheLinkCancelsIt(t *testing.T) {
 	require.NoError(t, err)
 	_, err = identity.ConfirmMFAEnrollment(ctx, h.pool, owner.IdentityID, code, time.Now())
 	require.NoError(t, err)
-	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1"})
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &ownerslice.RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1"})
 	assert.Equal(t, http.StatusBadRequest, statusOf(err), "no second-factor code")
-	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1", MfaCode: "000000"})
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &ownerslice.RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1", MfaCode: "000000"})
 	assert.Equal(t, http.StatusUnauthorized, statusOf(err), "wrong second-factor code")
 	// A TOTP step is single use, so the next valid code is a later one.
 	code, err = identity.TOTPAt(secret, time.Now().Add(30*time.Second))
 	require.NoError(t, err)
-	out, err := h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1", MfaCode: code})
+	out, err := h.client.Owner.RequestWorkspaceDeletion(asOwner, &ownerslice.RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1", MfaCode: code})
 	require.NoError(t, err)
 	assert.NotEmpty(t, out.EffectiveAt)
 	assert.Empty(t, out.CancelLink, "the link is in the emails when mail works")
@@ -173,7 +174,7 @@ func TestOwnerDeletesTheWorkspaceAndTheLinkCancelsIt(t *testing.T) {
 	token := cancelTokenFrom(t, h.mail.last(t, "owner@acme.io"))
 	assert.Equal(t, token, cancelTokenFrom(t, h.mail.last(t, "admin2@acme.io")))
 
-	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1"})
+	_, err = h.client.Owner.RequestWorkspaceDeletion(asOwner, &ownerslice.RequestWorkspaceDeletionRequest{ConfirmName: "Acme Ltd", Password: "password-1"})
 	assert.Error(t, err, "already scheduled")
 
 	// The link reopens the workspace once; a second use, or a wrong token, does nothing.

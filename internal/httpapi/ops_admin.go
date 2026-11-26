@@ -15,6 +15,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/credentials"
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
+	adminowner "github.com/metap-org/metap/internal/admin/owner"
 	"github.com/metap-org/metap/internal/admin/policies"
 	"github.com/metap-org/metap/internal/admin/preferences"
 	"github.com/metap-org/metap/internal/admin/roles"
@@ -713,32 +714,32 @@ func registerWorkspaceOperations(api huma.API, state *AppState, cfg admin.Identi
 		})
 
 	adminOp(api, state, opOf("getOwnerStatus", http.MethodGet, "/admin/owner", "Who owns the tenant, and any open recovery", "Owner"),
-		func(ctx context.Context, _ *struct{}) (*admin.OwnerStatus, error) {
-			return owner.GetOwnerStatus(ctx, empty)
+		func(ctx context.Context, _ *struct{}) (*adminowner.OwnerStatus, error) {
+			return owner.GetStatus(ctx, empty)
 		})
 	adminOp(api, state, opOf("transferOwnership", http.MethodPost, "/admin/owner/transfer", "Hand ownership to another member", "Owner"),
-		func(ctx context.Context, in *bodyIn[admin.TransferOwnershipRequest]) (*admin.OwnerStatus, error) {
-			return owner.TransferOwnership(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[adminowner.TransferOwnershipRequest]) (*adminowner.OwnerStatus, error) {
+			return owner.Transfer(ctx, &in.Body)
 		})
 	adminOp(api, state, opOf("requestWorkspaceDeletion", http.MethodPost, "/admin/workspace/deletion", "Delete the workspace after the retention period (the owner)", "Owner"),
-		func(ctx context.Context, in *bodyIn[admin.RequestWorkspaceDeletionRequest]) (*admin.WorkspaceDeletion, error) {
+		func(ctx context.Context, in *bodyIn[adminowner.RequestWorkspaceDeletionRequest]) (*adminowner.WorkspaceDeletion, error) {
 			return owner.RequestWorkspaceDeletion(ctx, &in.Body)
 		})
 	adminOp(api, state, opOf("cancelOwnerRecovery", http.MethodPost, "/admin/owner/recovery/cancel", "Stop an owner recovery (the owner)", "Owner"),
-		func(ctx context.Context, _ *struct{}) (*admin.OwnerStatus, error) {
-			return owner.CancelOwnerRecovery(ctx, empty)
+		func(ctx context.Context, _ *struct{}) (*adminowner.OwnerStatus, error) {
+			return owner.CancelRecovery(ctx, empty)
 		})
 	adminOp(api, state, opOf("getTenantOwner", http.MethodGet, "/platform/tenants/{id}/owner", "A tenant's owner, any open recovery and who could take over (platform admin)", "Owner"),
-		func(ctx context.Context, in *idPath) (*admin.TenantOwnerView, error) {
-			return owner.PlatformTenantOwner(ctx, &admin.TenantIdOnlyRequest{TenantId: in.ID})
+		func(ctx context.Context, in *idPath) (*adminowner.TenantOwnerView, error) {
+			return owner.PlatformTenantOwner(ctx, &adminowner.TenantIdOnlyRequest{TenantId: in.ID})
 		})
 	adminOp(api, state, opOf("requestOwnerRecovery", http.MethodPost, "/platform/owner-recovery", "Start moving ownership of a tenant whose owner is gone (platform admin)", "Owner"),
-		func(ctx context.Context, in *bodyIn[admin.RequestOwnerRecoveryRequest]) (*admin.OwnerRecovery, error) {
-			return owner.RequestOwnerRecovery(ctx, &in.Body)
+		func(ctx context.Context, in *bodyIn[adminowner.RequestOwnerRecoveryRequest]) (*adminowner.OwnerRecovery, error) {
+			return owner.RequestRecovery(ctx, &in.Body)
 		})
 	adminOp(api, state, opOf("completeOwnerRecovery", http.MethodPost, "/platform/owner-recovery/complete", "Finish an owner recovery once its wait is over (platform admin)", "Owner"),
-		func(ctx context.Context, in *bodyIn[tenantIDBody]) (*admin.OwnerRecovery, error) {
-			return owner.CompleteOwnerRecovery(ctx, &admin.TenantIdOnlyRequest{TenantId: in.Body.TenantID})
+		func(ctx context.Context, in *bodyIn[tenantIDBody]) (*adminowner.OwnerRecovery, error) {
+			return owner.CompleteRecovery(ctx, &adminowner.TenantIdOnlyRequest{TenantId: in.Body.TenantID})
 		})
 
 	adminOp(api, state, opOf("getSsoConfig", http.MethodGet, "/admin/sso", "The tenant's single sign-on setup", "SSO"),
