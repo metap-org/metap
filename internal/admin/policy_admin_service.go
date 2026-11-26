@@ -49,7 +49,7 @@ func (s *PolicyAdminService) WithSink(sink action.Sink) *PolicyAdminService {
 // administered record and what to audit; a nil diff writes no entry.
 func (s *PolicyAdminService) change(ctx context.Context, rc *permission.RequestContext, act audit.AuditAction,
 	fn func(ctx context.Context) (uuid.UUID, map[string][2]any, error)) error {
-	c, err := callerOf(rc)
+	c, err := kernel.CallerOf(rc)
 	if err != nil {
 		return err
 	}

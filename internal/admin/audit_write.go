@@ -22,9 +22,5 @@ func writeAdminAudit(ctx context.Context, store audit.Store, tenant, actor uuid.
 	kernel.WriteAudit(ctx, store, tenant, actor, entity, id, action, diff, now)
 }
 
-// namedID is a stable id for something an audit entry is about that has no uuid of its own (a
-// configuration key, the policy set of one entity): the same name always gives the same id, so its
-// history reads as one record's.
-func namedID(kind, name string) uuid.UUID {
-	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(kind+":"+name))
-}
+// namedID is kernel.NamedID.
+func namedID(kind, name string) uuid.UUID { return kernel.NamedID(kind, name) }

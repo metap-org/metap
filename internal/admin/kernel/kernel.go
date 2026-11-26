@@ -255,3 +255,20 @@ func FormatTime(t *time.Time) string {
 	}
 	return t.UTC().Format(time.RFC3339Nano)
 }
+
+// NamedID is a stable id for something an audit entry is about that has no uuid of its own (a
+// configuration key, the policy set of one entity): the same name always gives the same id, so its
+// history reads as one record's.
+func NamedID(kind, name string) uuid.UUID {
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(kind+":"+name))
+}
+
+// CallerOf is the Caller for a request context whose tenant claim is a uuid.
+func CallerOf(rc *permission.RequestContext) (Caller, error) {
+	tenant, err := uuid.Parse(rc.TenantID)
+	if err != nil {
+		return Caller{}, err
+	}
+	self, _ := uuid.Parse(rc.UserID)
+	return Caller{RC: rc, Tenant: tenant, Self: self}, nil
+}

@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -10,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/metap-org/metap/pkg/audit"
-	"github.com/metap-org/metap/pkg/config"
 	"github.com/metap-org/metap/pkg/permission"
 )
 
@@ -53,40 +51,6 @@ func TestAnAdminChangeIsRecordedWithItsActorAndBeforeAfter(t *testing.T) {
 	require.JSONEq(t, `{"before":null,"after":"waf.zones"}`, string(e.Diff["entity"]))
 }
 
-func TestAConfigChangeNeverRecordsTheValueOfASecretKey(t *testing.T) {
-	store := &capturedAudit{}
-	s := &ConfigAdminService{audit: store}
-	tenant := uuid.New()
-	rc := &permission.RequestContext{TenantID: tenant.String(), UserID: uuid.NewString()}
-
-	require.NotNil(t, config.Lookup(config.CronWebhookAuthorization))
-	require.True(t, config.Lookup(config.CronWebhookAuthorization).Secret, "the premise: this key is a credential")
-	require.NoError(t, s.auditConfig(context.Background(), rc, AuditEntityConfig, config.CronWebhookAuthorization, false,
-		func(context.Context) (json.RawMessage, json.RawMessage, error) {
-			return json.RawMessage(`"Bearer old-secret"`), json.RawMessage(`"Bearer new-secret"`), nil
-		}))
-	require.Len(t, store.entries, 1)
-	raw := string(store.entries[0].Diff[config.CronWebhookAuthorization])
-	require.NotContains(t, raw, "old-secret")
-	require.NotContains(t, raw, "new-secret")
-	require.Contains(t, raw, "(secret)", "it says the key changed, not to what")
-}
-
-func TestAConfigChangeRecordsBeforeAndAfterOfAnOrdinaryKey(t *testing.T) {
-	store := &capturedAudit{}
-	s := &ConfigAdminService{audit: store}
-	rc := &permission.RequestContext{TenantID: uuid.NewString(), UserID: uuid.NewString()}
-
-	require.NoError(t, s.auditConfig(context.Background(), rc, AuditEntityPlatformConfig, "auth.passwordMinLength", true,
-		func(context.Context) (json.RawMessage, json.RawMessage, error) {
-			return json.RawMessage(`8`), json.RawMessage(`12`), nil
-		}))
-	require.Len(t, store.entries, 1)
-	require.Equal(t, AuditEntityPlatformConfig, store.entries[0].Entity)
-	require.Equal(t, namedID("config", "auth.passwordMinLength"), store.entries[0].RecordID)
-	require.JSONEq(t, `{"before":8,"after":12}`, string(store.entries[0].Diff["auth.passwordMinLength"]))
-}
-
 func TestBasicGrantsListsOnlyWhatTheMatrixOwns(t *testing.T) {
 	rows := []permission.PolicyRow{
 		{Action: "read", Roles: []string{"viewer"}, HasRoles: true, Subject: "context", Effect: permission.EffectAllow},
@@ -99,11 +63,3 @@ func TestBasicGrantsListsOnlyWhatTheMatrixOwns(t *testing.T) {
 }
 
 var testNow = time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
-
-// Reading a configuration key the registry does not know panics, and the change is refused for
-// exactly that reason: the audit read must not get there first.
-func TestReadingAnUnknownKeyForTheAuditEntryIsEmptyNotAPanic(t *testing.T) {
-	s := &ConfigAdminService{}
-	require.Nil(t, s.platformValue("not.a.real.key"))
-	require.Nil(t, s.tenantValue(context.Background(), uuid.New(), "not.a.real.key"))
-}

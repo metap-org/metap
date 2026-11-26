@@ -4,6 +4,8 @@ package admin
 
 import (
 	"context"
+	"github.com/metap-org/metap/internal/admin/kernel"
+	"github.com/metap-org/metap/internal/admin/settings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -95,13 +97,13 @@ func TestPolicyAndConfigChangesAreAudited(t *testing.T) {
 		require.NoError(t, err)
 		return store.Effective(snap)
 	}
-	cfgSvc := NewConfigAdminService(store, h.cfg.Router, perms, effective, h.cfg.Audit)
+	cfgSvc := settings.New(settings.NewPgStore(store, h.cfg.Router, settings.EffectiveConfigFunc(effective)), perms, kernel.Deps{Cfg: kernel.Config{Audit: h.cfg.Audit}})
 	const key = "auth.passwordMinLength"
-	_, err = cfgSvc.SetTenantConfig(asAdmin, &SetConfigRequest{Key: key, Value: []byte(`12`)})
+	_, err = cfgSvc.SetTenant(asAdmin, &settings.SetConfigRequest{Key: key, Value: []byte(`12`)})
 	require.NoError(t, err)
-	_, err = cfgSvc.ResetTenantConfig(asAdmin, &ConfigKeyRequest{Key: key})
+	_, err = cfgSvc.ResetTenant(asAdmin, &settings.ConfigKeyRequest{Key: key})
 	require.NoError(t, err)
-	changes := trail(AuditEntityConfig)
+	changes := trail(settings.AuditEntityTenant)
 	require.Len(t, changes, 2, "the set and the reset")
 	for _, c := range changes {
 		assert.Equal(t, namedID("config", key), c.RecordID)
@@ -130,7 +132,7 @@ func TestConfigChangesAreAtomicWithTheirAuditEntry(t *testing.T) {
 		require.NoError(t, err)
 		return store.Effective(snap)
 	}
-	svc := NewConfigAdminService(store, h.cfg.Router, perms, effective, h.cfg.Audit).WithSink(h.cfg.Sink)
+	svc := settings.New(settings.NewPgStore(store, h.cfg.Router, settings.EffectiveConfigFunc(effective)), perms, kernel.Deps{Cfg: kernel.Config{Audit: h.cfg.Audit, Sink: h.cfg.Sink}})
 	trail := func(entity string) []audit.Row {
 		h.drainAudit()
 		rows, err := h.cfg.Audit.Search(ctx, tenant, audit.SearchQuery{Entity: entity, Limit: audit.MaxPageSize})
@@ -139,32 +141,32 @@ func TestConfigChangesAreAtomicWithTheirAuditEntry(t *testing.T) {
 	}
 	const key = "auth.passwordMinLength"
 
-	_, err := svc.SetTenantConfig(h.as(tenant, boss.ID), &SetConfigRequest{Key: key, Value: []byte(`12`)})
+	_, err := svc.SetTenant(h.as(tenant, boss.ID), &settings.SetConfigRequest{Key: key, Value: []byte(`12`)})
 	require.NoError(t, err)
-	require.Len(t, trail(AuditEntityConfig), 1)
+	require.Len(t, trail(settings.AuditEntityTenant), 1)
 	require.JSONEq(t, `12`, string(effective(ctx, tenant).Get(key)))
 
 	// A refused change writes no entry and changes nothing.
-	_, err = svc.SetTenantConfig(h.as(tenant, boss.ID), &SetConfigRequest{Key: key, Value: []byte(`"not a number"`)})
+	_, err = svc.SetTenant(h.as(tenant, boss.ID), &settings.SetConfigRequest{Key: key, Value: []byte(`"not a number"`)})
 	require.Error(t, err)
-	require.Len(t, trail(AuditEntityConfig), 1)
+	require.Len(t, trail(settings.AuditEntityTenant), 1)
 	require.JSONEq(t, `12`, string(effective(ctx, tenant).Get(key)))
 
-	_, err = svc.ResetTenantConfig(h.as(tenant, boss.ID), &ConfigKeyRequest{Key: key})
+	_, err = svc.ResetTenant(h.as(tenant, boss.ID), &settings.ConfigKeyRequest{Key: key})
 	require.NoError(t, err)
-	require.Len(t, trail(AuditEntityConfig), 2)
+	require.Len(t, trail(settings.AuditEntityTenant), 2)
 	require.NotEqual(t, `12`, string(effective(ctx, tenant).Get(key)), "the override is gone")
 
 	// A platform key: the snapshot moves when the change commits, with its entry.
 	asRoot := h.as(tenancy.PlatformTenantID, platform.ID)
-	_, err = svc.SetPlatformConfig(asRoot, &SetConfigRequest{Key: config.HTTPRateLimitBurst, Value: []byte(`321`)})
+	_, err = svc.SetPlatform(asRoot, &settings.SetConfigRequest{Key: config.HTTPRateLimitBurst, Value: []byte(`321`)})
 	require.NoError(t, err)
 	require.JSONEq(t, `321`, string(store.Current().Get(config.HTTPRateLimitBurst)))
 	h.drainAudit()
-	rows, err := h.cfg.Audit.Search(ctx, tenancy.PlatformTenantID, audit.SearchQuery{Entity: AuditEntityPlatformConfig, Limit: audit.MaxPageSize})
+	rows, err := h.cfg.Audit.Search(ctx, tenancy.PlatformTenantID, audit.SearchQuery{Entity: settings.AuditEntityPlatform, Limit: audit.MaxPageSize})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	_, err = svc.ResetPlatformConfig(asRoot, &ConfigKeyRequest{Key: config.HTTPRateLimitBurst})
+	_, err = svc.ResetPlatform(asRoot, &settings.ConfigKeyRequest{Key: config.HTTPRateLimitBurst})
 	require.NoError(t, err)
 	require.NotEqual(t, `321`, string(store.Current().Get(config.HTTPRateLimitBurst)))
 }

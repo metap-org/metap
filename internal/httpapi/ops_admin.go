@@ -15,6 +15,7 @@ import (
 	"github.com/metap-org/metap/internal/admin/kernel"
 	"github.com/metap-org/metap/internal/admin/mfa"
 	"github.com/metap-org/metap/internal/admin/preferences"
+	"github.com/metap-org/metap/internal/admin/settings"
 	"github.com/metap-org/metap/internal/admin/support"
 	"github.com/metap-org/metap/internal/admin/trail"
 	"github.com/metap-org/metap/pkg/action"
@@ -323,31 +324,32 @@ type configKeyBodyIn struct {
 // caller's own preferences. None needs the identity database.
 func registerConfigOperations(api huma.API, state *AppState) {
 	const tag = "Configuration"
-	s := admin.NewConfigAdminService(state.Config, state.Router, state.Permissions, state.EffectiveConfig, state.Audit).WithSink(action.NewSink(state.Router))
+	cfgDeps := kernel.Deps{Cfg: kernel.Config{Audit: state.Audit, Sink: action.NewSink(state.Router)}}
+	s := settings.New(settings.NewPgStore(state.Config, state.Router, settings.EffectiveConfigFunc(state.EffectiveConfig)), state.Permissions, cfgDeps)
 
 	adminOp(api, state, opOf("listPlatformConfig", http.MethodGet, "/platform/config", "The platform-writable configuration keys", tag),
-		func(ctx context.Context, _ *struct{}) (*admin.PlatformConfigList, error) {
-			return s.ListPlatformConfig(ctx, &admin.Empty{})
+		func(ctx context.Context, _ *struct{}) (*settings.PlatformConfigList, error) {
+			return s.ListPlatform(ctx)
 		})
 	adminOp(api, state, opOf("setPlatformConfig", http.MethodPut, "/platform/config/{key}", "Set a platform-wide value", tag),
-		func(ctx context.Context, in *configKeyBodyIn) (*admin.PlatformConfigResult, error) {
-			return s.SetPlatformConfig(ctx, &admin.SetConfigRequest{Key: in.Key, Value: in.Body.Value})
+		func(ctx context.Context, in *configKeyBodyIn) (*settings.PlatformConfigResult, error) {
+			return s.SetPlatform(ctx, &settings.SetConfigRequest{Key: in.Key, Value: in.Body.Value})
 		})
 	adminOp(api, state, opOf("resetPlatformConfig", http.MethodDelete, "/platform/config/{key}", "Fall back to the declared default", tag),
-		func(ctx context.Context, in *configKeyPath) (*admin.PlatformConfigResult, error) {
-			return s.ResetPlatformConfig(ctx, &admin.ConfigKeyRequest{Key: in.Key})
+		func(ctx context.Context, in *configKeyPath) (*settings.PlatformConfigResult, error) {
+			return s.ResetPlatform(ctx, &settings.ConfigKeyRequest{Key: in.Key})
 		})
 	adminOp(api, state, opOf("listTenantConfig", http.MethodGet, "/admin/config", "The tenant's effective configuration", tag),
-		func(ctx context.Context, _ *struct{}) (*admin.TenantConfigList, error) {
-			return s.ListTenantConfig(ctx, &admin.Empty{})
+		func(ctx context.Context, _ *struct{}) (*settings.TenantConfigList, error) {
+			return s.ListTenant(ctx)
 		})
 	adminOp(api, state, opOf("setTenantConfig", http.MethodPut, "/admin/config/{key}", "Set the tenant's own value", tag),
-		func(ctx context.Context, in *configKeyBodyIn) (*admin.TenantConfigResult, error) {
-			return s.SetTenantConfig(ctx, &admin.SetConfigRequest{Key: in.Key, Value: in.Body.Value})
+		func(ctx context.Context, in *configKeyBodyIn) (*settings.TenantConfigResult, error) {
+			return s.SetTenant(ctx, &settings.SetConfigRequest{Key: in.Key, Value: in.Body.Value})
 		})
 	adminOp(api, state, opOf("resetTenantConfig", http.MethodDelete, "/admin/config/{key}", "Clear the tenant's own value", tag),
-		func(ctx context.Context, in *configKeyPath) (*admin.TenantConfigResult, error) {
-			return s.ResetTenantConfig(ctx, &admin.ConfigKeyRequest{Key: in.Key})
+		func(ctx context.Context, in *configKeyPath) (*settings.TenantConfigResult, error) {
+			return s.ResetTenant(ctx, &settings.ConfigKeyRequest{Key: in.Key})
 		})
 
 	prefs := preferences.New(preferences.NewPgStore(kernel.IdentityDB{Pool: state.Pool}), state.Permissions)
