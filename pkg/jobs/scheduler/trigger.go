@@ -71,6 +71,16 @@ func RunTriggerListener(ctx context.Context, connect func() (eventbus.EventBus, 
 		})
 }
 
+// eventIDOf is the id the publisher gave the event (uuid.Nil when it gave none, or not a uuid), which
+// is what lets a redelivery of it be told from a new event.
+func eventIDOf(event *eventbus.ConsumedEvent) uuid.UUID {
+	id, err := uuid.Parse(event.MessageID())
+	if err != nil {
+		return uuid.Nil
+	}
+	return id
+}
+
 func rejectMalformed(event *eventbus.ConsumedEvent, reason string) {
 	slog.Warn("malformed trigger-worthy payload, routed to dead-letter queue", standard.LogRoutingKey, event.RoutingKey, "reason", reason)
 	event.NackLogged(false)
@@ -78,7 +88,7 @@ func rejectMalformed(event *eventbus.ConsumedEvent, reason string) {
 
 func dispatchTransition(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, policy *eventbus.RetryPolicy,
 	event *eventbus.ConsumedEvent, tenantID uuid.UUID, entity, action string, recordID uuid.UUID) {
-	claim, err := cron.DispatchOnTransitionMatches(ctx, pool, tenantID, entity, action, recordID)
+	claim, err := cron.DispatchOnTransitionMatches(ctx, pool, tenantID, entity, action, recordID, eventIDOf(event))
 	finishDispatch(ctx, pool, config, policy, event, claim, err, func() ([]cron.ResumedWorkflowRun, error) {
 		return cron.DispatchOnWaitEventTransitionMatches(ctx, pool, tenantID, entity, action, recordID)
 	}, "on_transition", tenantID, entity, action)
@@ -86,7 +96,7 @@ func dispatchTransition(ctx context.Context, pool *pgxpool.Pool, config *Executo
 
 func dispatchRecordEvent(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, policy *eventbus.RetryPolicy,
 	event *eventbus.ConsumedEvent, tenantID uuid.UUID, entity, recordEvent string, recordID uuid.UUID) {
-	claim, err := cron.DispatchOnRecordEventMatches(ctx, pool, tenantID, entity, recordEvent, recordID)
+	claim, err := cron.DispatchOnRecordEventMatches(ctx, pool, tenantID, entity, recordEvent, recordID, eventIDOf(event))
 	finishDispatch(ctx, pool, config, policy, event, claim, err, func() ([]cron.ResumedWorkflowRun, error) {
 		return cron.DispatchOnWaitEventRecordMatches(ctx, pool, tenantID, entity, recordEvent, recordID)
 	}, "on_record_event", tenantID, entity, recordEvent)

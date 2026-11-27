@@ -96,8 +96,10 @@ func ClaimDueJobs(ctx context.Context, pool *pgxpool.Pool, now time.Time, batchS
 }
 
 // DispatchOnTransitionMatches fires every enabled trigger_type = "on_transition" job whose
-// trigger_config matches (tenantID, entity, action).
-func DispatchOnTransitionMatches(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entity, action string, recordID uuid.UUID) (*ClaimResult, error) {
+// trigger_config matches (tenantID, entity, action). eventID identifies the event that caused it
+// (uuid.Nil: unknown): a job already fired for that event is not fired again, so a redelivery of the
+// event starts nothing twice.
+func DispatchOnTransitionMatches(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entity, action string, recordID, eventID uuid.UUID) (*ClaimResult, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -116,7 +118,7 @@ func DispatchOnTransitionMatches(ctx context.Context, pool *pgxpool.Pool, tenant
 	if err != nil {
 		return nil, err
 	}
-	result, err := fireMatchedJobs(ctx, tx, jobs, "on_transition", entity, action, &recordID)
+	result, err := fireMatchedJobs(ctx, tx, jobs, "on_transition", entity, action, &recordID, eventID)
 	if err != nil {
 		return nil, err
 	}
@@ -127,8 +129,8 @@ func DispatchOnTransitionMatches(ctx context.Context, pool *pgxpool.Pool, tenant
 }
 
 // DispatchOnRecordEventMatches fires every enabled trigger_type = "on_record_event" job whose
-// trigger_config matches (tenantID, entity, event).
-func DispatchOnRecordEventMatches(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entity, event string, recordID uuid.UUID) (*ClaimResult, error) {
+// trigger_config matches (tenantID, entity, event). eventID is as for DispatchOnTransitionMatches.
+func DispatchOnRecordEventMatches(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entity, event string, recordID, eventID uuid.UUID) (*ClaimResult, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -147,7 +149,7 @@ func DispatchOnRecordEventMatches(ctx context.Context, pool *pgxpool.Pool, tenan
 	if err != nil {
 		return nil, err
 	}
-	result, err := fireMatchedJobs(ctx, tx, jobs, "on_record_event", entity, event, &recordID)
+	result, err := fireMatchedJobs(ctx, tx, jobs, "on_record_event", entity, event, &recordID, eventID)
 	if err != nil {
 		return nil, err
 	}
@@ -170,16 +172,34 @@ func collectJobs(rows pgx.Rows) ([]*CronJob, error) {
 	return jobs, rows.Err()
 }
 
-func fireMatchedJobs(ctx context.Context, tx pgx.Tx, jobs []*CronJob, triggerKind, entity, detail string, recordID *uuid.UUID) (*ClaimResult, error) {
-	result := &ClaimResult{Claimed: len(jobs)}
+func fireMatchedJobs(ctx context.Context, tx pgx.Tx, jobs []*CronJob, triggerKind, entity, detail string, recordID *uuid.UUID, eventID uuid.UUID) (*ClaimResult, error) {
+	result := &ClaimResult{}
 	now := time.Now().UTC()
+
+	// uuid.Nil is "no event identity": the run is not tied to one and nothing is deduplicated.
+	var trigger *uuid.UUID
+	if eventID != uuid.Nil {
+		trigger = &eventID
+	}
 
 	for _, job := range jobs {
 		runID := uuid.New()
-		if _, err := tx.Exec(ctx, "INSERT INTO cron_job_runs (id, tenant_id, job_id, status, scheduled_for) VALUES ($1, $2, $3, $4, $5)",
-			runID, job.TenantID, job.ID, string(RunEnqueued), now); err != nil {
+		// One run per (job, event): a redelivery of the event meets the unique index, inserts nothing
+		// and so starts nothing. A Direct job whose first delivery died before running it is therefore
+		// not run by the second: Direct is fire-and-forget by definition (DispatchDirect), unlike Outbox,
+		// whose cron.job.due event was written in this same transaction and is not lost.
+		tag, err := tx.Exec(ctx, `INSERT INTO cron_job_runs (id, tenant_id, job_id, status, scheduled_for, trigger_event_id)
+			VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (job_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL DO NOTHING`,
+			runID, job.TenantID, job.ID, string(RunEnqueued), now, trigger)
+		if err != nil {
 			return nil, err
 		}
+		if tag.RowsAffected() == 0 {
+			slog.Info("cron job already fired for this event, skipping (redelivered event)", standard.LogJobID, job.ID,
+				"entity", entity, standard.LogTriggerKind, triggerKind, "detail", detail, "event_id", eventID)
+			continue
+		}
+		result.Claimed++
 		if _, err := tx.Exec(ctx, "UPDATE cron_jobs SET last_run_at = $1, updated_at = now() WHERE id = $2", now, job.ID); err != nil {
 			return nil, err
 		}

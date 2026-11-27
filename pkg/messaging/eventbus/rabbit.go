@@ -47,6 +47,7 @@ func RabbitMQConnector(url string) func() (EventBus, error) {
 func (b *RabbitEventBus) Publish(ctx context.Context, topic string, payload json.RawMessage) error {
 	err := b.channel.PublishWithContext(ctx, exchange, topic, false, false, amqp.Publishing{
 		ContentType:  standard.MediaTypeJSON,
+		MessageId:    messageIDFrom(ctx),
 		DeliveryMode: amqp.Persistent,
 		Body:         payload,
 	})

@@ -232,11 +232,11 @@ func TestDispatchOnTransitionMatchesFiresMatchingJobsOnly(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = DeleteJob(ctx, pool, tenant, job.ID) })
 
-	result, err := DispatchOnTransitionMatches(ctx, pool, tenant, "crm.customers", "approve", uuid.New())
+	result, err := DispatchOnTransitionMatches(ctx, pool, tenant, "crm.customers", "approve", uuid.New(), uuid.Nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Claimed, "expected 1 match, got %d", result.Claimed)
 
-	noMatch, err := DispatchOnTransitionMatches(ctx, pool, tenant, "crm.customers", "reject", uuid.New())
+	noMatch, err := DispatchOnTransitionMatches(ctx, pool, tenant, "crm.customers", "reject", uuid.New(), uuid.Nil)
 	require.NoError(t, err)
 	require.Equal(t, 0, noMatch.Claimed, "expected 0 matches for a different action, got %d", noMatch.Claimed)
 }
@@ -327,4 +327,41 @@ func TestWorkflowRunPauseAndResumeOnTransition(t *testing.T) {
 	afterResume, err := GetWorkflowRunByCronJobRun(ctx, pool, tenant, runID)
 	require.NoError(t, err)
 	require.EqualValues(t, string(WorkflowRunning), afterResume.Status, "expected running after resume, got %s", afterResume.Status)
+}
+
+// A trigger fires once per event: the broker delivers at least once, so the same event can arrive
+// again (a worker that died before acking, an outbox batch republished) and must start nothing new.
+func TestARedeliveredEventDoesNotFireTheJobAgain(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	tenant := uuid.New()
+	job, err := CreateJob(ctx, pool, tenant, NewCronJob{
+		Name: "on transition", TriggerType: string(TriggerOnTransition),
+		TriggerConfig: []byte(`{"entity":"crm.customers","action":"approve"}`),
+		Timezone:      "UTC", TargetType: string(TargetWebhook), TargetConfig: []byte(`{"url":"https://example.com"}`),
+		DispatchMode: string(DispatchOutbox), MaxAttempts: 1, RetryBackoffSeconds: 30, Enabled: true,
+	}, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = DeleteJob(ctx, pool, tenant, job.ID) })
+
+	record, event := uuid.New(), uuid.New()
+	first, err := DispatchOnTransitionMatches(ctx, pool, tenant, "crm.customers", "approve", record, event)
+	require.NoError(t, err)
+	require.Equal(t, 1, first.Claimed)
+
+	again, err := DispatchOnTransitionMatches(ctx, pool, tenant, "crm.customers", "approve", record, event)
+	require.NoError(t, err)
+	require.Equal(t, 0, again.Claimed, "the same event again starts nothing")
+
+	other, err := DispatchOnTransitionMatches(ctx, pool, tenant, "crm.customers", "approve", record, uuid.New())
+	require.NoError(t, err)
+	require.Equal(t, 1, other.Claimed, "a different event for the same record is a new firing")
+
+	unknown, err := DispatchOnTransitionMatches(ctx, pool, tenant, "crm.customers", "approve", record, uuid.Nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, unknown.Claimed, "an event with no identity cannot be deduplicated")
+
+	runs, err := ListJobRuns(ctx, pool, tenant, job.ID, 10)
+	require.NoError(t, err)
+	require.Len(t, runs, 3)
 }

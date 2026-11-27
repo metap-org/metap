@@ -122,7 +122,7 @@ func publishPending(ctx context.Context, pool *pgxpool.Pool, bus eventbus.EventB
 
 	allPublished := true
 	for _, row := range batch {
-		if pubErr := bus.Publish(ctx, row.topic, row.payload); pubErr == nil {
+		if pubErr := bus.Publish(eventbus.WithMessageID(ctx, row.id.String()), row.topic, row.payload); pubErr == nil {
 			if err := markPublished(ctx, tx, row.id); err != nil {
 				return false, err
 			}
