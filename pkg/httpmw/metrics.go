@@ -22,6 +22,9 @@ type MetricsRegistry struct {
 	inFlight      prometheus.Gauge
 }
 
+// UnmatchedRoute is the route label of a request that matched no route (404, 405).
+const UnmatchedRoute = "unmatched"
+
 // NewMetricsRegistry builds a registry with the process/Go runtime collectors plus this
 // package's own per-route HTTP metrics already registered.
 func NewMetricsRegistry() *MetricsRegistry {
@@ -48,8 +51,8 @@ func NewMetricsRegistry() *MetricsRegistry {
 // Middleware records request count/duration per (method, matched route pattern, status) plus a
 // single in-flight gauge. Must sit inside the router (router.Router.Use) — reads
 // router.Pattern(r) back off the request once next.ServeHTTP returns, the pattern the router stored
-// in a holder shared by every copy of the request. Falls back to the raw path (never empty, unlike a pattern on a 404) when
-// nothing matched.
+// in a holder shared by every copy of the request. Falls back to UnmatchedRoute (never empty,
+// never the raw path) when nothing matched.
 func (m *MetricsRegistry) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -60,7 +63,9 @@ func (m *MetricsRegistry) Middleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(sw, r)
 
-		route := r.URL.Path
+		// A request no route matched is labelled with one fixed value: the raw path is attacker
+		// chosen, and /metrics is public, so a path label would let anyone mint series without bound.
+		route := UnmatchedRoute
 		if pattern := router.Pattern(r); pattern != "" {
 			route = pattern
 		}
