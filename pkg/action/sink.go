@@ -55,8 +55,12 @@ func (s dbSink) Atomic(ctx context.Context, tenantID uuid.UUID, work func(ctx co
 	if err != nil {
 		return err
 	}
+	// Deferred, not only on error: a work that panics (the HTTP layer recovers it and carries on) would
+	// otherwise leave the transaction open, its connection out of the pool and its locks held. Rollback
+	// is a no-op after Commit; it runs without the request's cancellation so a dropped client still
+	// gets its transaction ended.
+	defer unit.Rollback(context.WithoutCancel(ctx))
 	if err := work(uctx, dbWriter{ctx: uctx, unit: unit}); err != nil {
-		unit.Rollback(ctx)
 		return err
 	}
 	return unit.Commit(ctx)
@@ -68,8 +72,12 @@ func (s dbSink) AtomicShared(ctx context.Context, work func(ctx context.Context,
 	if err != nil {
 		return err
 	}
+	// Deferred, not only on error: a work that panics (the HTTP layer recovers it and carries on) would
+	// otherwise leave the transaction open, its connection out of the pool and its locks held. Rollback
+	// is a no-op after Commit; it runs without the request's cancellation so a dropped client still
+	// gets its transaction ended.
+	defer unit.Rollback(context.WithoutCancel(ctx))
 	if err := work(uctx, dbWriter{ctx: uctx, unit: unit}); err != nil {
-		unit.Rollback(ctx)
 		return err
 	}
 	return unit.Commit(ctx)
