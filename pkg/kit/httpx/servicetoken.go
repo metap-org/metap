@@ -167,3 +167,18 @@ func loginOnce(ctx context.Context, httpClient *http.Client, loginURL, email, pa
 	}
 	return loginOutcome{kind: outcomeOK, token: envelope.Data.Token}
 }
+
+// CallerToken is the bearer token a call to a sibling service carries: the caller's own (forwarded
+// is the token the request arrived with, so the sibling enforces that person's permissions), else the
+// process's service account's (fallback, which may be nil: then none). It is what recordclient uses and
+// what any other call to another service, not shaped like a record call, should use instead of copying
+// the rule. Never mint a token on a caller's behalf.
+func CallerToken(forwarded string, fallback *ServiceTokenSource) string {
+	if forwarded != "" {
+		return forwarded
+	}
+	if fallback == nil {
+		return ""
+	}
+	return fallback.Current()
+}

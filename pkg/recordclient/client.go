@@ -49,15 +49,15 @@ func New(baseURL string, serviceToken *httpx.ServiceTokenSource) *Client {
 }
 
 func (c *Client) token(rc *permission.RequestContext) string {
-	if rc != nil && rc.ForwardedBearerToken != "" {
-		return rc.ForwardedBearerToken
-	}
+	forwarded := ""
 	tenant := ""
 	if rc != nil {
-		tenant = rc.TenantID
+		forwarded, tenant = rc.ForwardedBearerToken, rc.TenantID
 	}
-	slog.Debug("no forwarded bearer token, falling back to service account token", standard.LogTenantID, tenant)
-	return c.serviceToken.Current()
+	if forwarded == "" {
+		slog.Debug("no forwarded bearer token, falling back to service account token", standard.LogTenantID, tenant)
+	}
+	return httpx.CallerToken(forwarded, c.serviceToken)
 }
 
 type errorEnvelope struct {

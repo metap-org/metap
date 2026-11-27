@@ -66,3 +66,10 @@ func TestServeContextReturnsTheListenErrorImmediately(t *testing.T) {
 func TestDefaultClientAlwaysHasATimeout(t *testing.T) {
 	assert.Equal(t, httpx.DefaultClientTimeout, httpx.DefaultClient().Timeout)
 }
+
+func TestCallerTokenPrefersTheCallersOwn(t *testing.T) {
+	svc := httpx.NewStaticServiceTokenSource("service-token")
+	assert.Equal(t, "caller-token", httpx.CallerToken("caller-token", svc))
+	assert.Equal(t, "service-token", httpx.CallerToken("", svc))
+	assert.Empty(t, httpx.CallerToken("", nil))
+}
