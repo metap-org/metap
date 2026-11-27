@@ -157,7 +157,7 @@ this file above or below is pre-2026-11-07 history: read `go/<pkg>` as `pkg/<pkg
   field is not a bump, renaming/removing is. A service publishes its own domain event with `events.Emit(ctx, tx, events.Event{
   Topic, AggregateType, AggregateID, Payload})` in the business transaction (topic validated: namespaced, no wildcards, not a
   platform lifecycle topic) — never `infra.OutboxEvent` by hand, never RabbitMQ directly. In a consumer use
-  `event.AckLogged()` / `NackLogged(requeue)`, never `_ = event.Ack()`: a failed ack means redelivery, so handlers stay idempotent.
+  `event.AckLogged()` / `NackLogged(requeue)`, never `_ = event.Ack()`: a failed ack means redelivery, so handlers stay idempotent. An event carries a stable identity (the outbox row's id, set as the AMQP `MessageId` by `eventbus.WithMessageID`, kept across retries; `ConsumedEvent.MessageID()`), so a consumer that must not act twice keys on it: `cron_job_runs.trigger_event_id` with a unique `(job_id, trigger_event_id)` index (migration 0060) makes a redelivered event start no second run.
 - **`pkg/graphqlgateway` — removed (2026-11-21, roadmap 116).** It was the generic GraphQL BFF over gRPC upstreams; its
   job is now `pkg/apigateway` (see the REST-only note at the top of this file).
 - **`pkg/bootstrap` — first-run roles, grants and initial accounts (2026-11-14, `docs/roadmap/108-bootstrap-roles-accounts-permissions.md`

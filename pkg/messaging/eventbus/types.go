@@ -37,6 +37,11 @@ type ConsumedEvent struct {
 	queue        string
 }
 
+// MessageID is the identity the publisher gave this event (for an outbox event, the outbox row's id),
+// or "" when it had none. It is the same on every delivery and every republish of the event, so a
+// consumer that must not act twice on one event keys on it.
+func (e *ConsumedEvent) MessageID() string { return e.delivery.MessageId }
+
 func (e *ConsumedEvent) Ack() error {
 	return e.delivery.Ack(false)
 }
@@ -90,6 +95,7 @@ func (e *ConsumedEvent) RetryOrGiveUp(ctx context.Context, policy *RetryPolicy) 
 	}
 	headers[originalRoutingKeyHeader] = e.RoutingKey
 	err := e.retryChannel.PublishWithContext(ctx, "", retryQueue, false, false, amqp.Publishing{
+		MessageId:    e.delivery.MessageId, // the same event, so the same identity
 		DeliveryMode: amqp.Persistent,
 		Headers:      headers,
 		Body:         e.Payload,

@@ -105,3 +105,22 @@ func TestTheSinkWritesAuditEntriesInTheSameTransactionAsTheEvents(t *testing.T) 
 	}))
 	require.Equal(t, 1, countAudit(t, pool, record), "a committed unit has its audit entry")
 }
+
+// A step that panics (a nil dereference in a handler) must not leave its transaction open: the HTTP
+// layer recovers the panic and carries on, but the connection the unit holds would never go back to
+// the pool and its locks would stay.
+func TestAPanickingStepReleasesItsConnection(t *testing.T) {
+	sink, pool := testSink(t)
+	for name, run := range map[string]func(){
+		"tenant": func() {
+			_ = sink.Atomic(context.Background(), uuid.New(), func(context.Context, Writer) error { panic("boom") })
+		},
+		"shared": func() {
+			_ = sink.(SharedSink).AtomicShared(context.Background(), func(context.Context, Writer) error { panic("boom") })
+		},
+	} {
+		require.Panics(t, run, name)
+		require.Eventually(t, func() bool { return pool.Stat().AcquiredConns() == 0 }, 2*time.Second, 20*time.Millisecond,
+			"%s: the panicking unit still holds a connection", name)
+	}
+}

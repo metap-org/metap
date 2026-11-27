@@ -175,12 +175,8 @@ func (s *Service) Create(ctx context.Context, req *CreateUserRequest) (*CreateUs
 	}
 	if len(roles) > 0 {
 		if err := s.store.Grant(ctx, c.Tenant, m.ID, roles, invitedBy); err != nil {
-			// Undo the membership so a retry is not refused as "already a member", and say so in the trail:
-			// the entry above was written when the membership was.
-			_ = s.deps.Change(ctx, c, AuditEntity, m.ID, audit.ActionDelete, func(ctx context.Context) (map[string][2]any, error) {
-				return map[string][2]any{"email": {m.Email, nil}, "undone": {nil, "the roles could not be assigned"}},
-					s.store.Remove(ctx, c.Tenant, m.ID, s.deps.Now())
-			})
+			// Undo the membership so a retry is not refused as "already a member".
+			s.undoMember(ctx, c, m, "the roles could not be assigned")
 			return nil, err
 		}
 	}
@@ -381,10 +377,14 @@ func (s *Service) ResetMfa(ctx context.Context, req *UserIdRequest) (*kernel.Emp
 	if shared[m.IdentityID] {
 		return nil, sharedPerson("two-factor settings")
 	}
-	if err := s.store.DisableMFA(ctx, m.IdentityID); err != nil {
+	// Taking away someone's second factor is the change an audit trail exists for: the entry and the
+	// reset are one transaction, never a reset whose entry was lost.
+	err = s.deps.Change(ctx, c, AuditEntity, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+		return map[string][2]any{"mfa": {"on", "reset"}}, s.store.DisableMFA(ctx, m.IdentityID)
+	})
+	if err != nil {
 		return nil, kernel.IdentityErr(err)
 	}
-	s.deps.RecordFor(ctx, c, AuditEntity, id, audit.ActionUpdate, map[string][2]any{"mfa": {"on", "reset"}})
 	return &kernel.Empty{}, nil
 }
 
@@ -522,29 +522,49 @@ func (s *Service) Invite(ctx context.Context, req *InviteUserRequest) (*InviteUs
 		return nil, err
 	}
 	invitedBy := c.SelfPtr()
-	m, _, err := s.store.Add(ctx, identity.NewMember{
-		TenantID: c.Tenant, Email: req.GetEmail(), DisplayName: req.GetDisplayName(), InvitedBy: invitedBy,
-		Status: identity.StatusInvited,
+	var m *identity.Member
+	// The membership and its entry are one change. The roles (the tenant's own database) and the link
+	// come after it; if either fails the member is undone, and the trail says so.
+	err = s.deps.ChangeNew(ctx, c, AuditEntity, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+		var err error
+		if m, _, err = s.store.Add(ctx, identity.NewMember{
+			TenantID: c.Tenant, Email: req.GetEmail(), DisplayName: req.GetDisplayName(), InvitedBy: invitedBy,
+			Status: identity.StatusInvited,
+		}); err != nil {
+			return uuid.Nil, nil, kernel.IdentityErr(err)
+		}
+		return m.ID, map[string][2]any{
+			"email": {nil, m.Email}, "displayName": {nil, m.DisplayName}, "roles": {nil, roles},
+			"status": {nil, identity.StatusInvited},
+		}, nil
 	})
 	if err != nil {
-		return nil, kernel.IdentityErr(err)
+		return nil, err
 	}
 	if len(roles) > 0 {
 		if err := s.store.Grant(ctx, c.Tenant, m.ID, roles, invitedBy); err != nil {
-			_ = s.store.Remove(ctx, c.Tenant, m.ID, s.deps.Now())
+			s.undoMember(ctx, c, m, "the roles could not be assigned")
 			return nil, err
 		}
 	}
 	resp, err := s.issueInvitation(ctx, c, m.ID)
 	if err != nil {
-		_ = s.store.Remove(ctx, c.Tenant, m.ID, s.deps.Now())
+		s.undoMember(ctx, c, m, "the invitation could not be issued")
 		return nil, err
 	}
-	s.deps.RecordFor(ctx, c, AuditEntity, m.ID, audit.ActionCreate, map[string][2]any{
-		"email": {nil, m.Email}, "displayName": {nil, m.DisplayName}, "roles": {nil, roles},
-		"status": {nil, identity.StatusInvited},
-	})
 	return resp, nil
+}
+
+// undoMember removes a member this request just added, in the trail too (the entry of its creation
+// stays, as it was written when the membership was). A failed undo is logged: nothing else can act on it.
+func (s *Service) undoMember(ctx context.Context, c kernel.Caller, m *identity.Member, why string) {
+	err := s.deps.Change(ctx, c, AuditEntity, m.ID, audit.ActionDelete, func(ctx context.Context) (map[string][2]any, error) {
+		return map[string][2]any{"email": {m.Email, nil}, "displayName": {m.DisplayName, nil}, "undone": {nil, why}},
+			s.store.Remove(ctx, c.Tenant, m.ID, s.deps.Now())
+	})
+	if err != nil {
+		slog.Error("could not undo a member this request added", "member_id", m.ID, standard.LogError, err)
+	}
 }
 
 func (s *Service) ResendInvitation(ctx context.Context, req *UserIdRequest) (*InviteUserResponse, error) {
@@ -612,19 +632,25 @@ func (s *Service) CreateServiceAccount(ctx context.Context, req *CreateServiceAc
 		return nil, err
 	}
 	createdBy := c.SelfPtr()
-	m, err := s.store.CreateServiceAccount(ctx, c.Tenant, req.GetName(), createdBy)
+	var m *identity.Member
+	// The account and its entry are one change; the roles live in the tenant's own database, so they
+	// are granted after it and the account is undone, in the trail too, if that fails.
+	err = s.deps.ChangeNew(ctx, c, AuditEntity, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
+		var err error
+		if m, err = s.store.CreateServiceAccount(ctx, c.Tenant, req.GetName(), createdBy); err != nil {
+			return uuid.Nil, nil, fail(http.StatusBadRequest, errcode.ValidationFailed, err.Error())
+		}
+		return m.ID, map[string][2]any{"serviceAccount": {nil, m.DisplayName}, "roles": {nil, roles}}, nil
+	})
 	if err != nil {
-		return nil, fail(http.StatusBadRequest, errcode.ValidationFailed, err.Error())
+		return nil, err
 	}
 	if len(roles) > 0 {
 		if err := s.store.Grant(ctx, c.Tenant, m.ID, roles, createdBy); err != nil {
-			_ = s.store.Remove(ctx, c.Tenant, m.ID, s.deps.Now())
+			s.undoMember(ctx, c, m, "the roles could not be assigned")
 			return nil, err
 		}
 	}
-	s.deps.RecordFor(ctx, c, AuditEntity, m.ID, audit.ActionCreate, map[string][2]any{
-		"serviceAccount": {nil, m.DisplayName}, "roles": {nil, roles},
-	})
 	return s.userOr(ctx, c.Tenant, m.ID)
 }
 
