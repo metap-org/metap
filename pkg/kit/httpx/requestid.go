@@ -54,8 +54,8 @@ func GenerateRequestIDs(next http.Handler) http.Handler {
 	})
 }
 
-// WithRequestIDs makes ids ambient for CurrentRequestIDs — for a transport that is not net/http
-// (the gRPC server) and so never runs GenerateRequestIDs.
+// WithRequestIDs makes ids ambient for CurrentRequestIDs — for work that does not come
+// through net/http and so never runs GenerateRequestIDs.
 func WithRequestIDs(ctx context.Context, ids RequestIDs) context.Context {
 	return context.WithValue(ctx, requestIDsKey{}, ids)
 }

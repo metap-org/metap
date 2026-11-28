@@ -299,8 +299,8 @@ type EntityDefinition struct {
 	UniqueConstraints []EntityUniqueConstraint `json:"uniqueConstraints,omitempty"`
 	Audit             *EntityAuditConfig       `json:"audit,omitempty"`
 	// Actions are named operations beyond CRUD and workflow transitions (verify DNS, run a scan,
-	// ...). Declared once here, they are served over gRPC (ActionService.Invoke) and exposed by the
-	// GraphQL gateway as one mutation each; the handler is registered with crud.ActionRegistry.
+	// ...). Declared once here, they are served over REST (POST /api/{entity}[/{id}]/actions/{action});
+	// the handler is registered with crud.ActionRegistry.
 	Actions []EntityAction `json:"actions,omitempty"`
 	// Scopes say which scopes a record of this entity belongs to, so a role granted only inside a
 	// scope (roadmap 115 M1) reaches exactly those records: {type: "zone", field: "zoneId"} puts a

@@ -1,8 +1,8 @@
 // Package cronroutes is the optional cron job admin endpoints (/admin/cron-jobs*) route group,
 // mounted with httpapi.BuildRouter(state, cors, cronroutes.Mount, ...). It lives outside package
 // httpapi so a service that doesn't serve it doesn't link its dependencies.
-// Admin-gated CRUD over metap's cron job store. Same shape as routes_admin.go: every handler uses
-// requireAdmin, tenant always comes from the token via state.Permissions.ScopedTenant, never from
+// Admin-gated CRUD over metap's cron job store. Every route is in the admin access group, and the
+// tenant always comes from the token via state.Permissions.ScopedTenant, never from
 // the request body/path.
 package cronroutes
 
@@ -208,7 +208,7 @@ func createCronJob(w http.ResponseWriter, r *http.Request, state *httpapi.AppSta
 		cronValidationError(w, msg)
 		return
 	}
-	if missing, bad, err := missingCredential(r.Context(), state.Pool, tenantID, cron.ReferencedCredentials(body.TargetType, body.TargetConfig)); err != nil {
+	if missing, bad, err := cron.MissingCredential(r.Context(), state.Pool, tenantID, cron.ReferencedCredentials(body.TargetType, body.TargetConfig)); err != nil {
 		httpapi.WriteInternalError(w, err)
 		return
 	} else if bad {
@@ -338,7 +338,7 @@ func updateCronJob(w http.ResponseWriter, r *http.Request, state *httpapi.AppSta
 		} else if existing != nil {
 			targetType = existing.TargetType
 		}
-		if missing, bad, err := missingCredential(r.Context(), state.Pool, tenantID, cron.ReferencedCredentials(targetType, body.TargetConfig)); err != nil {
+		if missing, bad, err := cron.MissingCredential(r.Context(), state.Pool, tenantID, cron.ReferencedCredentials(targetType, body.TargetConfig)); err != nil {
 			httpapi.WriteInternalError(w, err)
 			return
 		} else if bad {

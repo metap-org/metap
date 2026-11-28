@@ -22,7 +22,7 @@ type jwksClaims struct {
 }
 
 // MintServiceOrUserJWT: a caller-on-behalf-of-user token (portal login, or forwarded end-user
-// identity for an on-behalf-of-user gRPC call) or a machine-identity token for pure
+// identity for a call to another service on the user's behalf) or a machine-identity token for pure
 // service-to-service calls — this function doesn't distinguish the two, since the claim shape is
 // identical either way.
 func MintServiceOrUserJWT(key *JwksKeyPair, tenantID, userID uuid.UUID, functionID *string, ttlSeconds uint64) (string, error) {

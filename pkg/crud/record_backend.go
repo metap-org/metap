@@ -1,4 +1,4 @@
-// RecordBackend is the seam that lets a GraphQL resolver or any
+// RecordBackend is the seam that lets a route, an action handler or any
 // other generic caller be written once against "however this entity's records actually get read
 // and written," without hardcoding whether that means an in-process CrudService call or a
 // remote call to another, separately-deployed microservice.
@@ -26,8 +26,7 @@ type RecordBackend interface {
 	Delete(ctx context.Context, entity string, id uuid.UUID, expectedVersion int32, rc *permission.RequestContext, reason *string) (RecordDto, error)
 	// Aggregate is the GROUP BY/COUNT/SUM counterpart to List — see CrudService.Aggregate's own
 	// doc comment for the permission/masking rules this must preserve regardless of which
-	// backend actually runs it (in-process CrudService, or a remote GrpcBackend call, a later
-	// wave).
+	// backend actually runs it (in-process CrudService, or a remote service through pkg/recordclient).
 	Aggregate(ctx context.Context, entity string, spec query.AggregateSpec, rc *permission.RequestContext) ([]json.RawMessage, error)
 }
 

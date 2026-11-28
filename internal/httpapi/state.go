@@ -1,6 +1,7 @@
-// Package httpapi is metap-http: the REST entity CRUD router plus minimal session auth.
-// Admin/platform routes (users/policies/cron/dashboards/config/oauth) are deferred to a later wave
-// — this package covers only /health, /auth/*, and /api/{entity}*.
+// Package httpapi is the HTTP transport: sign-in and sessions, the generic entity routes
+// (/api/{entity}*) and declared actions, the typed administrative operations, SCIM, and the router
+// they are registered on. The optional route groups are its subpackages; services reach it through
+// pkg/web and pkg/app.
 package httpapi
 
 import (

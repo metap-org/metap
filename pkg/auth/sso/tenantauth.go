@@ -31,8 +31,8 @@ const (
 	ProviderLocal AuthProviderKind = iota
 	ProviderBasic
 	ProviderOidc
-	// ProviderOAuth2: plain OAuth2 authorization-code login — distinct from ProviderOidc (see
-	// oauth2_login.go's doc comment): no discovery, no id_token, identity resolved by calling a
+	// ProviderOAuth2: plain OAuth2 authorization-code login — distinct from ProviderOidc: no
+	// discovery, no id_token, identity resolved by calling a
 	// configured userinfo endpoint with the obtained access token instead of decoding a JWT.
 	ProviderOAuth2
 )

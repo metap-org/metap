@@ -22,7 +22,7 @@ func writeInternalError(w http.ResponseWriter, err error) {
 
 // writeRouterUnavailable maps a tenancy.Router.Begin failure to an HTTP response — same mapping
 // crud's own routerUnavailable helper uses internally for CrudService's own calls; this is for
-// a route handler that calls Router.Begin directly (login, admin routes, a later wave).
+// a route handler that calls Router.Begin directly.
 func writeRouterUnavailable(w http.ResponseWriter, err error) {
 	var routerErr *tenancy.RouterError
 	if !errors.As(err, &routerErr) {

@@ -1,7 +1,7 @@
 // GET /admin/audit/export — the tenant's audit trail as a file (roadmap 115 M9). Admin only, the
-// tenant is the caller's. Same filters as the GraphQL `auditEntries` search, but the whole
-// matching history streams out page by page instead of one page: format=csv (default) or json
-// (one JSON array). A file has no GraphQL shape, so this stays REST like attachments.
+// tenant is the caller's. Same filters as the search (GET /admin/audit), but the whole matching
+// history streams out page by page instead of one page: format=csv (default) or json (one JSON
+// array). It is a hand-written route, not a typed operation, because what it answers is a file.
 package httpapi
 
 import (

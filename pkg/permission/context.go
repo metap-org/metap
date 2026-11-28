@@ -24,7 +24,7 @@ type RequestContext struct {
 	ScopedRoles       []ScopedRole
 	FunctionID        string
 	ContextAttributes map[string]json.RawMessage // nil means absent
-	// ForwardedBearerToken is a transport concern for a gRPC client, never ABAC-visible — deliberately
+	// ForwardedBearerToken is for calling another service as this caller (pkg/recordclient), never ABAC-visible — deliberately
 	// excluded from ToValue().
 	ForwardedBearerToken string
 	// SessionID is the login session behind the request (roadmap 115 M4); "" for a token that is not

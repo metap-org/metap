@@ -71,8 +71,10 @@ linters:
           deny:
             - pkg: github.com/jackc/pgx
               desc: a slice's service reaches the database through its Store (store.go), implemented in pgstore.go
-        # Handlers do not talk to the database (roadmap 118): internal/httpapi holds the pgx pool
-        # as a handle (AppState.Pool) and passes it to a service, it never runs a query.
+        # Handlers write no SQL (roadmap 118): internal/httpapi holds the pgx pool as a handle
+        # (AppState.Pool) and passes it, or a transaction some route modules open, to a package that
+        # runs the query. This rule cannot see a query (it only keeps pgconn and pgtype out), so that
+        # part is for review.
         transport-no-driver:
           files:
             - "**/internal/httpapi/**"

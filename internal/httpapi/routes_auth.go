@@ -1,7 +1,5 @@
-// Public POST /auth/login plus /auth/me, /auth/logout, /auth/token. OIDC/OAuth2 tenant-login
-// provider flows (oidc_login/oidc_callback/oauth2_login/ oauth2_callback) are deferred to a later
-// wave, same scope line the user drew for admin/ platform routes — local password is the only
-// provider this core wave needs to exercise entity CRUD end to end.
+// The /auth routes: signing in (password, then MFA when it applies), signing up, signing out, and
+// what a signed-in caller asks about its own session. Single sign-on is in routes_sso.go.
 package httpapi
 
 import (
