@@ -1,6 +1,5 @@
-// Role lookup and request-context resolution for every protected route. Basic auth (Authorization:
-// Basic) and the metap-jwks trust-root dual-dispatch are deferred (not needed to exercise entity
-// CRUD, the scope of this wave) — only Bearer and the HttpOnly session cookie are wired.
+// Role lookup and request-context resolution for every protected route: a Bearer token or API key,
+// or the HttpOnly session cookie with its CSRF check.
 package httpapi
 
 import (
@@ -137,9 +136,9 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 		return nil, unauthorized("Failed to check the session.")
 	}
 
-	// A token minted by the OAuth2 token endpoint (a later wave) carries a granted scope/client
+	// A token minted by the OAuth2 token endpoint carries a granted scope/client
 	// — ApplyOAuthGrant records it and PermissionService enforces it. An ordinary session token
-	// has no scope claim, so this is a no-op for every login path wired in this wave.
+	// has no scope claim, so this is a no-op for it.
 	if claims.Scope != nil {
 		clientID := ""
 		hasClientID := claims.ClientID != nil

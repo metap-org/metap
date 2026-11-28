@@ -154,8 +154,8 @@ const DefaultGroups int64 = 100
 const maxMetrics = 10
 
 // AggregateSpec is the raw wire shape of an aggregate request — every metric/bucket is still a
-// string here, not yet parsed. One shape for every transport (REST JSON body, gRPC Struct,
-// GraphQL Json scalar) — IntoInput is the single parse step every one of them calls.
+// string here, not yet parsed. It is the REST JSON body, and what a RecordBackend takes; IntoInput is
+// the single parse step.
 type AggregateSpec struct {
 	Metrics   []string          `json:"metrics,omitempty"`
 	GroupBy   *string           `json:"groupBy,omitempty"`

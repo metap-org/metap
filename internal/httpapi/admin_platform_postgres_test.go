@@ -1,8 +1,7 @@
 //go:build integration
 
-// E2E tests for the admin/platform route surface (routes_admin.go, routes_cron.go,
-// routes_dashboards.go, routes_preferences.go, routes_platform_config.go,
-// routes_tenant_config.go, routes_users.go) — a real httpapi.BuildRouter server, bound to a
+// E2E tests for the admin/platform surface: cron jobs, dashboards, preferences, platform and
+// tenant configuration, and users (typed operations and route modules) — a real httpapi.BuildRouter server, bound to a
 // real socket, hit with real HTTP requests and real JWTs, against real Postgres. Reuses the
 // pool/key/entity/server helpers already defined in http_server_postgres_test.go.
 package httpapi_test
@@ -47,7 +46,7 @@ func TestAdminUsersRolesAndPoliciesLifecycle(t *testing.T) {
 	newUserID := newUser.ID.String()
 	for _, gone := range []string{"/admin/users", "/users"} {
 		res := doRequest(t, "GET", base+gone, adminToken, nil)
-		require.Equal(t, http.StatusNotFound, res.StatusCode, "%s moved to gRPC", gone)
+		require.Equal(t, http.StatusNotFound, res.StatusCode, "%s is not a route", gone)
 	}
 
 	// invalidate-context is a no-op 204 even with nothing cached

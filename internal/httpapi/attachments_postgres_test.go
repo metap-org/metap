@@ -1,6 +1,6 @@
 //go:build integration
 
-// E2E tests for the permanent-REST route groups (routes_attachments.go,
+// E2E tests for the hand-written route groups (attachmentroutes,
 // routes_workflow_events.go, routes_audit_events.go, routes_metrics.go) — a real
 // httpapi.BuildRouter server, hit with real HTTP requests against real Postgres. Reuses the
 // pool/key/entity/server helpers already defined in http_server_postgres_test.go.

@@ -11,8 +11,6 @@ const (
 
 // RequiresCSRFCheck reports whether a cookie-authenticated request of this method must carry a
 // matching CSRFHeaderName header. Safe methods are exempt because they must not change state.
-// Not sufficient on its own for POST /graphql — every GraphQL operation rides the same HTTP
-// method regardless of query vs. mutation, so a caller there must always send the CSRF header.
 func RequiresCSRFCheck(method string) bool {
 	switch method {
 	case "GET", "HEAD", "OPTIONS":

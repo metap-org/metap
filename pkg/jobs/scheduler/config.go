@@ -41,7 +41,7 @@ type ExecutorConfig struct {
 	// SMTP settings for TargetType "email" jobs (RunEmail).
 	SMTP SmtpConfig
 
-	// Webhook guards TargetType "webhook"'s tenant-supplied target URL — see ssrf_guard.go.
+	// Webhook guards TargetType "webhook"'s tenant-supplied target URL — see ssrfguard.go.
 	Webhook WebhookPolicy
 
 	// Secrets resolves a tenant's stored webhook credential — the same SecretStore backend every

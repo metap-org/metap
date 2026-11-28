@@ -14,7 +14,7 @@ import (
 // — it only describes API shape, never tenant data. The other three require a session (requireAuth)
 // but not per-entity read permission: every registered entity's shape is visible to any
 // authenticated user of the tenant. They are
-// what @metap/platform-ui's useEntities/useEntity/graphqlRecords and the permission matrix read, so
+// what @metap/platform-ui's useEntities/useEntity and the permission matrix read, so
 // a service without them renders no entity screen at all.
 func mountMetadata(r *router.Router, state *AppState) {
 	acc := AccessGroups(r, state)

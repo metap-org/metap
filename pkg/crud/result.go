@@ -31,8 +31,7 @@ type ListResult struct {
 	Page         PageInfo
 }
 
-// ServiceError is a failure the caller can act on: a status (HTTP-shaped, carried over gRPC and
-// GraphQL too), a stable machine-readable code, an optional human message and optional per-field
+// ServiceError is a failure the caller can act on: an HTTP status, a stable machine-readable code, an optional human message and optional per-field
 // errors. Every CrudService/RecordBackend method returns it as the error of its (T, error)
 // result, so a transport maps it once (errors.As) and a plain error — a database or network
 // failure — stays a plain error, an internal one.

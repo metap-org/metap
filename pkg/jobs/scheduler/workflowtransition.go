@@ -17,14 +17,14 @@ import (
 
 // serviceContext is a client-side RequestContext for a call this process makes on its own
 // behalf, not on behalf of a live inbound request — ForwardedBearerToken is left empty so
-// GrpcBackend always signs with the executor's own ServiceToken; every other field is unused,
-// since the remote RecordService derives its own RequestContext from the bearer token's claims
+// the target backend (pkg/recordclient) signs with the executor's own service token; every other
+// field is unused, since the remote service derives its own RequestContext from the token's claims
 // and never reads what a caller sends here.
 func serviceContext() *permission.RequestContext {
 	return &permission.RequestContext{}
 }
 
-func targetGRPCBackend(backend crud.RecordBackend) (crud.RecordBackend, error) {
+func requireTargetBackend(backend crud.RecordBackend) (crud.RecordBackend, error) {
 	if backend == nil {
 		return nil, fmt.Errorf("CRON_TARGET_URL is unset — workflow_transition/bulk_query_action jobs cannot run")
 	}
@@ -65,7 +65,7 @@ func RunBulkQueryAction(ctx context.Context, backend crud.RecordBackend, targetC
 	if err := json.Unmarshal(targetConfig, &cfg); err != nil {
 		return nil, err
 	}
-	b, err := targetGRPCBackend(backend)
+	b, err := requireTargetBackend(backend)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func RunBulkQueryAction(ctx context.Context, backend crud.RecordBackend, targetC
 // version for optimistic locking, so this always reads first — same two-step every other
 // transition caller (the frontend included) has to do.
 func transitionOne(ctx context.Context, backend crud.RecordBackend, entity string, recordID uuid.UUID, action string) (crud.RecordDto, error) {
-	b, err := targetGRPCBackend(backend)
+	b, err := requireTargetBackend(backend)
 	if err != nil {
 		return crud.RecordDto{}, err
 	}

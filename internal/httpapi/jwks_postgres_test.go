@@ -18,8 +18,8 @@ import (
 )
 
 // Single-issuer JWKS over real HTTP: one AppState is the issuer (signs, publishes
-// /.well-known/jwks.json), another only verifies against it — the topology ../waap runs
-// (zones-service issues, scanning/alerting/graphql-gateway verify).
+// /.well-known/jwks.json), another only verifies against it — the topology of a product with one
+// token issuer and services that only verify.
 func TestSingleIssuerJWKSLoginVerifyAndCutover(t *testing.T) {
 	ctx := context.Background()
 	pool := httpTestPool(t)

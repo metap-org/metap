@@ -2,7 +2,7 @@
 // mounted with httpapi.BuildRouter(state, cors, dashboardroutes.Mount, ...). It lives outside package
 // httpapi so a service that doesn't serve it doesn't link its dependencies.
 // GET/PUT /dashboards/me (any authenticated user, their own personal layout) and GET/PUT
-// /dashboards/tenant-default (requireAdmin for the write, same posture routes_admin.go takes) — the
+// /dashboards/tenant-default (the write is in the admin access group) — the
 // HTTP surface for the dashboards package. Generic across every app/entity: a layout is an opaque
 // JSON blob to this package and to dashboards itself, interpreted only by the frontend's widget
 // catalog.

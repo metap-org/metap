@@ -1,6 +1,6 @@
 //go:build integration
 
-// E2E tests for the OAuth2 authorization server routes (routes_oauth2.go) — a real
+// E2E tests for the OAuth2 authorization server routes (oauth2routes) — a real
 // httpapi.BuildRouter server, hit with real HTTP requests against real Postgres. Reuses the
 // pool/key/entity/server helpers already defined in http_server_postgres_test.go.
 package httpapi_test

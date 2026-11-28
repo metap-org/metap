@@ -1,6 +1,5 @@
-// Package errcode holds the stable machine-readable error codes every metap transport returns
-// (the "code" in the REST error body, ServiceError.Code, the GraphQL error extensions and the gRPC
-// error details). A client switches on these, so each is declared once here and never retyped as a
+// Package errcode holds the stable machine-readable error codes metap returns (the "code" in the
+// REST error body and ServiceError.Code). A client switches on these, so each is declared once here and never retyped as a
 // string literal. Standard library only, like the rest of pkg/kit, so non-metap services can use it.
 package errcode
 

@@ -1,7 +1,7 @@
 // Package app is the boot sequence every metadata-driven service built on metap repeats:
 // config -> Postgres -> tenant router -> permissions -> JWT keys -> metadata registry ->
-// reconcile the service's own dedicated tables -> metadata drift check -> CRUD (+audit) -> optional gRPC
-// -> HTTP. A service's main shrinks to its entity list, its port numbers, and its own routes:
+// reconcile the service's own dedicated tables -> metadata drift check -> CRUD (+audit) -> HTTP.
+// A service's main shrinks to its entity list, its port numbers, and its own routes:
 // import _ "example.com/scanning/entities"
 //
 //	func main() {

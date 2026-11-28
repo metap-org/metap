@@ -33,7 +33,8 @@ type ActionCall struct {
 // other error is internal.
 type ActionHandler func(ctx context.Context, call ActionCall) (JsonObject, error)
 
-// ActionInvoker is what the gRPC ActionService and any in-process caller use.
+// ActionInvoker is what runs a declared action: an ActionRegistry in this process, or
+// pkg/recordclient for another service's actions.
 type ActionInvoker interface {
 	Invoke(ctx context.Context, call ActionCall) (JsonObject, error)
 }
