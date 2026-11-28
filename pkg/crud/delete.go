@@ -47,6 +47,7 @@ func (s *CrudService) Delete(ctx context.Context, entityName string, id uuid.UUI
 		sql:       deleteSQL,
 		args:      []any{userID, id, c.tenantID, expectedVersion},
 		versioned: true,
+		previous:  cur.record.Data,
 		before: func(ctx context.Context, tx pgx.Tx) error {
 			return s.assertNotReferenced(ctx, tx, c, id)
 		},

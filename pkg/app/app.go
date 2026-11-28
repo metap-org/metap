@@ -176,6 +176,11 @@ func Run(ctx context.Context, opts Options) error {
 	if err := registry.ValidateReferences(); err != nil {
 		return fmt.Errorf("validating entity references: %w", err)
 	}
+	// Checked before the database is, so a wrong setting is reported at once.
+	authContext, err := authContextEntity(appCfg.AuthContextEntity, storedEntities(opts, registry))
+	if err != nil {
+		return err
+	}
 	// The schema is only read here. Changing it is `<service> migrate`, run by a person or a
 	// deploy step, never by a booting service.
 	if err := requireSchema(ctx, pool, opts, storedEntities(opts, registry)); err != nil {
@@ -223,6 +228,10 @@ func Run(ctx context.Context, opts Options) error {
 	startAuditDrain(ctx, pool, router, auditStore)
 	state.PublicAppURL = appCfg.PublicAppURL
 	state.Crud = crud.WithAudit(state.Router, state.Metadata, state.Permissions, auditStore)
+	// Before anything keeps state.Crud: the record backends below are built over it.
+	if err := useAuthContext(state, appCfg, authContext); err != nil {
+		return err
+	}
 	state.CookieSecure = appCfg.CookieSecure
 	if !state.CookieSecure {
 		slog.Warn("COOKIE_SECURE=false: session cookies are sent without the Secure attribute, only for development over plain http")

@@ -3,7 +3,9 @@ package crud
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"strings"
 
 	"github.com/google/uuid"
@@ -74,6 +76,22 @@ func (s *CrudService) SetSystemFields(ctx context.Context, tenantID uuid.UUID, e
 	if err != nil {
 		return false, err
 	}
+	// When this is the context entity, who the record describes before and after the write.
+	var before, after *string
+	watched := s.contextInvalidation != nil && s.contextInvalidation.entityName == entityName
+	userOf := func(into **string) error {
+		err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT to_jsonb(t) ->> 'userId' FROM %s t WHERE t.id = $1 AND t.tenant_id = $2`, entity.TableName), id, tenantID).Scan(into)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if watched {
+		if err := userOf(&before); err != nil {
+			tx.Rollback(ctx) //nolint:errcheck
+			return false, err
+		}
+	}
 	tag, err := tx.Exec(ctx,
 		fmt.Sprintf(`UPDATE %s AS t SET %s FROM jsonb_to_record($1::jsonb) AS r(%s) WHERE t.id = $2 AND t.tenant_id = $3 AND t.deleted = false`,
 			entity.TableName, strings.Join(sets, ", "), recordTypeList(declared)),
@@ -82,8 +100,22 @@ func (s *CrudService) SetSystemFields(ctx context.Context, tenantID uuid.UUID, e
 		tx.Rollback(ctx) //nolint:errcheck
 		return false, err
 	}
+	if watched {
+		if err := userOf(&after); err != nil {
+			tx.Rollback(ctx) //nolint:errcheck
+			return false, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, err
 	}
+	var records []JsonObject
+	for _, user := range []*string{before, after} {
+		if user != nil {
+			raw, _ := json.Marshal(*user)
+			records = append(records, JsonObject{"userId": raw})
+		}
+	}
+	s.forgetContext(ctx, tenantID, s.contextMembers(entityName, records...))
 	return tag.RowsAffected() == 1, nil
 }

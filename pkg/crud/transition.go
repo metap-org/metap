@@ -47,7 +47,8 @@ func (s *CrudService) Transition(ctx context.Context, entityName string, id uuid
 
 	transitionAction := action
 	return s.persist(ctx, c, snapshot, write{
-		userID: userID, reason: reason,
+		previous: cur.record.Data,
+		userID:   userID, reason: reason,
 		sql:       buildUpdateSQL(c.entity, "status = $6::varchar"),
 		args:      []any{json.RawMessage(p.dataJSON), userID, id, c.tenantID, expectedVersion, p.toState},
 		versioned: true,

@@ -346,14 +346,17 @@ this file above or below is pre-2026-11-07 history: read `go/<pkg>` as `pkg/<pkg
   backend the service chose both apply. Do not register a `crud.ActionHandler` by hand unless `pkg/action` cannot do it.
   A handler writes no SQL: put the query in the package that owns the table. A new hand-written route in metap takes a
   named `func(w, r, state)` handler registered through the file's `wrap`; older inline closures change when next edited.
-- **Known gaps (open).**
-  - **`AUTH_CONTEXT_ENTITY` does nothing (found 2026-11-28).** `config.LoadApp` reads it, but no production code sets
-    `AppState.AuthContextEntity`, so `authctx.Resolver` always gets an empty name and loads no context attributes.
-    `AuthContextCacheTTLSeconds` is unused too, and nothing calls `CrudService.WithContextInvalidation`. A deployment whose
-    policies use attributes from a context entity has them evaluated without those attributes; whether a deny policy then
-    lets a caller through has not been tested. Do not rely on the setting until it is fixed. `../waap` does not set it.
-    A fix wires the config into the state and the invalidation into the record backend, with an allow and a deny policy
-    tested through `app.Run` or `BuildRouter`; if the feature is not wanted, remove it and fail the boot when it is set.
+- **`AUTH_CONTEXT_ENTITY` (fixed 2026-11-28; before that the setting did nothing, so policies on context attributes
+  were judged without them: a deny never matched).** With it, policy conditions read the fields of the record of that
+  entity whose `userId` is the caller (`pkg/app/authcontext.go`). The boot fails when the service does not store the
+  entity or it has no `userId` field, so set it only on a service that does. A request is refused when the attributes
+  cannot be read or the member has more than one such record. Fields named `tenantId`, `userId`, `roles`, `functionId`,
+  `oauthScope` or `oauthClientId` are not taken from the record. Any write through the service drops the cached
+  attributes of the members the record names before and after (when the surrounding unit of work commits); a change by
+  another process or by plain SQL shows within `AUTH_CONTEXT_CACHE_TTL_SECONDS` (default 30, 0 to 3600, 0 = no cache).
+  **Still true of the policy engine, so write policies for it:** a member with no record has no attributes, and a
+  missing attribute is `null`, which an `eq` never matches and a `neq`/`notIn` always does. Prefer allow rules that
+  require a value over deny rules that test one, and let only trusted roles write the context entity.
 - **Migrations are run by a person (2026-11-28, `../metap-docs/docs/migrations.md`, roadmap 126).** `app.Run` never changes
   the schema: it checks the platform's migrations, the service's own (`app.Options.Migrations`) and every entity's real table,
   and refuses to start when something is missing (`ErrSchemaNotReady`). `<service> migrate generate` writes up/down SQL from
