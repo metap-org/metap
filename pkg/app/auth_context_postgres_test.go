@@ -182,6 +182,24 @@ func (s *running) call(method, path, token string, body any) (int, map[string]an
 	return res.StatusCode, data
 }
 
+// refusal is the status and error code a staff member's read is answered with.
+func (s *running) refusal() (int, string) {
+	s.t.Helper()
+	req, err := http.NewRequest("GET", s.base+"/api/ctxt.docs", nil)
+	require.NoError(s.t, err)
+	req.Header.Set("Authorization", "Bearer "+s.staffTok)
+	res, err := http.DefaultClient.Do(req)
+	require.NoError(s.t, err)
+	defer res.Body.Close()
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(s.t, json.NewDecoder(res.Body).Decode(&body))
+	return res.StatusCode, body.Error.Code
+}
+
 func (s *running) staffReads() int {
 	status, _ := s.call("GET", "/api/ctxt.docs", s.staffTok, nil)
 	return status
@@ -222,7 +240,10 @@ func TestARequestIsRefusedWhenTheContextAttributesCannotBeRead(t *testing.T) {
 	s := startService(t)
 	_, err := s.pool.Exec(context.Background(), `ALTER TABLE ctxt.members RENAME COLUMN "userId" TO gone`)
 	require.NoError(t, err)
-	assert.NotEqual(t, 200, s.staffReads(), "without the attributes a deny cannot be judged, so nothing is allowed")
+	// Not 401: the caller's token is fine, and a client that is told otherwise signs them out.
+	status, code := s.refusal()
+	assert.Equal(t, 503, status, "without the attributes a deny cannot be judged, so nothing is allowed")
+	assert.Equal(t, "auth_context_unavailable", code)
 }
 
 func TestAContextRecordCannotSpeakForTheCaller(t *testing.T) {
@@ -261,5 +282,7 @@ func TestAMemberWithTwoContextRecordsIsRefused(t *testing.T) {
 			map[string]any{"data": map[string]any{"userId": s.staff.String(), "suspended": suspended}})
 		require.Equal(t, 201, status)
 	}
-	assert.NotEqual(t, 200, s.staffReads())
+	status, code := s.refusal()
+	assert.Equal(t, 403, status)
+	assert.Equal(t, "auth_context_ambiguous", code)
 }

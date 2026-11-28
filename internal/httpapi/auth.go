@@ -50,6 +50,21 @@ func (e *authError) respond(w http.ResponseWriter) {
 	_, _ = w.Write(body)
 }
 
+// contextError answers a caller whose context attributes cannot be judged, nil for any other
+// failure. Neither is a 401: the credential is fine, and a client told otherwise signs the person
+// out.
+func contextError(err error) *authError {
+	switch {
+	case errors.Is(err, identity.ErrAmbiguousContext):
+		return &authError{status: http.StatusForbidden, code: errcode.AuthContextAmbiguous,
+			message: "Your account has more than one context record. Ask an administrator to keep one."}
+	case errors.Is(err, authctx.ErrAttributesUnavailable):
+		return &authError{status: http.StatusServiceUnavailable, code: errcode.AuthContextUnavailable,
+			message: "Your permissions cannot be checked right now. Try again."}
+	}
+	return nil
+}
+
 // authenticate resolves the caller. An explicit Authorization header always
 // wins when present; otherwise it falls back to the HttpOnly session cookie (the shape a browser
 // request takes), CSRF-checked for any state-changing method.
@@ -92,6 +107,8 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 			return nil, &authError{status: http.StatusUnauthorized, code: errcode.SessionRevoked, message: "This API key was revoked."}
 		case errors.Is(err, identity.ErrDisabled):
 			return nil, &authError{status: http.StatusUnauthorized, code: errcode.AccountDisabled, message: "This account is disabled."}
+		case contextError(err) != nil:
+			return nil, contextError(err)
 		case err != nil:
 			return nil, unauthorized("Failed to resolve roles.")
 		}
@@ -126,6 +143,8 @@ func authenticate(ctx context.Context, state *AppState, r *http.Request) (*permi
 		return nil, &authError{status: http.StatusUnauthorized, code: errcode.SessionRevoked, message: "Your session was revoked, sign in again."}
 	case errors.Is(err, identity.ErrDisabled):
 		return nil, &authError{status: http.StatusUnauthorized, code: errcode.AccountDisabled, message: "This account is disabled."}
+	case contextError(err) != nil:
+		return nil, contextError(err)
 	case err != nil:
 		return nil, unauthorized("Failed to resolve roles.")
 	}
