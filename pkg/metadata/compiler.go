@@ -368,6 +368,12 @@ func Validate(entity EntityDefinition) error {
 		if action.Requires != "" && !slices.Contains(ActionRequirements, action.Requires) {
 			issues = append(issues, fmt.Sprintf("action %q requires %q, which is not one of %v", action.Name, action.Requires, ActionRequirements))
 		}
+		switch declared := action.Requires != "" || len(action.Roles) > 0; {
+		case !declared && !action.AnyMember:
+			issues = append(issues, fmt.Sprintf("action %q does not say who may run it: set requires, roles or anyMember", action.Name))
+		case declared && action.AnyMember:
+			issues = append(issues, fmt.Sprintf("action %q sets anyMember together with requires or roles", action.Name))
+		}
 		seenRoles := map[string]bool{}
 		for _, role := range action.Roles {
 			if role == "" {

@@ -316,7 +316,8 @@ const (
 	ActionScopeEntity = "entity" // acts on the entity as a whole, no id
 )
 
-// EntityAction declares one action. Permissions are not declared here: a handler reads and writes
+// EntityAction declares one action, and who may run it: every action sets Requires, Roles or
+// AnyMember (the compiler refuses one that sets none). Beyond that, a handler reads and writes
 // through the same RecordBackend with the caller's own RequestContext, so an action can never do
 // more than the caller could do with plain CRUD — as far as records go. What an action does outside
 // records (a network call, a probe) is not covered by that, which is what Requires is for.
@@ -329,13 +330,17 @@ type EntityAction struct {
 	// "transition") the caller must hold on this entity before the handler runs. Reading and writing
 	// records already checks permission, but an action that does something else — probes an address,
 	// calls a service — touches no record, so without this nothing but being signed in stands between
-	// anyone and it. Empty keeps the old behavior: the handler authorizes whatever it does itself.
+	// anyone and it.
 	Requires string `json:"requires,omitempty"`
 	// Roles are the roles that may run the action unless the tenant has policies of its own for it
 	// (policy action `action:<name>`, see permission.ActionPolicy): then those decide. Empty, and no
 	// policy, leaves the action open to any signed-in caller (Requires still applies); the admin role
 	// always may. The check runs before the handler and before its input is read.
 	Roles []string `json:"roles,omitempty"`
+	// AnyMember says on purpose that every signed-in member may run the action: the handler
+	// authorizes whatever it does itself, or it does nothing that needs it. It excludes Requires
+	// and Roles. A tenant's own action policies still decide when there are any.
+	AnyMember bool `json:"anyMember,omitempty"`
 }
 
 // ActionRequirements are the values EntityAction.Requires accepts.

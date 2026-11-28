@@ -103,6 +103,10 @@ func (s *Service) landing(postLogin string) string {
 	return strings.TrimRight(s.d.PublicURL, "/") + "/"
 }
 
+func errSSOOtherBrowser() error {
+	return serviceErr(http.StatusBadRequest, errcode.SSOFailed, "This sign-in was started in another browser. Start again here.", nil)
+}
+
 // OIDCCallbackRequest is what the provider sent the browser back with. SameBrowser says whether the
 // request carries the binding the start set: a state is only valid from the browser that began it.
 type OIDCCallbackRequest struct {
@@ -122,7 +126,7 @@ func (s *Service) OIDCCallback(ctx context.Context, req OIDCCallbackRequest, c C
 	}
 	// The state is spent either way; it only counts from the browser that started the sign-in.
 	if !req.SameBrowser {
-		return nil, serviceErr(http.StatusBadRequest, errcode.SSOFailed, "This sign-in was started in another browser. Start again here.", nil)
+		return nil, errSSOOtherBrowser()
 	}
 	cfg, err := s.store.OidcConfigFor(ctx, st.Tenant)
 	if err != nil {
@@ -176,29 +180,29 @@ func (s *Service) SAMLMetadata(ctx context.Context, tenant uuid.UUID) ([]byte, e
 	return sso.ServiceProviderMetadata(sso.SamlURLsFor(s.d.PublicURL, tenant), cfg)
 }
 
-// SAMLStart begins a SAML sign-in and returns where to send the browser. The relay state is our own
-// single-use state row; the AuthnRequest's ID rides in it so the response can be bound to this
-// sign-in (InResponseTo).
-func (s *Service) SAMLStart(ctx context.Context, tenant uuid.UUID) (string, error) {
+// SAMLStart begins a SAML sign-in: where to send the browser, and the relay state it is to be bound
+// to. The relay state is our own single-use state row; the AuthnRequest's ID rides in it so the
+// response can be bound to this sign-in (InResponseTo).
+func (s *Service) SAMLStart(ctx context.Context, tenant uuid.UUID) (*SSOStart, error) {
 	_, sp, err := s.samlProvider(ctx, tenant)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	relay := sso.NewStateToken()
 	target, requestID, err := sso.StartRedirect(sp, relay)
 	if err != nil {
 		slog.Error("saml: building the sign-in request", "tenant_id", tenant, "error", err)
-		return "", errSSOUnreachable()
+		return nil, errSSOUnreachable()
 	}
 	if err := s.store.CreateSSOState(ctx, tenant, relay, requestID, "", s.now()); err != nil {
-		return "", err
+		return nil, err
 	}
-	return target.String(), nil
+	return &SSOStart{RedirectURL: target.String(), State: relay}, nil
 }
 
 // SAMLACS checks the provider's signed response against the single-use request this sign-in made, with
 // the provider's own certificates, and signs the person in.
-func (s *Service) SAMLACS(ctx context.Context, tenant uuid.UUID, relayState, samlResponse string, c Client) (*SSOResult, error) {
+func (s *Service) SAMLACS(ctx context.Context, tenant uuid.UUID, relayState, samlResponse string, sameBrowser bool, c Client) (*SSOResult, error) {
 	cfg, sp, err := s.samlProvider(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -206,6 +210,10 @@ func (s *Service) SAMLACS(ctx context.Context, tenant uuid.UUID, relayState, sam
 	st, err := s.store.ConsumeSSOState(ctx, relayState, time.Now())
 	if err != nil || st.Tenant != tenant {
 		return nil, serviceErr(http.StatusBadRequest, errcode.SSOFailed, "The sign-in is unknown, used or expired. Start again.", nil)
+	}
+	// The state is spent either way; it only counts from the browser that started the sign-in.
+	if !sameBrowser {
+		return nil, errSSOOtherBrowser()
 	}
 	who, err := cfg.VerifyResponse(sp, samlResponse, st.Nonce)
 	if err != nil {

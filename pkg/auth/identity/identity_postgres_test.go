@@ -84,9 +84,9 @@ func TestLockoutAfterRepeatedWrongPasswords(t *testing.T) {
 		_, err := identity.Authenticate(ctx, pool, "bob@example.com", "wrong", now)
 		assert.ErrorIs(t, err, identity.ErrInvalidCredentials)
 	}
-	// Locked: the right password now says so, a wrong one still only says "invalid".
+	// Locked: the right password is refused like a wrong one.
 	_, err = identity.Authenticate(ctx, pool, "bob@example.com", "right-password", now)
-	assert.ErrorIs(t, err, identity.ErrLocked)
+	assert.ErrorIs(t, err, identity.ErrInvalidCredentials)
 	_, err = identity.Authenticate(ctx, pool, "bob@example.com", "wrong", now)
 	assert.ErrorIs(t, err, identity.ErrInvalidCredentials)
 

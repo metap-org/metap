@@ -105,14 +105,24 @@ func CheckDomain(ctx context.Context, db DBTX, lookup TXTLookup, tenant uuid.UUI
 	if d.VerifiedAt != nil {
 		return true, nil
 	}
+	if !DomainRecordPublished(ctx, lookup, d) {
+		return false, nil
+	}
+	return MarkDomainVerified(ctx, db, tenant, d.Domain, now)
+}
+
+// DomainRecordPublished reports whether d's ownership record is in DNS with the expected value. A
+// record that is not found and a lookup that failed both read as "not yet": try again later. It
+// asks the network only, so a caller can ask before opening the transaction that marks the domain.
+func DomainRecordPublished(ctx context.Context, lookup TXTLookup, d SSODomain) bool {
 	values, err := lookup(ctx, d.VerifyHost())
 	if err != nil {
-		return false, nil // not found or the lookup failed: not verified, try again later
+		return false
 	}
 	for _, v := range values {
 		if strings.TrimSpace(v) == d.Token {
-			return MarkDomainVerified(ctx, db, tenant, d.Domain, now)
+			return true
 		}
 	}
-	return false, nil
+	return false
 }

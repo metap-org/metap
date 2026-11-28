@@ -113,6 +113,34 @@ func clearSSOBindCookie(secure bool) *http.Cookie {
 
 // ssoBoundToBrowser reports whether the request carries the binding cookie for state.
 func ssoBoundToBrowser(r *http.Request, state string) bool {
-	c, err := r.Cookie(ssoBindCookieName)
+	return boundBy(r, ssoBindCookieName, state)
+}
+
+func boundBy(r *http.Request, cookie, state string) bool {
+	c, err := r.Cookie(cookie)
 	return err == nil && subtle.ConstantTimeCompare([]byte(c.Value), []byte(ssoBindValue(state))) == 1
+}
+
+// samlBindCookieName is the SAML counterpart of ssoBindCookieName. It is a separate cookie because
+// the identity provider answers with a cross-site POST, which a SameSite=Lax cookie does not follow.
+const samlBindCookieName = "metap_saml_bind"
+
+// samlBindCookie is SameSite=None so that POST carries it, and browsers keep such a cookie only when
+// it is Secure — whatever AppState.CookieSecure says. SAML therefore needs https (or localhost, which
+// browsers treat as secure).
+func samlBindCookie(state string) *http.Cookie {
+	c := baseCookie(samlBindCookieName, ssoBindValue(state), true, true, ssoBindTTLSeconds)
+	c.Path, c.SameSite = "/auth/saml", http.SameSiteNoneMode
+	return c
+}
+
+func clearSAMLBindCookie() *http.Cookie {
+	c := samlBindCookie("")
+	c.Value, c.MaxAge = "", -1
+	return c
+}
+
+// samlBoundToBrowser reports whether the request carries the binding cookie for relayState.
+func samlBoundToBrowser(r *http.Request, relayState string) bool {
+	return boundBy(r, samlBindCookieName, relayState)
 }

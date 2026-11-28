@@ -137,9 +137,10 @@ func TestChangePasswordGuessesAreLockedOut(t *testing.T) {
 		_, err = s.ChangePassword(ctx, rc, "a-wrong-guess", "a-new-password-1", client)
 		assert.Equal(t, errcode.WrongPassword, serviceErr(t, err).Code)
 	}
-	// The identity is locked now, for the right password too, and for signing in.
+	// The identity is locked now, for the right password too. The signed-in caller is told so;
+	// signing in answers as for any wrong password, so the lock says nothing to a guesser.
 	_, err = s.ChangePassword(ctx, rc, "first-password", "a-new-password-1", client)
 	assert.Equal(t, errcode.AccountLocked, serviceErr(t, err).Code)
 	_, err = s.Login(ctx, signin.LoginRequest{Email: email, Password: "first-password"}, client)
-	assert.Equal(t, errcode.AccountLocked, serviceErr(t, err).Code)
+	assert.Equal(t, errcode.InvalidCredentials, serviceErr(t, err).Code)
 }

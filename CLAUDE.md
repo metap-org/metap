@@ -57,6 +57,11 @@ gRPC/GraphQL mention below is history. Today:
   `TRUSTED_PROXIES` or the portal shares one rate-limit bucket; the gateway lists nginx/LB and rate limits per caller itself
   (`RATE_LIMIT_PER_MS`/`RATE_LIMIT_BURST`).
 
+- **Secure by default** (2026-11-28, roadmap 124): session/CSRF/SSO cookies are `Secure` unless `COOKIE_SECURE=false` (plain-http
+  development only). A password attempt is counted (`claimAttempt`, one `UPDATE`) before the password is looked at, and a locked
+  identity's password is not judged: sign-in then answers `invalid_credentials`. SAML and OIDC sign-ins are bound to the browser
+  that started them. Every `EntityAction` declares `Requires`, `Roles` or `AnyMember`, or the metadata does not compile.
+
 **`docs/` moved to a separate repo, `../metap-docs` (2026-08-31, `docs/roadmap/54-docs-repo-split.md`
 in that repo).** Every `docs/...` path mentioned anywhere below in this file, in `README.md`, or in
 any `crates/*.rs` doc comment (150+ occurrences, none rewritten — see that phase entry for why) now

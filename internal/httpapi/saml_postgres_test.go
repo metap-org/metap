@@ -131,12 +131,13 @@ var (
 
 // samlRound walks the browser flow up to the provider's answer: start on our service, the
 // provider's sign-in page, and the auto-post form it returns. It hands back what the browser
-// would post to the ACS.
+// would post to the ACS. The cookies the start set are remembered as the browser's.
 func samlRound(t *testing.T, base string, tenant uuid.UUID, idp *testSAMLIdP) (acsURL string, form url.Values) {
 	t.Helper()
 	start := get(t, base+"/auth/saml/"+tenant.String()+"/start")
 	require.Equal(t, 302, start.StatusCode)
 	start.Body.Close()
+	cookies := start.Cookies()
 	// The browser goes where the redirect says; a forger intercepts by answering at the same path.
 	loc, err := url.Parse(start.Header.Get("Location"))
 	require.NoError(t, err)
@@ -153,14 +154,27 @@ func samlRound(t *testing.T, base string, tenant uuid.UUID, idp *testSAMLIdP) (a
 	if relay != nil {
 		form.Set("RelayState", html.UnescapeString(string(relay[1])))
 	}
+	samlBrowsers[form.Get("RelayState")] = cookies
 	return base + "/auth/saml/" + tenant.String() + "/acs", form
 }
 
+// samlBrowsers holds, per relay state, the cookies of the browser that started that sign-in.
+var samlBrowsers = map[string][]*http.Cookie{}
+
+// postACS posts the provider's answer from the browser that started the sign-in the form names.
 func postACS(t *testing.T, acsURL string, form url.Values) *http.Response {
+	t.Helper()
+	return postACSWith(t, acsURL, form, samlBrowsers[form.Get("RelayState")])
+}
+
+func postACSWith(t *testing.T, acsURL string, form url.Values, cookies []*http.Cookie) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest("POST", acsURL, strings.NewReader(form.Encode()))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
 	res, err := noFollow.Do(req)
 	require.NoError(t, err)
 	return res
@@ -373,4 +387,38 @@ func TestSAMLPersistentNameIDKeepsTheAccountWhenTheAddressChanges(t *testing.T) 
 	again, err := identity.FindExternalMember(ctx, pool, tenant, "saml", "opaque-7f3a")
 	require.NoError(t, err)
 	assert.Equal(t, ada.ID, again.ID, "an address change at the provider does not make a second account")
+}
+
+// A SAML answer signs in only the browser that started the sign-in: otherwise somebody can start
+// one as themselves and have another person's browser post the answer, signing that person into the
+// first one's account (login CSRF).
+func TestSAMLAnswerOnlySignsInTheBrowserThatStarted(t *testing.T) {
+	idp := startSAMLIdP(t, "")
+	base, tenant, _, _ := setupSAMLTenant(t, idp, func(c *sso.SamlConfig) { c.DefaultRole = "viewer" })
+	idp.signIn("dana@acme.io")
+
+	start := get(t, base+"/auth/saml/"+tenant.String()+"/start")
+	start.Body.Close()
+	require.Len(t, start.Cookies(), 1)
+	bind := start.Cookies()[0]
+	// The answer arrives as a cross-site POST, which sends only SameSite=None cookies, and browsers
+	// accept those only with Secure.
+	assert.Equal(t, http.SameSiteNoneMode, bind.SameSite)
+	assert.True(t, bind.Secure)
+	assert.True(t, bind.HttpOnly)
+
+	refused := func(cookies []*http.Cookie, why string) {
+		acs, form := samlRound(t, base, tenant, idp)
+		res := postACSWith(t, acs, form, cookies)
+		defer res.Body.Close()
+		assert.Equal(t, 400, res.StatusCode, why)
+		assert.Nil(t, sessionCookie(res), why)
+		// The sign-in is spent: the right browser cannot use it afterwards either.
+		again := postACS(t, acs, form)
+		again.Body.Close()
+		assert.Equal(t, 400, again.StatusCode, why)
+	}
+	refused(nil, "a browser that never started a sign-in")
+	_, other := samlRound(t, base, tenant, idp)
+	refused(samlBrowsers[other.Get("RelayState")], "a browser that started a different sign-in")
 }

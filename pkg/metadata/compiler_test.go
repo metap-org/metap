@@ -343,7 +343,11 @@ func TestValidateActions(t *testing.T) {
 		return EntityDefinition{Name: "shop.orders", Label: "Orders", TableName: "shop.orders", Actions: actions,
 			Fields: []EntityField{NewField("name", "Name", KindString)}}
 	}
-	assert.NoError(t, Validate(base(EntityAction{Name: "verifyDns", Scope: ActionScopeRecord}, EntityAction{Name: "sweep", Scope: ActionScopeEntity})))
+	assert.NoError(t, Validate(base(EntityAction{Name: "verifyDns", Scope: ActionScopeRecord, Requires: "update"}, EntityAction{Name: "sweep", Scope: ActionScopeEntity, AnyMember: true})))
+	// An action that says nothing about who may run it is refused: it used to be open to everybody.
+	assert.ErrorContains(t, Validate(base(EntityAction{Name: "sweep", Scope: ActionScopeEntity})), "who may run it")
+	assert.ErrorContains(t, Validate(base(EntityAction{Name: "sweep", Scope: ActionScopeEntity, AnyMember: true, Requires: "read"})), "together with")
+	assert.ErrorContains(t, Validate(base(EntityAction{Name: "sweep", Scope: ActionScopeEntity, AnyMember: true, Roles: []string{"analyst"}})), "together with")
 	assert.ErrorContains(t, Validate(base(EntityAction{Name: "Bad", Scope: ActionScopeRecord})), "must match")
 	assert.ErrorContains(t, Validate(base(EntityAction{Name: "x", Scope: "weird"})), "scope")
 	assert.ErrorContains(t, Validate(base(EntityAction{Name: "x", Scope: ActionScopeRecord}, EntityAction{Name: "x", Scope: ActionScopeEntity})), "duplicate action")
