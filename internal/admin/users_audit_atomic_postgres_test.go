@@ -31,14 +31,14 @@ func TestMembershipChangesLeaveTheirAuditEntry(t *testing.T) {
 	h.drainAudit()
 
 	for name, id := range map[string]string{
-		"service account": sa.GetId(), "invitation": invited.GetUser().GetId(),
+		"service account": sa.Id, "invitation": invited.User.Id,
 	} {
 		trail, err := h.client.Admin.ListAudit(ctx, &users.ListUserAuditRequest{Id: id})
 		require.NoError(t, err, name)
-		require.Len(t, trail.GetEvents(), 1, name)
-		assert.Equal(t, "create", trail.GetEvents()[0].GetAction(), name)
+		require.Len(t, trail.Events, 1, name)
+		assert.Equal(t, "create", trail.Events[0].Action, name)
 	}
 	trail, err := h.client.Admin.ListAudit(ctx, &users.ListUserAuditRequest{Id: bob.ID.String()})
 	require.NoError(t, err)
-	require.Len(t, trail.GetEvents(), 1, "the reset is in the trail")
+	require.Len(t, trail.Events, 1, "the reset is in the trail")
 }

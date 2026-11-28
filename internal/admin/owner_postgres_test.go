@@ -35,11 +35,11 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	// The oldest admin is the owner, and the user list says so.
 	st, err := h.client.Owner.GetStatus(asOther, &Empty{})
 	require.NoError(t, err)
-	assert.Equal(t, owner.ID.String(), st.GetOwnerMemberId())
+	assert.Equal(t, owner.ID.String(), st.OwnerMemberId)
 	listed, err := h.client.Admin.List(asOwner, &users.ListUsersRequest{})
 	require.NoError(t, err)
-	for _, u := range listed.GetUsers() {
-		assert.Equal(t, u.GetId() == owner.ID.String(), u.GetIsOwner(), u.GetEmail())
+	for _, u := range listed.Users {
+		assert.Equal(t, u.Id == owner.ID.String(), u.IsOwner, u.Email)
 	}
 
 	// Another admin cannot touch the owner.
@@ -72,35 +72,35 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, statusOf(err), "a reason is required")
 	rec, err := h.client.Owner.RequestRecovery(asVendor, req)
 	require.NoError(t, err)
-	assert.NotEmpty(t, rec.GetEffectiveAt())
+	assert.NotEmpty(t, rec.EffectiveAt)
 	_, err = h.client.Owner.RequestRecovery(asVendor, req)
 	assert.Equal(t, http.StatusConflict, statusOf(err), "one recovery at a time")
 	_, err = h.client.Owner.CompleteRecovery(asVendor, &ownerslice.TenantIdOnlyRequest{TenantId: tenant.String()})
 	assert.Equal(t, http.StatusConflict, statusOf(err), "cannot complete during the 72-hour wait")
 	st, err = h.client.Owner.GetStatus(asOwner, &Empty{})
 	require.NoError(t, err)
-	assert.NotNil(t, st.GetPendingRecovery(), "the tenant sees the pending recovery")
+	assert.NotNil(t, st.PendingRecovery, "the tenant sees the pending recovery")
 
 	// The platform admin sees the same, plus who could take over; nobody else may look.
 	_, err = h.client.Owner.PlatformTenantOwner(asOwner, &ownerslice.TenantIdOnlyRequest{TenantId: tenant.String()})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
 	view, err := h.client.Owner.PlatformTenantOwner(asVendor, &ownerslice.TenantIdOnlyRequest{TenantId: tenant.String()})
 	require.NoError(t, err)
-	assert.Equal(t, owner.ID.String(), view.GetOwner().GetOwnerMemberId())
-	assert.Equal(t, "owner@acme.io", view.GetOwner().GetOwnerEmail())
-	assert.NotNil(t, view.GetOwner().GetPendingRecovery())
+	assert.Equal(t, owner.ID.String(), view.Owner.OwnerMemberId)
+	assert.Equal(t, "owner@acme.io", view.Owner.OwnerEmail)
+	assert.NotNil(t, view.Owner.PendingRecovery)
 	var emails []string
-	for _, p := range view.GetPeople() {
-		emails = append(emails, p.GetEmail())
-		assert.Equal(t, p.GetId() == owner.ID.String(), p.GetIsOwner())
+	for _, p := range view.People {
+		emails = append(emails, p.Email)
+		assert.Equal(t, p.Id == owner.ID.String(), p.IsOwner)
 	}
 	assert.ElementsMatch(t, []string{"owner@acme.io", "admin2@acme.io"}, emails, "the disabled viewer is not offered")
 
 	// An admin cancels it: nothing changes.
 	st, err = h.client.Owner.CancelRecovery(asOther, &Empty{})
 	require.NoError(t, err)
-	assert.Nil(t, st.GetPendingRecovery())
-	assert.Equal(t, owner.ID.String(), st.GetOwnerMemberId())
+	assert.Nil(t, st.PendingRecovery)
+	assert.Equal(t, owner.ID.String(), st.OwnerMemberId)
 
 	// A second recovery, left alone, completes after the wait and moves ownership.
 	_, err = h.client.Owner.RequestRecovery(asVendor, req)
@@ -110,10 +110,10 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	require.NoError(t, err)
 	done, err := h.client.Owner.CompleteRecovery(asVendor, &ownerslice.TenantIdOnlyRequest{TenantId: tenant.String()})
 	require.NoError(t, err)
-	assert.NotEmpty(t, done.GetCompletedAt())
+	assert.NotEmpty(t, done.CompletedAt)
 	st, err = h.client.Owner.GetStatus(asOther, &Empty{})
 	require.NoError(t, err)
-	assert.Equal(t, other.ID.String(), st.GetOwnerMemberId())
+	assert.Equal(t, other.ID.String(), st.OwnerMemberId)
 	// The old owner is now an ordinary admin, and the new owner is protected from them.
 	_, err = h.client.Admin.Disable(asOwner, &users.UserIdRequest{Id: other.ID.String()})
 	assert.Equal(t, http.StatusForbidden, statusOf(err))
@@ -121,7 +121,7 @@ func TestOwnerIsProtectedAndRecoveryWaits(t *testing.T) {
 	// The new owner can hand it back.
 	back, err := h.client.Owner.Transfer(asOther, &ownerslice.TransferOwnershipRequest{MemberId: owner.ID.String()})
 	require.NoError(t, err)
-	assert.Equal(t, owner.ID.String(), back.GetOwnerMemberId())
+	assert.Equal(t, owner.ID.String(), back.OwnerMemberId)
 }
 
 // UC-81: only the owner deletes the workspace, by typing its name; every admin is emailed a link

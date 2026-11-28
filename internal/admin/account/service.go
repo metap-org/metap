@@ -46,7 +46,7 @@ func (s *Service) UpdateProfile(ctx context.Context, req *UpdateProfileRequest) 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.Rename(ctx, c.Tenant, c.Self, req.GetDisplayName()); err != nil {
+	if err := s.store.Rename(ctx, c.Tenant, c.Self, req.DisplayName); err != nil {
 		return nil, kernel.IdentityErr(err)
 	}
 	return s.me(ctx, c)
@@ -82,10 +82,10 @@ func (s *Service) ListTenantUsers(ctx context.Context, req *ListTenantUsersReque
 		return nil, err
 	}
 	out := &ListTenantUsersResponse{Users: []*TenantUser{}}
-	want := int(req.GetLimit())
+	want := int(req.Limit)
 	for offset := 0; ; offset += identity.MaxListLimit {
 		page, total, err := s.store.Members(ctx, c.Tenant, identity.ListQuery{
-			Search: req.GetSearch(), Status: identity.StatusActive, Offset: offset, Limit: identity.MaxListLimit,
+			Search: req.Search, Status: identity.StatusActive, Offset: offset, Limit: identity.MaxListLimit,
 		})
 		if err != nil {
 			return nil, err

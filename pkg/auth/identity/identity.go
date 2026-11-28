@@ -46,7 +46,7 @@ const (
 // ServicePrincipalProvider marks the member an OAuth2 client-credentials client acts as.
 const ServicePrincipalProvider = "oauth2_client_credentials"
 
-// MinPasswordLength is the policy ValidatePassword enforces.
+// MinPasswordLength is the platform-wide minimum, which ValidatePasswordLength never goes below.
 const MinPasswordLength = 8
 
 var (
@@ -103,13 +103,6 @@ func normalizeEmail(email string) (string, error) {
 		return "", ErrInvalidEmail
 	}
 	return email, nil
-}
-
-// ValidatePassword is the platform-wide minimum, checked where a person chooses a password (admin
-// create/reset, change password, invitation, reset link) — not on every write, so seeding and tests
-// keep their short fixtures. ValidatePasswordLength applies a tenant's stricter policy.
-func ValidatePassword(password string) error {
-	return ValidatePasswordLength(password, MinPasswordLength)
 }
 
 // WeakPasswordError is a password shorter than the policy (errors.Is(err, ErrWeakPassword)).

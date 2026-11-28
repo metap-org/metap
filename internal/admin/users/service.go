@@ -98,8 +98,8 @@ func (s *Service) List(ctx context.Context, req *ListUsersRequest) (*ListUsersRe
 	if err != nil {
 		return nil, err
 	}
-	q := identity.ListQuery{Search: req.GetSearch(), Status: req.GetStatus(), Offset: int(req.GetOffset()), Limit: int(req.GetLimit())}
-	if role := strings.TrimSpace(req.GetRole()); role != "" {
+	q := identity.ListQuery{Search: req.Search, Status: req.Status, Offset: int(req.Offset), Limit: int(req.Limit)}
+	if role := strings.TrimSpace(req.Role); role != "" {
 		if q.IDs, err = s.store.WithRole(ctx, c.Tenant, role); err != nil {
 			return nil, err
 		}
@@ -120,7 +120,7 @@ func (s *Service) Get(ctx context.Context, req *UserIdRequest) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -143,13 +143,13 @@ func (s *Service) Create(ctx context.Context, req *CreateUserRequest) (*CreateUs
 	if err != nil {
 		return nil, err
 	}
-	roles := kernel.Dedupe(req.GetRoles())
+	roles := kernel.Dedupe(req.Roles)
 	if err := s.checkRoles(ctx, c.Tenant, roles); err != nil {
 		return nil, err
 	}
-	if req.GetPassword() != "" {
+	if req.Password != "" {
 		// The password only applies to a new account, which belongs to this tenant alone.
-		if err := s.store.CheckPassword(ctx, uuid.Nil, req.GetPassword(), c.Tenant); err != nil {
+		if err := s.store.CheckPassword(ctx, uuid.Nil, req.Password, c.Tenant); err != nil {
 			return nil, kernel.IdentityErr(err)
 		}
 	}
@@ -161,11 +161,11 @@ func (s *Service) Create(ctx context.Context, req *CreateUserRequest) (*CreateUs
 	err = s.deps.ChangeNew(ctx, c, AuditEntity, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
 		var err error
 		if m, created, err = s.store.Add(ctx, identity.NewMember{
-			TenantID: c.Tenant, Email: req.GetEmail(), Password: req.GetPassword(), DisplayName: req.GetDisplayName(), InvitedBy: invitedBy,
+			TenantID: c.Tenant, Email: req.Email, Password: req.Password, DisplayName: req.DisplayName, InvitedBy: invitedBy,
 		}); err != nil {
 			return uuid.Nil, nil, kernel.IdentityErr(err)
 		}
-		if created && req.GetPassword() == "" {
+		if created && req.Password == "" {
 			return uuid.Nil, nil, passwordRequired()
 		}
 		return m.ID, map[string][2]any{"email": {nil, m.Email}, "displayName": {nil, m.DisplayName}, "roles": {nil, roles}}, nil
@@ -192,7 +192,7 @@ func (s *Service) Update(ctx context.Context, req *UpdateUserRequest) (*User, er
 	if err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func (s *Service) Update(ctx context.Context, req *UpdateUserRequest) (*User, er
 		return nil, kernel.IdentityErr(err)
 	}
 	err = s.deps.Change(ctx, c, AuditEntity, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
-		if err := s.store.Rename(ctx, c.Tenant, id, req.GetDisplayName()); err != nil {
+		if err := s.store.Rename(ctx, c.Tenant, id, req.DisplayName); err != nil {
 			return nil, err
 		}
 		after, err := s.store.Member(ctx, c.Tenant, id)
@@ -255,7 +255,7 @@ func (s *Service) setStatus(ctx context.Context, req *UserIdRequest, next string
 	if err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +292,7 @@ func (s *Service) Remove(ctx context.Context, req *UserIdRequest) (*kernel.Empty
 	if err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +322,7 @@ func (s *Service) ResetPassword(ctx context.Context, req *ResetPasswordRequest) 
 	if err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -340,11 +340,11 @@ func (s *Service) ResetPassword(ctx context.Context, req *ResetPasswordRequest) 
 	if shared[m.IdentityID] {
 		return nil, sharedPerson("password")
 	}
-	if err := s.store.CheckPassword(ctx, m.IdentityID, req.GetPassword(), uuid.Nil); err != nil {
+	if err := s.store.CheckPassword(ctx, m.IdentityID, req.Password, uuid.Nil); err != nil {
 		return nil, kernel.IdentityErr(err)
 	}
 	err = s.deps.Change(ctx, c, AuditEntity, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
-		return map[string][2]any{"password": {nil, "reset"}}, s.store.SetPassword(ctx, m.IdentityID, req.GetPassword(), s.deps.Now())
+		return map[string][2]any{"password": {nil, "reset"}}, s.store.SetPassword(ctx, m.IdentityID, req.Password, s.deps.Now())
 	})
 	if err != nil {
 		return nil, kernel.IdentityErr(err)
@@ -359,7 +359,7 @@ func (s *Service) ResetMfa(ctx context.Context, req *UserIdRequest) (*kernel.Emp
 	if err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -396,17 +396,17 @@ func (s *Service) changeRole(ctx context.Context, req *RoleRequest, assign bool)
 	if err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
-	role := strings.TrimSpace(req.GetRole())
+	role := strings.TrimSpace(req.Role)
 	before, err := s.userOr(ctx, c.Tenant, id)
 	if err != nil {
 		return nil, err
 	}
-	if req.GetScopeType() != "" || req.GetScopeId() != "" {
-		return s.changeScopedRole(ctx, c, id, role, req.GetScopeType(), req.GetScopeId(), assign, before)
+	if req.ScopeType != "" || req.ScopeId != "" {
+		return s.changeScopedRole(ctx, c, id, role, req.ScopeType, req.ScopeId, assign, before)
 	}
 	if assign {
 		if err := s.checkRoles(ctx, c.Tenant, []string{role}); err != nil {
@@ -479,10 +479,10 @@ func (s *Service) ListScopeMembers(ctx context.Context, req *ScopeRequest) (*Lis
 	if err != nil {
 		return nil, err
 	}
-	if err := rolestore.ValidateScope(req.GetScopeType(), req.GetScopeId()); err != nil {
+	if err := rolestore.ValidateScope(req.ScopeType, req.ScopeId); err != nil {
 		return nil, fail(http.StatusBadRequest, errcode.ValidationFailed, err.Error())
 	}
-	members, err := s.store.ScopeMembers(ctx, c.Tenant, req.GetScopeType(), req.GetScopeId())
+	members, err := s.store.ScopeMembers(ctx, c.Tenant, req.ScopeType, req.ScopeId)
 	if err != nil {
 		return nil, err
 	}
@@ -503,11 +503,11 @@ func (s *Service) ListAudit(ctx context.Context, req *ListUserAuditRequest) (*ke
 	if err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
-	return s.deps.ListAudit(ctx, c, AuditEntity, id, req.GetCursor(), req.GetLimit())
+	return s.deps.ListAudit(ctx, c, AuditEntity, id, req.Cursor, req.Limit)
 }
 
 // Invite adds someone as an invited member and emails them a link; accepting it (REST
@@ -517,7 +517,7 @@ func (s *Service) Invite(ctx context.Context, req *InviteUserRequest) (*InviteUs
 	if err != nil {
 		return nil, err
 	}
-	roles := kernel.Dedupe(req.GetRoles())
+	roles := kernel.Dedupe(req.Roles)
 	if err := s.checkRoles(ctx, c.Tenant, roles); err != nil {
 		return nil, err
 	}
@@ -528,7 +528,7 @@ func (s *Service) Invite(ctx context.Context, req *InviteUserRequest) (*InviteUs
 	err = s.deps.ChangeNew(ctx, c, AuditEntity, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
 		var err error
 		if m, _, err = s.store.Add(ctx, identity.NewMember{
-			TenantID: c.Tenant, Email: req.GetEmail(), DisplayName: req.GetDisplayName(), InvitedBy: invitedBy,
+			TenantID: c.Tenant, Email: req.Email, DisplayName: req.DisplayName, InvitedBy: invitedBy,
 			Status: identity.StatusInvited,
 		}); err != nil {
 			return uuid.Nil, nil, kernel.IdentityErr(err)
@@ -572,7 +572,7 @@ func (s *Service) ResendInvitation(ctx context.Context, req *UserIdRequest) (*In
 	if err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -662,7 +662,7 @@ func (s *Service) CreateServiceAccount(ctx context.Context, req *CreateServiceAc
 	if err != nil {
 		return nil, err
 	}
-	roles := kernel.Dedupe(req.GetRoles())
+	roles := kernel.Dedupe(req.Roles)
 	if err := s.checkRoles(ctx, c.Tenant, roles); err != nil {
 		return nil, err
 	}
@@ -672,7 +672,7 @@ func (s *Service) CreateServiceAccount(ctx context.Context, req *CreateServiceAc
 	// are granted after it and the account is undone, in the trail too, if that fails.
 	err = s.deps.ChangeNew(ctx, c, AuditEntity, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
 		var err error
-		if m, err = s.store.CreateServiceAccount(ctx, c.Tenant, req.GetName(), createdBy); err != nil {
+		if m, err = s.store.CreateServiceAccount(ctx, c.Tenant, req.Name, createdBy); err != nil {
 			return uuid.Nil, nil, fail(http.StatusBadRequest, errcode.ValidationFailed, err.Error())
 		}
 		return m.ID, map[string][2]any{"serviceAccount": {nil, m.DisplayName}, "roles": {nil, roles}}, nil

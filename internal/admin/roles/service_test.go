@@ -191,13 +191,13 @@ func TestCreateUpdateDeleteAreAudited(t *testing.T) {
 
 	r, err := w.svc.Create(ctx, &CreateRoleRequest{Name: "analyst", Label: "Analyst"})
 	require.NoError(t, err)
-	assert.Equal(t, "analyst", r.GetName())
+	assert.Equal(t, "analyst", r.Name)
 	_, err = w.svc.Create(ctx, &CreateRoleRequest{Name: "analyst"})
 	assert.Equal(t, http.StatusConflict, statusOf(err))
 
 	up, err := w.svc.Update(ctx, &UpdateRoleRequest{Name: "analyst", Label: "SOC"})
 	require.NoError(t, err)
-	assert.Equal(t, "SOC", up.GetLabel())
+	assert.Equal(t, "SOC", up.Label)
 
 	_, err = w.svc.Delete(ctx, &RoleNameRequest{Name: "analyst"})
 	require.NoError(t, err)
@@ -235,7 +235,7 @@ func TestSetPermissionsAuditsOnlyRealChanges(t *testing.T) {
 	set := &SetRolePermissionsRequest{Role: "analyst", Grants: []*RoleGrant{{Entity: "waf.zones", Action: "read"}}}
 	out, err := w.svc.SetPermissions(ctx, set)
 	require.NoError(t, err)
-	assert.Len(t, out.GetGrants(), 1)
+	assert.Len(t, out.Grants, 1)
 	require.Len(t, w.audit.entries, 1)
 	assert.Contains(t, w.audit.entries[0].Diff, "granted")
 
@@ -258,7 +258,7 @@ func TestCreateCopiesPermissions(t *testing.T) {
 	require.NoError(t, err)
 	two, err := w.svc.Create(ctx, &CreateRoleRequest{Name: "analyst_two", CopyFrom: "analyst"})
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, two.GetPolicyCount())
+	assert.EqualValues(t, 1, two.PolicyCount)
 	_, err = w.svc.Create(ctx, &CreateRoleRequest{Name: "x", CopyFrom: "ghost"})
 	assert.Equal(t, http.StatusNotFound, statusOf(err))
 }

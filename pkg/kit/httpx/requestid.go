@@ -53,18 +53,3 @@ func GenerateRequestIDs(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
-
-// WithRequestIDs makes ids ambient for CurrentRequestIDs — for work that does not come
-// through net/http and so never runs GenerateRequestIDs.
-func WithRequestIDs(ctx context.Context, ids RequestIDs) context.Context {
-	return context.WithValue(ctx, requestIDsKey{}, ids)
-}
-
-// OpaqueIDOrNew returns v when it is a valid opaque id (what GenerateRequestIDs accepts from an
-// incoming header), otherwise a fresh UUID.
-func OpaqueIDOrNew(v string) string {
-	if isValidOpaqueID(v) {
-		return v
-	}
-	return newUUID()
-}

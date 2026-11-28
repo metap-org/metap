@@ -20,7 +20,7 @@ import (
 )
 
 type fakeStore struct {
-	oidc, saml     *sso.OidcConfig
+	oidc           *sso.OidcConfig
 	samlCfg        *sso.SamlConfig
 	oidcOn, samlOn bool
 	domains        []sso.SSODomain

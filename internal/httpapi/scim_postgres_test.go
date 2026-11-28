@@ -47,9 +47,9 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 		TenantID: tenant.String(), UserID: adminMember.ID.String(), Roles: []string{"admin"}, HasRoles: true})
 	sa, err := userSvc.CreateServiceAccount(asAdmin, &users.CreateServiceAccountRequest{Name: "entra"})
 	require.NoError(t, err)
-	_, err = userSvc.AssignRole(asAdmin, &users.RoleRequest{Id: sa.GetId(), Role: "admin"})
+	_, err = userSvc.AssignRole(asAdmin, &users.RoleRequest{Id: sa.Id, Role: "admin"})
 	require.NoError(t, err)
-	key, err := keys.Create(asAdmin, &apikeys.CreateApiKeyRequest{UserId: sa.GetId(), Name: "scim", ExpiresInDays: 30})
+	key, err := keys.Create(asAdmin, &apikeys.CreateApiKeyRequest{UserId: sa.Id, Name: "scim", ExpiresInDays: 30})
 	require.NoError(t, err)
 
 	call := func(method, path, token, body string) (int, map[string]any) {
@@ -128,9 +128,9 @@ func TestSCIMProvisionsUsers(t *testing.T) {
 	assert.Equal(t, "Carol B", got["displayName"])
 
 	// The change is in the audit trail, attributed to the service account.
-	entries, err := trail.New(idCfg.Audit).Search(asAdmin, &trail.SearchAuditRequest{ActorUserId: sa.GetId(), RecordId: id})
+	entries, err := trail.New(idCfg.Audit).Search(asAdmin, &trail.SearchAuditRequest{ActorUserId: sa.Id, RecordId: id})
 	require.NoError(t, err)
-	assert.NotEmpty(t, entries.GetEntries())
+	assert.NotEmpty(t, entries.Entries)
 
 	code, _ = call("DELETE", "/Users/"+id, token, "")
 	assert.Equal(t, 204, code)

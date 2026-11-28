@@ -102,7 +102,7 @@ func (s *Service) PlatformTenantOwner(ctx context.Context, req *TenantIdOnlyRequ
 	if _, err := s.deps.PlatformAdmin(ctx); err != nil {
 		return nil, err
 	}
-	tenant, err := uuid.Parse(req.GetTenantId())
+	tenant, err := uuid.Parse(req.TenantId)
 	if err != nil {
 		return nil, tenantIDErr()
 	}
@@ -145,7 +145,7 @@ func (s *Service) Transfer(ctx context.Context, req *TransferOwnershipRequest) (
 	if owner == uuid.Nil || c.Self != owner {
 		return nil, fail(http.StatusForbidden, errcode.OwnerProtected, "Only the tenant owner can transfer ownership.")
 	}
-	target, err := kernel.ParseID(req.GetMemberId())
+	target, err := kernel.ParseID(req.MemberId)
 	if err != nil {
 		return nil, err
 	}
@@ -207,11 +207,11 @@ func (s *Service) RequestRecovery(ctx context.Context, req *RequestOwnerRecovery
 	if err != nil {
 		return nil, err
 	}
-	tenant, err := uuid.Parse(req.GetTenantId())
+	tenant, err := uuid.Parse(req.TenantId)
 	if err != nil {
 		return nil, tenantIDErr()
 	}
-	newOwner, err := kernel.ParseID(req.GetNewOwnerMemberId())
+	newOwner, err := kernel.ParseID(req.NewOwnerMemberId)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +229,7 @@ func (s *Service) RequestRecovery(ctx context.Context, req *RequestOwnerRecovery
 	in := kernel.Caller{RC: c.RC, Tenant: tenant, Self: c.Self}
 	err = s.deps.Change(ctx, in, AuditEntity, tenant, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
 		var err error
-		if r, err = s.store.RequestRecovery(ctx, tenant, newOwner, c.Self, person.Email, req.GetReason(), now); err != nil {
+		if r, err = s.store.RequestRecovery(ctx, tenant, newOwner, c.Self, person.Email, req.Reason, now); err != nil {
 			return nil, err
 		}
 		return map[string][2]any{"ownerRecovery": {nil, "requested for " + target.Email + " (effective " + r.EffectiveAt.UTC().Format(time.RFC3339) + ")"}}, nil
@@ -247,7 +247,7 @@ func (s *Service) CompleteRecovery(ctx context.Context, req *TenantIdOnlyRequest
 	if err != nil {
 		return nil, err
 	}
-	tenant, err := uuid.Parse(req.GetTenantId())
+	tenant, err := uuid.Parse(req.TenantId)
 	if err != nil {
 		return nil, tenantIDErr()
 	}

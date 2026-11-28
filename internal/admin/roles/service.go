@@ -32,7 +32,7 @@ func (s *Service) List(ctx context.Context, req *ListRolesRequest) (*ListRolesRe
 	if err != nil {
 		return nil, err
 	}
-	rows, policyCounts, err := s.store.Catalog(ctx, c.Tenant, req.GetSearch())
+	rows, policyCounts, err := s.store.Catalog(ctx, c.Tenant, req.Search)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func (s *Service) Get(ctx context.Context, req *RoleNameRequest) (*Role, error) 
 	if err != nil {
 		return nil, err
 	}
-	return s.role(ctx, c.Tenant, strings.TrimSpace(req.GetName()))
+	return s.role(ctx, c.Tenant, strings.TrimSpace(req.Name))
 }
 
 func (s *Service) Create(ctx context.Context, req *CreateRoleRequest) (*Role, error) {
@@ -76,12 +76,12 @@ func (s *Service) Create(ctx context.Context, req *CreateRoleRequest) (*Role, er
 	if err != nil {
 		return nil, err
 	}
-	name := strings.TrimSpace(req.GetName())
+	name := strings.TrimSpace(req.Name)
 	if err := checkName(name); err != nil {
 		return nil, err
 	}
-	label, description := strings.TrimSpace(req.GetLabel()), strings.TrimSpace(req.GetDescription())
-	copyFrom := strings.TrimSpace(req.GetCopyFrom())
+	label, description := strings.TrimSpace(req.Label), strings.TrimSpace(req.Description)
+	copyFrom := strings.TrimSpace(req.CopyFrom)
 	var created rolestore.Role
 	var copied int
 	err = s.deps.ChangeInTenantNew(ctx, c, AuditEntity, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
@@ -110,8 +110,8 @@ func (s *Service) Update(ctx context.Context, req *UpdateRoleRequest) (*Role, er
 	if err != nil {
 		return nil, err
 	}
-	name := strings.TrimSpace(req.GetName())
-	label, description := strings.TrimSpace(req.GetLabel()), strings.TrimSpace(req.GetDescription())
+	name := strings.TrimSpace(req.Name)
+	label, description := strings.TrimSpace(req.Label), strings.TrimSpace(req.Description)
 	err = s.deps.ChangeInTenantNew(ctx, c, AuditEntity, audit.ActionUpdate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
 		before, after, err := s.store.Update(ctx, c.Tenant, name, label, description)
 		if err != nil {
@@ -142,7 +142,7 @@ func (s *Service) Delete(ctx context.Context, req *RoleNameRequest) (*kernel.Emp
 	if err != nil {
 		return nil, err
 	}
-	name := strings.TrimSpace(req.GetName())
+	name := strings.TrimSpace(req.Name)
 	r, holders, policies, err := s.store.Usage(ctx, c.Tenant, name)
 	if err != nil {
 		return nil, storeErr(err, name)
@@ -178,12 +178,12 @@ func (s *Service) ListAudit(ctx context.Context, req *ListRoleAuditRequest) (*ke
 	if err != nil {
 		return nil, err
 	}
-	name := strings.TrimSpace(req.GetName())
+	name := strings.TrimSpace(req.Name)
 	r, err := s.store.Role(ctx, c.Tenant, name)
 	if err != nil {
 		return nil, storeErr(err, name)
 	}
-	return s.deps.ListAudit(ctx, c, AuditEntity, r.ID, req.GetCursor(), req.GetLimit())
+	return s.deps.ListAudit(ctx, c, AuditEntity, r.ID, req.Cursor, req.Limit)
 }
 
 func (s *Service) permissions(ctx context.Context, tenant uuid.UUID, name string) (*RolePermissions, error) {
@@ -199,7 +199,7 @@ func (s *Service) GetPermissions(ctx context.Context, req *RoleNameRequest) (*Ro
 	if err != nil {
 		return nil, err
 	}
-	name := strings.TrimSpace(req.GetName())
+	name := strings.TrimSpace(req.Name)
 	out, err := s.permissions(ctx, c.Tenant, name)
 	if err != nil {
 		return nil, storeErr(err, name)
@@ -213,8 +213,8 @@ func (s *Service) SetPermissions(ctx context.Context, req *SetRolePermissionsReq
 	if err != nil {
 		return nil, err
 	}
-	name := strings.TrimSpace(req.GetRole())
-	grants, err := checkGrants(name, req.GetGrants())
+	name := strings.TrimSpace(req.Role)
+	grants, err := checkGrants(name, req.Grants)
 	if err != nil {
 		return nil, err
 	}

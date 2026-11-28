@@ -56,12 +56,6 @@ func (s *Service) change(ctx context.Context, c kernel.Caller, member uuid.UUID,
 	return kernel.Change(ctx, s.sink, s.audit, s.now, c, AuditEntityUsers, member, audit.ActionUpdate, fn)
 }
 
-func (s *Service) record(ctx context.Context, c kernel.Caller, member uuid.UUID, diff map[string][2]any) {
-	if s.audit != nil {
-		s.audit.Record(ctx, c, AuditEntityUsers, member, audit.ActionUpdate, diff)
-	}
-}
-
 // Create issues a key for a member of the caller's tenant. The secret is in the answer once.
 func (s *Service) Create(ctx context.Context, req *CreateApiKeyRequest) (*CreateApiKeyResponse, error) {
 	c, err := kernel.Durable(ctx, s.store.IsSupportSession)

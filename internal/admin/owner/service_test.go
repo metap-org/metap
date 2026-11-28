@@ -216,7 +216,7 @@ func TestOnlyTheOwnerTransfersToAnAdmin(t *testing.T) {
 
 	st, err := w.svc.Transfer(w.as(w.tenant, w.alice.ID, "admin"), &TransferOwnershipRequest{MemberId: w.bob.ID.String()})
 	require.NoError(t, err)
-	assert.Equal(t, w.bob.ID.String(), st.GetOwnerMemberId())
+	assert.Equal(t, w.bob.ID.String(), st.OwnerMemberId)
 	require.Len(t, w.audit.entries, 1)
 	assert.Equal(t, AuditEntity, w.audit.entries[0].Entity)
 }
@@ -233,7 +233,7 @@ func TestRecoveryLifecycle(t *testing.T) {
 
 	r, err := w.svc.RequestRecovery(asVendor, req)
 	require.NoError(t, err)
-	assert.NotEmpty(t, r.GetEffectiveAt())
+	assert.NotEmpty(t, r.EffectiveAt)
 	_, err = w.svc.RequestRecovery(asVendor, req)
 	assert.Equal(t, http.StatusConflict, statusOf(err), "one pending recovery per tenant")
 
@@ -242,7 +242,7 @@ func TestRecoveryLifecycle(t *testing.T) {
 
 	st, err := w.svc.CancelRecovery(w.as(w.tenant, w.alice.ID, "admin"), &kernel.Empty{})
 	require.NoError(t, err)
-	assert.Nil(t, st.GetPendingRecovery())
+	assert.Nil(t, st.PendingRecovery)
 }
 
 func TestCompleteMakesTheNewOwnerAnAdmin(t *testing.T) {
@@ -253,7 +253,7 @@ func TestCompleteMakesTheNewOwnerAnAdmin(t *testing.T) {
 	w.store.owner = w.alice.ID
 	done, err := w.svc.CompleteRecovery(w.as(tenancy.PlatformTenantID, w.vendor.ID, "platform_admin"), &TenantIdOnlyRequest{TenantId: w.tenant.String()})
 	require.NoError(t, err)
-	assert.NotEmpty(t, done.GetCompletedAt())
+	assert.NotEmpty(t, done.CompletedAt)
 	assert.Equal(t, w.bob.ID, w.store.owner)
 	assert.Equal(t, []uuid.UUID{w.bob.ID}, w.store.granted, "ownership without the role would lock the owner out")
 }

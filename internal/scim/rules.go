@@ -84,13 +84,13 @@ func (p *Problem) Body() map[string]any {
 func Resource(u *users.User) map[string]any {
 	return map[string]any{
 		"schemas":     []string{UserSchema},
-		"id":          u.GetId(),
-		"userName":    u.GetEmail(),
-		"displayName": u.GetDisplayName(),
-		"name":        map[string]any{"formatted": u.GetDisplayName()},
-		"emails":      []map[string]any{{"value": u.GetEmail(), "primary": true, "type": "work"}},
-		"active":      u.GetStatus() != identity.StatusDisabled,
-		"meta":        map[string]any{"resourceType": "User", "created": u.GetCreatedAt(), "location": "/scim/v2/Users/" + u.GetId()},
+		"id":          u.Id,
+		"userName":    u.Email,
+		"displayName": u.DisplayName,
+		"name":        map[string]any{"formatted": u.DisplayName},
+		"emails":      []map[string]any{{"value": u.Email, "primary": true, "type": "work"}},
+		"active":      u.Status != identity.StatusDisabled,
+		"meta":        map[string]any{"resourceType": "User", "created": u.CreatedAt, "location": "/scim/v2/Users/" + u.Id},
 	}
 }
 

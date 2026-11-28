@@ -39,7 +39,7 @@ func (s *Service) Grant(ctx context.Context, req *GrantSupportAccessRequest) (*S
 	if c.Self == uuid.Nil {
 		return nil, kernel.Err(http.StatusForbidden, errcode.Forbidden, "Support access is granted by a person, not a service account.")
 	}
-	role := req.GetRole()
+	role := req.Role
 	known, err := s.store.KnownRoles(ctx, c.Tenant)
 	if err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func (s *Service) Grant(ctx context.Context, req *GrantSupportAccessRequest) (*S
 	var g *identity.SupportGrant
 	err = s.deps.ChangeNew(ctx, c, AuditEntity, audit.ActionCreate, func(ctx context.Context) (uuid.UUID, map[string][2]any, error) {
 		var err error
-		if g, err = s.store.CreateGrant(ctx, c.Tenant, c.Self, req.GetReason(), role, int(req.GetHours()), now); err != nil {
+		if g, err = s.store.CreateGrant(ctx, c.Tenant, c.Self, req.Reason, role, int(req.Hours), now); err != nil {
 			return uuid.Nil, nil, mapErr(err)
 		}
 		return g.ID, map[string][2]any{
@@ -93,7 +93,7 @@ func (s *Service) Revoke(ctx context.Context, req *SupportGrantIdRequest) (*Supp
 	if err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -134,14 +134,14 @@ func (s *Service) Start(ctx context.Context, req *StartSupportSessionRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	tenant, err := uuid.Parse(req.GetTenantId())
+	tenant, err := uuid.Parse(req.TenantId)
 	if err != nil {
 		return nil, kernel.Err(http.StatusBadRequest, errcode.ValidationFailed, "`tenantId` must be a tenant id.")
 	}
 	now := s.deps.Now()
 	var grant *identity.SupportGrant
-	if req.GetGrantId() != "" {
-		gid, err := kernel.ParseID(req.GetGrantId())
+	if req.GrantId != "" {
+		gid, err := kernel.ParseID(req.GrantId)
 		if err != nil {
 			return nil, err
 		}

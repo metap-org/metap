@@ -20,7 +20,6 @@ import (
 
 // fakeStore is an in-memory Store.
 type fakeStore struct {
-	mu       sync.Mutex
 	roles    map[uuid.UUID][]string // tenant -> catalog
 	grants   []*identity.SupportGrant
 	people   map[uuid.UUID]*identity.Member

@@ -266,11 +266,6 @@ func (d Deps) ChangeInTenantNew(ctx context.Context, c Caller, entity string, ac
 	return ChangeInTenantNew(ctx, d.Cfg.Sink, d.Auditor(), d.NowFor, c, entity, act, fn)
 }
 
-// RecordFor writes one audit entry for a change that has already been made (the no-Sink path).
-func (d Deps) RecordFor(ctx context.Context, c Caller, entity string, id uuid.UUID, act audit.AuditAction, diff map[string][2]any) {
-	WriteAudit(ctx, d.Cfg.Audit, c.Tenant, c.Self, entity, id, act, diff, d.Now())
-}
-
 // JSONOr is raw when it holds valid JSON, else fallback ("null", "{}").
 func JSONOr(raw []byte, fallback string) json.RawMessage {
 	if len(raw) == 0 || !json.Valid(raw) {
