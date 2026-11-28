@@ -210,7 +210,10 @@ func Run(ctx context.Context, opts Options) error {
 	startAuditDrain(ctx, pool, router, auditStore)
 	state.PublicAppURL = appCfg.PublicAppURL
 	state.Crud = crud.WithAudit(state.Router, state.Metadata, state.Permissions, auditStore)
-	state.CookieSecure = false
+	state.CookieSecure = appCfg.CookieSecure
+	if !state.CookieSecure {
+		slog.Warn("COOKIE_SECURE=false: session cookies are sent without the Secure attribute, only for development over plain http")
+	}
 	state.Mailer = mail.New(mail.Config{
 		Host: appCfg.SMTPHost, Port: appCfg.SMTPPort, User: appCfg.SMTPUser, Password: appCfg.SMTPPassword,
 		From: appCfg.SMTPFrom, PublicURL: appCfg.PublicAppURL,

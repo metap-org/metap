@@ -36,8 +36,8 @@ func TestDeclaredActionsOverREST(t *testing.T) {
 
 	entity := httpTestEntity()
 	entity.Actions = []metadata.EntityAction{
-		{Name: "ping", Scope: metadata.ActionScopeRecord},
-		{Name: "sweep", Scope: metadata.ActionScopeEntity},
+		{Name: "ping", Scope: metadata.ActionScopeRecord, AnyMember: true},
+		{Name: "sweep", Scope: metadata.ActionScopeEntity, AnyMember: true},
 	}
 	state, privPEM := newTestAppState(t, pool, entity)
 	reg := crud.NewActionRegistry()
@@ -220,8 +220,8 @@ func TestAStepThatFailsUndoesItsRecordWriteAndLeavesNoEventOrAudit(t *testing.T)
 	entity := httpTestEntity()
 	entity.Audit = &metadata.EntityAuditConfig{Enabled: true}
 	entity.Actions = []metadata.EntityAction{
-		{Name: "renameTwice", Scope: metadata.ActionScopeRecord},
-		{Name: "renameOnce", Scope: metadata.ActionScopeRecord},
+		{Name: "renameTwice", Scope: metadata.ActionScopeRecord, AnyMember: true},
+		{Name: "renameOnce", Scope: metadata.ActionScopeRecord, AnyMember: true},
 	}
 	state, privPEM := newTestAppState(t, pool, entity)
 	auditStore := audit.NewPostgresStore(pool)

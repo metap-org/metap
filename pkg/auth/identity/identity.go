@@ -52,7 +52,9 @@ const MinPasswordLength = 8
 var (
 	// ErrInvalidCredentials: unknown email, wrong password, or an identity without a password.
 	ErrInvalidCredentials = errors.New("invalid email or password")
-	// ErrLocked is only returned once the password was right, so it tells nothing to a guesser.
+	// ErrLocked is only returned to somebody already signed in (VerifyCurrentPassword), whatever the
+	// password: signing in answers ErrInvalidCredentials while locked, so a locked account cannot be
+	// told apart from a wrong password, and the lock never says which password is right.
 	ErrLocked = errors.New("too many failed sign-in attempts, try again later")
 	// ErrDisabled: the identity or the member is disabled.
 	ErrDisabled = errors.New("this account is disabled")
@@ -138,13 +140,11 @@ func Authenticate(ctx context.Context, db DBTX, email, password string, now time
 		storedEmail  string
 		hash         *string
 		status       string
-		failed       int
-		lockedUntil  *time.Time
 		lastTenantID *uuid.UUID
 	)
-	err := db.QueryRow(ctx, `SELECT id, email, password_hash, status, failed_logins, locked_until, last_tenant_id
+	err := db.QueryRow(ctx, `SELECT id, email, password_hash, status, last_tenant_id
 		FROM metadata.identities WHERE lower(email) = lower($1)`, strings.TrimSpace(email)).
-		Scan(&id, &storedEmail, &hash, &status, &failed, &lockedUntil, &lastTenantID)
+		Scan(&id, &storedEmail, &hash, &status, &lastTenantID)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && hash == nil) {
 		verifyDummyPassword(password)
 		return nil, ErrInvalidCredentials
@@ -152,23 +152,25 @@ func Authenticate(ctx context.Context, db DBTX, email, password string, now time
 	if err != nil {
 		return nil, err
 	}
+	claimed, err := claimAttempt(ctx, db, id, now)
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		verifyDummyPassword(password)
+		return nil, ErrInvalidCredentials
+	}
 	ok, err := VerifyPassword(password, *hash)
 	if err != nil {
 		return nil, err
 	}
-	locked := lockedUntil != nil && now.Before(*lockedUntil)
 	if !ok {
-		if !locked {
-			if err := recordFailure(ctx, db, id, failed+1, now); err != nil {
-				return nil, err
-			}
-		}
 		return nil, ErrInvalidCredentials
 	}
-	if locked {
-		return nil, ErrLocked
-	}
 	if status != StatusActive {
+		if err := clearAttempts(ctx, db, id); err != nil {
+			return nil, err
+		}
 		return nil, ErrDisabled
 	}
 	if _, err := db.Exec(ctx, `UPDATE metadata.identities
@@ -178,13 +180,26 @@ func Authenticate(ctx context.Context, db DBTX, email, password string, now time
 	return &Identity{ID: id, Email: storedEmail, Status: status, LastTenantID: lastTenantID}, nil
 }
 
-func recordFailure(ctx context.Context, db DBTX, id uuid.UUID, failed int, now time.Time) error {
-	if failed >= MaxFailedLogins {
-		_, err := db.Exec(ctx, `UPDATE metadata.identities
-			SET failed_logins = 0, locked_until = $2 WHERE id = $1`, id, now.Add(LockoutDuration))
-		return err
+// claimAttempt counts one password attempt before the password is looked at, in one statement, so
+// attempts sent together are limited like attempts sent one after another. The count assumes the
+// attempt fails (a right password clears it with clearAttempts); the one that reaches
+// MaxFailedLogins locks the identity. false: it is locked, and the password must not be judged.
+func claimAttempt(ctx context.Context, db DBTX, id uuid.UUID, now time.Time) (bool, error) {
+	tag, err := db.Exec(ctx, `UPDATE metadata.identities SET
+			failed_logins = CASE WHEN failed_logins + 1 >= $3 THEN 0 ELSE failed_logins + 1 END,
+			locked_until = CASE WHEN failed_logins + 1 >= $3 THEN $4::timestamptz ELSE locked_until END
+		WHERE id = $1 AND (locked_until IS NULL OR locked_until <= $2)`,
+		id, now, MaxFailedLogins, now.Add(LockoutDuration))
+	if err != nil {
+		return false, err
 	}
-	_, err := db.Exec(ctx, `UPDATE metadata.identities SET failed_logins = $2 WHERE id = $1`, id, failed)
+	return tag.RowsAffected() == 1, nil
+}
+
+// clearAttempts forgets the failed attempts (and the lock the claimed attempt itself may have set)
+// once a password proved right.
+func clearAttempts(ctx context.Context, db DBTX, id uuid.UUID) error {
+	_, err := db.Exec(ctx, `UPDATE metadata.identities SET failed_logins = 0, locked_until = NULL WHERE id = $1`, id)
 	return err
 }
 
@@ -491,37 +506,29 @@ func CheckPassword(ctx context.Context, db DBTX, identityID uuid.UUID, password 
 // same lockout as signing in (ErrInvalidCredentials, then ErrLocked once locked), so a stolen
 // session cannot be used to guess the password without limit.
 func VerifyCurrentPassword(ctx context.Context, db DBTX, identityID uuid.UUID, password string, now time.Time) error {
-	var (
-		hash        *string
-		failed      int
-		lockedUntil *time.Time
-	)
-	if err := db.QueryRow(ctx, `SELECT password_hash, failed_logins, locked_until FROM metadata.identities WHERE id = $1`, identityID).
-		Scan(&hash, &failed, &lockedUntil); err != nil {
+	var hash *string
+	if err := db.QueryRow(ctx, `SELECT password_hash FROM metadata.identities WHERE id = $1`, identityID).Scan(&hash); err != nil {
 		return err
 	}
 	if hash == nil {
 		verifyDummyPassword(password)
 		return ErrInvalidCredentials
 	}
+	claimed, err := claimAttempt(ctx, db, identityID, now)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return ErrLocked
+	}
 	ok, err := VerifyPassword(password, *hash)
 	if err != nil {
 		return err
 	}
-	locked := lockedUntil != nil && now.Before(*lockedUntil)
 	if !ok {
-		if !locked {
-			if err := recordFailure(ctx, db, identityID, failed+1, now); err != nil {
-				return err
-			}
-		}
 		return ErrInvalidCredentials
 	}
-	if locked {
-		return ErrLocked
-	}
-	_, err = db.Exec(ctx, `UPDATE metadata.identities SET failed_logins = 0 WHERE id = $1`, identityID)
-	return err
+	return clearAttempts(ctx, db, identityID)
 }
 
 // CheckSession decides whether a token for (tenantID, userID), issued at issuedAt, may still be

@@ -62,6 +62,17 @@ type App struct {
 	SMTPFrom     string
 	// PublicAppURL is the portal origin account emails link to (invitations, password reset).
 	PublicAppURL string
+	// CookieSecure is the Secure attribute of the session, CSRF and SSO cookies. On unless
+	// COOKIE_SECURE=false, which is only for development over plain http.
+	CookieSecure bool
+}
+
+// cookieSecure is true unless COOKIE_SECURE says "false" or "0": anything else, a typo included,
+// keeps the cookies Secure.
+func cookieSecure() bool {
+	v, _ := env.Lookup("COOKIE_SECURE")
+	v = strings.ToLower(strings.TrimSpace(v))
+	return v != "false" && v != "0"
 }
 
 // OutboxDatabaseURLOrDefault is the URL a worker's outbox/event-publishing DB connection should
@@ -183,5 +194,6 @@ func LoadApp() (*App, error) {
 		PolicyCacheRedisURL: policyCacheRedisURL, PolicyCacheTTLSeconds: policyCacheTTLSeconds,
 		SMTPHost: smtpHost, SMTPPort: smtpPort, SMTPUser: smtpUser, SMTPPassword: smtpPassword, SMTPFrom: smtpFrom,
 		PublicAppURL: publicAppURL,
+		CookieSecure: cookieSecure(),
 	}, nil
 }

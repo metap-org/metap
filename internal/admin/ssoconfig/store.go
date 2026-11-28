@@ -26,8 +26,10 @@ type Store interface {
 	DeleteSaml(ctx context.Context, tenant uuid.UUID) error
 
 	Domains(ctx context.Context, tenant uuid.UUID) ([]sso.SSODomain, error)
-	// CheckDomain looks up the ownership record and marks the domain verified when it is there.
-	CheckDomain(ctx context.Context, tenant uuid.UUID, d sso.SSODomain, now time.Time) (bool, error)
+	// DomainPublished looks up the ownership record (network only, so outside any transaction).
+	DomainPublished(ctx context.Context, d sso.SSODomain) bool
+	// MarkDomainVerified records the proof; false when the tenant's settings no longer name the domain.
+	MarkDomainVerified(ctx context.Context, tenant uuid.UUID, domain string, now time.Time) (bool, error)
 }
 
 // Secrets keeps the OIDC client secret (the deployment's secret store).

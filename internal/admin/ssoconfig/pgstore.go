@@ -67,8 +67,12 @@ func (s *PgStore) Domains(ctx context.Context, t uuid.UUID) ([]sso.SSODomain, er
 	return sso.Domains(ctx, s.db(), t)
 }
 
-func (s *PgStore) CheckDomain(ctx context.Context, t uuid.UUID, d sso.SSODomain, now time.Time) (bool, error) {
-	return sso.CheckDomain(ctx, s.db(), s.lookup, t, d, now)
+func (s *PgStore) DomainPublished(ctx context.Context, d sso.SSODomain) bool {
+	return sso.DomainRecordPublished(ctx, s.lookup, d)
+}
+
+func (s *PgStore) MarkDomainVerified(ctx context.Context, t uuid.UUID, domain string, now time.Time) (bool, error) {
+	return sso.MarkDomainVerified(ctx, s.db(), t, domain, now)
 }
 
 // NetProvider reaches the identity provider over the network.

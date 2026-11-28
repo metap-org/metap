@@ -222,17 +222,30 @@ func (s *Service) VerifyDomain(ctx context.Context, req *VerifySsoDomainRequest)
 	if found == nil {
 		return nil, kernel.Err(http.StatusNotFound, errcode.NotFound, "That domain is not in this workspace's single sign-on settings.")
 	}
-	ok, err := s.store.CheckDomain(ctx, c.Tenant, *found, s.deps.Now())
-	switch {
-	case errors.Is(err, sso.ErrDomainClaimed):
-		return nil, kernel.Err(http.StatusConflict, errcode.UniqueViolation, "Another workspace has already verified this domain.")
-	case err != nil:
-		return nil, err
-	case !ok:
-		return nil, kernel.Err(http.StatusConflict, errcode.DomainNotVerified,
-			"The record "+found.VerifyHost()+" was not found with the expected value yet. DNS changes can take a while; try again shortly.")
+	notYet := kernel.Err(http.StatusConflict, errcode.DomainNotVerified,
+		"The record "+found.VerifyHost()+" was not found with the expected value yet. DNS changes can take a while; try again shortly.")
+	// A domain already proved stays proved: nothing changes and nothing is recorded.
+	if found.VerifiedAt == nil {
+		// DNS is asked before the transaction opens; the proof and its audit entry are then one change.
+		if !s.store.DomainPublished(ctx, *found) {
+			return nil, notYet
+		}
+		err = s.deps.Change(ctx, c, AuditEntity, c.Tenant, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+			ok, err := s.store.MarkDomainVerified(ctx, c.Tenant, domain, s.deps.Now())
+			switch {
+			case errors.Is(err, sso.ErrDomainClaimed):
+				return nil, kernel.Err(http.StatusConflict, errcode.UniqueViolation, "Another workspace has already verified this domain.")
+			case err != nil:
+				return nil, err
+			case !ok:
+				return nil, notYet
+			}
+			return map[string][2]any{"verifiedDomain": {nil, domain}}, nil
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
-	s.deps.RecordFor(ctx, c, AuditEntity, c.Tenant, audit.ActionUpdate, map[string][2]any{"verifiedDomain": {nil, domain}})
 	return s.view(ctx, c.Tenant)
 }
 

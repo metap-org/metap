@@ -576,17 +576,39 @@ func (s *Service) ResendInvitation(ctx context.Context, req *UserIdRequest) (*In
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.issueInvitation(ctx, c, id)
+	m, err := s.invitee(ctx, c, id)
 	if err != nil {
 		return nil, err
 	}
-	s.deps.RecordFor(ctx, c, AuditEntity, id, audit.ActionUpdate, map[string][2]any{"invitation": {nil, "resent"}})
-	return resp, nil
+	var link newLink
+	// The new link (which replaces the old one) and its entry are one change; the email follows it.
+	err = s.deps.Change(ctx, c, AuditEntity, id, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
+		var err error
+		link, err = s.newInvitation(ctx, c, m)
+		return map[string][2]any{"invitation": {nil, "resent"}}, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.sendInvitation(ctx, c, m, link)
 }
 
 // issueInvitation creates a fresh link for invited member id and emails it. A relay failure is not an
 // error: the invitation stands and the link comes back for the admin to pass on.
 func (s *Service) issueInvitation(ctx context.Context, c kernel.Caller, id uuid.UUID) (*InviteUserResponse, error) {
+	m, err := s.invitee(ctx, c, id)
+	if err != nil {
+		return nil, err
+	}
+	link, err := s.newInvitation(ctx, c, m)
+	if err != nil {
+		return nil, err
+	}
+	return s.sendInvitation(ctx, c, m, link)
+}
+
+// invitee is the member id, who must still be waiting to join.
+func (s *Service) invitee(ctx context.Context, c kernel.Caller, id uuid.UUID) (*identity.Member, error) {
 	m, err := s.store.Member(ctx, c.Tenant, id)
 	if err != nil {
 		return nil, kernel.IdentityErr(err)
@@ -594,10 +616,23 @@ func (s *Service) issueInvitation(ctx context.Context, c kernel.Caller, id uuid.
 	if m.Status != identity.StatusInvited {
 		return nil, fail(http.StatusConflict, errcode.AlreadyMember, "This person has already joined the tenant.")
 	}
+	return m, nil
+}
+
+type newLink struct {
+	token      string
+	inv        *identity.Invitation
+	newAccount bool
+}
+
+func (s *Service) newInvitation(ctx context.Context, c kernel.Caller, m *identity.Member) (newLink, error) {
 	token, inv, newAccount, err := s.store.NewInvitation(ctx, c.Tenant, m, c.SelfPtr(), s.deps.Now())
-	if err != nil {
-		return nil, err
-	}
+	return newLink{token: token, inv: inv, newAccount: newAccount}, err
+}
+
+// sendInvitation emails the link. It talks to the mail relay, so it runs outside any transaction.
+func (s *Service) sendInvitation(ctx context.Context, c kernel.Caller, m *identity.Member, issued newLink) (*InviteUserResponse, error) {
+	token, inv, newAccount := issued.token, issued.inv, issued.newAccount
 	// Without a mailer the link is relative: the portal resolves it.
 	link := (*mail.Mailer)(nil).Link("/accept-invite", token)
 	var sendErr error = mail.ErrNotConfigured

@@ -37,7 +37,7 @@ func TestRecordClientOverREST(t *testing.T) {
 	})
 	ensureTestOrdersTable(t, pool)
 	entity := httpTestEntity()
-	entity.Actions = []metadata.EntityAction{{Name: "ping", Scope: metadata.ActionScopeRecord}}
+	entity.Actions = []metadata.EntityAction{{Name: "ping", Scope: metadata.ActionScopeRecord, AnyMember: true}}
 	state, privPEM := newTestAppState(t, pool, entity)
 	reg := crud.NewActionRegistry()
 	require.NoError(t, reg.Register("test.orders", "ping", func(_ context.Context, call crud.ActionCall) (crud.JsonObject, error) {

@@ -152,12 +152,13 @@ func samlStart(w http.ResponseWriter, r *http.Request, state *AppState) {
 	if !ok {
 		return
 	}
-	target, err := state.Signin().SAMLStart(r.Context(), tenant)
+	start, err := state.Signin().SAMLStart(r.Context(), tenant)
 	if err != nil {
 		writeCrudError(w, err)
 		return
 	}
-	redirectTo(w, target)
+	http.SetCookie(w, samlBindCookie(start.State))
+	redirectTo(w, start.RedirectURL)
 }
 
 // samlACS receives the provider's signed response.
@@ -171,6 +172,10 @@ func samlACS(w http.ResponseWriter, r *http.Request, state *AppState) {
 		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed, "The response is not a form post.", nil)
 		return
 	}
-	res, err := state.Signin().SAMLACS(r.Context(), tenant, r.PostForm.Get("RelayState"), r.PostForm.Get("SAMLResponse"), clientOf(r, state))
+	relay := r.PostForm.Get("RelayState")
+	// The state is spent whatever happens, so the binding cookie goes with it.
+	http.SetCookie(w, clearSAMLBindCookie())
+	res, err := state.Signin().SAMLACS(r.Context(), tenant, relay, r.PostForm.Get("SAMLResponse"),
+		samlBoundToBrowser(r, relay), clientOf(r, state))
 	finishSSO(w, state, res, err)
 }

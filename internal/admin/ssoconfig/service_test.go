@@ -72,9 +72,13 @@ func (f *fakeStore) DeleteSaml(context.Context, uuid.UUID) error {
 func (f *fakeStore) Domains(context.Context, uuid.UUID) ([]sso.SSODomain, error) {
 	return f.domains, nil
 }
-func (f *fakeStore) CheckDomain(context.Context, uuid.UUID, sso.SSODomain, time.Time) (bool, error) {
+func (f *fakeStore) DomainPublished(context.Context, sso.SSODomain) bool {
 	f.checked = true
-	return f.checkResult, nil
+	return f.checkResult
+}
+
+func (f *fakeStore) MarkDomainVerified(context.Context, uuid.UUID, string, time.Time) (bool, error) {
+	return true, nil
 }
 
 type vault map[string]string
