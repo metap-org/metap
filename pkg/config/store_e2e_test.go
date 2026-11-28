@@ -25,11 +25,11 @@ func TestSetPlatformGlobalThenReloadIsVisibleImmediately(t *testing.T) {
 	ctx := context.Background()
 	store, err := Load(ctx, pool)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.ResetPlatformGlobal(context.Background(), GraphQLMaxDepth) })
+	t.Cleanup(func() { _ = store.ResetPlatformGlobal(context.Background(), HTTPRateLimitBurst) })
 
-	require.NoError(t, store.SetPlatformGlobal(ctx, GraphQLMaxDepth, num(33)))
+	require.NoError(t, store.SetPlatformGlobal(ctx, HTTPRateLimitBurst, num(33)))
 	// SetPlatformGlobal already re-swaps the snapshot — no separate Reload needed.
-	got := store.Current().GetU64(GraphQLMaxDepth)
+	got := store.Current().GetU64(HTTPRateLimitBurst)
 	require.EqualValues(t, 33, got, "got %d, want 33", got)
 }
 
@@ -38,10 +38,10 @@ func TestResetPlatformGlobalFallsBackToTheDeclaredDefault(t *testing.T) {
 	ctx := context.Background()
 	store, err := Load(ctx, pool)
 	require.NoError(t, err)
-	require.NoError(t, store.SetPlatformGlobal(ctx, GraphQLMaxComplexity, num(5000)))
-	require.NoError(t, store.ResetPlatformGlobal(ctx, GraphQLMaxComplexity))
-	got := store.Current().GetU64(GraphQLMaxComplexity)
-	require.EqualValues(t, 1000, got, "got %d, want the declared default 1000", got)
+	require.NoError(t, store.SetPlatformGlobal(ctx, HTTPRateLimitPerMs, num(5000)))
+	require.NoError(t, store.ResetPlatformGlobal(ctx, HTTPRateLimitPerMs))
+	got := store.Current().GetU64(HTTPRateLimitPerMs)
+	require.EqualValues(t, 200, got, "got %d, want the declared default 200", got)
 }
 
 func TestSetPlatformGlobalRejectsAnOperatorKey(t *testing.T) {
@@ -71,7 +71,7 @@ func TestSetPlatformGlobalRejectsAnInvalidValue(t *testing.T) {
 	pool := testPool(t)
 	store, err := Load(context.Background(), pool)
 	require.NoError(t, err)
-	err = store.SetPlatformGlobal(context.Background(), GraphQLMaxDepth, num(0))
+	err = store.SetPlatformGlobal(context.Background(), HTTPRateLimitBurst, num(0))
 	var cfgErr *Error
 	ok := asConfigError(err, &cfgErr)
 	require.True(t, ok, "got %v, want Invalid", err)
@@ -110,7 +110,7 @@ func TestSetTenantRejectsAPlatformGlobalKey(t *testing.T) {
 	pool := testPool(t)
 	store, err := Load(context.Background(), pool)
 	require.NoError(t, err)
-	err = store.SetTenant(context.Background(), pool, uuid.New(), GraphQLMaxDepth, num(5))
+	err = store.SetTenant(context.Background(), pool, uuid.New(), HTTPRateLimitBurst, num(5))
 	var cfgErr *Error
 	ok := asConfigError(err, &cfgErr)
 	require.True(t, ok, "got %v, want NotWritable (a tenant admin reaching a fleet-wide key)", err)

@@ -1,144 +1,96 @@
-# Security test checklist
+# Checklist test bảo mật
 
-Sống — cập nhật mỗi khi thêm/đổi test bảo mật. Mỗi hàng trỏ đúng file/hàm test tương ứng, không
-diễn giải lại logic (đọc code là nguồn thật).
+Cập nhật khi thêm hoặc đổi test bảo mật. Mỗi hàng chỉ tới test thật; đọc test để biết chính xác nó
+khẳng định gì. Đây là danh sách chọn lọc theo tính chất, không phải mọi test. Có tên ở đây nghĩa là
+tính chất đó có test chặn hồi quy, không phải là đã được audit.
 
-## Đã cover
+## Token và phiên
 
-| Scenario | Test | Ghi chú |
-|---|---|---|
-| Dependency có CVE đã biết | `.github/workflows/ci.yml`'s job `security` (`cargo audit`) | `.cargo/audit.toml` ignore-list 1 advisory không thể sửa (`rsa` qua `sqlx-mysql`, không compile vào build thật — xem file đó) |
-| `SET LOCAL search_path` không rò giữa 2 tenant dùng chung 1 connection | `crates/metap-control/tests/tenant_isolation_postgres.rs`'s `single_connection_pool_never_leaks_search_path_between_two_registered_tenants` | `max_connections(1)`, đúng invariant §7 #4 thiết kế |
-| `CrudService::list()` không rò dòng dữ liệu giữa 2 tenant dùng chung pool nhỏ | `crates/metap-crud/tests/crud_service_postgres.rs`'s `concurrent_cross_tenant_list_calls_never_return_another_tenants_records` | Đúng hình dạng bug thật đã fix ở commit `cc5f1ea` (thiếu filter `tenant_id`) |
-| JWT thiếu token | `crates/metap-http/tests/jwt_security_postgres.rs`'s `missing_token_is_rejected` | |
-| JWT hết hạn | `..jwt_security_postgres.rs`'s `expired_token_is_rejected` | `crates/metap-http/src/auth.rs`'s `validation.leeway = 20` (siết từ mặc định 60s của crate `jsonwebtoken`, quyết định chủ dự án 2026-08-24 — xem `docs/roadmap.md`) |
-| JWT chữ ký bị sửa | `..jwt_security_postgres.rs`'s `tampered_signature_is_rejected` | |
-| JWT ký bằng key khác (không phải key server tin) | `..jwt_security_postgres.rs`'s `token_signed_by_a_different_key_is_rejected` | |
-| JWT hợp lệ nhưng tenant khác không đọc được dữ liệu | `..jwt_security_postgres.rs`'s `a_valid_token_for_one_tenant_cannot_read_another_tenants_record` | |
-| Deny-by-default khi không có policy nào khớp (role không phải admin) | `crates/metap-permission/tests/rbac_abac_integration_postgres.rs`'s `non_admin_role_with_no_matching_policy_is_denied_by_default` | Trước đây chỉ có unit test cô lập, không có integration test qua Postgres thật |
-| RBAC role-gate cấp/từ chối đúng role | `..rbac_abac_integration_postgres.rs`'s `role_gate_policy_grants_the_named_role_and_denies_others` | |
-| ABAC record-condition (`fromContext`) cấp/từ chối đúng theo attribute | `..rbac_abac_integration_postgres.rs`'s `record_condition_allows_matching_department_and_denies_mismatched` | Non-admin role — `is_admin()` mới bypass, test này không dùng admin |
-| Deny ghi đè Allow qua round-trip Postgres thật | `..rbac_abac_integration_postgres.rs`'s `explicit_deny_policy_overrides_a_matching_allow_policy` | Logic thuần đã unit-test ở `policy_condition.rs`; đây là bản round-trip DB thật |
-| SAST cho logic code tự viết (không phải CVE dependency) | `.github/workflows/codeql.yml` (`analyze` job) | GitHub-native, chạy trên push/PR/cron hằng tuần. Report-only qua tab Security, không phải gate chặn CI — quy ước CodeQL: ruleset mới trên codebase cũ cần một vòng triage trước khi đủ tin để chặn build |
-| SAST local + CI (blocking) | `.semgrep.yml` + `semgrep scan --config p/rust --config p/secrets --config .semgrep.yml`, wired vào CI 2026-08-25 (`.github/workflows/ci.yml`'s `semgrep` job, `--error`) | Ban đầu chỉ local (yêu cầu người dùng: "semgrep quét local"); wired vào CI sau khi false positive duy nhất được nosemgrep inline (xem hàng dưới) — gate thật ở 0 finding, không phải report-only |
+| Tính chất | File test: hàm |
+|---|---|
+| Token hết hạn bị từ chối | `pkg/auth/jwks/static_test.go`: `TestDecodeAccessTokenRejectsAnExpiredToken` |
+| Token ký bằng khoá khác bị từ chối | `pkg/auth/jwks/static_test.go`: `TestDecodeAccessTokenRejectsATokenSignedByADifferentKey` |
+| Khoá đã gỡ khỏi JWKS không còn được chấp nhận | `pkg/auth/jwks/jwks_test.go`: `TestJwksClientRejectsATokenSignedByAKeyNoLongerPublishedInTheJwks` |
+| Token của issuer khác bị từ chối | `pkg/auth/jwks/single_issuer_test.go`: `TestAutoVerifierRejectsATokenFromAnotherIssuer` |
+| Token cho downstream không dùng được như token nền tảng | `pkg/auth/jwks/downstream_test.go`: `TestADownstreamTokenIsNotAnOrdinaryPlatformToken` |
+| Thành viên bị thu hồi hoặc vô hiệu không qua được | `internal/authctx/resolver_test.go`: `TestARevokedOrDisabledMemberGetsNoContextAndNoRoleRead` |
+| Vô hiệu, xoá hoặc đổi mật khẩu làm mất phiên | `pkg/auth/identity/identity_postgres_test.go`: `TestSessionsAreRevokedByDisableRemoveAndPasswordChange` |
+| Gọi bằng cookie mà thiếu header CSRF bị từ chối | `internal/httpapi/ops_sessions_postgres_test.go`: `TestSessionOperationsOverREST`; `pkg/kit/httpx/cookieauth_test.go`: `TestCsrfMatchesOnlyWhenBothArePresentAndEqual` |
 
-### Bổ sung 2026-09-07 — rà soát lại sau ~2 tuần không động tới, tìm ra 17 file test mới chưa ghi
+## Đăng nhập
 
-Bảng gốc phía trên viết 2026-08-23/25, trước khi gRPC/GraphQL/JWKS/config-tiers/cookie-session/S3
-ship — rà soát lại tìm thấy các test bảo mật thật đã tồn tại nhưng chưa từng vào bảng này (không
-phải test mới viết, trừ hàng JWKS cuối cùng):
+| Tính chất | File test: hàm |
+|---|---|
+| Khoá tài khoản sau nhiều lần sai, kể cả gửi song song | `pkg/auth/identity/lockout_postgres_test.go`: `TestParallelWrongGuessesCannotOutrunTheLockout`, `TestParallelSignInGuessesLockTheAccount` |
+| Tài khoản đang khoá không lộ mật khẩu đúng | `pkg/auth/identity/lockout_postgres_test.go`: `TestALockedSignInDoesNotTellTheRightPasswordApart` |
+| Route đăng nhập có rate limit riêng chặt hơn | `internal/httpapi/auth_ratelimit_postgres_test.go`: `TestAuthRoutesShareAStricterPerIPLimit`, `TestSSOStartRoutesShareTheCredentialBucket` |
+| Rate limit sau proxy đếm theo người gọi | `pkg/httpmw/ratelimit_behind_test.go`: `TestRateLimitBehindCountsEachCallerSeparately` |
+| Mã TOTP không dùng lại được | `pkg/auth/identity/mfa_test.go`: `TestMatchTOTPWindowAndReplay` |
+| SAML từ chối phản hồi giả, phát lại, không được yêu cầu; chỉ đăng nhập trình duyệt đã bắt đầu | `internal/httpapi/saml_postgres_test.go`: `TestSAMLRefusesForgedReplayedAndUnsolicitedResponses`, `TestSAMLAnswerOnlySignsInTheBrowserThatStarted` |
+| SSO: ràng buộc trình duyệt, địa chỉ đã xác minh, domain đã chứng minh | `internal/httpapi/sso_postgres_test.go`: `TestSSOCallbackNeedsTheBrowserThatStarted`, `TestSSORefusesAnAddressTheProviderDidNotVerify`, `TestSSODomainMustBeVerified` |
+| Lời mời không vượt được SSO bắt buộc | `internal/httpapi/sso_postgres_test.go`: `TestAcceptingAnInvitationDoesNotBypassEnforcedSSO` |
+| OIDC sai nonce bị từ chối | `pkg/auth/sso/oidc_test.go`: `TestWrongNonceIsRejected` |
 
-| Scenario | Test | Ghi chú |
-|---|---|---|
-| 2 tenant ghi cùng key logic vào object storage không đụng nhau | `crates/metap-storage/tests/s3_seaweedfs.rs`'s `same_key_different_tenants_never_collide` | Tên trùng (cùng invariant) với `metap-cache::redis_cache`'s test cùng tên — 2 test độc lập, khác backend |
-| Key dạng path-traversal (`../`) bị chặn trước khi chạm backend | `..s3_seaweedfs.rs`'s `traversal_shaped_key_is_rejected_before_it_reaches_the_backend` | `S3ObjectStore::validate_key`, cùng kỷ luật `Router::validate_schema_name` |
-| Webhook SSRF guard (audit 04 A#1) — chặn cloud-metadata/private-range/scheme lạ/header cấm | `crates/metap-cron-scheduler/src/executor/ssrf_guard.rs`'s `#[cfg(test)] mod tests`, 12 test (`blocks_cloud_metadata_and_private_ranges`, `ipv4_mapped_ipv6_does_not_bypass_the_v4_rules`, `check_rejects_a_literal_metadata_address_end_to_end`, `forbidden_headers_are_rejected_regardless_of_case`, `a_literal_authorization_header_stays_refused_after_the_secret_path_was_added`, ...) | Unit test thuần (không cần Postgres), nằm trong `src/`, không phải `tests/*.rs` — dễ bị bỏ sót khi rà theo convention cũ, xem `testing/regression/README.md`'s mục riêng cho việc này |
-| CSRF double-submit: request mutating thiếu header bị từ chối | `crates/metap-http/tests/cookie_session_postgres.rs`'s `a_mutating_request_without_the_csrf_header_is_rejected` | |
-| CSRF double-submit: header không khớp cookie bị từ chối | `..cookie_session_postgres.rs`'s `a_mutating_request_with_a_mismatched_csrf_header_is_rejected` | |
-| Bearer token thắng cookie, không bao giờ bị CSRF-gate | `..cookie_session_postgres.rs`'s `an_authorization_header_wins_over_a_cookie_and_is_never_csrf_gated` | Bearer là cơ chế cũ, không đổi hành vi bởi migration cookie |
-| Token hết hạn trong cookie bị từ chối | `..cookie_session_postgres.rs`'s `an_expired_token_in_a_cookie_is_rejected` | |
-| Credential `secret`-tier không bao giờ trả về qua bất kỳ read nào | `crates/metap-http/tests/tenant_secret_postgres.rs`'s `a_stored_credential_is_never_returned_by_any_read` | Đúng invariant "write-only" `docs/features/18-config-tiers-db-backed.md` slice 3 yêu cầu |
-| Reference secret do caller tự đặt bị bỏ qua hoàn toàn (server luôn tự suy ra) | `..tenant_secret_postgres.rs`'s `a_caller_supplied_secret_reference_is_ignored_entirely` | |
-| Credential chứa newline bị từ chối, không lưu | `..tenant_secret_postgres.rs`'s `a_credential_containing_a_newline_is_refused_and_not_stored` | Chặn header/value injection |
-| Platform admin không thể set credential cho 1 tenant cụ thể qua bề mặt fleet-wide | `..tenant_secret_postgres.rs`'s `a_platform_admin_cannot_set_a_tenant_credential_fleet_wide` | Ranh giới `PlatformAdminContext` vs `AdminContext` |
-| `SecretString` không bao giờ in nội dung qua `Debug`/`Display` | `..tenant_secret_postgres.rs`'s `a_secret_string_never_prints_its_contents` | |
-| Key tier `Operator` không thể ghi qua bất kỳ API nào, kể cả platform admin | `crates/metap-http/tests/platform_config_postgres.rs`'s `an_operator_key_is_refused_even_for_a_platform_admin` | Đúng invariant tiering-là-security-boundary `metap-config` — xem `CLAUDE.md`'s mục đó |
-| Tenant admin không chạm được bề mặt `/platform/config` | `..platform_config_postgres.rs`'s `a_tenant_admin_cannot_reach_the_platform_surface_at_all` | |
-| Tenant admin không ghi được key tier Operator/PlatformGlobal qua `/admin/config` | `crates/metap-http/tests/tenant_config_postgres.rs`'s `a_tenant_admin_cannot_write_an_operator_or_fleet_key` | |
-| Override config của tenant này không lộ sang tenant khác | `..tenant_config_postgres.rs`'s `one_tenants_overrides_never_leak_into_another` | |
-| `GET /public/config` chỉ trả branding, không trả gì khác | `..tenant_config_postgres.rs`'s `the_public_surface_serves_branding_and_nothing_else` | Route công khai, không auth — chặn rò thông tin |
-| Giá trị theme dạng injection (`javascript:`/`data:`/...) bị từ chối trước khi lưu | `..tenant_config_postgres.rs`'s `injection_shaped_theme_values_are_refused_before_storage` | Chặn XSS qua giá trị render vào trang public |
-| OIDC nonce sai bị từ chối (chặn replay) | `crates/metap-auth/tests/oidc_e2e.rs`'s `wrong_nonce_is_rejected` | |
-| `WaitEvent` chain không resume nhầm theo event của tenant khác | `crates/metap-cron/tests/wait_event_postgres.rs`'s `a_waiting_chain_never_resumes_for_a_matching_event_in_another_tenant` | |
-| GraphQL query quá sâu bị chặn bởi depth limit | `crates/metap-graphql/tests/graphql_schema_postgres.rs`'s `overly_deep_query_is_rejected_by_the_depth_limit` | Audit 04 A#7 |
-| Token ký bởi key JWKS đã bị retire (không còn publish) bị từ chối | `crates/metap-jwks/src/lib.rs`'s `jwks_client_rejects_a_token_signed_by_a_key_no_longer_published_in_the_jwks` | **Test mới, viết 2026-09-07** — trước đó JWKS hoàn toàn không xuất hiện trong file này dù đã có rotation/`JwksClient`. Không cover nhánh "verifier đã cache key trước khi bị retire, chỉ hết hạn theo TTL của chính cache đó" — đây là grace-window có chủ đích của thiết kế 3-bước, không phải gap, xem test's doc comment |
+## OAuth2 (metap làm server)
 
-### Bổ sung 2026-09-19 — OAuth2 Authorization Server (login provider + consent/client_credentials), audit 06 (tenant isolation + audit-trail bypass), ABAC `Contains`
+| Tính chất | File test: hàm |
+|---|---|
+| Client secret không lưu dạng rõ; client bị thu hồi không xác thực được | `pkg/auth/oauthserver/oauth_server_postgres_test.go`: `TestClientSecretIsNeverStoredInPlaintextAndVerifiesCorrectly`, `TestRevokedClientFailsSecretVerificationEvenWithTheRightSecret` |
+| `redirect_uri` phải khớp | `pkg/auth/oauthserver/oauth_server_postgres_test.go`: `TestAuthorizationCodeRejectsAMismatchedRedirectURI` |
+| Dùng lại refresh token thu hồi cả chuỗi | `pkg/auth/oauthserver/oauth_server_postgres_test.go`: `TestRefreshTokenReuseRevokesTheWholeChain` |
+| PKCE: verifier sai bị từ chối; client public bắt buộc PKCE | `pkg/auth/oauthserver/pkce_test.go`: `TestVerifyPKCERejectsAWrongVerifier`; `internal/httpapi/oauth2_postgres_test.go`: `TestOAuth2PublicClientRequiresPKCE` |
+| Consent chỉ dùng một lần, đúng người | `pkg/auth/oauthserver/consent_postgres_test.go`: `TestPendingAuthorizationIsConsumedExactlyOnce`, `TestConsumePendingAuthorizationRejectsAMismatchedUser` |
+| Scope không vượt phần được cấp | `pkg/auth/oauthserver/scope_test.go`: `TestScopeSubsetRejectsAnythingNotGranted` |
+| Scope thu hẹp quyền của token (token chỉ đọc không ghi được) | `internal/httpapi/oauth2_postgres_test.go`: `TestOAuth2FullAuthorizationCodeFlowWithPKCEAndScopeEnforcement` |
 
-Từ 2026-09-07 đến giờ ship: OAuth2 login provider bên ngoài (`metap-auth`), OAuth2 Authorization
-Server đầy đủ (`metap-oauth-server` + `crates/metap-http/src/routes/oauth2.rs`), audit 06's 3
-finding HIGH, và operator ABAC mới `Contains`/`NotContains`. Phần lớn là test đã tồn tại từ các
-commit trước (`fd1af60`, `oauth2_login_e2e.rs`) chưa từng vào bảng này; các hàng đánh dấu **"test
-mới 2026-09-19"** là viết cùng lúc với feature trong lần rà này (consent screen,
-`client_credentials`, `Contains`).
+## Phân quyền
 
-| Scenario | Test | Ghi chú |
-|---|---|---|
-| JIT-provision user OIDC/OAuth2-login chỉ tạo 1 lần, login lại thì link vào user cũ | `crates/metap-auth/tests/oauth2_login_e2e.rs`'s `jit_provisioning_creates_once_then_links_on_repeat_login` | |
-| Cùng `external_subject` nhưng khác `auth_provider` không bị coi là cùng 1 user | `..oauth2_login_e2e.rs`'s `same_external_subject_under_different_providers_does_not_collide` | `users_tenant_external_subject_idx` đúng khoá `(tenant_id, auth_provider, external_subject)` |
-| Response `userinfo` thiếu field cấu hình (`subject_field`/`email_field`) là lỗi rõ ràng, không JIT-provision với dữ liệu rỗng/sai | `..oauth2_login_e2e.rs`'s `missing_configured_field_in_the_userinfo_response_is_an_error` | |
-| Client secret không bao giờ lưu plaintext | `crates/metap-oauth-server/tests/oauth_server_postgres.rs`'s `client_secret_is_never_stored_in_plaintext_and_verifies_correctly` | |
-| Client bị revoke thì verify secret luôn fail dù đúng secret | `..oauth_server_postgres.rs`'s `revoked_client_fails_secret_verification_even_with_the_right_secret` | |
-| Authorization code chỉ đổi được 1 lần (chặn replay) | `..oauth_server_postgres.rs`'s `authorization_code_is_single_use` | |
-| `redirect_uri` không khớp URI lúc `/authorize` bị từ chối | `..oauth_server_postgres.rs`'s `authorization_code_rejects_a_mismatched_redirect_uri` | RFC 6749 §4.1.3 |
-| Refresh token rotate mỗi lần dùng, token cũ chết ngay | `..oauth_server_postgres.rs`'s `refresh_token_rotates_and_the_old_one_stops_working` | |
-| Refresh token bị replay (dùng lại token đã rotate) → revoke cả chain của client/user đó | `..oauth_server_postgres.rs`'s `refresh_token_reuse_revokes_the_whole_chain` | Đúng dấu hiệu token bị đánh cắp — xem `consume_refresh_token`'s doc comment |
-| `POST /oauth/revoke` chặn refresh token rotate tiếp | `..oauth_server_postgres.rs`'s `revoke_refresh_token_stops_it_from_rotating` | |
-| Full flow `authorization_code`+`refresh_token` qua HTTP thật (không chỉ unit) | `crates/metap-http/tests/oauth2_authorization_server_postgres.rs`'s `full_authorization_code_and_refresh_lifecycle` | |
-| Public client thiếu PKCE (`code_challenge`) bị từ chối | `..oauth2_authorization_server_postgres.rs`'s `public_client_without_pkce_is_rejected` | |
-| Sai `client_secret` ở `/oauth/token` bị từ chối | `..oauth2_authorization_server_postgres.rs`'s `wrong_client_secret_is_rejected` | |
-| Lần đầu 1 cặp (client, user) phải hiện consent screen thật, không tự động approve | `..oauth2_authorization_server_postgres.rs`'s `consent_screen_names_the_client_and_requested_scope` | **Test mới 2026-09-19** |
-| Từ chối consent trả về `error=access_denied`, không có `code` | `..oauth2_authorization_server_postgres.rs`'s `denying_consent_redirects_with_access_denied_and_no_code` | **Test mới 2026-09-19** |
-| Đã consent scope này trước thì lần `/authorize` sau bỏ qua màn hình, không nag lại | `..oauth2_authorization_server_postgres.rs`'s `a_second_authorization_after_consent_skips_the_screen` | **Test mới 2026-09-19** |
-| Pending authorization của user A không thể bị user B (cùng tenant) quyết định thay, và vẫn còn nguyên cho A quyết định sau | `..oauth2_authorization_server_postgres.rs`'s `a_pending_authorization_cannot_be_decided_by_a_different_user_but_survives_for_the_real_owner` | **Test mới 2026-09-19** — `consume_pending_authorization` match `(tenant_id, user_id)` ngay trong query, không consume nhầm rồi mới check |
-| `client_credentials` mint đúng token dưới danh nghĩa service user của client, không phải user gọi API tạo client | `..oauth2_authorization_server_postgres.rs`'s `client_credentials_mints_a_token_as_the_provisioned_service_user` | **Test mới 2026-09-19** |
-| `client_credentials` bị từ chối với public client (RFC 6749 §4.4 — chỉ confidential client) | `..oauth2_authorization_server_postgres.rs`'s `client_credentials_is_rejected_for_a_public_client` | **Test mới 2026-09-19** |
-| `client_credentials` từ chối scope vượt quá `allowed_scopes` đã đăng ký cho client | `..oauth2_authorization_server_postgres.rs`'s `client_credentials_rejects_a_scope_the_client_is_not_allowed` | **Test mới 2026-09-19** |
-| `Router::pool_for` và `Router::begin` phải trỏ cùng 1 schema cho tenant `Schema`-strategy (chặn split-schema: đọc 1 nơi, ghi 1 nơi khác) | `crates/metap-control/tests/router_postgres.rs`'s `pool_for_resolves_the_same_schema_begin_does` | Audit 06 finding #1 |
-| Tenant mới provision vẫn login được qua path tenant-less (`users`/`user_roles` không bị clone riêng theo schema) | `crates/metap-control/tests/provisioning_postgres.rs`'s `provision_schema_tenant_writes_registry_row_and_admin_user` | Audit 06 finding #2 — assertion đã đảo ngược so với trước fix (trước đây *yêu cầu* role sống trong schema riêng của tenant, chính là hành vi gây lỗi) |
-| Audit trail che field mà caller không có quyền đọc | `crates/metap-crud/tests/crud_service_postgres.rs`'s `audit_events_mask_fields_the_caller_cannot_read` | Audit 06 finding #3 |
-| Che field record-conditional không thể bị đảo ngược bằng cách tự sửa field mà điều kiện phụ thuộc vào | `..crud_service_postgres.rs`'s `audit_events_mask_survives_the_caller_editing_the_field_it_is_conditioned_on` | |
-| Record-level access state-dependent thì giấu toàn bộ before/after, chỉ giữ action/actor/timestamp/reason | `..crud_service_postgres.rs`'s `audit_events_withhold_values_when_record_level_access_is_state_dependent` | |
-| Field có unconditional grant riêng thì không bị che oan dù cũng có 1 policy conditional khác (không over-mask) | `..crud_service_postgres.rs`'s `audit_events_still_show_fields_an_unconditional_grant_already_settles` | |
-| Field khai báo trong `EntityAuditConfig.redactedFields` không bao giờ vào bảng audit ở dạng plaintext | `..crud_service_postgres.rs`'s `a_redacted_field_never_reaches_the_audit_table` | Assert thẳng trên row lưu trong DB, không qua service — loại trừ khả năng chỉ lọc lúc đọc mà giá trị thật vẫn nằm trong bảng |
-| `PostgresAuditTrailStore` không ghi/đọc nhầm entry qua tenant khác | `crates/metap-audit/tests/audit_trail_postgres.rs`'s `postgres_store_rejects_a_mismatched_tenant_id` | |
-| `Contains` fail-closed khi attribute không phải JSON array (không đoán bừa) | `crates/metap-permission/src/policy_condition.rs`'s `contains_fails_closed_when_the_attribute_is_not_an_array` | **Test mới 2026-09-19** |
-| Scope-gating thật qua ABAC `context`-subject + `Contains` — token thường (không có `oauthScope`) bị chặn đúng | `..policy_condition.rs`'s `oauth_scope_gating_via_context_subject_and_contains` | **Test mới 2026-09-19** — chứng minh `fromContext.oauthScope` dùng được ngay hôm nay, không cần sửa `PermissionService` |
-| `Contains` trên record field trong `list()` bị từ chối rõ ràng (chưa hỗ trợ SQL pushdown cho JSONB array), không sinh sai SQL âm thầm | `crates/metap-query/src/condition_to_sql/tests.rs`'s `contains_on_a_record_field_is_a_clear_error_not_silently_wrong_sql` | **Test mới 2026-09-19** |
+| Tính chất | File test: hàm |
+|---|---|
+| Mỗi route nằm trong đúng một nhóm quyền; thêm, bớt route là thấy trong diff | `internal/httpapi/route_inventory_postgres_test.go`: `TestRouteInventory` |
+| Không có policy khớp thì chỉ admin qua | `internal/httpapi/gate_test.go`: `TestGateAdminPassesAndNoPolicyDeniesEveryoneElse` |
+| Thao tác quản trị từ chối đúng người | `internal/httpapi/admin_access_postgres_test.go`: `TestEveryAdministrativeOperationRefusesWhoItShould` |
+| Deny thắng allow | `pkg/permission/condition_test.go`: `TestDenyOverridesAllowEvenWhenAnAllowPolicyAlsoMatches` |
+| Dòng deny thu hẹp câu `WHERE`, không nới ra | `pkg/query/condition_to_sql_test.go`: `TestDenyRowNarrowsTheWhereClauseWithAndNotInsteadOfWideningItViaOr` |
+| Role theo phạm vi không thấy ngoài phạm vi; admin theo phạm vi không phải admin tenant | `pkg/crud/scoped_roles_postgres_test.go`: `TestScopedRoleDoesNotLeakAcrossScopes`; `pkg/permission/scope_test.go`: `TestScopedAdminIsNotATenantAdmin` |
+| Phạm vi rỗng từ chối mọi thứ | `pkg/permission/permissionservice_test.go`: `TestAnEmptyScopeDeniesEverythingEvenForAnAdminUser` |
+| Backend có gác quyền từ chối trước khi tới dữ liệu; lỗi đọc policy không thành allow | `pkg/crud/gated_test.go`: `TestGatedRefusesEveryOperationBeforeTheBackendWhenNothingIsAllowed`, `TestGatedAPolicyFailureIsAnErrorNotAnAllow` |
+| Action khai báo đòi quyền entity | `internal/httpapi/routes_actions_postgres_test.go`: `TestDeclaredActionRequiresEntityPermission` |
+| Lọc chỉ theo field list view khai | `pkg/query/query_planner_test.go`: `TestPlanListRefusesAFilterNotInTheListViewsFilters` |
+| `AUTH_CONTEXT_ENTITY`: deny theo thuộc tính có hiệu lực; không đánh giá được thì từ chối; bản ghi không giả được danh tính | `pkg/app/auth_context_postgres_test.go`: `TestADenyOnAContextAttributeHoldsAndFollowsTheRecord`, `TestARequestIsRefusedWhenTheContextAttributesCannotBeRead`, `TestAContextRecordCannotSpeakForTheCaller` |
 
-### Semgrep false positive đã xác nhận (không cần sửa code)
+## Cô lập tenant
 
-| File | Rule | Vì sao là false positive |
-|---|---|---|
-| `crates/metap-dev-tools/src/main.rs` (dòng `std::env::args().collect()`) | `rust.lang.security.args.args` | Rule cảnh báo dùng `std::env::args()[0]` (đường dẫn executable) cho mục đích bảo mật — file này chỉ dùng `args.get(1)` để chọn subcommand CLI (`gen-keys`/`mint-token`/...), không đọc `args[0]`, không có logic bảo mật nào phụ thuộc executable path. Suppress bằng `# nosemgrep: rust.lang.security.args.args` inline (2026-08-25) để CI job gate được ở 0 finding thật, không phải bị "biết trước 1 finding luôn đỏ" |
+| Tính chất | File test: hàm |
+|---|---|
+| Tenant dùng schema riêng không rò sang nhau; tên schema độc hại bị từ chối | `pkg/tenancy/router_postgres_test.go`: `TestRegisteredSchemaTenantRoutesToItsSchemaAndDoesNotLeak`, `TestMaliciousSchemaNameIsRejectedBeforeUse` |
+| Tenant bị tạm ngưng hoặc đang migrate bị từ chối | `pkg/tenancy/router_postgres_test.go`: `TestSuspendedTenantIsRejected`, `TestMigratingTenantIsRejected` |
+| Câu list loại dòng của tenant khác | `pkg/query/query_planner_postgres_test.go`: `TestPlanListTenantScopingActuallyExcludesOtherTenantsRows` |
+| Audit không nhận bản ghi sai tenant; export không lẫn tenant khác | `pkg/audit/postgresstore_e2e_test.go`: `TestRecordRejectsAMismatchedTenantID`; `internal/httpapi/audit_export_postgres_test.go`: `TestAuditExportCSVAndJSON` |
 
-## Chưa cover / cân nhắc thêm (ghi nhận, chưa phải việc cần làm ngay)
+## Secret, đầu ra, audit
 
-- **Fuzz testing** — không nằm trong phạm vi bộ test này.
-- **Injection qua tên entity low-code** — đã có `MetadataCompiler` validate theo
-  `docs/architectures/09-adr/00-index.md`, không phải gap cần lấp thêm.
-- **Rate-limiter bypass** — `security_headers.rs`/rate-limit layer đã có (Phase 8 Hardening), chưa
-  có test riêng khai thác bypass (vd multiple IP giả mạo header).
-- **Resolve-đúng-transform-chain khi quarantine** (`crates/metap-reconciler/src/quarantine.rs`) —
-  đã ghi nhận là giới hạn có chủ đích trong chính doc comment của `resolve()`, không phải gap ẩn.
-- **gRPC không có test tenant-isolation/RBAC-deny riêng** (2026-09-07) — `grpc_backend_client_postgres.rs`/
-  `grpc_crud_postgres.rs` chạy CRUD thật qua 1 JWT thật (đúng đường auth), nhưng không có test nào
-  hình dạng giống `jwt_security_postgres.rs`/`rbac_abac_integration_postgres.rs` cho riêng đường
-  gRPC — permission/validation đi qua cùng `CrudService` với REST nên rủi ro thấp, nhưng chưa có
-  test khẳng định trực tiếp.
-- **OAuth2 `scope` không tự động enforce vào RBAC/ABAC** (2026-09-19) — có chủ đích, không phải
-  gap ẩn: `AuthContext` đã fold `scope`/`clientId` vào `context_attributes` (`oauthScope`/
-  `oauthClientId`), và `ConditionOp::Contains` đã đủ để 1 tenant tự viết policy gate theo đó (xem
-  bảng trên) — nhưng không có gì trong `PermissionService`/`metap-oauth-server` *bắt buộc* việc
-  này. Một token `client_credentials`/`authorization_code` với `scope` hẹp nhưng service user vẫn
-  còn role rộng (`admin`) thì vẫn làm được mọi thứ role đó cho phép, `scope` chỉ là thông tin, không
-  phải giới hạn quyền tự động. Quyết định chủ đích: enforce cứng ở tầng platform sẽ ảnh hưởng mọi
-  deployment đang chạy theo cách không tenant nào chọn được — xem `metap-oauth-server`'s doc comment
-  đầu file.
+| Tính chất | File test: hàm |
+|---|---|
+| Webhook cron chặn địa chỉ nội bộ và metadata cloud, kể cả IPv4-mapped IPv6 | `pkg/jobs/scheduler/ssrfguard_test.go`: `TestBlocksCloudMetadataAndPrivateRanges`, `TestIPv4MappedIPv6DoesNotBypassTheV4Rules`, `TestCheckRejectsALiteralMetadataAddressEndToEnd` |
+| Tenant không tự đặt được header cấm; credential bị che trong phản hồi | `pkg/jobs/scheduler/ssrfguard_test.go`: `TestForbiddenHeadersAreRejectedRegardlessOfCase`; `pkg/jobs/scheduler/webhook_test.go`: `TestRedactRemovesAnEchoedCredentialFromAResponseBody` |
+| Secret chỉ lưu tham chiếu; không khoá nào vừa secret vừa public; credential có xuống dòng bị từ chối | `pkg/config/store_e2e_test.go`: `TestSecretMarkerFlowStoresOnlyTheReferenceNeverThePlaintext`; `pkg/config/keys_test.go`: `TestNoKeyIsBothSecretAndPublic`, `TestACredentialWithANewlineIsRefusedAsHeaderInjection` |
+| Giá trị theme dạng injection bị từ chối | `pkg/config/keys_test.go`: `TestThePublicThemeValidatorsRejectInjectionShapedValues` |
+| Chuỗi audit phát hiện sửa đổi; field bị che mất cả giá trị cũ và mới | `pkg/audit/chain_e2e_test.go`: `TestChainVerifiesAndDetectsTampering`; `pkg/audit/entry_test.go`: `TestARedactedFieldKeepsTheFactItChangedButLosesBothValues` |
+| Tên bảng attachment dạng injection bị từ chối | `pkg/attachments/attachments_test.go`: `TestValidateTableNameRejectsInjectionShapedInput` |
 
-## Công cụ bổ sung (không phải regression test)
+## Chưa có test
 
-- **OWASP ZAP (DAST)** — `testing/security/zap/run.sh`, xem `testing/README.md`'s mục "DAST —
-  OWASP ZAP". Cover rộng kiểu OWASP Top 10 (injection/header/v.v) bằng cách import
-  `/metadata/openapi.json` — không hiểu multi-tenant ABAC/workflow của app này, không thay thế
-  các hàng ở trên. **Giờ có bản CI report-only** (2026-09-19,
-  `.github/workflows/pentest.yml`) — `workflow_dispatch`/cron hàng tuần (`baseline` mode nhanh),
-  không bao giờ block build, chỉ đăng bảng alert-theo-risk-level vào step summary + upload
-  report HTML/JSON làm artifact. Nhắm vào `metap-demo-jira` (tham chiếu đầu tiên qua
-  `testing/apps/jira.env` — không phải `metap-demo-crm`, đã deprecated). Vẫn không thay thế 4 bộ
-  test tenant-isolation/JWT/RBAC-ABAC/audit ở trên — báo hiệu song song, không phải phủ nhau.
+Chỉ ghi những gì đã thấy thiếu khi lập bảng, không phải kết quả rà soát đầy đủ.
 
-## Không thay thế review thủ công
+- Qua HTTP: không thấy test gửi token hết hạn hoặc bị sửa chữ ký vào một route. Hiện chỉ test ở tầng
+  verifier.
+- Fuzzing.
 
-Skill `/security-review` (chạy trên diff/PR) vẫn là bổ sung định kỳ cho các thay đổi lớn — bộ
-test ở đây là regression gate tự động, không phải review toàn diện.
+## Công cụ quét
+
+- CI: `govulncheck` (CVE của dependency), Semgrep (`p/golang`, `p/secrets`, `.semgrep.yml`, chặn build).
+- CodeQL (`.github/workflows/codeql.yml`): kết quả ở tab Security, không chặn build. Sau khi merge,
+  xem lại cảnh báo trên nhánh chính: check xanh trên PR không bảo đảm không có cảnh báo mới.
+- ZAP: `zap/run.sh`, chạy tay ([README](../README.md)). Không hiểu phân quyền đa tenant, không thay
+  các test trên.

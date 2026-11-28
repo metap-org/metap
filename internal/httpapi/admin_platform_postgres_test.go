@@ -421,7 +421,7 @@ func TestTenantConfigListSetResetAndPublicConfig(t *testing.T) {
 	require.True(t, foundSecret, "expected cron.webhookAuthorization in the tenant view")
 
 	// a platform-tier key is not writable by a tenant admin
-	platformKeyRes := doRequest(t, "PUT", base+"/admin/config/graphql.maxDepth", adminToken, map[string]any{"value": 5})
+	platformKeyRes := doRequest(t, "PUT", base+"/admin/config/http.rateLimitBurst", adminToken, map[string]any{"value": 5})
 	require.Equal(t, 403, platformKeyRes.StatusCode, "got %d", platformKeyRes.StatusCode)
 
 	// set a public branding key

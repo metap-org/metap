@@ -1,6 +1,6 @@
 // Reusable HTTP-level load-test scenario — k6 (Grafana's own load-test engine), not a hand-rolled
 // stress-test client (`testing/README.md`'s Performance section). One scenario per invocation
-// (`LABEL`/`QS` env vars), run for any entity/route — nothing here is `crm.customers`-specific.
+// (`LABEL`/`QS` env vars), run for any entity/route — nothing here is one entity-specific.
 // Orchestrated by `run.sh`, which sequences seed -> rate-limit-bucket wait -> one `docker compose
 // run` per scenario; this file only knows about a single scenario's request shape.
 import http from 'k6/http';

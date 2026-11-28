@@ -214,8 +214,6 @@ func operatorOnly(json.RawMessage) error {
 }
 
 const (
-	GraphQLMaxDepth                = "graphql.maxDepth"
-	GraphQLMaxComplexity           = "graphql.maxComplexity"
 	HTTPRateLimitPerMs             = "http.rateLimitPerMillisecond"
 	HTTPRateLimitBurst             = "http.rateLimitBurst"
 	HTTPAuthRateLimitPerMs         = "http.authRateLimitPerMillisecond"
@@ -239,10 +237,6 @@ const (
 // Registry is every key the platform knows. Adding one here is the only way to make it settable.
 var Registry = []KeyDef{
 	// --- PlatformGlobal: the values that were hard-coded in code until this feature ---
-	{Key: GraphQLMaxDepth, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(10) },
-		Validate: positiveIntIn(3, 50)},
-	{Key: GraphQLMaxComplexity, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(1000) },
-		Validate: positiveIntIn(10, 1_000_000)},
 	{Key: HTTPRateLimitPerMs, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(200) },
 		Validate: positiveIntIn(1, 60_000)},
 	{Key: HTTPRateLimitBurst, Level: LevelPlatformGlobal, Default: func() json.RawMessage { return num(300) },
