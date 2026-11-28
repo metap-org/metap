@@ -39,35 +39,52 @@ func RunStatusOf(ctx context.Context, pool *pgxpool.Pool, runID uuid.UUID) (RunS
 	return rs, ok, nil
 }
 
-// StartRun marks a run as started.
-func StartRun(ctx context.Context, pool *pgxpool.Pool, runID uuid.UUID) error {
-	_, err := pool.Exec(ctx, "UPDATE cron_job_runs SET started_at = now() WHERE id = $1", runID)
-	return err
-}
-
 // FinishRun records a run's final outcome.
 func FinishRun(ctx context.Context, pool *pgxpool.Pool, runID uuid.UUID, status RunStatus, errMsg *string, responseSummary json.RawMessage) error {
 	_, err := pool.Exec(ctx,
-		"UPDATE cron_job_runs SET status = $1, error = $2, response_summary = $3, finished_at = now() WHERE id = $4",
+		`UPDATE cron_job_runs SET status = $1, error = $2, response_summary = $3, finished_at = now(),
+		 lease_token = NULL, lease_expires_at = NULL WHERE id = $4`,
 		string(status), errMsg, responseSummary, runID)
 	return err
 }
 
 // FinishRunWithRetry records the outcome of payload's firing, and — on failure with attempts
-// remaining — also schedules the next retry as a new cron_job_runs row.
+// remaining — also schedules the next retry as a new cron_job_runs row. It is for a run nobody
+// claims (a resumed wait_event chain, owned through its workflow_runs row); the executor uses
+// FinishClaimedRun.
 func FinishRunWithRetry(ctx context.Context, pool *pgxpool.Pool, payload *CronJobDuePayload, status RunStatus, errMsg *string, responseSummary json.RawMessage) error {
-	if err := FinishRun(ctx, pool, payload.RunID, status, errMsg, responseSummary); err != nil {
-		return err
-	}
-
-	if status != RunFailed || payload.Attempt >= payload.MaxAttempts {
-		return nil
-	}
-
-	nextAttempt := payload.Attempt + 1
-	scheduledFor := time.Now().UTC().Add(backoffDelay(payload.RetryBackoffSeconds, payload.Attempt))
-	_, err := pool.Exec(ctx,
-		"INSERT INTO cron_job_runs (id, tenant_id, job_id, status, attempt, scheduled_for) VALUES ($1, $2, $3, $4, $5, $6)",
-		uuid.New(), payload.TenantID, payload.JobID, string(RunEnqueued), nextAttempt, scheduledFor)
+	_, err := finishAndScheduleRetry(ctx, pool, payload, nil, status, errMsg, responseSummary)
 	return err
+}
+
+// finishAndScheduleRetry writes the result and the retry in one transaction, so a failure is never
+// recorded without the retry it asks for. With a token, only while the run is still held by it.
+func finishAndScheduleRetry(ctx context.Context, pool *pgxpool.Pool, payload *CronJobDuePayload, token *uuid.UUID,
+	status RunStatus, errMsg *string, responseSummary json.RawMessage) (bool, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	tag, err := tx.Exec(ctx,
+		`UPDATE cron_job_runs SET status = $1, error = $2, response_summary = $3, finished_at = now(),
+		 lease_token = NULL, lease_expires_at = NULL WHERE id = $4 AND ($5::uuid IS NULL OR lease_token = $5)`,
+		string(status), errMsg, responseSummary, payload.RunID, token)
+	if err != nil {
+		return false, err
+	}
+	if token != nil && tag.RowsAffected() == 0 {
+		return false, nil
+	}
+
+	if status == RunFailed && payload.Attempt < payload.MaxAttempts {
+		scheduledFor := time.Now().UTC().Add(backoffDelay(payload.RetryBackoffSeconds, payload.Attempt))
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO cron_job_runs (id, tenant_id, job_id, status, attempt, scheduled_for) VALUES ($1, $2, $3, $4, $5, $6)",
+			uuid.New(), payload.TenantID, payload.JobID, string(RunEnqueued), payload.Attempt+1, scheduledFor); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit(ctx)
 }

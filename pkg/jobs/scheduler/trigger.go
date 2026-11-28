@@ -40,6 +40,8 @@ func triggerRetryPolicy() *eventbus.RetryPolicy {
 // interrupt the other's in-flight stream.
 func RunTriggerListener(ctx context.Context, connect func() (eventbus.EventBus, error), pool *pgxpool.Pool, config *ExecutorConfig) error {
 	policy := triggerRetryPolicy()
+	direct := newBackground(config)
+	defer direct.wait()
 	return eventbus.RunResilientConsumer(ctx, TriggerQueue, TriggerRoutingKey, policy, connect,
 		func(ctx context.Context, event *eventbus.ConsumedEvent) {
 			t := events.ParseTopic(event.RoutingKey)
@@ -54,14 +56,14 @@ func RunTriggerListener(ctx context.Context, connect func() (eventbus.EventBus, 
 					rejectMalformed(event, "missing/invalid `action`")
 					return
 				}
-				dispatchTransition(ctx, pool, config, policy, event, p.TenantID, t.Entity, p.Action, p.RecordID)
+				dispatchTransition(ctx, pool, direct, policy, event, p.TenantID, t.Entity, p.Action, p.RecordID)
 			case events.KindRecord:
 				p, err := events.Decode[events.Envelope](event.Payload)
 				if err != nil || p.TenantID == uuid.Nil || p.RecordID == uuid.Nil {
 					rejectMalformed(event, "missing/invalid `tenantId`/`recordId`")
 					return
 				}
-				dispatchRecordEvent(ctx, pool, config, policy, event, p.TenantID, t.Entity, string(t.Action), p.RecordID)
+				dispatchRecordEvent(ctx, pool, direct, policy, event, p.TenantID, t.Entity, string(t.Action), p.RecordID)
 			default:
 				// Not a topic this listener cares about — acking is correct here, not a
 				// fallback: under a catch-all subscription, receiving other topics is the
@@ -86,18 +88,18 @@ func rejectMalformed(event *eventbus.ConsumedEvent, reason string) {
 	event.NackLogged(false)
 }
 
-func dispatchTransition(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, policy *eventbus.RetryPolicy,
+func dispatchTransition(ctx context.Context, pool *pgxpool.Pool, direct *background, policy *eventbus.RetryPolicy,
 	event *eventbus.ConsumedEvent, tenantID uuid.UUID, entity, action string, recordID uuid.UUID) {
 	claim, err := cron.DispatchOnTransitionMatches(ctx, pool, tenantID, entity, action, recordID, eventIDOf(event))
-	finishDispatch(ctx, pool, config, policy, event, claim, err, func() ([]cron.ResumedWorkflowRun, error) {
+	finishDispatch(ctx, pool, direct, policy, event, claim, err, func() ([]cron.ResumedWorkflowRun, error) {
 		return cron.DispatchOnWaitEventTransitionMatches(ctx, pool, tenantID, entity, action, recordID)
 	}, "on_transition", tenantID, entity, action)
 }
 
-func dispatchRecordEvent(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, policy *eventbus.RetryPolicy,
+func dispatchRecordEvent(ctx context.Context, pool *pgxpool.Pool, direct *background, policy *eventbus.RetryPolicy,
 	event *eventbus.ConsumedEvent, tenantID uuid.UUID, entity, recordEvent string, recordID uuid.UUID) {
 	claim, err := cron.DispatchOnRecordEventMatches(ctx, pool, tenantID, entity, recordEvent, recordID, eventIDOf(event))
-	finishDispatch(ctx, pool, config, policy, event, claim, err, func() ([]cron.ResumedWorkflowRun, error) {
+	finishDispatch(ctx, pool, direct, policy, event, claim, err, func() ([]cron.ResumedWorkflowRun, error) {
 		return cron.DispatchOnWaitEventRecordMatches(ctx, pool, tenantID, entity, recordEvent, recordID)
 	}, "on_record_event", tenantID, entity, recordEvent)
 }
@@ -112,7 +114,7 @@ func dispatchRecordEvent(ctx context.Context, pool *pgxpool.Pool, config *Execut
 // resumes leaves "waiting" inside the same transaction, so a later attempt won't match it
 // again), so a resume failure here just means this specific event didn't get to resume a
 // matching chain — the chain stays "waiting" and can still be resumed by any later matching event.
-func finishDispatch(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, policy *eventbus.RetryPolicy,
+func finishDispatch(ctx context.Context, pool *pgxpool.Pool, direct *background, policy *eventbus.RetryPolicy,
 	event *eventbus.ConsumedEvent, claim *cron.ClaimResult, fireErr error,
 	resumeQuery func() ([]cron.ResumedWorkflowRun, error), triggerKind string, tenantID uuid.UUID, entity, detail string) {
 	if fireErr != nil {
@@ -123,25 +125,22 @@ func finishDispatch(ctx context.Context, pool *pgxpool.Pool, config *ExecutorCon
 		return
 	}
 
-	for _, directJob := range claim.DirectJobs {
-		payload := cron.CronJobDuePayload{
-			RunID: directJob.RunID, JobID: directJob.JobID, TenantID: directJob.TenantID, TargetType: directJob.TargetType,
-			TargetConfig: directJob.TargetConfig, Attempt: directJob.Attempt, MaxAttempts: directJob.MaxAttempts,
-			RetryBackoffSeconds: directJob.RetryBackoffSeconds, DispatchMode: directJob.DispatchMode,
-			TriggerRecordID: directJob.TriggerRecordID, TriggerEntity: directJob.TriggerEntity,
-		}
-		Execute(ctx, pool, config, &payload)
-	}
-
+	// Resume before starting this event's Direct jobs: a chain one of them pauses must wait for a
+	// later event, not be woken by the one that started it.
 	resumed, err := resumeQuery()
 	if err != nil {
 		slog.Error("failed to resume wait_event chains for this event — any matching chain stays waiting",
 			standard.LogTenantID, tenantID, "entity", entity, standard.LogTriggerKind, triggerKind, "detail", detail, standard.LogError, err)
 	} else {
 		for i := range resumed {
-			ResumeSteps(ctx, pool, config, &resumed[i])
+			// The match already took the chain out of "waiting", so it runs here or not at all.
+			if !direct.run(ctx, func() { ResumeSteps(ctx, pool, direct.config, &resumed[i]) }) {
+				slog.Error("shutting down before a resumed chain could start, it stays running",
+					standard.LogRunID, resumed[i].CronJobRunID, standard.LogJobID, resumed[i].JobID)
+			}
 		}
 	}
+	runDirectJobs(ctx, pool, direct, claim.DirectJobs)
 
 	event.AckLogged()
 }

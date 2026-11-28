@@ -11,6 +11,9 @@
 package scheduler
 
 import (
+	"sync"
+	"time"
+
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/secrets"
@@ -47,6 +50,17 @@ type ExecutorConfig struct {
 	// asks for one fails saying so — the honest failure, rather than silently sending the webhook
 	// without the Authorization it was configured to carry.
 	Secrets secrets.Store
+
+	// DirectConcurrency bounds the Direct jobs and resumed chains running at once (0: 8). When all
+	// are busy, the loop starting another waits.
+	DirectConcurrency int
+
+	// RunLease is how long a claim on a run lasts without being renewed (0: one minute). It is
+	// renewed while the job runs, so it need not cover the job's length.
+	RunLease time.Duration
+
+	slotsOnce sync.Once
+	slotsCh   chan struct{}
 }
 
 type SmtpConfig struct {

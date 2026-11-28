@@ -214,13 +214,16 @@ func TestTickRunsADirectModeJobImmediately(t *testing.T) {
 	t.Cleanup(func() { _ = cron.DeleteJob(ctx, pool, tenantID, job.ID) })
 	makeDueNow(t, pool, job.ID)
 
-	require.NoError(t, tick(ctx, pool, testExecutorConfig(), 50))
+	direct := newBackground(testExecutorConfig())
+	require.NoError(t, tick(ctx, pool, direct, 50))
 
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		require.FailNow(t, "expected the direct-mode job's webhook to have been called during tick()")
 	}
+
+	direct.wait() // the result is recorded after the call returns
 
 	var runCount int
 	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM cron_job_runs WHERE job_id = $1 AND status = $2", job.ID, string(cron.RunSuccess)).Scan(&runCount))

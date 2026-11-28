@@ -1,6 +1,6 @@
 // The polling half: claims due jobs/retries and either writes their cron.job.due outbox event (the
-// default) or — for DispatchMode "direct" jobs — executes them immediately, in-process, in the same
-// tick that claimed them.
+// default) or — for DispatchMode "direct" jobs — starts them in-process as soon as the tick has
+// claimed them.
 // Go's context cancellation doesn't abort an in-flight pgx query the same structural way — this
 // loop instead lets an in-flight tick run to completion (pgx itself still respects ctx cancellation
 // inside its own queries, so a long-stuck query is still interrupted) and checks ctx.Err()
@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metap-org/metap/pkg/jobs/cron"
+	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 type TickerConfig struct {
@@ -24,13 +25,15 @@ type TickerConfig struct {
 
 // RunTicker runs the poll loop until ctx is canceled.
 func RunTicker(ctx context.Context, pool *pgxpool.Pool, executorConfig *ExecutorConfig, config TickerConfig) error {
+	direct := newBackground(executorConfig)
+	defer direct.wait()
 	for {
 		if ctx.Err() != nil {
 			slog.Info("shutdown signal received, exiting ticker")
 			return nil
 		}
 
-		if err := tick(ctx, pool, executorConfig, config.BatchSize); err != nil {
+		if err := tick(ctx, pool, direct, config.BatchSize); err != nil {
 			if ctx.Err() != nil {
 				slog.Info("shutdown signal received, exiting ticker")
 				return nil
@@ -47,7 +50,7 @@ func RunTicker(ctx context.Context, pool *pgxpool.Pool, executorConfig *Executor
 	}
 }
 
-func tick(ctx context.Context, pool *pgxpool.Pool, executorConfig *ExecutorConfig, batchSize int64) error {
+func tick(ctx context.Context, pool *pgxpool.Pool, direct *background, batchSize int64) error {
 	due, err := cron.ClaimDueJobs(ctx, pool, time.Now().UTC(), batchSize)
 	if err != nil {
 		return err
@@ -55,7 +58,7 @@ func tick(ctx context.Context, pool *pgxpool.Pool, executorConfig *ExecutorConfi
 	if due.Claimed > 0 {
 		slog.Info("cron ticker claimed due jobs", "claimed", due.Claimed, "direct", len(due.DirectJobs))
 	}
-	runDirectJobs(ctx, pool, executorConfig, due.DirectJobs)
+	runDirectJobs(ctx, pool, direct, due.DirectJobs)
 
 	// Retries scheduled by a prior failed attempt (FinishRunWithRetry) — same claim/dispatch
 	// shape as ClaimDueJobs, just sourced from cron_job_runs instead of cron_jobs.
@@ -66,16 +69,16 @@ func tick(ctx context.Context, pool *pgxpool.Pool, executorConfig *ExecutorConfi
 	if retries.Claimed > 0 {
 		slog.Info("cron ticker claimed due retries", "claimed", retries.Claimed, "direct", len(retries.DirectJobs))
 	}
-	runDirectJobs(ctx, pool, executorConfig, retries.DirectJobs)
+	runDirectJobs(ctx, pool, direct, retries.DirectJobs)
 
 	return nil
 }
 
-// runDirectJobs runs every Direct-mode job claimed this tick right here, sequentially — a slow
-// direct job delays the next tick's claim, which is the fire-and-forget tradeoff this dispatch
-// mode signs up for; a job that can't tolerate that delay should use DispatchMode "outbox"
-// instead.
-func runDirectJobs(ctx context.Context, pool *pgxpool.Pool, executorConfig *ExecutorConfig, directJobs []cron.ClaimedDirectJob) {
+// runDirectJobs starts every claimed Direct-mode job in the background, so a slow one holds up
+// neither the next tick nor the trigger consumer. Direct stays fire-and-forget: no message stands
+// behind the run, so a first attempt cut off by a crash is not run again (a retry attempt is, by
+// ClaimDueRetries). A job that must not be lost uses DispatchMode "outbox".
+func runDirectJobs(ctx context.Context, pool *pgxpool.Pool, direct *background, directJobs []cron.ClaimedDirectJob) {
 	for _, dj := range directJobs {
 		payload := cron.CronJobDuePayload{
 			RunID: dj.RunID, JobID: dj.JobID, TenantID: dj.TenantID, TargetType: dj.TargetType,
@@ -83,6 +86,8 @@ func runDirectJobs(ctx context.Context, pool *pgxpool.Pool, executorConfig *Exec
 			RetryBackoffSeconds: dj.RetryBackoffSeconds, DispatchMode: dj.DispatchMode,
 			TriggerRecordID: dj.TriggerRecordID, TriggerEntity: dj.TriggerEntity,
 		}
-		Execute(ctx, pool, executorConfig, &payload)
+		if !direct.run(ctx, func() { Execute(ctx, pool, direct.config, &payload) }) {
+			slog.Warn("shutting down before a direct job could start", standard.LogRunID, payload.RunID, standard.LogJobID, payload.JobID)
+		}
 	}
 }

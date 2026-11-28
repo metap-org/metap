@@ -37,6 +37,7 @@ func TestRecordClientOverREST(t *testing.T) {
 	})
 	ensureTestOrdersTable(t, pool)
 	entity := httpTestEntity()
+	entity.ListViews[0].Filters = []string{"name"}
 	entity.Actions = []metadata.EntityAction{{Name: "ping", Scope: metadata.ActionScopeRecord, AnyMember: true}}
 	state, privPEM := newTestAppState(t, pool, entity)
 	reg := crud.NewActionRegistry()
@@ -63,6 +64,13 @@ func TestRecordClientOverREST(t *testing.T) {
 	many, err := client.GetMany(ctx, "test.orders", []uuid.UUID{created.ID, uuid.New()}, rc)
 	require.NoError(t, err)
 	require.Len(t, many, 1)
+
+	// A filter the list does not declare is refused over REST too, instead of listing everything.
+	_, err = client.List(ctx, "test.orders", query.ListInput{Limit: 10, Filters: [][2]string{{"nmae", "First"}}}, rc)
+	bad, isService := crud.AsServiceError(err)
+	require.True(t, isService, "%v", err)
+	assert.Equal(t, uint16(400), bad.Status)
+	assert.Contains(t, bad.FieldErrors, "nmae")
 
 	list, err := client.List(ctx, "test.orders", query.ListInput{Limit: 10, Filters: [][2]string{{"name", "First"}}}, rc)
 	require.NoError(t, err)

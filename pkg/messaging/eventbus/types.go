@@ -88,7 +88,23 @@ func (e *ConsumedEvent) RetryOrGiveUp(ctx context.Context, policy *RetryPolicy) 
 		return e.Nack(false)
 	}
 
-	retryQueue := fmt.Sprintf("%s.retry.%d", e.queue, attempt+1)
+	return e.republishToTier(ctx, attempt+1)
+}
+
+// Defer sends the message back after policy's first delay, however many times it has been deferred:
+// for work that is not failing, only not this consumer's to do yet. Use it only where whatever it
+// waits for must end by itself, as there is no giving up. Resolves the original delivery unless it
+// returns an error.
+func (e *ConsumedEvent) Defer(ctx context.Context, policy *RetryPolicy) error {
+	if policy == nil || len(policy.Delays) == 0 {
+		return fmt.Errorf("eventbus: Defer needs a retry policy with a delay")
+	}
+	return e.republishToTier(ctx, 1)
+}
+
+// republishToTier publishes the message to retry tier n (1-based) and acks the original.
+func (e *ConsumedEvent) republishToTier(ctx context.Context, n int) error {
+	retryQueue := fmt.Sprintf("%s.retry.%d", e.queue, n)
 	headers := amqp.Table{}
 	for k, v := range e.delivery.Headers {
 		headers[k] = v

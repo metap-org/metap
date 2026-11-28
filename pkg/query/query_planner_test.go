@@ -68,12 +68,18 @@ func TestPlanListRejectsAnUnknownListView(t *testing.T) {
 	require.True(t, ok, "expected %T, got %T: %v", target, err, err)
 }
 
-func TestPlanListIgnoresAFilterNotInTheListViewsFilters(t *testing.T) {
+// A filter the list view does not declare is refused. Dropping it would answer with more rows than
+// were asked for, and code that filters to find "this tenant's" or "this domain's" records would
+// act on everybody's.
+func TestPlanListRefusesAFilterNotInTheListViewsFilters(t *testing.T) {
 	reg := qpTestRegistry(t, qpTestEntity())
 	perms := permission.NewPermissionService(nil)
-	q, err := PlanList(reg, perms, "test.widgets", ListInput{Filters: [][2]string{{"notAllowed", "x"}}}, qpTestContext(uuid.New()), nil)
-	require.NoError(t, err)
-	require.NotContains(t, q.WhereSQL, "notAllowed", "expected the disallowed filter to be silently ignored, got %q", q.WhereSQL)
+	for _, filter := range [][2]string{{"notAllowed", "x"}, {"notAllowed", ""}} {
+		_, err := PlanList(reg, perms, "test.widgets", ListInput{Filters: [][2]string{filter}}, qpTestContext(uuid.New()), nil)
+		var unknown *UnknownFilterError
+		require.ErrorAs(t, err, &unknown, "%v", filter)
+		require.Equal(t, filter[0], unknown.Field)
+	}
 }
 
 func TestPlanListUsesIlikeForASearchableFieldFilter(t *testing.T) {

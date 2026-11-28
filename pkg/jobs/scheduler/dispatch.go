@@ -9,6 +9,7 @@ import (
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -19,13 +20,19 @@ import (
 
 const ExecutorQueue = "cron.executor"
 
+// executorDeferDelay is how long a delivery whose run cannot be taken yet waits before it comes
+// back. It is the TTL of a durable queue: changing it means deleting cron.executor.retry.1 first.
+const executorDeferDelay = 15 * time.Second
+
 // RunExecutor runs the consume-execute loop until ctx is canceled — a thin wrapper around
-// eventbus.RunResilientConsumer (reconnects with backoff on any connection loss). No retry
-// policy here — a failed job execution already has its own DB-scheduled backoff
-// (cron.FinishRunWithRetry/ClaimDueRetries), so a second, message-level retry on top of it
-// isn't needed for this consumer.
+// eventbus.RunResilientConsumer (reconnects with backoff on any connection loss). A failed job has
+// its own DB-scheduled backoff (cron.FinishClaimedRun/ClaimDueRetries), so a failure is not retried
+// at the message level. The one thing the message waits for is a run it cannot take yet: it is
+// deferred until the holder finishes (then it is acked as a duplicate) or the holder's lease runs
+// out (then it runs the job).
 func RunExecutor(ctx context.Context, connect func() (eventbus.EventBus, error), pool *pgxpool.Pool, config *ExecutorConfig) error {
-	return eventbus.RunResilientConsumer(ctx, ExecutorQueue, cron.RoutingKey, nil, connect,
+	policy := &eventbus.RetryPolicy{Delays: []time.Duration{executorDeferDelay}}
+	return eventbus.RunResilientConsumer(ctx, ExecutorQueue, cron.RoutingKey, policy, connect,
 		func(ctx context.Context, event *eventbus.ConsumedEvent) {
 			var payload cron.CronJobDuePayload
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
@@ -33,57 +40,80 @@ func RunExecutor(ctx context.Context, connect func() (eventbus.EventBus, error),
 				event.NackLogged(false)
 				return
 			}
-			Execute(ctx, pool, config, &payload)
-			event.AckLogged()
+			if Execute(ctx, pool, config, &payload) != ExecuteDeferred {
+				event.AckLogged()
+				return
+			}
+			if err := event.Defer(ctx, policy); err != nil {
+				slog.Warn("failed to defer cron.job.due, leaving it to be redelivered", standard.LogRunID, payload.RunID, standard.LogError, err)
+				event.NackLogged(true)
+			}
 		})
 }
 
+// ExecuteResult is what became of one request to run a firing.
+type ExecuteResult int
+
+const (
+	// ExecuteRan: this call ran the job and its outcome is recorded.
+	ExecuteRan ExecuteResult = iota
+	// ExecuteSkipped: there was nothing to run (a duplicate of a finished or paused firing).
+	ExecuteSkipped
+	// ExecuteDeferred: the firing is not settled and this call could not settle it: another worker
+	// holds it, or the database did not take the claim or the result. Whoever asked must ask again.
+	ExecuteDeferred
+)
+
 // Execute runs one job to completion and records its result — shared by the outbox-consuming
-// loop above and the ticker's Direct-dispatch path (ticker.go), so "how a job actually gets
-// executed" has exactly one implementation regardless of which DispatchMode got it here.
+// loop above and the Direct-dispatch path, so "how a job actually gets executed" has exactly one
+// implementation regardless of which DispatchMode got it here.
 //
-// Idempotency check first: cron.job.due is at-least-once (a crash between dispatch finishing and
-// the message's ack landing redelivers it) — run_id's cron_job_runs.status starts "enqueued" and
-// only ever leaves that state once via FinishRun/FinishRunWithRetry at the end of this function,
-// so a status that's already success/failed/waiting means this exact firing already ran (or is
-// durably paused) — skip re-dispatching and let the caller ack the (now known-duplicate)
-// delivery as normal.
+// It claims the run first (cron.ClaimRun): cron.job.due is at-least-once, and one firing can reach
+// two workers at once (a redelivery while the first is still running, a second executor). Only the
+// holder of the claim runs the job and records the result. A worker that dies stops renewing its
+// claim and the run is taken again, so a job runs at least once, not exactly once: a target must
+// tolerate being called again for a run id it has seen.
 //
 // Wrapped in a fresh root trace context: this process consumes from RabbitMQ, not from an HTTP
 // request, so there is no ambient trace otherwise — a fresh root trace means every outbound
 // workflow_transition/bulk_query_action/webhook call this job makes propagates onward, and a
 // record written by a cron job is traceable back to the run that caused it.
-func Execute(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, payload *cron.CronJobDuePayload) {
+func Execute(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, payload *cron.CronJobDuePayload) ExecuteResult {
 	tc := httpx.TraceContextFromHeaders(http.Header{})
 	ctx = httpx.WithTraceContext(ctx, tc)
 
-	status, ok, err := cron.RunStatusOf(ctx, pool, payload.RunID)
-	if err != nil {
-		slog.Error("failed to check cron job run status, proceeding anyway", standard.LogRunID, payload.RunID, standard.LogError, err)
-	} else if ok && (status == cron.RunSuccess || status == cron.RunFailed || status == cron.RunWaiting) {
+	token, claim, err := cron.ClaimRun(ctx, pool, payload.RunID, config.runLease())
+	switch {
+	case err != nil:
+		slog.Error("failed to claim cron job run", standard.LogRunID, payload.RunID, standard.LogError, err)
+		return ExecuteDeferred
+	case claim == cron.ClaimSettled:
 		slog.Warn("cron job run already completed or waiting, skipping duplicate dispatch (redelivered message)",
 			standard.LogRunID, payload.RunID, standard.LogJobID, payload.JobID)
-		return
+		return ExecuteSkipped
+	case claim == cron.ClaimHeld:
+		slog.Info("cron job run is held by another worker", standard.LogRunID, payload.RunID, standard.LogJobID, payload.JobID)
+		return ExecuteDeferred
 	}
 
-	if err := cron.StartRun(ctx, pool, payload.RunID); err != nil {
-		slog.Error("failed to mark cron job run started", standard.LogRunID, payload.RunID, standard.LogError, err)
+	runCtx, release := holdLease(ctx, pool, payload.RunID, token, config.runLease())
+	summary, waiting, dispatchErr := dispatch(runCtx, pool, config, payload)
+	if release() {
+		return ExecuteDeferred
 	}
-
-	summary, waiting, dispatchErr := dispatch(ctx, pool, config, payload)
 	if waiting {
 		// run_steps already wrote cron_job_runs.status = "waiting" (via PauseWorkflowRun) before
-		// returning this — nothing left to record here, and calling FinishRunWithRetry would
-		// incorrectly mark the run finished while it's still durably paused.
+		// returning this — nothing left to record here, and finishing the run would
+		// incorrectly mark it finished while it's still durably paused.
 		slog.Info("cron job chain paused on wait_event", standard.LogJobID, payload.JobID, standard.LogRunID, payload.RunID)
-		return
+		return ExecuteRan
 	}
 
-	status2 := cron.RunSuccess
+	status := cron.RunSuccess
 	var errMsg *string
 	var responseSummary json.RawMessage
 	if dispatchErr != nil {
-		status2 = cron.RunFailed
+		status = cron.RunFailed
 		msg := dispatchErr.Error()
 		errMsg = &msg
 		slog.Warn("cron job execution failed", standard.LogJobID, payload.JobID, standard.LogRunID, payload.RunID, standard.LogError, msg)
@@ -92,9 +122,18 @@ func Execute(ctx context.Context, pool *pgxpool.Pool, config *ExecutorConfig, pa
 		slog.Info("cron job executed", standard.LogJobID, payload.JobID, standard.LogRunID, payload.RunID)
 	}
 
-	if err := cron.FinishRunWithRetry(ctx, pool, payload, status2, errMsg, responseSummary); err != nil {
+	recordCtx, end := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+	defer end()
+	recorded, err := cron.FinishClaimedRun(recordCtx, pool, payload, token, status, errMsg, responseSummary)
+	if err != nil {
 		slog.Error("failed to record cron job run result", standard.LogRunID, payload.RunID, standard.LogError, err)
+		return ExecuteDeferred
 	}
+	if !recorded {
+		slog.Warn("cron job run was taken over before its result was recorded", standard.LogRunID, payload.RunID)
+		return ExecuteDeferred
+	}
+	return ExecuteRan
 }
 
 // dispatch routes payload.TargetType to the matching Run*/RunSteps function. Returns

@@ -112,6 +112,8 @@ func main() {
 		},
 		Webhook: scheduler.WebhookPolicyFromEnv(),
 		Secrets: secretStore,
+
+		DirectConcurrency: int(env.Int("CRON_DIRECT_CONCURRENCY", 0)),
 	}
 	tickerConfig := scheduler.TickerConfig{Interval: tickMs, BatchSize: batchSize}
 
