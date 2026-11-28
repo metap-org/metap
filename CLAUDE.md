@@ -608,7 +608,9 @@ Backend library (`crates/`, a Cargo workspace — see `docs/architectures/09-adr
 **No sample apps in this repo** — see the "No example apps in this repo" note above. What used to live here:
 `crm-server` registered the real `crm.customers` entity and wired every `crates/metap-*` crate above into a running server, `jira-server` was a second, smaller demo built specifically to exercise table-per-entity end to end (`jira.projects`/`jira.sprints`/`jira.issues`/`jira.comments`/... on dedicated tables reconciled at boot, a real provisioned dedicated-DB tenant, a 4-state diamond-shaped workflow so the kanban board had a real review column), each with its own `@metap/crm-fe`/`@metap/jira-fe` frontend dev harness. All 4 now live, unmodified in substance, as `../metap-demo-crm` and `../metap-demo-jira` — see each repo's own `README.md` for exactly what they do; `templates/metap-app/` is the `cargo generate` starting point for a *new* downstream project (not these two, which already exist).
 
-`testing/` (repo root) — the backend test-kit control tower (regression/performance/security): docs, a living security checklist, performance baselines, orchestration scripts. No Rust code lives here — actual tests/benchmarks stay in each crate's own `tests/`/`benches/` per normal Cargo convention; `testing/README.md` is the index.
+`testing/` (repo root) — how to run the tests, `security/checklist.md` (which test holds which
+security property; update it with security tests), and the hand-run k6 and ZAP scripts. The tests
+themselves sit beside the code (`testing/README.md` is the index).
 
 ## Commands
 
@@ -631,7 +633,6 @@ cargo build --workspace                   # build every crate + ops binary
 cargo test --workspace                    # unit tests only, no DB needed
 cargo test --workspace -- --ignored       # e2e tests — needs DATABASE_URL + a running dev Postgres/RabbitMQ
 cargo watch -w crates -x 'run -p metap-graphql-gateway'   # watch + rebuild + run the graphql-gateway BFF, from crates/metap-graphql-gateway/ — needs crates/metap-graphql-gateway/.env, see that crate's README; upstreams point at the sibling demo repos
-./testing/performance/k6/run.sh           # reusable HTTP load test via k6 in Docker (testing/performance/k6/), crm.customers scenario set by default — needs ../metap-demo-crm running + `docker compose --profile observability up -d`
 ```
 
 Run a single Rust test: `cargo test -p <crate> <test_name>` (add `-- --ignored` for e2e tests) from the repo root — the workspace `Cargo.toml` lives at the repo root, not under `crates/`, so no `--manifest-path` is needed. Any of these `cargo`/binary commands also work fine invoked from a downstream repo via `cargo run --manifest-path ../metap/crates/<crate>/Cargo.toml -- <args>` (`db-migrate`/`dev-tools`/the worker binaries) — see `../metap-demo-crm`/`../metap-demo-jira`/`../metap-demo-waf`'s own READMEs for that pattern in context.

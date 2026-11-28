@@ -20,24 +20,24 @@ func tenantWith(pairs map[string]json.RawMessage) *TenantSnapshot {
 
 func TestAnUnsetKeyReadsBackTheDeclaredDefaultNotNull(t *testing.T) {
 	empty := snapshotWith(nil)
-	got := empty.GetU64(GraphQLMaxDepth)
-	require.EqualValues(t, 10, got, "got %d, want 10", got)
+	got := empty.GetU64(HTTPRateLimitBurst)
+	require.EqualValues(t, 300, got, "got %d, want 300", got)
 	got = empty.GetU64(AuthSessionTTLSeconds)
 	require.EqualValues(t, 3600, got, "got %d, want 3600", got)
 }
 
 func TestAStoredOverrideWinsOverTheDefault(t *testing.T) {
-	snap := snapshotWith(map[string]json.RawMessage{GraphQLMaxDepth: num(25)})
-	got := snap.GetU64(GraphQLMaxDepth)
+	snap := snapshotWith(map[string]json.RawMessage{HTTPRateLimitBurst: num(25)})
+	got := snap.GetU64(HTTPRateLimitBurst)
 	require.EqualValues(t, 25, got, "got %d, want 25", got)
 	got = snap.GetU64(AuthSessionTTLSeconds)
 	require.EqualValues(t, 3600, got, "got %d, want 3600 (untouched key keeps its default)", got)
 }
 
 func TestANonNumericStoredValueFallsBackInsteadOfZeroingALimit(t *testing.T) {
-	snap := snapshotWith(map[string]json.RawMessage{GraphQLMaxDepth: str("not a number")})
-	got := snap.GetU64(GraphQLMaxDepth)
-	require.EqualValues(t, 10, got, "got %d, want 10", got)
+	snap := snapshotWith(map[string]json.RawMessage{HTTPRateLimitBurst: str("not a number")})
+	got := snap.GetU64(HTTPRateLimitBurst)
+	require.EqualValues(t, 300, got, "got %d, want 300", got)
 }
 
 func TestThePlatformWritableViewNeverIncludesOperatorKeys(t *testing.T) {
@@ -46,7 +46,7 @@ func TestThePlatformWritableViewNeverIncludesOperatorKeys(t *testing.T) {
 	for _, item := range view {
 		shown[item.Def.Key] = true
 	}
-	require.True(t, shown[GraphQLMaxDepth], "expected GraphQLMaxDepth to be shown")
+	require.True(t, shown[HTTPRateLimitBurst], "expected HTTPRateLimitBurst to be shown")
 	for _, operatorKey := range []string{CronWebhookAllowPrivateTargets, CronWebhookAllowedHosts, CORSOrigins} {
 		require.False(t, shown[operatorKey], "%s must not be exposed by the platform-admin surface", operatorKey)
 	}
@@ -66,8 +66,8 @@ func TestEachTierOverridesOnlyTheKeysItStores(t *testing.T) {
 	require.Equal(t, "#123456", primaryColor, "got %q, want tenant override to win", primaryColor)
 	got := effective.GetU64(AuthSessionTTLSeconds)
 	require.EqualValues(t, 7200, got, "got %d, want the fleet default", got)
-	got = effective.GetU64(GraphQLMaxDepth)
-	require.EqualValues(t, 10, got, "got %d, want the value declared in Go", got)
+	got = effective.GetU64(HTTPRateLimitBurst)
+	require.EqualValues(t, 300, got, "got %d, want the value declared in Go", got)
 }
 
 func TestATenantThatSetNothingReadsTheFleetDefaults(t *testing.T) {

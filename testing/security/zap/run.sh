@@ -1,69 +1,42 @@
 #!/usr/bin/env bash
-# OWASP ZAP scan against a running metap backend (crm-server or jira-server), via Docker.
-# Manual tool only (`docker run`, no docker-compose service, no CI wiring) — this repo's ZAP
-# invocation lives here as a reusable script/template, not a gate.
+# OWASP ZAP scan of a running app built on metap, via Docker. Run by hand.
 #
-# Two modes:
-#   MODE=api      (default) — imports GET /metadata/openapi.json (public, no auth — see
-#                 CLAUDE.md's "Metadata types stay generated" section for why that route has no
-#                 auth) and active-attacks every entity route ZAP finds there (injection payloads
-#                 per field, param fuzzing, etc). Broad OWASP-Top-10-style coverage without
-#                 hand-listing routes — the router is metadata-driven (`/api/:entity*`), so there
-#                 is no fixed route list to hand ZAP in the first place.
-#   MODE=baseline — passive spider + baseline scan only (no active attack payloads), much
-#                 faster, closer to a pre-push sanity pass than a real pentest.
+#   MODE=api      (default) imports GET /metadata/openapi.json (public) and attacks every entity
+#                 route in it. The router is driven by metadata, so there is no fixed route list.
+#                 It WRITES: use a tenant and database made for the test.
+#   MODE=baseline passive spider and scan only, much faster.
 #
-# Neither mode understands this app's actual attack surface (multi-tenant ABAC, workflow
-# guards) — see testing/security/checklist.md for the hand-written tests that do. This is a
-# broad, generic complementary layer, not a replacement.
+# Neither understands multi-tenant permissions or workflows; checklist.md lists the tests that do.
+#
+# The token comes from TOKEN, or from `dev-tools mint-token <TENANT_ID> <USER_ID>`; set
+# JWKS_KEYS_DIR (or AUTH_JWT_PRIVATE_KEY_PATH) to the target app's keys so that it accepts it.
 #
 # Usage:
-#   ./testing/security/zap/run.sh                                       # crm-server, api mode
-#   MODE=baseline ./testing/security/zap/run.sh                         # crm-server, baseline mode
-#   APP=jira TENANT_ID=<uuid> USER_ID=<uuid> ./testing/security/zap/run.sh   # jira-server
+#   TENANT_ID=<uuid> USER_ID=<uuid> ./testing/security/zap/run.sh
+#   MODE=baseline TOKEN=<token> BASE_URL=http://host.docker.internal:3000 ./testing/security/zap/run.sh
 #
-# Reports land in testing/security/zap/reports/ (gitignored, timestamped, never overwritten).
+# Reports land in testing/security/zap/reports/ (gitignored, timestamped).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$REPO_ROOT"
 
-APP="${APP:-crm}"
 MODE="${MODE:-api}"
+BASE_URL="${BASE_URL:-http://host.docker.internal:3000}"
 OUT_DIR="$REPO_ROOT/testing/security/zap/reports"
 mkdir -p "$OUT_DIR"
 
-# `crm-server`/`jira-server` each moved to their own repo (2026-08-31, `../metap-demo-crm`/
-# `../metap-demo-jira`) — `dev-tools mint-token` below always signs with *this* repo's own dev
-# keypair by default (`REPO_ROOT`/`cd` above always puts CWD at this repo's root, which has no
-# `.env`/`keys/` of its own to load a different one from). Export
-# `AUTH_JWT_PRIVATE_KEY_PATH`/`AUTH_JWT_PUBLIC_KEY_PATH` pointing at the target app's own
-# `keys/` before running this script so the minted token actually verifies against it.
-if [ "$APP" = "jira" ]; then
-  BASE_URL="${BASE_URL:-http://host.docker.internal:3100}"
-  # jira-server's tenant is a real provisioned DedicatedDb tenant, not a fixed dev id — no safe
-  # default to fall back to (see ../metap-demo-jira/.env's JIRA_TENANT_ID).
-  : "${TENANT_ID:?jira mode needs TENANT_ID (the provisioned jira tenant, see ../metap-demo-jira/.env)}"
-  : "${USER_ID:?jira mode needs USER_ID (see ../metap-demo-jira/.env)}"
-  TOKEN="${TOKEN:-$(cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)}"
-elif [ "$APP" = "crm" ]; then
-  BASE_URL="${BASE_URL:-http://host.docker.internal:3000}"
-  TENANT_ID="${TENANT_ID:-00000000-0000-0000-0000-000000000001}"
-  USER_ID="${USER_ID:-00000000-0000-0000-0000-000000000002}"
-  TOKEN="${TOKEN:-$(cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)}"
-else
-  echo "unknown APP=$APP (expected crm|jira)" >&2
-  exit 1
+if [ -z "${TOKEN:-}" ]; then
+  : "${TENANT_ID:?TENANT_ID is required without TOKEN}"
+  : "${USER_ID:?USER_ID is required without TOKEN}"
+  TOKEN=$(go run ./cmd/dev-tools mint-token "$TENANT_ID" "$USER_ID" | tail -1)
 fi
-echo "✓ token minted for $APP (tenant=$TENANT_ID)"
 
 OPENAPI_URL="${OPENAPI_URL:-$BASE_URL/metadata/openapi.json}"
 STAMP=$(date +%s)
-REPORT_NAME="${APP}-${MODE}-${STAMP}.html"
-# JSON alongside the HTML report (same `-r`-shaped `-J` flag both zap-*.py scripts accept) — the
-# machine-readable form .github/workflows/pentest.yml's report step parses for an alert-count
-# summary. The human-facing report stays the HTML file; this is purely additive.
-JSON_REPORT_NAME="${APP}-${MODE}-${STAMP}.json"
+REPORT_NAME="${MODE}-${STAMP}.html"
+# The same report as JSON.
+JSON_REPORT_NAME="${MODE}-${STAMP}.json"
 
 # Inject the bearer token on every request ZAP makes, via a ZAP "replacer" rule — the documented
 # way to auth a ZAP scan against a JWT-protected API (zap-api-scan.py/zap-baseline.py have no

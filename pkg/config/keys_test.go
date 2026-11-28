@@ -118,7 +118,7 @@ func TestThePublicThemeValidatorsRejectInjectionShapedValues(t *testing.T) {
 }
 
 func TestValidatorsRejectZeroAndNonIntegers(t *testing.T) {
-	depth := Lookup(GraphQLMaxDepth)
+	depth := Lookup(HTTPRateLimitBurst)
 	err := depth.Validate(num(0))
 	require.Error(t, err, "expected rejection")
 	err = depth.Validate(str("ten"))

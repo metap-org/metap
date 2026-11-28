@@ -1,52 +1,37 @@
 #!/usr/bin/env bash
-# Thin orchestrator around k6 (`testing/README.md`'s Performance section) — sequences
-# seed -> rate-limit-bucket wait -> each scenario via `docker compose run --rm k6`. No load
-# generation or percentile math lives here — that's k6's job (`scenario.js`/`seed.js`); this is
-# only credential setup (`dev-tools seed-admin`/`mint-token`, already-correct logic, not
-# reimplemented here) plus docker/sleep sequencing.
+# Thin orchestrator around k6 (testing/README.md): seed, wait for the rate-limit bucket, then one
+# `docker compose run --rm k6` per scenario. No load generation or percentile math lives here.
 #
-# Default `ENTITY=crm.customers` targets the entity that lives in `../metap-demo-crm` (its own
-# repo since 2026-08-31 — see `docs/roadmap/51-example-apps-repo-split.md`), not this repo — the
-# server being load-tested (`BASE_URL`) is that app's. `dev-tools mint-token` below always signs
-# with *this* repo's own dev keypair (no `.env`/`keys/` here to load a different one from — see
-# `REPO_ROOT`/`cd` below, always this repo's root regardless of caller's `PWD`); export
-# `AUTH_JWT_PRIVATE_KEY_PATH`/`AUTH_JWT_PUBLIC_KEY_PATH` pointing at `../metap-demo-crm/keys/`
-# before running this script if the token needs to verify against that app's server instead.
+# It targets an app that is already running (BASE_URL) and WRITES SEED_COUNT records of ENTITY into
+# TENANT_ID: use a tenant and database made for the test.
 #
-# Usage: ENTITY=... SEED_TEMPLATE='...' ./testing/performance/k6/run.sh
-#   (defaults below reproduce the original crm.customers scenario set)
+# The token comes from TOKEN, or from `dev-tools mint-token`; set JWKS_KEYS_DIR (or
+# AUTH_JWT_PRIVATE_KEY_PATH) to the target app's keys so that it accepts it. Without TOKEN,
+# `dev-tools seed-admin` first makes USER_ID an admin of TENANT_ID in DATABASE_URL.
+#
+# Usage: ENTITY=... SEED_TEMPLATE='{"name":"load-{i}"}' TENANT_ID=... USER_ID=... ./testing/performance/k6/run.sh
+# FILTER_QS changes the filter/sort scenario; it must use what the entity's list view declares.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$REPO_ROOT"
 
-ENTITY="${ENTITY:-crm.customers}"
-# `${VAR:-default}` can't hold this default directly — its literal `{`/`}` characters confuse
-# bash's own brace matching for the expansion (verified live 2026-08-23: the closing `}` of the
-# first `{i}` placeholder was parsed as closing `${SEED_TEMPLATE:-...}` itself, corrupting the
-# JSON before it ever reached k6). Plain conditional assignment sidesteps that entirely.
-if [ -z "${SEED_TEMPLATE:-}" ]; then
-  SEED_TEMPLATE='{"code":"LOAD-{i}","name":"Load Test Customer {i}","email":"load{i}@example.com"}'
-fi
+: "${ENTITY:?ENTITY is required (the entity to seed and read)}"
+# Not a ${VAR:-default}: the braces of a JSON template confuse bash's own brace matching.
+: "${SEED_TEMPLATE:?SEED_TEMPLATE is required: a JSON object for one record, {i} is made unique}"
 BASE_URL="${BASE_URL:-http://host.docker.internal:3000}"
 SEED_COUNT="${SEED_COUNT:-500}"
 REQUESTS="${REQUESTS:-250}"
 CONCURRENCY="${CONCURRENCY:-20}"
-TENANT_ID="${TENANT_ID:-00000000-0000-0000-0000-000000000001}"
-USER_ID="${USER_ID:-00000000-0000-0000-0000-000000000002}"
+FILTER_QS="${FILTER_QS:-?limit=50&sort=-createdAt}"
 
-# A caller that already has a real provisioned tenant/admin (e.g. .github/workflows/performance.yml
-# provisioning a real DedicatedDb jira tenant via `dev-tools provision-tenant`, not this repo's
-# own shared dev registry) passes a pre-minted TOKEN directly — seed-admin below assumes the
-# platform's own shared tenant registry, which a DedicatedDb tenant's admin was never written
-# into, so re-running it for that tenant_id would be at best redundant and at worst confusing.
 if [ -z "${TOKEN:-}" ]; then
+  : "${TENANT_ID:?TENANT_ID is required without TOKEN}"
+  : "${USER_ID:?USER_ID is required without TOKEN}"
   echo "=== seed admin + mint dev token ==="
-  cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- seed-admin "$TENANT_ID" "$USER_ID" >/dev/null
-  TOKEN=$(cargo run --manifest-path crates/metap-dev-tools/Cargo.toml --quiet -- mint-token "$TENANT_ID" "$USER_ID" 2>/dev/null | tail -1)
+  go run ./cmd/dev-tools seed-admin "$TENANT_ID" "$USER_ID" >/dev/null
+  TOKEN=$(go run ./cmd/dev-tools mint-token "$TENANT_ID" "$USER_ID" | tail -1)
   echo "✓ token minted"
-else
-  echo "✓ using pre-minted TOKEN (caller already provisioned a real tenant/admin)"
 fi
 
 COMMON_ENV=(
@@ -77,7 +62,7 @@ await_full_bucket
 
 SCENARIOS=(
   "list:?limit=50"
-  "filter+sort:?limit=50&status=active&sort=-createdAt"
+  "filter+sort:$FILTER_QS"
   "cursor:?limit=50"
 )
 for scenario in "${SCENARIOS[@]}"; do

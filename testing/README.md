@@ -1,143 +1,57 @@
-# Backend test kit — regression, performance, security, disruptive
+# testing/
 
-Control tower cho 4 trụ test backend (trụ thứ 4, disruptive/chaos, thêm 2026-09-19). **Không chứa
-code Rust** — code test/benchmark thật nằm trong từng crate (`crates/*/tests/*.rs`,
-`crates/*/benches/*.rs`), đúng convention Cargo. Thư mục này chỉ có tài liệu điều phối, checklist
-sống, baseline số liệu, script gọi tới test đã có.
+Tài liệu và công cụ chạy tay. Test nằm cạnh code (`*_test.go`), không nằm ở đây.
 
-**App target cho cả 3 trụ có CI tự động** (performance/pentest/disruptive) khai báo qua
-[`apps/`](apps/) — 1 file `apps/<name>.env` mỗi app, hiện chỉ có `jira` (`metap-demo-crm`, default
-cũ khắp nơi trong tooling này, đã deprecated 2026-09-11). Thêm app khác: 1 file mới, không sửa
-workflow nào.
+| Thứ | Ở đâu |
+|---|---|
+| Bảo mật: tính chất nào có test nào giữ | [`security/checklist.md`](security/checklist.md) |
+| Quét DAST (OWASP ZAP) | `security/zap/run.sh` |
+| Tải HTTP (k6) | `performance/k6/` |
 
-Kế hoạch gốc: `docs/architectures/11-risks.md` (hàng ghi nhận gap test-coverage bảo mật).
-
-## Regression
-
-`.github/workflows/ci.yml`'s `rust` job (mọi push/PR — `frontend` job đã gỡ 2026-08-31, xem
-`CLAUDE.md`'s "No example apps in this repo") + `e2e-manual.yml`'s `rust-e2e` job (chạy tay/trigger
-thủ công, 2026-08-28 — xem file đó's doc comment) đã cover phần lớn. Chi tiết + gap còn lại:
-[`regression/README.md`](regression/README.md).
-
-## Performance
-
-**Giờ có CI report-only** (2026-09-19, `.github/workflows/performance.yml`) —
-`workflow_dispatch`/cron hàng tuần, không bao giờ block build (số liệu runner GitHub-hosted dao
-động, không đại diện — chỉ dùng để phát hiện lệch tương đối giữa 2 lần chạy gần nhau, không phải
-baseline tuyệt đối). Chi tiết từng scenario CI thật sự chạy: [`performance/scenarios.md`](performance/scenarios.md).
-Phần dưới đây vẫn đúng cho việc chạy tay tại máy dev.
-
-Trước 2026-09-19: chưa có gate tự động dài hạn — nhưng đã có 2 công cụ load-test **tái sử dụng
-được cho nhiều router/entity**, không hardcode `crm.customers`, và không có logic stress-test nào
-nằm trong file `.sh` (một bài stress test nặng IO/CPU/RAM cần engine thật, không phải `curl` fork
-qua `xargs` + hậu xử lý `awk` — file `.sh` ở đây chỉ còn vai trò orchestration mỏng: seed token +
-tuần tự hoá lệnh `docker`, không còn tính percentile hay bắn request):
-
-- **Direct mode** (bỏ qua HTTP, đo thẳng `CrudService`) —
-  [`crates/metap-crud/tests/support/mod.rs`](../crates/metap-crud/tests/support/mod.rs)'s
-  `run_sustained_load`: spawn N worker, chạy vòng lặp tới deadline, gom p50/p95/p99/throughput.
-  Dùng ở 3 test trong `crud_service_postgres.rs`
-  (`sustained_concurrent_list_against_a_real_multi_entity_abac_workflow`,
-  `sustained_concurrent_list_across_many_tenants_at_ten_million_rows`,
-  `sustained_concurrent_create_update_transition_delete_cycle`). Đo capacity thật không bị giới
-  hạn bởi rate-limiter tầng HTTP. Vẫn hit chung Postgres — dashboard "Metap — Postgres Resource
-  Metrics" (bên dưới) là "monitoring view" đúng nghĩa cho chế độ này, xem trực tiếp trong lúc
-  test chạy, không cần thêm gì.
-- **HTTP mode** (qua thật `axum` router, có auth/rate-limit/CORS) —
-  [`k6`](https://k6.io) (Grafana's own load-test engine, chạy qua Docker — `docker-compose.yml`'s
-  service `k6`, image `grafana/k6`) với 2 script tái sử dụng ở
-  [`performance/k6/`](performance/k6/): `seed.js` (seed dữ liệu song song) + `scenario.js`
-  (bắn N request qua M VU vào `<entity><querystring>` bất kỳ, hỗ trợ keyset-cursor 2 bước). Chạy
-  qua:
-  ```bash
-  ./testing/performance/k6/run.sh   # scenario set cũ (list/filter+sort/cursor) cho crm.customers
-  ENTITY=inventory.movements SEED_TEMPLATE='{"sku":"SKU-{i}",...}' ./testing/performance/k6/run.sh
-  ```
-  `run.sh` chỉ làm 2 việc không phải "stress logic": mint token qua `dev-tools seed-admin`/
-  `mint-token` (đúng logic `dev-tools` đã có), và tuần tự hoá `docker compose run --rm k6`
-  cho seed + từng scenario, `sleep 65` giữa các lần (**Rate limiter không tắt được** cho path này
-  — mỗi scenario phải chờ bucket đầy lại). Toàn bộ việc bắn request thật, đếm percentile, format
-  báo cáo cuối là k6 tự làm.
-
-  **Monitoring view khi chạy HTTP mode** — k6 tự push metric qua Prometheus remote-write
-  (`k6 run -o experimental-prometheus-rw`, cấu hình trong `run.sh`) tới cùng Prometheus đã có
-  trong `observability` profile (`docker-compose.yml`'s `prometheus` service bật
-  `--web.enable-remote-write-receiver`) — `k6_http_reqs_total{scenario,status}`,
-  `k6_http_req_duration_p50/p95/p99`, `k6_http_req_failed_rate`. Dashboard Grafana **"Metap —
-  Load Test Generator (k6)"** (tự provision, `docker/grafana/dashboards/metap-load-test.json`)
-  hiển thị requests/sec theo scenario+status, failed rate, p50/p95/p99 client-side — cạnh 2
-  dashboard tài nguyên đã có ("crm-server Resource Metrics", "Postgres Resource Metrics") trong
-  cùng 1 Grafana (`http://localhost:3001`, cần `docker compose --profile observability up -d`),
-  nên theo dõi được cả 3: tải sinh ra + CPU/RAM của `crm-server` + tài nguyên Postgres, cùng lúc,
-  trong khi bài stress test đang chạy.
-
-Baseline số liệu tham chiếu (2 benchmark direct-mode đã đo): [`performance/baseline.md`](performance/baseline.md).
-Phần seed/nightly-workflow tự động so baseline (`seed_10m.sql`, `run-nightly-benchmark.sh`,
-`.github/workflows/nightly-benchmark.yml`) trong kế hoạch gốc **chưa làm** — xem "Định hướng chưa
-lên phase" trong `docs/roadmap.md`.
-
-## Security
-
-Trụ ưu tiên cao nhất — gap lớn nhất khi khảo sát (2026-08-23): 0 dòng `cargo-audit`, 0 test
-tenant-isolation đúng invariant thiết kế đã ghim, RBAC/ABAC chỉ có unit test cô lập, 0 SAST cho
-logic code tự viết. Checklist sống: [`security/checklist.md`](security/checklist.md).
+## Chạy test
 
 ```bash
-# Chạy toàn bộ test bảo mật mới (cần Postgres dev đang chạy — docker compose up -d postgres):
-DATABASE_URL=postgres://metap:metap@localhost:5433/metap cargo test --release \
-  -p metap-control --test tenant_isolation_postgres -- --ignored --nocapture
-DATABASE_URL=postgres://metap:metap@localhost:5433/metap cargo test --release \
-  -p metap-crud --test crud_service_postgres concurrent_cross_tenant_list_calls_never_return_another_tenants_records -- --ignored --nocapture
-DATABASE_URL=postgres://metap:metap@localhost:5433/metap cargo test --release \
-  -p metap-http --test jwt_security_postgres -- --ignored --nocapture
-DATABASE_URL=postgres://metap:metap@localhost:5433/metap cargo test --release \
-  -p metap-permission --test rbac_abac_integration_postgres -- --ignored --nocapture
-
-# Quét lỗ hổng dependency (cần cargo-audit: cargo install cargo-audit):
-cargo audit
-
-# Quét logic-vuln local trước khi push (cần semgrep: pipx install semgrep):
-semgrep scan --config p/rust --config p/secrets --config .semgrep.yml
+go test ./...                                   # unit, không cần service
+docker compose up -d postgres rabbitmq dragonfly vault
+REDIS_URL=redis://127.0.0.1:6379 VAULT_ADDR=http://127.0.0.1:8200 \
+VAULT_TOKEN=metap-dev-root-token RABBITMQ_URL=amqp://metap:metap@localhost:5672 \
+  go test -tags integration ./...
 ```
 
-SAST cho logic code tự viết (khác `cargo audit`, vốn chỉ quét CVE dependency) dùng **cả hai**
-công cụ, mỗi cái một vai trò:
-- **CodeQL** (`.github/workflows/codeql.yml`) — chạy trong CI (push/PR/cron tuần), report-only
-  qua tab Security của repo, không chặn build.
-- **Semgrep** (`.semgrep.yml`) — chạy tay trên máy dev, phản hồi nhanh trước khi push, chưa wire
-  vào CI.
+Test tích hợp có `//go:build integration`, dùng `pkg/testkit` (mỗi test một database mới, mặc định
+Postgres ở `localhost:5433`, đổi bằng `METAP_TEST_DATABASE_URL`) và **fail, không skip**, khi thiếu
+service.
 
-### DAST — OWASP ZAP
+CI (`.github/workflows/`): `ci.yml` chạy build, vet, unit test, gofmt và lint, test tích hợp,
+`govulncheck`, Semgrep; `codeql.yml` chạy CodeQL; `e2e-manual.yml` chạy tay.
 
-Cả 3 bộ trên đều là test nhắm đúng bug/invariant đã biết trước — không cover rộng kiểu OWASP Top
-10 (injection payload theo từng field, header thiếu, v.v). `metap`'s router hoàn toàn
-metadata-driven (`/api/:entity*`) nên không có danh sách route cố định để liệt kê tay cho một
-scanner — thay vào đó trỏ [OWASP ZAP](https://www.zaproxy.org/) (open-source) thẳng vào
-`GET /metadata/openapi.json` (route này vốn public, không auth — sinh cho bước codegen frontend,
-xem CLAUDE.md's "Metadata types stay generated"), để ZAP tự đọc ra toàn bộ entity/route rồi tự
-sinh request tấn công theo từng field.
+## Tải và DAST
+
+`metap` là thư viện, không có app mẫu. Cả hai công cụ chạy vào **một app đang chạy** (ví dụ `waap`),
+do bạn chỉ định. **Cả hai ghi dữ liệu vào tenant được chỉ định** (k6 seed bản ghi, ZAP ở chế độ
+`api` gửi payload tấn công): chỉ dùng tenant và database dựng riêng để thử, không dùng dữ liệu thật.
+
+Token: truyền sẵn `TOKEN`, hoặc để script chạy `dev-tools mint-token`. Để app chấp nhận token đó,
+đặt `JWKS_KEYS_DIR` trỏ tới thư mục khoá của app (hoặc `AUTH_JWT_PRIVATE_KEY_PATH` nếu app còn dùng
+RSA).
 
 ```bash
-./testing/security/zap/run.sh                                        # crm-server, api mode (đầy đủ)
-MODE=baseline ./testing/security/zap/run.sh                          # crm-server, chỉ passive scan (nhanh)
-APP=jira TENANT_ID=<uuid> USER_ID=<uuid> ./testing/security/zap/run.sh   # jira-server
+# k6: seed rồi đo list, list có sort, trang keyset. Bộ lọc/sort phải là thứ list view của entity khai.
+ENTITY=<entity> SEED_TEMPLATE='{"name":"load-{i}"}' TENANT_ID=<uuid> USER_ID=<uuid> \
+  ./testing/performance/k6/run.sh
+
+# ZAP: đọc GET /metadata/openapi.json để biết các route
+TENANT_ID=<uuid> USER_ID=<uuid> ./testing/security/zap/run.sh      # quét chủ động
+MODE=baseline TOKEN=<token> ./testing/security/zap/run.sh          # chỉ quét thụ động
 ```
 
-Script chỉ orchestration mỏng (mint token qua `dev-tools mint-token` có sẵn, tự inject
-`Authorization: Bearer` vào mọi request ZAP bắn qua ZAP replacer rule, `docker run
-zaproxy/zap-stable`) — không có logic scan nào tự viết. Report HTML+JSON ra
-`testing/security/zap/reports/` (gitignored). Chạy tay trước khi push thay đổi lớn liên quan tới
-route/auth vẫn dùng được y nguyên. **Giờ cũng có bản CI report-only** (2026-09-19,
-`.github/workflows/pentest.yml`) — `workflow_dispatch`/cron hàng tuần (`baseline` mode nhanh, `api`
-mode đầy đủ chỉ khi trigger tay), không bao giờ block build, chỉ đăng bảng alert-theo-risk-level
-vào step summary + upload report làm artifact. Không thay thế 4 bộ test tenant-isolation/JWT/
-RBAC-ABAC ở trên — ZAP không hiểu multi-tenant ABAC/workflow guard của app này, đây chỉ là lớp
-phủ rộng bổ sung cho các lỗ hổng web chung chung.
+k6 chạy qua Docker (`docker compose --profile observability`, kèm Prometheus và Grafana ở
+`http://localhost:3001`). Dashboard tài nguyên app lọc theo job Prometheus tên `crm-server`
+(`docker/prometheus/prometheus.yml`, mặc định `host.docker.internal:3000`); tên là di sản, đổi
+target nếu app chạy chỗ khác. Rate limit theo IP không tắt được (mặc định burst 300, 5 request/giây),
+nên script chờ 65 giây giữa các kịch bản.
 
-## Disruptive (chaos)
+## Hiện chưa có
 
-Trụ thứ 4, mới thêm 2026-09-19 — trước đó không tồn tại. Real fault injection (`docker stop`/
-`start`/`pause` container thật giữa lúc test chạy) chứng minh resilience code đã có
-(`run_resilient_consumer`, `metap-outbox-publisher`'s reconnect) thật sự hoạt động, không chỉ đúng
-trong unit test với mock. Chi tiết đầy đủ (triết lý, bảng kịch bản, cách chạy tay, CI):
-[`disruptive/README.md`](disruptive/README.md).
+Benchmark (`func Benchmark…`), test chaos (dừng Postgres/RabbitMQ giữa chừng), đo coverage, và
+workflow tự động cho k6 hay ZAP. Các tài liệu và số đo của bản Rust nằm trong lịch sử git.
