@@ -232,6 +232,7 @@ func ClaimDueRetries(ctx context.Context, pool *pgxpool.Pool, now time.Time, bat
 		 FROM cron_job_runs r
 		 JOIN cron_jobs j ON j.id = r.job_id
 		 WHERE r.attempt > 1 AND r.status = $1 AND (r.started_at IS NULL OR r.started_at < $4)
+		 AND (r.lease_expires_at IS NULL OR r.lease_expires_at <= now())
 		 AND r.scheduled_for <= $2 AND j.enabled
 		 ORDER BY r.scheduled_for LIMIT $3 FOR UPDATE OF r SKIP LOCKED`,
 		string(RunEnqueued), now, batchSize, staleBefore)

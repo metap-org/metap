@@ -47,6 +47,7 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 	if err != nil {
 		var invalidCursor *query.InvalidCursorError
 		var unknownListView *query.UnknownListViewError
+		var unknownFilter *query.UnknownFilterError
 		var invalidOffset *query.InvalidOffsetError
 		var searchUnsupported *query.SearchNotSupportedError
 		var invalidJql *query.InvalidJqlError
@@ -59,6 +60,8 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 			return ListResult{}, NewServiceErrorMsg(http.StatusBadRequest, errcode.InvalidOffset, err.Error())
 		case errors.As(err, &searchUnsupported):
 			return ListResult{}, NewServiceErrorMsg(http.StatusBadRequest, errcode.SearchNotSupported, err.Error())
+		case errors.As(err, &unknownFilter):
+			return ListResult{}, unknownFilterError(unknownFilter)
 		case errors.As(err, &unknownListView):
 			return ListResult{}, NewServiceErrorMsg(http.StatusBadRequest, "unknown_list_view", err.Error())
 		case errors.As(err, &invalidJql):
@@ -154,4 +157,10 @@ func (s *CrudService) List(ctx context.Context, entityName string, input query.L
 		CanDelete: snapshot.CanPerformEntityAction(rc, entity.Name, permission.ActionDelete).Allowed,
 	}
 	return ListResult{Capabilities: caps, Data: data, Page: PageInfo{Limit: planned.Limit, NextCursor: nextCursor, Offset: planned.Offset, Total: total}}, nil
+}
+
+// unknownFilterError names the refused filter, so a caller can see which parameter it was.
+func unknownFilterError(e *query.UnknownFilterError) error {
+	return NewServiceErrorFields(http.StatusBadRequest, errcode.ValidationFailed,
+		map[string][]string{e.Field: {"not a filter of this list"}})
 }

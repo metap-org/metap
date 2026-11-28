@@ -48,9 +48,12 @@ func (s *CrudService) AggregateWithInput(ctx context.Context, entityName string,
 	planned, err := query.PlanAggregate(md, s.permissions, entity.Name, input, rc, recordPolicies, planOpts...)
 	if err != nil {
 		var invalidAggregate *query.InvalidAggregateError
+		var unknownFilter *query.UnknownFilterError
 		var crossRecord *query.CrossRecordConditionInListError
 		var unsupportedContains *query.UnsupportedContainsConditionInListError
 		switch {
+		case errors.As(err, &unknownFilter):
+			return nil, unknownFilterError(unknownFilter)
 		case errors.As(err, &invalidAggregate):
 			return nil, NewServiceErrorMsg(http.StatusBadRequest, errcode.InvalidAggregate, err.Error())
 		case errors.As(err, &crossRecord), errors.As(err, &unsupportedContains):

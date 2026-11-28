@@ -331,12 +331,9 @@ func PlanAggregate(metadataRegistry *metadata.MetadataRegistry, permissions Tena
 	}
 	for _, kv := range input.Filters {
 		fieldName, value := kv[0], kv[1]
-		if !allowedFilterFields[fieldName] {
-			continue
-		}
 		field, ok := fieldsByName[fieldName]
-		if !ok {
-			continue
+		if !ok || !allowedFilterFields[fieldName] {
+			return nil, &UnknownFilterError{Field: fieldName}
 		}
 		expr := valueExpression(*field, params)
 		if value == "" {

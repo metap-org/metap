@@ -21,6 +21,12 @@ type UnknownListViewError struct{ Name string }
 
 func (e *UnknownListViewError) Error() string { return "Unknown list view: " + e.Name }
 
+// UnknownFilterError: a filter names a field the list view does not declare as a filter. It is
+// refused, never dropped: a dropped filter widens the answer to records nobody asked for.
+type UnknownFilterError struct{ Field string }
+
+func (e *UnknownFilterError) Error() string { return "Not a filter of this list: " + e.Field }
+
 type ResolvedSort struct {
 	Field      string
 	Descending bool
@@ -269,7 +275,7 @@ func PlanList(metadataRegistry *metadata.MetadataRegistry, permissions TenantSco
 	for _, kv := range input.Filters {
 		field, value := kv[0], kv[1]
 		if !allowedFilterFields[field] {
-			continue
+			return nil, &UnknownFilterError{Field: field}
 		}
 
 		fieldDef := fieldsByName[field]

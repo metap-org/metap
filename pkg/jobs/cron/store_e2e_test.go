@@ -174,7 +174,9 @@ func TestRunLifecycleStartFinishAndRetry(t *testing.T) {
 	require.True(t, ok, "got (%v, %v, %v)", status, ok, err)
 	require.Equal(t, RunEnqueued, status, "got (%v, %v, %v)", status, ok, err)
 
-	require.NoError(t, StartRun(ctx, pool, runID))
+	_, outcome, err := ClaimRun(ctx, pool, runID, time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, ClaimWon, outcome)
 
 	payload := &CronJobDuePayload{
 		RunID: runID, JobID: job.ID, TenantID: tenant, TargetType: string(TargetWebhook),

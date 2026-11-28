@@ -163,6 +163,17 @@ this file above or below is pre-2026-11-07 history: read `go/<pkg>` as `pkg/<pkg
   Topic, AggregateType, AggregateID, Payload})` in the business transaction (topic validated: namespaced, no wildcards, not a
   platform lifecycle topic) — never `infra.OutboxEvent` by hand, never RabbitMQ directly. In a consumer use
   `event.AckLogged()` / `NackLogged(requeue)`, never `_ = event.Ack()`: a failed ack means redelivery, so handlers stay idempotent. An event carries a stable identity (the outbox row's id, set as the AMQP `MessageId` by `eventbus.WithMessageID`, kept across retries; `ConsumedEvent.MessageID()`), so a consumer that must not act twice keys on it: `cron_job_runs.trigger_event_id` with a unique `(job_id, trigger_event_id)` index (migration 0060) makes a redelivered event start no second run.
+- **A list or aggregate filter that is not allowed is a 400, never dropped (2026-11-28).** `query.PlanList` allows the list
+  view's `Filters` (the named view, else the first), `PlanAggregate` the union of every view's; anything else is
+  `UnknownFilterError` -> `validation_failed` naming the field. Dropping it answered with *more* records than asked, so
+  code filtering for "this tenant's"/"this domain's" records acted on all of them. Code that filters on a field declares
+  it there, including server-side lookups. This also covers `bulk_query_action`/`workflow_transition` job filters.
+- **A cron run is claimed before it runs (2026-11-28, migration 0061).** `cron.ClaimRun` sets a lease token with an expiry
+  in one conditional UPDATE; `scheduler.Execute` renews it while the job runs, cancels the job if it is lost, and records
+  through `cron.FinishClaimedRun` (result and retry in one transaction, only by the holder). A delivery whose run is held
+  is `ConsumedEvent.Defer`red (`cron.executor.retry.1`, 15s), never acked away. At least once, not exactly once.
+  Direct jobs and resumed chains run in the background, `CRON_DIRECT_CONCURRENCY` (8) at a time; Direct stays
+  fire-and-forget. Migrate before starting a new scheduler.
 - **`pkg/graphqlgateway` — removed (2026-11-21, roadmap 116).** It was the generic GraphQL BFF over gRPC upstreams; its
   job is now `pkg/apigateway` (see the REST-only note at the top of this file).
 - **`pkg/bootstrap` — first-run roles, grants and initial accounts (2026-11-14, `docs/roadmap/108-bootstrap-roles-accounts-permissions.md`
