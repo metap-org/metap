@@ -149,25 +149,6 @@ func RevokeAllRoles(ctx context.Context, db DBTX, tenantID, userID uuid.UUID) er
 	return RevokeScopedRolesOf(ctx, db, tenantID, userID)
 }
 
-// PolicyRoles returns every role named by one of tenantID's policies.
-func PolicyRoles(ctx context.Context, db DBTX, tenantID uuid.UUID) ([]string, error) {
-	rows, err := db.Query(ctx, `SELECT DISTINCT r FROM policies, jsonb_array_elements_text(roles) AS r
-		WHERE tenant_id = $1 AND jsonb_typeof(roles) = 'array' ORDER BY r`, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]string, 0)
-	for rows.Next() {
-		var r string
-		if err := rows.Scan(&r); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 // ScopedRolesForUser returns the roles a user holds only inside a scope (roadmap 115 M1).
 func ScopedRolesForUser(ctx context.Context, db DBTX, tenantID, userID uuid.UUID) ([]permission.ScopedRole, error) {
 	m, err := ScopedRolesForUsers(ctx, db, tenantID, []uuid.UUID{userID})

@@ -1,6 +1,6 @@
 // REST entity CRUD — /api/{entity}*.
-// A successful update invalidates the auth-context cache inside crud.CrudService.Update itself (via
-// CrudService.WithContextInvalidation), so this handler does not repeat it.
+// This handler does not invalidate the auth-context cache. CrudService.Update would, once
+// WithContextInvalidation is wired, which nothing does yet: see "Known gaps" in CLAUDE.md.
 package httpapi
 
 import (

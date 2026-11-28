@@ -48,12 +48,11 @@ type Route struct {
 }
 
 type shared struct {
-	mux      *http.ServeMux
-	global   []Middleware
-	root     http.Handler
-	routes   []Route
-	onError  ErrorWriter
-	prefixes []string
+	mux     *http.ServeMux
+	global  []Middleware
+	root    http.Handler
+	routes  []Route
+	onError ErrorWriter
 }
 
 // Router registers routes. A Router returned by Group, Labelled or Route shares the same ServeMux and

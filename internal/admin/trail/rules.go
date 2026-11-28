@@ -20,15 +20,15 @@ const defaultLimit = 50
 // error text of the first malformed filter ("" when all are fine). Exported for the REST export,
 // which takes the same filters from the query string. Pure: no I/O.
 func SearchFromRequest(req *SearchAuditRequest) (audit.SearchQuery, string) {
-	q := audit.SearchQuery{Entity: req.GetEntity(), Actions: kernel.Dedupe(req.GetActions()), Limit: int(req.GetLimit())}
-	if raw := req.GetActorUserId(); raw != "" {
+	q := audit.SearchQuery{Entity: req.Entity, Actions: kernel.Dedupe(req.Actions), Limit: int(req.Limit)}
+	if raw := req.ActorUserId; raw != "" {
 		id, err := uuid.Parse(raw)
 		if err != nil {
 			return q, "`actorUserId` must be a user id."
 		}
 		q.ActorUserID = &id
 	}
-	if raw := req.GetRecordId(); raw != "" {
+	if raw := req.RecordId; raw != "" {
 		id, err := uuid.Parse(raw)
 		if err != nil {
 			return q, "`recordId` must be a record id."
@@ -39,7 +39,7 @@ func SearchFromRequest(req *SearchAuditRequest) (audit.SearchQuery, string) {
 		raw  string
 		dst  **time.Time
 		name string
-	}{{req.GetFrom(), &q.From, "from"}, {req.GetTo(), &q.To, "to"}} {
+	}{{req.From, &q.From, "from"}, {req.To, &q.To, "to"}} {
 		if b.raw == "" {
 			continue
 		}
@@ -49,7 +49,7 @@ func SearchFromRequest(req *SearchAuditRequest) (audit.SearchQuery, string) {
 		}
 		*b.dst = &t
 	}
-	if raw := req.GetCursor(); raw != "" {
+	if raw := req.Cursor; raw != "" {
 		cur, ok := audit.DecodeCursor(raw)
 		if !ok {
 			return q, invalidCursor

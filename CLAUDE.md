@@ -346,6 +346,14 @@ this file above or below is pre-2026-11-07 history: read `go/<pkg>` as `pkg/<pkg
   backend the service chose both apply. Do not register a `crud.ActionHandler` by hand unless `pkg/action` cannot do it.
   A handler writes no SQL: put the query in the package that owns the table. A new hand-written route in metap takes a
   named `func(w, r, state)` handler registered through the file's `wrap`; older inline closures change when next edited.
+- **Known gaps (open).**
+  - **`AUTH_CONTEXT_ENTITY` does nothing (found 2026-11-28).** `config.LoadApp` reads it, but no production code sets
+    `AppState.AuthContextEntity`, so `authctx.Resolver` always gets an empty name and loads no context attributes.
+    `AuthContextCacheTTLSeconds` is unused too, and nothing calls `CrudService.WithContextInvalidation`. A deployment whose
+    policies use attributes from a context entity has them evaluated without those attributes; whether a deny policy then
+    lets a caller through has not been tested. Do not rely on the setting until it is fixed. `../waap` does not set it.
+    A fix wires the config into the state and the invalidation into the record backend, with an allow and a deny policy
+    tested through `app.Run` or `BuildRouter`; if the feature is not wanted, remove it and fail the boot when it is set.
 - **Migrations are run by a person (2026-11-28, `../metap-docs/docs/migrations.md`, roadmap 126).** `app.Run` never changes
   the schema: it checks the platform's migrations, the service's own (`app.Options.Migrations`) and every entity's real table,
   and refuses to start when something is missing (`ErrSchemaNotReady`). `<service> migrate generate` writes up/down SQL from

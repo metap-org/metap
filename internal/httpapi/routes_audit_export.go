@@ -70,8 +70,8 @@ func exportAudit(w http.ResponseWriter, r *http.Request, state *AppState) {
 			if row.Seq != nil {
 				seq = strconv.FormatInt(*row.Seq, 10)
 			}
-			_ = cw.Write([]string{seq, e.GetOccurredAt(), e.GetEntity(), e.GetRecordId(), e.GetAction(),
-				e.GetTransitionAction(), e.GetActorUserId(), e.GetReason(), e.GetDiffJson(), e.GetHash()})
+			_ = cw.Write([]string{seq, e.OccurredAt, e.Entity, e.RecordId, e.Action,
+				e.TransitionAction, e.ActorUserId, e.Reason, e.DiffJson, e.Hash})
 		}
 		finish = cw.Flush
 	} else {

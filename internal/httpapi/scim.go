@@ -144,13 +144,13 @@ func (h *scimHandler) list(w http.ResponseWriter, r *http.Request) {
 				scimFromErr(w, err)
 				return
 			}
-			for _, u := range res.GetUsers() {
-				if strings.EqualFold(u.GetEmail(), exact) {
+			for _, u := range res.Users {
+				if strings.EqualFold(u.Email, exact) {
 					resources = append(resources, scim.Resource(u))
 				}
 			}
-			req.Offset += int32(len(res.GetUsers()))
-			if len(resources) > 0 || len(res.GetUsers()) == 0 || req.Offset >= res.GetTotal() {
+			req.Offset += int32(len(res.Users))
+			if len(resources) > 0 || len(res.Users) == 0 || req.Offset >= res.Total {
 				break
 			}
 		}
@@ -161,10 +161,10 @@ func (h *scimHandler) list(w http.ResponseWriter, r *http.Request) {
 			scimFromErr(w, err)
 			return
 		}
-		for _, u := range res.GetUsers() {
+		for _, u := range res.Users {
 			resources = append(resources, scim.Resource(u))
 		}
-		total = int(res.GetTotal())
+		total = int(res.Total)
 	}
 	scimWrite(w, http.StatusOK, map[string]any{"schemas": []string{scim.ListSchema}, "totalResults": total,
 		"startIndex": page.Start, "itemsPerPage": len(resources), "Resources": resources})
@@ -210,14 +210,14 @@ func (h *scimHandler) create(w http.ResponseWriter, r *http.Request) {
 		scimFromErr(w, err)
 		return
 	}
-	u := res.GetUser()
+	u := res.User
 	if body.Active != nil && !bool(*body.Active) {
-		if u, err = h.users.Disable(ctx, &users.UserIdRequest{Id: u.GetId()}); err != nil {
+		if u, err = h.users.Disable(ctx, &users.UserIdRequest{Id: u.Id}); err != nil {
 			scimFromErr(w, err)
 			return
 		}
 	}
-	w.Header().Set("Location", "/scim/v2/Users/"+u.GetId())
+	w.Header().Set("Location", "/scim/v2/Users/"+u.Id)
 	scimWrite(w, http.StatusCreated, scim.Resource(u))
 }
 
@@ -261,7 +261,7 @@ func (h *scimHandler) replace(w http.ResponseWriter, r *http.Request) {
 		scimFromErr(w, err)
 		return
 	}
-	if email := body.Email(); email != "" && !strings.EqualFold(email, cur.GetEmail()) {
+	if email := body.Email(); email != "" && !strings.EqualFold(email, cur.Email) {
 		scimProblem(w, scim.NameChanged())
 		return
 	}
@@ -297,7 +297,7 @@ func (h *scimHandler) patch(w http.ResponseWriter, r *http.Request) {
 			scimFromErr(w, err)
 			return
 		}
-		if !patch.SameName(cur.GetEmail()) {
+		if !patch.SameName(cur.Email) {
 			scimProblem(w, scim.NameChanged())
 			return
 		}

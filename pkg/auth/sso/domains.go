@@ -99,18 +99,6 @@ func DomainVerifiedFor(ctx context.Context, db DBTX, tenant uuid.UUID, address s
 // TXTLookup resolves a TXT record (net.Resolver.LookupTXT in production, a fake in tests).
 type TXTLookup func(ctx context.Context, name string) ([]string, error)
 
-// CheckDomain looks up the ownership record and, when the token is there, marks the domain
-// verified. (false, nil) means the record is not there (yet).
-func CheckDomain(ctx context.Context, db DBTX, lookup TXTLookup, tenant uuid.UUID, d SSODomain, now time.Time) (bool, error) {
-	if d.VerifiedAt != nil {
-		return true, nil
-	}
-	if !DomainRecordPublished(ctx, lookup, d) {
-		return false, nil
-	}
-	return MarkDomainVerified(ctx, db, tenant, d.Domain, now)
-}
-
 // DomainRecordPublished reports whether d's ownership record is in DNS with the expected value. A
 // record that is not found and a lookup that failed both read as "not yet": try again later. It
 // asks the network only, so a caller can ask before opening the transaction that marks the domain.

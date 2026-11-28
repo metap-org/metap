@@ -93,7 +93,10 @@ func checkGrants(role string, in []*RoleGrant) ([]rolestore.RoleGrant, error) {
 	}
 	out := make([]rolestore.RoleGrant, 0, len(in))
 	for _, g := range in {
-		entity, action := strings.TrimSpace(g.GetEntity()), strings.TrimSpace(g.GetAction())
+		if g == nil {
+			return nil, validationErr("Invalid permission: a grant is empty.", map[string][]string{"grants": {"a grant is empty"}})
+		}
+		entity, action := strings.TrimSpace(g.Entity), strings.TrimSpace(g.Action)
 		valid := validGrantAction(action)
 		if strings.HasPrefix(entity, permission.ResourcePrefix) {
 			valid = permission.ValidResourceGrant(entity, action)

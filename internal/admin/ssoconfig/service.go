@@ -123,28 +123,28 @@ func (s *Service) SetOidc(ctx context.Context, req *SetSsoConfigRequest) (*SsoCo
 	if s.redirectURI() == "" {
 		return nil, unavailable()
 	}
-	issuer := strings.TrimSpace(req.GetIssuerUrl())
+	issuer := strings.TrimSpace(req.IssuerUrl)
 	if err := checkIssuer(issuer); err != nil {
 		return nil, err
 	}
-	clientID := strings.TrimSpace(req.GetClientId())
+	clientID := strings.TrimSpace(req.ClientId)
 	if clientID == "" || len(clientID) > 200 {
 		return nil, bad("`clientId` is required.")
 	}
 	a, err := s.checkAccess(ctx, c, accessInput{
-		EmailDomains: req.GetEmailDomains(), PostLoginRedirect: req.GetPostLoginRedirect(), DefaultRole: req.GetDefaultRole(),
-		RoleClaim: req.GetRoleClaim(), RoleMap: req.GetRoleMap(), Enabled: req.GetEnabled(), Enforced: req.GetEnforced()})
+		EmailDomains: req.EmailDomains, PostLoginRedirect: req.PostLoginRedirect, DefaultRole: req.DefaultRole,
+		RoleClaim: req.RoleClaim, RoleMap: req.RoleMap, Enabled: req.Enabled, Enforced: req.Enforced})
 	if err != nil {
 		return nil, err
 	}
 	if other, err := s.store.ActiveSaml(ctx, c.Tenant); err != nil {
 		return nil, err
-	} else if other != nil && req.GetEnabled() {
+	} else if other != nil && req.Enabled {
 		return nil, bad("SAML single sign-on is on for this workspace: turn it off before enabling OpenID Connect.")
 	}
 
 	ref := secrets.TenantSecretRef(c.Tenant, SecretKey)
-	secret := req.GetClientSecret()
+	secret := req.ClientSecret
 	if secret == "" {
 		existing, err := s.secrets.GetSecret(ctx, ref)
 		if err != nil {
@@ -152,30 +152,30 @@ func (s *Service) SetOidc(ctx context.Context, req *SetSsoConfigRequest) (*SsoCo
 		}
 		secret = existing
 	}
-	scopes := req.GetScopes()
+	scopes := req.Scopes
 	if len(scopes) == 0 {
 		scopes = []string{"openid", "email", "profile"}
 	}
 	cfg := &sso.OidcConfig{IssuerURL: issuer, ClientID: clientID, ClientSecretRef: ref, RedirectURI: s.redirectURI(),
 		Scopes: scopes, PostLoginRedirect: a.postLoginRedirect, EmailDomains: a.domains,
-		DefaultRole: a.defaultRole, Enforced: req.GetEnforced(), RoleClaim: a.roleClaim, RoleMap: a.roleMap}
+		DefaultRole: a.defaultRole, Enforced: req.Enforced, RoleClaim: a.roleClaim, RoleMap: a.roleMap}
 	// Catch a wrong issuer now, not at someone's first sign-in.
 	if err := s.provider.CheckOidc(ctx, cfg, secret); err != nil {
 		return nil, bad("The identity provider could not be reached or is not an OpenID Connect issuer.")
 	}
 	before, _, _ := s.store.Oidc(ctx, c.Tenant)
-	if req.GetClientSecret() != "" {
-		if err := s.secrets.PutSecret(ctx, ref, req.GetClientSecret()); err != nil {
+	if req.ClientSecret != "" {
+		if err := s.secrets.PutSecret(ctx, ref, req.ClientSecret); err != nil {
 			return nil, kernel.Err(http.StatusConflict, errcode.Forbidden, err.Error())
 		}
 	}
 	err = s.deps.Change(ctx, c, AuditEntity, c.Tenant, audit.ActionUpdate, func(ctx context.Context) (map[string][2]any, error) {
-		if err := s.store.SaveOidc(ctx, c.Tenant, cfg, req.GetEnabled(), a.domains); err != nil {
+		if err := s.store.SaveOidc(ctx, c.Tenant, cfg, req.Enabled, a.domains); err != nil {
 			return nil, err
 		}
-		diff := map[string][2]any{"issuerUrl": {nil, issuer}, "enabled": {nil, req.GetEnabled()}, "enforced": {nil, req.GetEnforced()}}
+		diff := map[string][2]any{"issuerUrl": {nil, issuer}, "enabled": {nil, req.Enabled}, "enforced": {nil, req.Enforced}}
 		if before != nil {
-			diff = map[string][2]any{"issuerUrl": {before.IssuerURL, issuer}, "enforced": {before.Enforced, req.GetEnforced()}}
+			diff = map[string][2]any{"issuerUrl": {before.IssuerURL, issuer}, "enforced": {before.Enforced, req.Enforced}}
 		}
 		return diff, nil
 	})
@@ -208,7 +208,7 @@ func (s *Service) VerifyDomain(ctx context.Context, req *VerifySsoDomainRequest)
 	if err != nil {
 		return nil, err
 	}
-	domain := strings.ToLower(strings.TrimSpace(req.GetDomain()))
+	domain := strings.ToLower(strings.TrimSpace(req.Domain))
 	domains, err := s.store.Domains(ctx, c.Tenant)
 	if err != nil {
 		return nil, err

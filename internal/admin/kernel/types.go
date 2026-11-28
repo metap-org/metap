@@ -20,54 +20,5 @@ type ListUserAuditResponse struct {
 	NextCursor string        `json:"nextCursor" required:"false"`
 }
 
-func (x *ListUserAuditResponse) GetEvents() []*AuditEvent {
-	if x != nil {
-		return x.Events
-	}
-	return nil
-}
-
-func (x *ListUserAuditResponse) GetNextCursor() string {
-	if x != nil {
-		return x.NextCursor
-	}
-	return ""
-}
-
-func (x *AuditEvent) GetId() string {
-	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *AuditEvent) GetAction() string {
-	if x != nil {
-		return x.Action
-	}
-	return ""
-}
-
-func (x *AuditEvent) GetActorUserId() string {
-	if x != nil {
-		return x.ActorUserId
-	}
-	return ""
-}
-
-func (x *AuditEvent) GetOccurredAt() string {
-	if x != nil {
-		return x.OccurredAt
-	}
-	return ""
-}
-
-func (x *AuditEvent) GetDiff() json.RawMessage {
-	if x != nil {
-		return x.Diff
-	}
-	return nil
-}
-
 type Empty struct {
 }

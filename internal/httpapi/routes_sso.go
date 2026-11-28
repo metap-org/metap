@@ -21,22 +21,11 @@ import (
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
 
 	"github.com/metap-org/metap/internal/signin"
-	"github.com/metap-org/metap/pkg/auth/identity"
 	"github.com/metap-org/metap/pkg/kit/errcode"
 )
 
 // SSOSecretKey is the config key a tenant's OIDC client secret is stored under (control.TenantSecretRef).
 const SSOSecretKey = "sso.clientSecret"
-
-// ssoRequired refuses a password sign-in (or tenant switch) into a tenant that enforces SSO, unless
-// the member is the tenant's owner — the way back in when the IdP is broken.
-func ssoRequired(w http.ResponseWriter, r *http.Request, state *AppState, m identity.Membership) bool {
-	if err := state.Signin().RequirePasswordAllowed(r.Context(), m); err != nil {
-		writeCrudError(w, err)
-		return true
-	}
-	return false
-}
 
 // redirectTo sends the browser to target. Neither caller passes anything taken from the request:
 // the sign-in URL comes from the tenant's configured identity provider and the landing page is

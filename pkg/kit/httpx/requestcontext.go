@@ -8,9 +8,6 @@ import (
 	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
-// Error bodies are small JSON objects; this is just a sanity ceiling, not a tuned limit.
-const maxErrorBodyBytes = 1024 * 1024
-
 // RequestContext echoes x-request-id/x-trace-id response headers on every request, and folds both
 // ids into any JSON error body (status >= 400). A success response streams through untouched.
 func RequestContext(next http.Handler) http.Handler {

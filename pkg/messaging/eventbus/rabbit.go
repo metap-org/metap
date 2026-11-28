@@ -36,14 +36,6 @@ func ConnectRabbitEventBus(url string) (*RabbitEventBus, error) {
 	return &RabbitEventBus{conn: conn, channel: ch}, nil
 }
 
-// RabbitMQConnector returns a reconnect closure — every long-running consumer in this module
-// takes one so a RabbitMQ blip mid-run can reconnect with backoff instead of dying.
-func RabbitMQConnector(url string) func() (EventBus, error) {
-	return func() (EventBus, error) {
-		return ConnectRabbitEventBus(url)
-	}
-}
-
 func (b *RabbitEventBus) Publish(ctx context.Context, topic string, payload json.RawMessage) error {
 	err := b.channel.PublishWithContext(ctx, exchange, topic, false, false, amqp.Publishing{
 		ContentType:  standard.MediaTypeJSON,

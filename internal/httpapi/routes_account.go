@@ -9,17 +9,10 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/metap-org/metap/internal/signin"
 )
 
 type tokenBody struct {
 	Token string `json:"token"`
-}
-
-// writeInvitationError maps pkg/identity's invitation and reset errors onto the error envelope.
-func writeInvitationError(w http.ResponseWriter, err error) {
-	writeCrudError(w, signin.InvitationError(err))
 }
 
 // lookupInvitation tells the accept page what to ask for: a new password (a brand-new account) or

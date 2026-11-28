@@ -12,3 +12,11 @@ tmp/
 /cron-scheduler
 /notification-worker
 /outbox-publisher
+/api-gateway
+# The same binaries built from inside cmd/<name>/: a 40MB dev-tools was committed that way.
+/cmd/api-gateway/api-gateway
+/cmd/cron-scheduler/cron-scheduler
+/cmd/db-migrate/db-migrate
+/cmd/dev-tools/dev-tools
+/cmd/notification-worker/notification-worker
+/cmd/outbox-publisher/outbox-publisher

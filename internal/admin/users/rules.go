@@ -52,7 +52,7 @@ func scopedView(in []permission.ScopedRole) []*ScopedRole {
 
 func sameScoped(a, b []*ScopedRole) bool {
 	return slices.EqualFunc(a, b, func(x, y *ScopedRole) bool {
-		return x.GetRole() == y.GetRole() && x.GetScopeType() == y.GetScopeType() && x.GetScopeId() == y.GetScopeId()
+		return x.Role == y.Role && x.ScopeType == y.ScopeType && x.ScopeId == y.ScopeId
 	})
 }
 
@@ -60,7 +60,7 @@ func sameScoped(a, b []*ScopedRole) bool {
 func scopedForAudit(in []*ScopedRole) []string {
 	out := make([]string, len(in))
 	for i, r := range in {
-		out[i] = r.GetRole() + "@" + r.GetScopeType() + ":" + r.GetScopeId()
+		out[i] = r.Role + "@" + r.ScopeType + ":" + r.ScopeId
 	}
 	return out
 }

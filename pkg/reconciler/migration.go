@@ -126,26 +126,6 @@ func Preflight(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, tabl
 	return PreflightReport{BadRows: badRows}, nil
 }
 
-// PreflightFkOrphans is the "orphan ref" preflight — separate from MigrationOp because it
-// belongs to a FkSpec (a Reference field's constraint), not a data-evolution op.
-func PreflightFkOrphans(ctx context.Context, pool *pgxpool.Pool, table string, fk FkSpec) (PreflightReport, error) {
-	predicate := fkOrphanPredicate(fk)
-	quotedTable := quoteQualifiedIdent(table)
-	var badRows int64
-	err := pool.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM %s t WHERE %s", quotedTable, predicate)).Scan(&badRows)
-	if err != nil {
-		return PreflightReport{}, err
-	}
-	return PreflightReport{BadRows: badRows}, nil
-}
-
-func fkOrphanPredicate(fk FkSpec) string {
-	col := quoteIdent(fk.Column)
-	refTable := quoteQualifiedIdent(fk.RefTable)
-	refCol := quoteIdent(fk.RefColumn)
-	return fmt.Sprintf("t.%s IS NOT NULL AND NOT EXISTS (SELECT 1 FROM %s r WHERE r.%s = t.%s)", col, refTable, refCol, col)
-}
-
 func badRowPredicate(op MigrationOp) (string, bool) {
 	if op.Kind != MigWidenType {
 		return "", false

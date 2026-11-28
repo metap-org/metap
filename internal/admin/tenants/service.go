@@ -52,7 +52,7 @@ func (s *Service) List(ctx context.Context, req *ListTenantsRequest) (*ListTenan
 		return nil, err
 	}
 	rows, total, err := s.store.Search(ctx, tenancy.TenantFilter{
-		Query: req.GetQuery(), Status: req.GetStatus(), Tier: req.GetTier(), Limit: int(req.GetLimit()), Offset: int(req.GetOffset()),
+		Query: req.Query, Status: req.Status, Tier: req.Tier, Limit: int(req.Limit), Offset: int(req.Offset),
 	})
 	if err != nil {
 		return nil, err
@@ -70,7 +70,7 @@ func (s *Service) Get(ctx context.Context, req *TenantIdRequest) (*Tenant, error
 	if _, err := s.deps.PlatformAdmin(ctx); err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func (s *Service) Create(ctx context.Context, req *CreateTenantRequest) (*Create
 	if err != nil {
 		return nil, err
 	}
-	name, tier, err := newTenant(req.GetName(), req.GetTier())
+	name, tier, err := newTenant(req.Name, req.Tier)
 	if err != nil {
 		return nil, err
 	}
@@ -98,8 +98,8 @@ func (s *Service) Create(ctx context.Context, req *CreateTenantRequest) (*Create
 		_ = s.store.Deprovision(ctx, id)
 		return cause
 	}
-	if req.GetProduct() != "" {
-		if err := s.store.SetProduct(ctx, id, req.GetProduct()); err != nil {
+	if req.Product != "" {
+		if err := s.store.SetProduct(ctx, id, req.Product); err != nil {
 			return nil, fail(err)
 		}
 	}
@@ -108,7 +108,7 @@ func (s *Service) Create(ctx context.Context, req *CreateTenantRequest) (*Create
 	var made *Admin
 	err = s.deps.Change(ctx, c, AuditEntity, id, audit.ActionCreate, func(ctx context.Context) (map[string][2]any, error) {
 		var err error
-		made, err = s.store.CreateAdmin(ctx, id, NewAdmin{Email: req.GetAdminEmail(), DisplayName: req.GetAdminDisplayName()}, c.SelfPtr(), now)
+		made, err = s.store.CreateAdmin(ctx, id, NewAdmin{Email: req.AdminEmail, DisplayName: req.AdminDisplayName}, c.SelfPtr(), now)
 		if err != nil {
 			return nil, kernel.IdentityErr(err)
 		}
@@ -148,7 +148,7 @@ func (s *Service) Update(ctx context.Context, req *UpdateTenantRequest) (*Tenant
 	if err != nil {
 		return nil, err
 	}
-	id, err := kernel.ParseID(req.GetId())
+	id, err := kernel.ParseID(req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -197,26 +197,26 @@ func (s *Service) lifecycle(ctx context.Context, idStr, change string, fn func(c
 }
 
 func (s *Service) Suspend(ctx context.Context, req *TenantIdRequest) (*Tenant, error) {
-	return s.lifecycle(ctx, req.GetId(), "suspend", func(ctx context.Context, id uuid.UUID, _ time.Time) error {
+	return s.lifecycle(ctx, req.Id, "suspend", func(ctx context.Context, id uuid.UUID, _ time.Time) error {
 		return s.store.Suspend(ctx, id)
 	}, map[string][2]any{"status": {"active", "suspended"}})
 }
 
 func (s *Service) Resume(ctx context.Context, req *TenantIdRequest) (*Tenant, error) {
-	return s.lifecycle(ctx, req.GetId(), "resume", func(ctx context.Context, id uuid.UUID, _ time.Time) error {
+	return s.lifecycle(ctx, req.Id, "resume", func(ctx context.Context, id uuid.UUID, _ time.Time) error {
 		return s.store.Resume(ctx, id)
 	}, map[string][2]any{"status": {"suspended", "active"}})
 }
 
 func (s *Service) RequestDeletion(ctx context.Context, req *RequestTenantDeletionRequest) (*Tenant, error) {
-	retention := time.Duration(req.GetRetentionDays()) * 24 * time.Hour
-	return s.lifecycle(ctx, req.GetId(), "request-deletion", func(ctx context.Context, id uuid.UUID, now time.Time) error {
+	retention := time.Duration(req.RetentionDays) * 24 * time.Hour
+	return s.lifecycle(ctx, req.Id, "request-deletion", func(ctx context.Context, id uuid.UUID, now time.Time) error {
 		return s.store.RequestDeletion(ctx, id, now, retention)
 	}, map[string][2]any{"status": {nil, "suspended"}, "deletionRequested": {false, true}})
 }
 
 func (s *Service) CancelDeletion(ctx context.Context, req *TenantIdRequest) (*Tenant, error) {
-	return s.lifecycle(ctx, req.GetId(), "cancel-deletion", func(ctx context.Context, id uuid.UUID, now time.Time) error {
+	return s.lifecycle(ctx, req.Id, "cancel-deletion", func(ctx context.Context, id uuid.UUID, now time.Time) error {
 		return s.store.CancelDeletion(ctx, id, now)
 	}, map[string][2]any{"deletionRequested": {true, false}})
 }

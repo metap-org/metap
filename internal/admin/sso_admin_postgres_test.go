@@ -56,8 +56,8 @@ func TestSsoAdminConfig(t *testing.T) {
 
 	cfg, err := h.client.SSO.GetOidc(asOwner, &Empty{})
 	require.NoError(t, err)
-	assert.False(t, cfg.GetConfigured())
-	assert.Equal(t, "http://portal.test/auth/sso/callback", cfg.GetRedirectUri(), "what to register at the IdP")
+	assert.False(t, cfg.Configured)
+	assert.Equal(t, "http://portal.test/auth/sso/callback", cfg.RedirectUri, "what to register at the IdP")
 
 	valid := func() *ssoconfig.SetSsoConfigRequest {
 		return &ssoconfig.SetSsoConfigRequest{IssuerUrl: issuer, ClientId: "c1", ClientSecret: "s3cret", EmailDomains: []string{"Acme.io"},
@@ -96,9 +96,9 @@ func TestSsoAdminConfig(t *testing.T) {
 
 	set, err := h.client.SSO.SetOidc(asOther, valid())
 	require.NoError(t, err)
-	assert.True(t, set.GetConfigured() && set.GetEnabled() && set.GetHasClientSecret())
-	assert.Equal(t, []string{"acme.io"}, set.GetEmailDomains(), "domains are normalised")
-	assert.Equal(t, []string{"openid", "email", "profile"}, set.GetScopes())
+	assert.True(t, set.Configured && set.Enabled && set.HasClientSecret)
+	assert.Equal(t, []string{"acme.io"}, set.EmailDomains, "domains are normalised")
+	assert.Equal(t, []string{"openid", "email", "profile"}, set.Scopes)
 
 	// A valid mapping is stored and read back (never null).
 	mapped := valid()
@@ -117,8 +117,8 @@ func TestSsoAdminConfig(t *testing.T) {
 	upd.ClientSecret, upd.ClientId = "", "c2"
 	set, err = h.client.SSO.SetOidc(asOther, upd)
 	require.NoError(t, err)
-	assert.Equal(t, "c2", set.GetClientId())
-	assert.True(t, set.GetHasClientSecret())
+	assert.Equal(t, "c2", set.ClientId)
+	assert.True(t, set.HasClientSecret)
 
 	// Only the owner can enforce SSO, and only while it is enabled.
 	enforce := valid()
@@ -131,18 +131,18 @@ func TestSsoAdminConfig(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, statusOf(err))
 	set, err = h.client.SSO.SetOidc(asOwner, enforce)
 	require.NoError(t, err)
-	assert.True(t, set.GetEnforced())
+	assert.True(t, set.Enforced)
 
 	// Removing it restores password sign-in and drops the secret.
 	_, err = h.client.SSO.DeleteOidc(asOther, &Empty{})
 	require.NoError(t, err)
 	cfg, err = h.client.SSO.GetOidc(asOwner, &Empty{})
 	require.NoError(t, err)
-	assert.False(t, cfg.GetConfigured())
+	assert.False(t, cfg.Configured)
 	h.drainAudit()
 	trail, err := h.client.Trail.Search(asOwner, &trail.SearchAuditRequest{Entity: ssoconfig.AuditEntity})
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(trail.GetEntries()), 3, "every change is audited")
+	assert.GreaterOrEqual(t, len(trail.Entries), 3, "every change is audited")
 }
 
 // The domains a workspace names start pending with a token to publish; a check that finds the

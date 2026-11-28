@@ -20,12 +20,6 @@ import (
 	"github.com/metap-org/metap/pkg/permission"
 )
 
-func sessionTTLSeconds(ctx *http.Request, state *AppState, tenantID uuid.UUID) uint64 {
-	return state.EffectiveConfig(ctx.Context(), tenantID).GetU64(config.AuthSessionTTLSeconds)
-}
-
-func unixNowSecs() int64 { return time.Now().Unix() }
-
 type loginBody struct {
 	Email    string     `json:"email"`
 	Password string     `json:"password"`
@@ -109,22 +103,6 @@ func writeGrant(w http.ResponseWriter, state *AppState, g *signin.Grant) {
 		data["recoveryCodes"] = g.RecoveryCodes
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
-}
-
-// startSession signs the person into membership m (a fresh login session) and answers with it; used
-// by the paths that prove who someone is some other way (invitation, signup verification).
-func startSession(w http.ResponseWriter, r *http.Request, state *AppState, identityID uuid.UUID, m identity.Membership) {
-	g, err := state.Signin().Issue(r.Context(), identityID, m, clientOf(r, state))
-	if err != nil {
-		writeCrudError(w, err)
-		return
-	}
-	writeGrant(w, state, g)
-}
-
-// writeIdentityError maps pkg/identity's sign-in and password errors onto the error envelope.
-func writeIdentityError(w http.ResponseWriter, err error) {
-	writeCrudError(w, signin.IdentityError(err))
 }
 
 type switchTenantBody struct {
@@ -304,9 +282,4 @@ func mountAuth(r *router.Router, state *AppState, guard router.Middleware) {
 	guarded.Post("/auth/password/reset", wrap(resetPassword))
 	guarded.Post("/auth/workspace-deletion/cancel", wrap(cancelWorkspaceDeletion))
 	acc.Authenticated.Get("/auth/token", wrap(issueToken))
-}
-
-func uuidOf(s string) uuid.UUID {
-	id, _ := uuid.Parse(s)
-	return id
 }

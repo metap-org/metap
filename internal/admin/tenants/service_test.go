@@ -186,9 +186,9 @@ func TestCreateMakesTenantAndAuditsIt(t *testing.T) {
 	w := newWorld()
 	res, err := w.svc.Create(platform(), &CreateTenantRequest{Name: " Acme ", AdminEmail: "a@acme.io", Product: "waf"})
 	require.NoError(t, err)
-	assert.Equal(t, "Acme", res.GetTenant().GetName())
-	assert.Equal(t, "waf", res.GetTenant().GetProduct())
-	assert.False(t, res.GetEmailSent(), "no mailer: the answer carries the link instead")
+	assert.Equal(t, "Acme", res.Tenant.Name)
+	assert.Equal(t, "waf", res.Tenant.Product)
+	assert.False(t, res.EmailSent, "no mailer: the answer carries the link instead")
 	require.Len(t, w.audit.entries, 1)
 	assert.Equal(t, AuditEntity, w.audit.entries[0].Entity)
 	assert.Empty(t, w.store.deprovision)
@@ -215,12 +215,12 @@ func TestLifecycle(t *testing.T) {
 	w := newWorld()
 	res, err := w.svc.Create(platform(), &CreateTenantRequest{Name: "Acme", AdminEmail: "a@acme.io"})
 	require.NoError(t, err)
-	id := res.GetTenant().GetId()
+	id := res.Tenant.Id
 
 	name := "Acme 2"
 	up, err := w.svc.Update(platform(), &UpdateTenantRequest{Id: id, Name: &name})
 	require.NoError(t, err)
-	assert.Equal(t, "Acme 2", up.GetName())
+	assert.Equal(t, "Acme 2", up.Name)
 
 	_, err = w.svc.Suspend(platform(), &TenantIdRequest{Id: id})
 	require.NoError(t, err)
@@ -231,10 +231,10 @@ func TestLifecycle(t *testing.T) {
 
 	del, err := w.svc.RequestDeletion(platform(), &RequestTenantDeletionRequest{Id: id, RetentionDays: 7})
 	require.NoError(t, err)
-	assert.NotEmpty(t, del.GetDeletionEffectiveAt())
+	assert.NotEmpty(t, del.DeletionEffectiveAt)
 	back, err := w.svc.CancelDeletion(platform(), &TenantIdRequest{Id: id})
 	require.NoError(t, err)
-	assert.Empty(t, back.GetDeletionEffectiveAt())
+	assert.Empty(t, back.DeletionEffectiveAt)
 
 	_, err = w.svc.Get(platform(), &TenantIdRequest{Id: uuid.NewString()})
 	assert.Equal(t, http.StatusNotFound, statusOf(err))
