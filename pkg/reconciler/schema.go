@@ -1,8 +1,7 @@
 // Package reconciler is the table-per-entity reconciler: reconcile(desired) = introspect(actual) ->
-// diff -> plan -> execute for one (tenant, entity), declarative migration ops with
-// preflight/quarantine, multi-tenant fan-out (orchestrator), and the one-shot generic-table-to-
-// dedicated-table data move. No HTTP, no business-entity knowledge — a plain library, same shape as
-// permission/cron.
+// diff -> plan -> execute for one (tenant, entity), and declarative migration ops with
+// preflight/quarantine. No HTTP, no business-entity knowledge — a plain library, same shape as
+// permission/cron. Rolling a change out across tenants is ../metap-lowcode/orchestrator.
 package reconciler
 
 // PhysicalSchema is the common representation both Compile (from an EntityDefinition, the

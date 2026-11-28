@@ -33,10 +33,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  dev-tools vault-put-dsn <dsnSecretRef> <dsn>                     (reads VAULT_ADDR/VAULT_TOKEN)")
 	fmt.Fprintln(os.Stderr, "  dev-tools aws-secrets-put-dsn <dsnSecretRef> <dsn>               (reads AWS_SECRETS_REGION/_ACCESS_KEY/_SECRET_KEY)")
 	fmt.Fprintln(os.Stderr, "  dev-tools gcp-secrets-put-dsn <dsnSecretRef> <dsn>               (reads GCP_SECRETS_PROJECT_ID)")
-	fmt.Fprintln(os.Stderr, "  dev-tools enqueue-reconcile <tenantId> <entityName> <desiredVersion>")
 	fmt.Fprintln(os.Stderr, "  dev-tools set-tenant-hostname <tenantId> <hostname>")
 	fmt.Fprintln(os.Stderr, "  dev-tools put-tenant-secret <tenantId> <configKey> <value>")
-	fmt.Fprintln(os.Stderr, "  dev-tools migrate-to-dedicated-table <tenantId> <entityJsonPath> [sourceTable]")
 	fmt.Fprintln(os.Stderr, "  dev-tools reconcile-plan <tenantId> <entityJsonPath> <tableName> [--fail-on-destructive]")
 	fmt.Fprintln(os.Stderr, "  dev-tools restore-legacy-data <tenantId> <entityJsonPath> <tableName> [--all-tenants]")
 	fmt.Fprintln(os.Stderr, "  dev-tools migrate-to-native-columns <tenantId> <entityJsonPath> <tableName> [--all-tenants] [--drop-data]")
@@ -75,14 +73,10 @@ func main() {
 		err = awsSecretsPutDSN(args)
 	case "gcp-secrets-put-dsn":
 		err = gcpSecretsPutDSN(args)
-	case "enqueue-reconcile":
-		err = enqueueReconcile(args)
 	case "set-tenant-hostname":
 		err = setTenantHostname(args)
 	case "put-tenant-secret":
 		err = putTenantSecret(args)
-	case "migrate-to-dedicated-table":
-		err = migrateToDedicatedTable(args)
 	case "reconcile-plan":
 		err = reconcilePlan(args)
 	case "restore-legacy-data":
@@ -118,8 +112,8 @@ func migrationsDir() string {
 }
 
 // connectShared loads .env (if present) and opens a pool against DATABASE_URL with maxConns
-// connections — most subcommands only ever need 1 connection; a couple (migrate-to-dedicated-
-// table, reconcile-plan) hold one connection for an advisory lock for the whole duration of a
+// connections — most subcommands only ever need 1 connection; a couple (reconcile-plan among them)
+// hold one connection for an advisory lock for the whole duration of a
 // reconcile while issuing further queries against the same pool, which deadlocks a 1-connection
 // pool the moment the resolved tenant's strategy is Schema (PoolFor returns this exact pool, not
 // a fresh one).
@@ -138,7 +132,7 @@ func connectShared(ctx context.Context, maxConns int32) (*pgxpool.Pool, error) {
 }
 
 // routerFor builds the same kind of Router a real app's own main.go does, so seed-admin/
-// create-user/enqueue-reconcile/migrate-to-dedicated-table/reconcile-plan can't resolve a
+// create-user/reconcile-plan can't resolve a
 // tenant's database any differently than a real request would. EnvStore only (not the AppRole/
 // Vault branching a real app's main.go has) — a Vault-backed dedicated tenant's DSN can still be
 // seeded by hand via vault-put-dsn first, same as it always could.

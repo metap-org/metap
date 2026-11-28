@@ -57,7 +57,7 @@ func RunHeavyBackfill(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUI
 // batch picks up — used by migration's widenType with an idempotent predicate so a resumed/re-run
 // pass only touches rows that still need the transform.
 func RunBatchedUpdate(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entityName, table, opID, setClause, whereExtra string, scope BackfillScope) error {
-	cursor, err := loadCursor(ctx, pool, tenantID, entityName, opID)
+	cursor, err := LoadBackfillCursor(ctx, pool, tenantID, entityName, opID)
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func RunBatchedUpdate(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUI
 			break
 		}
 		cursor = maxUUID(ids)
-		if err := saveProgress(ctx, tx, tenantID, entityName, opID, cursor, false); err != nil {
+		if err := SaveBackfillCursor(ctx, tx, tenantID, entityName, opID, cursor); err != nil {
 			tx.Rollback(ctx) //nolint:errcheck
 			return err
 		}
@@ -134,7 +134,7 @@ func RunBatchedUpdate(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUI
 		time.Sleep(backfillThrottle)
 	}
 
-	return markCompleted(ctx, pool, tenantID, entityName, opID)
+	return CompleteBackfill(ctx, pool, tenantID, entityName, opID)
 }
 
 // maxUUID returns the largest UUID by byte order.
@@ -148,9 +148,12 @@ func maxUUID(ids []uuid.UUID) uuid.UUID {
 	return max
 }
 
-// loadCursor is reused as-is by migrate.go's copyGenericRecords, which needs the exact same
-// checkpoint-table shape for a different kind of op.
-func loadCursor(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entityName, opID string) (uuid.UUID, error) {
+// The checkpoint ledger (metadata.reconciler_backfill_progress). It is exported for a batch job
+// outside this package that checkpoints the same way, so one package owns what the table means: load
+// the cursor, save it in the same transaction as each batch, mark the op completed at the end.
+
+// LoadBackfillCursor is the last id (tenantID, entityName, opID) has committed; uuid.Nil to start.
+func LoadBackfillCursor(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entityName, opID string) (uuid.UUID, error) {
 	var cursor *uuid.UUID
 	err := pool.QueryRow(ctx,
 		"SELECT cursor_id FROM metadata.reconciler_backfill_progress WHERE tenant_id = $1 AND entity_name = $2 AND op_id = $3",
@@ -167,17 +170,19 @@ func loadCursor(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, ent
 	return *cursor, nil
 }
 
-func saveProgress(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, entityName, opID string, cursor uuid.UUID, completed bool) error {
+// SaveBackfillCursor records cursor in tx, the transaction of the batch that reached it.
+func SaveBackfillCursor(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, entityName, opID string, cursor uuid.UUID) error {
 	_, err := tx.Exec(ctx,
 		`INSERT INTO metadata.reconciler_backfill_progress (tenant_id, entity_name, op_id, cursor_id, completed, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, now())
+		 VALUES ($1, $2, $3, $4, false, now())
 		 ON CONFLICT (tenant_id, entity_name, op_id) DO UPDATE
 		 SET cursor_id = EXCLUDED.cursor_id, completed = EXCLUDED.completed, updated_at = now()`,
-		tenantID, entityName, opID, cursor, completed)
+		tenantID, entityName, opID, cursor)
 	return err
 }
 
-func markCompleted(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entityName, opID string) error {
+// CompleteBackfill marks (tenantID, entityName, opID) done.
+func CompleteBackfill(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, entityName, opID string) error {
 	_, err := pool.Exec(ctx,
 		`INSERT INTO metadata.reconciler_backfill_progress (tenant_id, entity_name, op_id, completed, updated_at)
 		 VALUES ($1, $2, $3, true, now())
