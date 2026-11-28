@@ -3,6 +3,7 @@ package authctx
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -75,21 +76,25 @@ func (r *Resolver) attributes(ctx context.Context, tenantID, userID uuid.UUID) (
 		return nil, nil
 	}
 	if r.Registry == nil || r.Registry.Load() == nil {
-		return nil, fmt.Errorf("context attributes: no metadata to resolve %q in", r.AuthContextEntity)
+		return nil, fmt.Errorf("%w: no metadata to resolve %q in", ErrAttributesUnavailable, r.AuthContextEntity)
 	}
 	entity, ok := r.Registry.Load().GetEntity(r.AuthContextEntity)
 	if !ok {
-		return nil, fmt.Errorf("context attributes: AUTH_CONTEXT_ENTITY %q is not a registered entity", r.AuthContextEntity)
+		return nil, fmt.Errorf("%w: AUTH_CONTEXT_ENTITY %q is not a registered entity", ErrAttributesUnavailable, r.AuthContextEntity)
 	}
 	attrs, err := r.Attributes.GetWith(ctx, tenantID, userID, func(ctx context.Context) (map[string]any, error) {
 		return r.Store.ContextAttributes(ctx, tenantID, entity.TableName, userID)
 	})
 	if err != nil {
 		slog.Error("failed to resolve context attributes, refusing the request", standard.LogTenantID, tenantID, "user_id", userID, standard.LogError, err)
-		return nil, fmt.Errorf("context attributes: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrAttributesUnavailable, err)
 	}
 	return attributesJSON(attrs), nil
 }
+
+// ErrAttributesUnavailable: the context attributes could not be read. It says nothing about the
+// caller's credentials.
+var ErrAttributesUnavailable = errors.New("context attributes are unavailable")
 
 // reservedAttributes are what the platform itself says about a caller. A field of the context record
 // with one of these names is left out: a record someone can edit must not speak for the caller.

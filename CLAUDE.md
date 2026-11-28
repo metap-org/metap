@@ -350,7 +350,8 @@ this file above or below is pre-2026-11-07 history: read `go/<pkg>` as `pkg/<pkg
   were judged without them: a deny never matched).** With it, policy conditions read the fields of the record of that
   entity whose `userId` is the caller (`pkg/app/authcontext.go`). The boot fails when the service does not store the
   entity or it has no `userId` field, so set it only on a service that does. A request is refused when the attributes
-  cannot be read or the member has more than one such record. Fields named `tenantId`, `userId`, `roles`, `functionId`,
+  cannot be read (503 `auth_context_unavailable`) or the member has more than one such record (403
+  `auth_context_ambiguous`), never with a 401, which clients take for a dead session. Fields named `tenantId`, `userId`, `roles`, `functionId`,
   `oauthScope` or `oauthClientId` are not taken from the record. Any write through the service drops the cached
   attributes of the members the record names before and after (when the surrounding unit of work commits); a change by
   another process or by plain SQL shows within `AUTH_CONTEXT_CACHE_TTL_SECONDS` (default 30, 0 to 3600, 0 = no cache).

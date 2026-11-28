@@ -108,12 +108,15 @@ func TestALongJobKeepsItsLease(t *testing.T) {
 	target := newSlowTarget(t)
 	payload := enqueuedRun(t, pool, target.url, 1)
 	config := testExecutorConfig()
-	config.RunLease = 600 * time.Millisecond
+	// A renewal has a third of the lease to answer in. Short enough to keep the test quick is too
+	// short for a database busy with the rest of the suite: at 600ms a stall of under a second lost
+	// the lease.
+	config.RunLease = 3 * time.Second
 
 	first := make(chan ExecuteResult, 1)
 	go func() { first <- Execute(context.Background(), pool, config, payload) }()
 	target.waitStarted(t)
-	time.Sleep(3 * config.RunLease)
+	time.Sleep(config.RunLease + config.RunLease/2) // past the first expiry: only renewal keeps it
 	assert.Equal(t, ExecuteDeferred, Execute(context.Background(), pool, config, payload))
 	close(target.release)
 	assert.Equal(t, ExecuteRan, <-first)

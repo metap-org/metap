@@ -43,16 +43,21 @@ const (
 	MFANotEnrolled    = "mfa_not_enrolled"    // 409
 	AccountLocked     = "account_locked"      // 429: too many failed sign-ins, retry later
 	AccountDisabled   = "account_disabled"    // 403: the identity or this membership is disabled
-	SessionRevoked    = "session_revoked"     // 401: token issued before the user's sessions were revoked
-	NoTenantAccess    = "no_tenant_access"    // 403: signed in, but not an active member of that tenant
-	AlreadyMember     = "already_member"      // 409: the person is already a member of the tenant
-	WeakPassword      = "weak_password"       // 400: password fails the policy
-	LastAdmin         = "last_admin"          // 409: the change would leave the tenant without an admin
-	SelfModification  = "self_modification"   // 409: an admin cannot disable, remove or demote themselves
-	OwnerProtected    = "owner_protected"     // 403: only the tenant owner may change the owner
-	SSORequired       = "sso_required"        // 403: this tenant signs in through its identity provider, not a password
-	SSOFailed         = "sso_failed"          // 400/403: the single sign-in could not be completed
-	WrongPassword     = "wrong_password"      // 400: the current password given to a change is wrong
+	// AuthContextUnavailable (503): the AUTH_CONTEXT_ENTITY attributes could not be read, so the
+	// request cannot be judged. AuthContextAmbiguous (403): more than one record of that entity names
+	// the caller.
+	AuthContextUnavailable = "auth_context_unavailable"
+	AuthContextAmbiguous   = "auth_context_ambiguous"
+	SessionRevoked         = "session_revoked"   // 401: token issued before the user's sessions were revoked
+	NoTenantAccess         = "no_tenant_access"  // 403: signed in, but not an active member of that tenant
+	AlreadyMember          = "already_member"    // 409: the person is already a member of the tenant
+	WeakPassword           = "weak_password"     // 400: password fails the policy
+	LastAdmin              = "last_admin"        // 409: the change would leave the tenant without an admin
+	SelfModification       = "self_modification" // 409: an admin cannot disable, remove or demote themselves
+	OwnerProtected         = "owner_protected"   // 403: only the tenant owner may change the owner
+	SSORequired            = "sso_required"      // 403: this tenant signs in through its identity provider, not a password
+	SSOFailed              = "sso_failed"        // 400/403: the single sign-in could not be completed
+	WrongPassword          = "wrong_password"    // 400: the current password given to a change is wrong
 
 	// Invitations and password reset (roadmap 113 P2).
 	InvitationInvalid     = "invitation_invalid"       // 400: unknown, expired, used or revoked invitation link
