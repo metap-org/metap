@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"github.com/metap-org/metap/migrations"
+	dbmigrate "github.com/metap-org/metap/pkg/db/migrate"
 	"github.com/metap-org/metap/pkg/kit/shutdown"
 	"log/slog"
 	"os"
@@ -38,6 +40,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	if err := dbmigrate.Require(ctx, pool, migrations.FS); err != nil {
+		slog.Error("the database is not migrated", standard.LogError, err)
+		os.Exit(1)
+	}
 
 	// The same loop also moves audit entries from this outbox into the chain (they are never sent to
 	// the broker). The chain lives in the main database, which may not be the one this outbox is in.

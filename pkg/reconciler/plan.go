@@ -2,7 +2,7 @@
 // same Diff the real apply path uses and renders each resulting DdlOp to the exact SQL Execute
 // would run, without ever opening a connection. Lets a human review generated DDL before applying
 // it by hand — the same split modern migration tools make — as an addition alongside, never a
-// replacement for, the auto-apply Reconcile every downstream binary's boot sequence relies on.
+// replacement for, Reconcile. Services do not reconcile at boot: their migrations come from Generate.
 package reconciler
 
 // PlannedOp is one planned DDL operation and the literal SQL Execute would run for it. SQL is

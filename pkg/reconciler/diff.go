@@ -238,39 +238,45 @@ func fkMatches(actual, desired FkSpec) bool {
 // constraint to a plain index needs its DropUnique to run *before* any
 // DropIndexConcurrently/CreateIndexConcurrently touching that name.
 func topoSort(ops []DdlOp) []DdlOp {
-	rank := func(op DdlOp) int {
-		switch op.Kind {
-		case OpCreateTable:
-			return 0
-		case OpRenameColumn:
-			return 1
-		case OpAddColumn:
-			return 2
-		case OpBackfillColumn:
-			return 3
-		case OpDropSyncTrigger:
-			return 4
-		case OpDropForeignKey:
-			return 5
-		case OpDropUnique:
-			return 6
-		case OpDropIndexConcurrently:
-			return 7
-		case OpCreateIndexConcurrently:
-			return 8
-		case OpAddUnique:
-			return 9
-		case OpAddForeignKeyNotValid:
-			return 10
-		case OpValidateForeignKey:
-			return 11
-		default:
-			return 99
-		}
-	}
-	sort.SliceStable(ops, func(i, j int) bool { return rank(ops[i]) < rank(ops[j]) })
+	sort.SliceStable(ops, func(i, j int) bool { return opRank(ops[i]) < opRank(ops[j]) })
 	return ops
 }
+
+// opRank is where an op runs relative to the others.
+func opRank(op DdlOp) int {
+	switch op.Kind {
+	case OpCreateTable:
+		return 0
+	case OpRenameColumn:
+		return 10
+	case OpAddColumn:
+		return 20
+	case OpBackfillColumn:
+		return 30
+	case OpDropSyncTrigger:
+		return 40
+	case OpDropForeignKey:
+		return 50
+	case OpDropUnique:
+		return 60
+	case OpDropIndexConcurrently:
+		return 70
+	case OpCreateIndexConcurrently:
+		return 80
+	case OpAddUnique:
+		return 90
+	case OpAddForeignKeyNotValid:
+		return 100
+	case OpValidateForeignKey:
+		return 110
+	default:
+		return 990
+	}
+}
+
+// rankTypeChange is where a generated column type change runs: after the old indexes and
+// constraints are gone, before the new ones are built.
+const rankTypeChange = 75
 
 func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))

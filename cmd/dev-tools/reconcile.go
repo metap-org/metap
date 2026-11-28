@@ -37,9 +37,8 @@ func loadEntityFromFile(path string) (metadata.EntityDefinition, error) {
 }
 
 // reconcilePlan prints the SQL a real Reconcile() for this (tenant, entity) would run, without
-// executing any of it — the "let a dev review generated SQL and apply it themselves" mode,
-// alongside (never instead of) the auto-apply every downstream service's boot sequence already
-// relies on.
+// executing any of it: a look at how one live table differs from a definition. A service's
+// migrations are not made with it (`<service> migrate generate`).
 //
 // entityJsonPath is a local file holding what GET /metadata/entities/{entity} returns (or a bare
 // definition). table_name isn't part of that endpoint's response (it's an internal reconciler detail, not
@@ -65,8 +64,8 @@ func reconcilePlan(args []string) error {
 		fmt.Fprintln(os.Stderr, "    curl -H \"Authorization: Bearer $TOKEN\" <baseUrl>/metadata/entities/<entity> -o entity.json")
 		fmt.Fprintln(os.Stderr, "  tableName: the entity's own real, already-qualified table_name, e.g. \"waf.ddos_policies\".")
 		fmt.Fprintln(os.Stderr, "  Prints the SQL a real Reconcile() would run — nothing is executed. Review it, then apply")
-		fmt.Fprintln(os.Stderr, "  by hand (psql or your own migration tool). The owning service's boot-time Reconcile() is")
-		fmt.Fprintln(os.Stderr, "  completely unaffected by this and keeps auto-applying exactly as it always has.")
+		fmt.Fprintln(os.Stderr, "  by hand. A service's own migrations come from `<service> migrate generate` (docs/migrations.md);")
+		fmt.Fprintln(os.Stderr, "  this command is for looking at how one live table differs from a definition.")
 		os.Exit(1)
 	}
 

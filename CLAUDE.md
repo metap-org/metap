@@ -346,6 +346,13 @@ this file above or below is pre-2026-11-07 history: read `go/<pkg>` as `pkg/<pkg
   backend the service chose both apply. Do not register a `crud.ActionHandler` by hand unless `pkg/action` cannot do it.
   A handler writes no SQL: put the query in the package that owns the table. A new hand-written route in metap takes a
   named `func(w, r, state)` handler registered through the file's `wrap`; older inline closures change when next edited.
+- **Migrations are run by a person (2026-11-28, `../metap-docs/docs/migrations.md`, roadmap 126).** `app.Run` never changes
+  the schema: it checks the platform's migrations, the service's own (`app.Options.Migrations`) and every entity's real table,
+  and refuses to start when something is missing (`ErrSchemaNotReady`). `<service> migrate generate` writes up/down SQL from
+  `reconciler.Generate` against the committed `schema.snapshot.json`, with no database; `migrate up/down/status/baseline`
+  runs it (`pkg/db/migrate`). A platform migration after 0061 needs a `.down.sql` (a test enforces it). `reconciler.Reconcile`
+  is for tests and tools: never call it from a boot path. Every statement elsewhere in this file about reconciling or
+  migrating at boot is history.
 - **What the HTTP side refuses on its own (2026-11-28).** `app.Run` does not start a service with a route outside the access
   groups (or in two of them): register it through `web.Public`/`Authenticated`/`Admin`/`PlatformAdmin`/`SelfAuth`. An action's
   body is `{"input": {...}}` and any other key is a 400 (it used to be dropped, running the action with no input). A route with

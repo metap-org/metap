@@ -1,6 +1,6 @@
 // Package app is the boot sequence every metadata-driven service built on metap repeats:
 // config -> Postgres -> tenant router -> permissions -> JWT keys -> metadata registry ->
-// reconcile the service's own dedicated tables -> metadata drift check -> CRUD (+audit) -> HTTP.
+// check the schema (never change it; `<service> migrate` does) -> metadata drift check -> CRUD (+audit) -> HTTP.
 // A service's main shrinks to its entity list, its port numbers, and its own routes:
 // import _ "example.com/scanning/entities"
 //
@@ -17,9 +17,11 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"github.com/metap-org/metap/pkg/auth/captcha"
 	"github.com/metap-org/metap/pkg/permission/policypg"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -52,7 +54,6 @@ import (
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/reconciler"
 	"github.com/metap-org/metap/pkg/secrets/backend"
 	"github.com/metap-org/metap/pkg/tenancy"
 )
@@ -63,11 +64,17 @@ type Options struct {
 	Name string
 
 	// Entities is normally left empty: every entity the service's packages declare with
-	// metadata.SubmitEntity (from an init(), next to the definition) is registered and reconciled
-	// at boot, referenced entities first. Set it only to reconcile a different set or order
-	// explicitly — those are then reconciled instead of the submitted ones. Shared
-	// Schema-strategy tables are backfilled across every tenant (reconciler.ScopeAllTenants).
+	// metadata.SubmitEntity (from an init(), next to the definition) is registered, and its table
+	// must exist before the service starts (see Migrations). Set it only to name a different set of
+	// stored entities explicitly.
 	Entities []metadata.EntityDefinition
+
+	// Migrations are the SQL files that create and change this service's entity tables, written by
+	// `<service> migrate generate`, committed, and embedded in the binary. Booting never changes
+	// the schema: a service whose database lacks anything does not start (docs/migrations.md).
+	// MigrationsDir is where `generate` and `new` write them, relative to where they are run.
+	Migrations    fs.FS
+	MigrationsDir string
 
 	// WrapBackend, if set, decorates the CRUD backend the REST API serves (/api/{entity}) — e.g.
 	// to add service-specific create/update/delete guards. Defaults to state.Crud as-is.
@@ -104,8 +111,21 @@ func DefaultModules() []httpapi.Mount {
 }
 
 // Main runs the service and exits the process with status 1 on any error.
+// `<service> migrate ...` runs the migration command instead of the service.
 func Main(opts Options) {
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		if err := MigrateCommand(context.Background(), opts, os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "migrate:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := Run(context.Background(), opts); err != nil {
+		// The list of what is missing, and what to run, as lines a person can read.
+		if errors.Is(err, ErrSchemaNotReady) {
+			fmt.Fprintln(os.Stderr, err)
+			err = ErrSchemaNotReady
+		}
 		slog.Error(opts.Name+" exited with an error", standard.LogError, err)
 		os.Exit(1)
 	}
@@ -156,20 +176,11 @@ func Run(ctx context.Context, opts Options) error {
 	if err := registry.ValidateReferences(); err != nil {
 		return fmt.Errorf("validating entity references: %w", err)
 	}
-	toReconcile := opts.Entities
-	if len(toReconcile) == 0 {
-		toReconcile = registry.Definitions()
+	// The schema is only read here. Changing it is `<service> migrate`, run by a person or a
+	// deploy step, never by a booting service.
+	if err := requireSchema(ctx, pool, opts, storedEntities(opts, registry)); err != nil {
+		return err
 	}
-	for _, entity := range toReconcile {
-		outcome, err := reconciler.ReconcileWithScope(ctx, pool, tenancy.PlatformTenantID, entity, nil, reconciler.ScopeAllTenants)
-		if err != nil {
-			return fmt.Errorf("reconciling %s: %w", entity.Name, err)
-		}
-		slog.Info("reconciled dedicated table", "entity", entity.Name, "table", outcome.Table, "ops_applied", outcome.OpsApplied)
-	}
-
-	// Indexes for dedicated tables are built by the reconcile above; peripherals' old
-	// records-table index reconciler was removed (that table was dropped in migration 0033).
 	metadata.CheckDrift(ctx, pool, registry.ListEntities())
 	for _, ext := range opts.ExternalEntities {
 		if err := registry.Register(ext.Definition); err != nil {
