@@ -1,14 +1,5 @@
 package reconciler
 
-// Values of metadata.reconciler_entity_deployments.status (the orchestrator's queue).
-const (
-	DeployPending = "pending" // enqueued, not yet claimed
-	DeployRunning = "running" // claimed by a worker, lease held
-	DeployDone    = "done"
-	DeployFailed  = "failed"  // transient failure, claimable again
-	DeployBlocked = "blocked" // data or metadata failure: a human moves it forward
-)
-
 // Values of metadata.reconciler_entity_status.status (one entity's reconcile state).
 const (
 	entityStatusActive    = "active"
