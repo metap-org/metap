@@ -9,66 +9,12 @@ package migrate
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io/fs"
 	"os"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// migration is one parsed migrations/NNNN_description.sql file.
-type migration struct {
-	Version     int64
-	Description string
-	Filename    string
-	SQL         string
-	Checksum    [32]byte
-}
-
-var filenamePattern = regexp.MustCompile(`^(\d+)_(.+)\.sql$`)
-
-// LoadMigrations reads and parses every *.sql file in dir, sorted by version ascending.
-func LoadMigrations(dir string) ([]migration, error) {
-	return LoadMigrationsFS(os.DirFS(dir))
-}
-
-// LoadMigrationsFS is LoadMigrations over any fs.FS — e.g. the embedded migrations.FS from the
-// repo-root migrations package, so a binary needs no MIGRATIONS_DIR on disk at all.
-func LoadMigrationsFS(fsys fs.FS) ([]migration, error) {
-	entries, err := fs.ReadDir(fsys, ".")
-	if err != nil {
-		return nil, err
-	}
-	var out []migration
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		m := filenamePattern.FindStringSubmatch(entry.Name())
-		if m == nil {
-			continue
-		}
-		version, err := strconv.ParseInt(m[1], 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("migration %s: invalid version prefix: %w", entry.Name(), err)
-		}
-		content, err := fs.ReadFile(fsys, entry.Name())
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, migration{
-			Version: version, Description: strings.ReplaceAll(m[2], "_", " "),
-			Filename: entry.Name(), SQL: string(content), Checksum: sha256.Sum256(content),
-		})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Version < out[j].Version })
-	return out, nil
-}
 
 const trackingTableDDL = `
 CREATE TABLE IF NOT EXISTS metap_go_migrations (
@@ -95,9 +41,8 @@ type Result struct {
 }
 
 // Run applies every migration in dir not yet recorded in this database's own tracking table,
-// in version order, each inside its own transaction — mirrors sqlx::migrate!().run()'s
-// behavior (one transaction per migration file, not one for the whole batch, so a failure
-// partway through leaves every earlier file's migration durably applied).
+// in version order, each inside its own transaction (one per file, not one for the batch, so a
+// failure partway through leaves every earlier file's migration applied).
 func Run(ctx context.Context, pool *pgxpool.Pool, dir string) (*Result, error) {
 	return RunFS(ctx, pool, os.DirFS(dir))
 }
@@ -108,62 +53,81 @@ func RunFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (*Result, error)
 	if err != nil {
 		return nil, err
 	}
-
-	if _, err := pool.Exec(ctx, trackingTableDDL); err != nil {
-		return nil, err
-	}
-	if _, err := pool.Exec(ctx, sqlxPlaceholderTableDDL); err != nil {
-		return nil, err
-	}
-
-	applied := map[int64][32]byte{}
-	rows, err := pool.Query(ctx, "SELECT version, checksum FROM metap_go_migrations")
+	result := &Result{}
+	err = withLock(ctx, pool, func(conn *pgxpool.Conn) error {
+		if _, err := conn.Exec(ctx, trackingTableDDL); err != nil {
+			return err
+		}
+		if _, err := conn.Exec(ctx, sqlxPlaceholderTableDDL); err != nil {
+			return err
+		}
+		applied, err := platformApplied(ctx, conn)
+		if err != nil {
+			return err
+		}
+		for _, m := range migrations {
+			if existing, ok := applied[m.Version]; ok {
+				if err := sameChecksum(m, existing); err != nil {
+					return err
+				}
+				continue
+			}
+			if NoTransaction(m.SQL) {
+				return fmt.Errorf("migration %s: the platform's migrations are transactional", m.Filename)
+			}
+			if err := inTx(ctx, conn, m.SQL, "INSERT INTO metap_go_migrations (version, description, checksum) VALUES ($1, $2, $3)",
+				m.Version, m.Description, m.Checksum[:]); err != nil {
+				return fmt.Errorf("applying migration %s: %w", m.Filename, err)
+			}
+			result.Applied = append(result.Applied, m.Version)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	for rows.Next() {
-		var version int64
-		var checksum []byte
-		if err := rows.Scan(&version, &checksum); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		var c [32]byte
-		copy(c[:], checksum)
-		applied[version] = c
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	return result, nil
+}
+
+// Rollback undoes the last steps applied platform migrations, newest first, each in its own
+// transaction. It checks them all first: one without a down script (every migration up to
+// PlatformBaseline) or newer than this build stops it before anything runs. plan, when not nil, is
+// given what is about to run and can refuse.
+func Rollback(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, steps int, plan func([]Migration) error) ([]int64, error) {
+	migrations, err := LoadMigrationsFS(fsys)
+	if err != nil {
 		return nil, err
 	}
-
-	result := &Result{}
-	for _, m := range migrations {
-		if existing, ok := applied[m.Version]; ok {
-			if existing != m.Checksum {
-				return nil, fmt.Errorf("migration %s: checksum mismatch against the already-applied version — "+
-					"the file was edited after it was applied", m.Filename)
-			}
-			continue
-		}
-
-		tx, err := pool.Begin(ctx)
+	var done []int64
+	err = withLock(ctx, pool, func(conn *pgxpool.Conn) error {
+		applied, err := platformApplied(ctx, conn)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if _, err := tx.Exec(ctx, m.SQL); err != nil {
-			tx.Rollback(ctx)
-			return nil, fmt.Errorf("applying migration %s: %w", m.Filename, err)
+		targets, err := rollbackTargets(migrations, applied, steps)
+		if err != nil {
+			return err
 		}
-		if _, err := tx.Exec(ctx, "INSERT INTO metap_go_migrations (version, description, checksum) VALUES ($1, $2, $3)",
-			m.Version, m.Description, m.Checksum[:]); err != nil {
-			tx.Rollback(ctx)
-			return nil, err
+		if plan != nil {
+			if err := plan(targets); err != nil {
+				return err
+			}
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
+		for _, m := range targets {
+			if err := inTx(ctx, conn, m.Down, "DELETE FROM metap_go_migrations WHERE version = $1", m.Version); err != nil {
+				return fmt.Errorf("rolling back %s: %w", m.Filename, err)
+			}
+			done = append(done, m.Version)
 		}
-		result.Applied = append(result.Applied, m.Version)
-	}
-	return result, nil
+		return nil
+	})
+	return done, err
+}
+
+// PlatformBaseline is the last platform migration written before down scripts were required. It
+// and everything before it cannot be rolled back; restore a backup instead.
+const PlatformBaseline = 61
+
+func platformApplied(ctx context.Context, q querier) (map[int64][]byte, error) {
+	return appliedChecksums(ctx, q, "SELECT version, checksum FROM metap_go_migrations")
 }

@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/metap-org/metap/migrations"
+	dbmigrate "github.com/metap-org/metap/pkg/db/migrate"
 	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/kit/shutdown"
 	"github.com/metap-org/metap/pkg/recordclient"
@@ -89,6 +91,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	if err := dbmigrate.Require(ctx, pool, migrations.FS); err != nil {
+		slog.Error("the database is not migrated", standard.LogError, err)
+		os.Exit(1)
+	}
 
 	// Same backend picker every other binary uses, so a deployment configures Vault/AWS/GCP once
 	// and every process agrees on where a tenant's credentials live. A backend that fails to

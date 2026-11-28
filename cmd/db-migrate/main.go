@@ -1,51 +1,95 @@
-// db-migrate applies migrations/*.sql. See the dbmigrate package's doc comment for why this tracks
-// applied versions in its own table rather than sqlx's _sqlx_migrations.
+// db-migrate runs the platform's own migrations (migrations/*.sql, embedded). Nothing else applies
+// them: no service migrates when it boots. A product's entity tables are migrated with the
+// service's own `migrate` command, which applies these first (docs/migrations.md).
+//
+//	db-migrate [up]                 apply what is pending
+//	db-migrate status               what is pending (reads only)
+//	db-migrate down [--steps N]     print the SQL that undoes the newest N
+//	db-migrate down --yes           and run it
+//
+// DATABASE_URL names the database; MIGRATIONS_DIR reads the files from disk instead.
 package main
 
 import (
 	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
+	"strings"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metap-org/metap/migrations"
 	"github.com/metap-org/metap/pkg/config"
+	"github.com/metap-org/metap/pkg/db"
 	"github.com/metap-org/metap/pkg/db/migrate"
 	"github.com/metap-org/metap/pkg/kit/standard"
 )
 
 func main() {
 	config.InitLogging()
+	if err := run(context.Background(), os.Args[1:]); err != nil {
+		slog.Error("db-migrate failed", standard.LogError, err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, args []string) error {
+	command := "up"
+	if len(args) > 0 {
+		command, args = args[0], args[1:]
+	}
+	flags := flag.NewFlagSet("db-migrate "+command, flag.ContinueOnError)
+	steps := flags.Int("steps", 1, "migrations to undo")
+	yes := flags.Bool("yes", false, "run the rollback instead of only printing it")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if command != "up" && command != "status" && command != "down" {
+		return fmt.Errorf("unknown command %q: use up, status or down", command)
+	}
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		slog.Error("DATABASE_URL is required")
-		os.Exit(1)
+		return errors.New("DATABASE_URL is required")
 	}
-
-	ctx := context.Background()
-	slog.Info("connecting to postgres...")
-	pool, err := pgxpool.New(ctx, databaseURL)
+	pool, err := db.ConnectForMigrate(ctx, databaseURL)
 	if err != nil {
-		slog.Error("connecting to postgres", standard.LogError, err)
-		os.Exit(1)
+		return fmt.Errorf("connecting to postgres: %w", err)
 	}
 	defer pool.Close()
-
-	// Default: the migrations embedded into this binary (repo-root migrations package).
-	// MIGRATIONS_DIR overrides with an on-disk directory.
-	var result *migrate.Result
+	var files fs.FS = migrations.FS
 	if dir := os.Getenv("MIGRATIONS_DIR"); dir != "" {
-		slog.Info("applying migrations", "dir", dir)
-		result, err = migrate.Run(ctx, pool, dir)
-	} else {
-		slog.Info("applying embedded migrations")
-		result, err = migrate.RunFS(ctx, pool, migrations.FS)
-	}
-	if err != nil {
-		slog.Error("migration failed", standard.LogError, err)
-		os.Exit(1)
+		files = os.DirFS(dir)
 	}
 
-	slog.Info("done", "applied", result.Applied)
+	switch command {
+	case "status":
+		if err := migrate.Require(ctx, pool, files); err != nil {
+			return err
+		}
+		fmt.Println("up to date")
+	case "down":
+		done, err := migrate.Rollback(ctx, pool, files, *steps, func(targets []migrate.Migration) error {
+			for _, m := range targets {
+				fmt.Printf("-- ===== %s =====\n%s\n", m.DownFilename, strings.TrimSpace(m.Down))
+			}
+			if !*yes {
+				return errors.New("nothing was run: repeat with --yes to run the SQL above")
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		slog.Info("rolled back", "versions", done)
+	default:
+		result, err := migrate.RunFS(ctx, pool, files)
+		if err != nil {
+			return fmt.Errorf("migration failed: %w", err)
+		}
+		slog.Info("done", "applied", result.Applied)
+	}
+	return nil
 }

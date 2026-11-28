@@ -31,3 +31,14 @@ func TestEmbeddedMigrationsMatchTheOnDiskDirectory(t *testing.T) {
 		require.Equal(t, onDisk[i].Checksum, embedded[i].Checksum, "migration %d differs: embedded %s, on disk %s", i, embedded[i].Filename, onDisk[i].Filename)
 	}
 }
+
+// Every platform migration written after the baseline can be rolled back.
+func TestEveryPlatformMigrationAfterTheBaselineHasADownScript(t *testing.T) {
+	all, err := LoadMigrationsFS(migrations.FS)
+	require.NoError(t, err)
+	for _, m := range all {
+		if m.Version > PlatformBaseline {
+			require.NotEmpty(t, Statements(m.Down), "%s needs a .down.sql with at least one statement", m.Filename)
+		}
+	}
+}
