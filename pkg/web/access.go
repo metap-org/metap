@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/metap-org/metap/internal/httpapi"
 	"github.com/metap-org/metap/pkg/kit/httpx/router"
@@ -14,8 +13,8 @@ type Router = router.Router
 
 // A route a service writes itself says who may call it by the gate it is registered through, the
 // same five groups metap's own routes sit in. Registering on the bare router is how an unguarded
-// handler gets added by accident: nothing resolves the caller and nothing labels the route, so
-// RoutesWithoutOneAccessRule (put it in the service's own test) reports it.
+// handler gets added by accident: nothing resolves the caller and nothing labels the route. app.Run
+// refuses to start with such a route (RoutesWithoutOneAccessRule lists them).
 //
 //	web.Authenticated(r, state).Post("/internal/jobs/{id}/results", h)
 //
@@ -52,23 +51,6 @@ func CheckResourceIn(ctx context.Context, state *State, rc *permission.RequestCo
 }
 
 // RoutesWithoutOneAccessRule lists the routes of r that do not sit in exactly one access group, as
-// "PATTERN [labels]". A service's own route test asserts it is empty after mounting its routes.
-func RoutesWithoutOneAccessRule(r *Router) []string {
-	rules := map[string]bool{
-		httpapi.LabelPublic: true, httpapi.LabelAuthenticated: true, httpapi.LabelAdmin: true,
-		httpapi.LabelPlatformAdmin: true, httpapi.LabelSelfAuth: true,
-	}
-	var bad []string
-	for _, route := range r.Routes() {
-		n := 0
-		for _, l := range route.Labels {
-			if rules[l] {
-				n++
-			}
-		}
-		if n != 1 {
-			bad = append(bad, fmt.Sprintf("%s %v", route.Pattern, route.Labels))
-		}
-	}
-	return bad
-}
+// "PATTERN [labels]". app.Run refuses to start while there is one; a service's own route test can
+// assert this is empty after mounting its routes, to learn that before the service is deployed.
+func RoutesWithoutOneAccessRule(r *Router) []string { return httpapi.RoutesWithoutOneAccessRule(r) }

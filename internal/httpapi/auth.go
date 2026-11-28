@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/metap-org/metap/internal/access"
 	"github.com/metap-org/metap/internal/authctx"
 	"github.com/metap-org/metap/pkg/auth/jwks"
@@ -175,6 +176,27 @@ const (
 	LabelPlatformAdmin = "platform-admin" // cross-tenant admin
 	LabelSelfAuth      = "self-auth"      // authenticates inside (a bearer of another kind: SCIM, typed operations, OAuth2 client auth)
 )
+
+// RoutesWithoutOneAccessRule lists the routes of r that do not sit in exactly one access group, as
+// "PATTERN [labels]". None, or a request can reach a handler that nobody said who may call.
+func RoutesWithoutOneAccessRule(r *router.Router) []string {
+	rules := map[string]bool{
+		LabelPublic: true, LabelAuthenticated: true, LabelAdmin: true, LabelPlatformAdmin: true, LabelSelfAuth: true,
+	}
+	var bad []string
+	for _, route := range r.Routes() {
+		n := 0
+		for _, l := range route.Labels {
+			if rules[l] {
+				n++
+			}
+		}
+		if n != 1 {
+			bad = append(bad, fmt.Sprintf("%s %v", route.Pattern, route.Labels))
+		}
+	}
+	return bad
+}
 
 // Authenticated refuses a request with no valid session, token or API key and puts the caller in
 // the request (RC).
