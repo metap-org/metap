@@ -5,6 +5,8 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -13,6 +15,7 @@ import (
 
 	"github.com/metap-org/metap/pkg/crud"
 	"github.com/metap-org/metap/pkg/kit/errcode"
+	"github.com/metap-org/metap/pkg/kit/httpx"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
 )
@@ -70,7 +73,7 @@ func invokeDeclaredAction(w http.ResponseWriter, r *http.Request, state *AppStat
 	}
 	if r.ContentLength != 0 {
 		var body actionBody
-		if !decodeJSONBody(w, r, &body) {
+		if !decodeActionBody(w, r, &body) {
 			return
 		}
 		if body.Input != nil {
@@ -86,6 +89,26 @@ func invokeDeclaredAction(w http.ResponseWriter, r *http.Request, state *AppStat
 		result = crud.JsonObject{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": result})
+}
+
+// decodeActionBody is decodeJSONBody for the {"input": {...}} envelope, which takes no other key.
+// Dropping one would run the action without the input the caller sent, flat or under a misspelt key,
+// and an action whose fields are all optional would go ahead on its defaults.
+func decodeActionBody(w http.ResponseWriter, r *http.Request, dst *actionBody) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, httpx.DefaultMaxBodyBytes))
+	dec.DisallowUnknownFields()
+	err := dec.Decode(dst)
+	var tooLarge *http.MaxBytesError
+	switch {
+	case err == nil:
+		return true
+	case errors.As(err, &tooLarge):
+		writeServiceError(w, http.StatusRequestEntityTooLarge, errcode.PayloadTooLarge, "Request body is too large.", nil)
+	default:
+		writeServiceError(w, http.StatusBadRequest, errcode.ValidationFailed,
+			`Invalid request body: an action takes {"input": {...}} and no other key.`, nil)
+	}
+	return false
 }
 
 func mountActions(r *router.Router, state *AppState) {

@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -46,6 +47,7 @@ import (
 	"github.com/metap-org/metap/pkg/jobs/scheduler"
 	"github.com/metap-org/metap/pkg/kit/env"
 	"github.com/metap-org/metap/pkg/kit/httpx"
+	"github.com/metap-org/metap/pkg/kit/httpx/router"
 	"github.com/metap-org/metap/pkg/kit/shutdown"
 	"github.com/metap-org/metap/pkg/kit/standard"
 	"github.com/metap-org/metap/pkg/metadata"
@@ -272,12 +274,31 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	state.TrustedProxies = trusted
 	state.Identity = identityConfig(state, auditStore, secretManager)
-	handler := httpapi.BuildRouter(state, appCfg.CORSOrigins, append(modules, opts.Routes)...)
+	handler, err := buildHandler(state, appCfg.CORSOrigins, append(modules, opts.Routes))
+	if err != nil {
+		return err
+	}
 	addr := fmt.Sprintf("%s:%d", appCfg.Host, appCfg.Port)
 	slog.Info(opts.Name+" listening", "addr", addr)
 	serveCtx, stop := shutdown.Context(ctx)
 	defer stop()
 	return httpx.ServeContext(serveCtx, &http.Server{Addr: addr, Handler: handler}, httpx.DefaultShutdownTimeout)
+}
+
+// buildHandler is the router the service serves. It refuses one with a route outside the access
+// groups: such a route answers anyone, and a service that has no test of its own for it would
+// otherwise ship it.
+func buildHandler(state *httpapi.AppState, corsOrigins []string, mounts []httpapi.Mount) (http.Handler, error) {
+	handler := httpapi.BuildRouter(state, corsOrigins, mounts...)
+	r, ok := handler.(*router.Router)
+	if !ok {
+		return nil, fmt.Errorf("checking route access: BuildRouter returned %T, not a router", handler)
+	}
+	if bad := httpapi.RoutesWithoutOneAccessRule(r); len(bad) > 0 {
+		return nil, fmt.Errorf("routes outside the access groups (register each through one of web.Public, "+
+			"web.Authenticated, web.Admin, web.PlatformAdmin, web.SelfAuth): %s", strings.Join(bad, "; "))
+	}
+	return r, nil
 }
 
 // identityConfig serves user administration on the token issuer only (it owns identities); a

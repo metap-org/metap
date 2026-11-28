@@ -28,7 +28,7 @@ func BuildRouter(state *AppState, corsOrigins []string, mounts ...Mount) http.Ha
 	)
 	cors := httpx.CORS(httpx.CORSOptions{
 		Origins: corsOrigins,
-		Methods: []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete},
+		Methods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
 		Headers: []string{standard.HeaderAuthorization, standard.HeaderContentType, "Accept"},
 	})
 
