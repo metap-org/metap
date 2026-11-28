@@ -3,7 +3,9 @@ package authctx
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -30,10 +32,9 @@ type Resolver struct {
 }
 
 // Context builds a RequestContext for an already-verified token: the session check (always live), the
-// roles (live, or reused for the RolesCache TTL) plus the AUTH_CONTEXT_ENTITY opt-in best-effort
-// attributes lookup (cached). Any failure resolving roles propagates as an error (identity without roles is
-// unusable), while a failure resolving context attributes only logs and yields nil (supplementary ABAC
-// context, never blocks auth).
+// roles (live, or reused for the RolesCache TTL) plus, with AUTH_CONTEXT_ENTITY, the attributes of the
+// member's record of that entity (cached). Failing to read the roles or the attributes is an error:
+// policies cannot be judged without them.
 //
 // issuedAt is the token's iat: a token for a member who was disabled or removed, or issued before their
 // sessions were revoked, fails with identity.ErrDisabled / identity.ErrSessionRevoked.
@@ -48,6 +49,10 @@ func (r *Resolver) Context(ctx context.Context, tenantID, userID uuid.UUID, func
 	if err != nil {
 		return nil, err
 	}
+	attributes, err := r.attributes(ctx, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
 	return &permission.RequestContext{
 		TenantID:          tenantID.String(),
 		UserID:            userID.String(),
@@ -55,44 +60,40 @@ func (r *Resolver) Context(ctx context.Context, tenantID, userID uuid.UUID, func
 		ScopedRoles:       held.scoped,
 		HasRoles:          true,
 		FunctionID:        functionID,
-		ContextAttributes: r.attributes(ctx, tenantID, userID),
+		ContextAttributes: attributes,
 		// Not a forwarding source — this is the shared server-side "decode a token, look up roles" path
 		// every static-verifier server runs, not a gateway's own inbound-request auth.
 		ForwardedBearerToken: "",
 	}, nil
 }
 
-// table is the table the AUTH_CONTEXT_ENTITY opt-in reads ("" when it is off or names nothing registered).
-func (r *Resolver) table() string {
-	if r.AuthContextEntity == "" || r.Registry == nil {
-		return ""
+// attributes are the member's context attributes: nil when AUTH_CONTEXT_ENTITY is off or the member
+// has no record of it. Anything that keeps them from being read is an error, never "none": a policy
+// that denies on an attribute would not match without it.
+func (r *Resolver) attributes(ctx context.Context, tenantID, userID uuid.UUID) (map[string]json.RawMessage, error) {
+	if r.AuthContextEntity == "" {
+		return nil, nil
 	}
-	reg := r.Registry.Load()
-	if reg == nil {
-		return ""
+	if r.Registry == nil || r.Registry.Load() == nil {
+		return nil, fmt.Errorf("context attributes: no metadata to resolve %q in", r.AuthContextEntity)
 	}
-	entity, ok := reg.GetEntity(r.AuthContextEntity)
+	entity, ok := r.Registry.Load().GetEntity(r.AuthContextEntity)
 	if !ok {
-		slog.Warn("AUTH_CONTEXT_ENTITY does not resolve to a registered entity", "entity", r.AuthContextEntity)
-		return ""
-	}
-	return entity.TableName
-}
-
-func (r *Resolver) attributes(ctx context.Context, tenantID, userID uuid.UUID) map[string]json.RawMessage {
-	table := r.table()
-	if table == "" {
-		return nil
+		return nil, fmt.Errorf("context attributes: AUTH_CONTEXT_ENTITY %q is not a registered entity", r.AuthContextEntity)
 	}
 	attrs, err := r.Attributes.GetWith(ctx, tenantID, userID, func(ctx context.Context) (map[string]any, error) {
-		return r.Store.ContextAttributes(ctx, tenantID, table, userID)
+		return r.Store.ContextAttributes(ctx, tenantID, entity.TableName, userID)
 	})
 	if err != nil {
-		slog.Warn("failed to resolve context attributes", standard.LogTenantID, tenantID, "user_id", userID, standard.LogError, err)
-		return nil
+		slog.Error("failed to resolve context attributes, refusing the request", standard.LogTenantID, tenantID, "user_id", userID, standard.LogError, err)
+		return nil, fmt.Errorf("context attributes: %w", err)
 	}
-	return attributesJSON(attrs)
+	return attributesJSON(attrs), nil
 }
+
+// reservedAttributes are what the platform itself says about a caller. A field of the context record
+// with one of these names is left out: a record someone can edit must not speak for the caller.
+var reservedAttributes = []string{"tenantId", "userId", "roles", "functionId", permission.OAuthScopeAttribute, permission.OAuthClientIDAttribute}
 
 // attributesJSON is the attributes as raw JSON values; a value that cannot be encoded is left out. Pure.
 func attributesJSON(attrs map[string]any) map[string]json.RawMessage {
@@ -101,6 +102,9 @@ func attributesJSON(attrs map[string]any) map[string]json.RawMessage {
 	}
 	out := make(map[string]json.RawMessage, len(attrs))
 	for k, v := range attrs {
+		if slices.Contains(reservedAttributes, k) {
+			continue
+		}
 		b, err := json.Marshal(v)
 		if err != nil {
 			continue

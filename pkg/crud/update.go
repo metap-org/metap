@@ -57,7 +57,7 @@ func (s *CrudService) Update(ctx context.Context, entityName string, id uuid.UUI
 		emit: func(ctx context.Context, tx pgx.Tx, record RecordDto) error {
 			return workflow.EmitUpdated(ctx, tx, c.entity, c.tenantID, record.ID, p.data, record.Version)
 		},
-		after:       func() { s.invalidateContextCacheIfConfigured(c.entity.Name, c.tenantID, p.data) },
+		previous:    cur.record.Data,
 		auditAction: audit.ActionUpdate,
 		diff: func(RecordDto) audit.JsonObject {
 			return audit.DiffJSONObjects(audit.JsonObject(cur.record.Data), audit.JsonObject(p.data))

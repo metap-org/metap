@@ -29,7 +29,12 @@ type ContextAttributesCache struct {
 	group singleflight.Group
 }
 
+// A ttl of zero or less returns nil, which reads the attributes on every request (to the cache
+// underneath, zero would mean for ever).
 func NewContextAttributesCache(ttl time.Duration) *ContextAttributesCache {
+	if ttl <= 0 {
+		return nil
+	}
 	return &ContextAttributesCache{cache: gocache.New(ttl, ttl)}
 }
 
@@ -37,6 +42,9 @@ func NewContextAttributesCache(ttl time.Duration) *ContextAttributesCache {
 // so this type stays free of any entity-name knowledge. A nil result (no matching record) is
 // cached too, so a user with no membership record doesn't re-query on every request either.
 func (c *ContextAttributesCache) GetWith(ctx context.Context, tenantID, userID uuid.UUID, fetch func(ctx context.Context) (map[string]any, error)) (map[string]any, error) {
+	if c == nil {
+		return fetch(ctx)
+	}
 	key := tenantID.String() + "/" + userID.String()
 	if v, ok := c.cache.Get(key); ok {
 		return v.(contextAttributesCacheEntry).attrs, nil
@@ -61,6 +69,9 @@ func (c *ContextAttributesCache) GetWith(ctx context.Context, tenantID, userID u
 
 // Invalidate is a no-op if the key isn't cached — safe to call unconditionally.
 func (c *ContextAttributesCache) Invalidate(tenantID, userID uuid.UUID) {
+	if c == nil {
+		return
+	}
 	c.cache.Delete(tenantID.String() + "/" + userID.String())
 }
 

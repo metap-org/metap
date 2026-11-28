@@ -128,7 +128,12 @@ func (c *RequestContext) ToValue() json.RawMessage {
 		out["functionId"] = b
 	}
 	for k, v := range c.ContextAttributes {
-		out[k] = v
+		switch k {
+		case "tenantId", "userId", "roles", "functionId":
+			// What the request says about the caller is not an attribute's to replace.
+		default:
+			out[k] = v
+		}
 	}
 	b, _ := json.Marshal(out)
 	return b

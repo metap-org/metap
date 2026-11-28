@@ -1,6 +1,6 @@
 // REST entity CRUD — /api/{entity}*.
-// This handler does not invalidate the auth-context cache. CrudService.Update would, once
-// WithContextInvalidation is wired, which nothing does yet: see "Known gaps" in CLAUDE.md.
+// A write to the AUTH_CONTEXT_ENTITY invalidates the auth-context cache inside crud.CrudService
+// (WithContextInvalidation, chained on by app.Run), so these handlers do not.
 package httpapi
 
 import (

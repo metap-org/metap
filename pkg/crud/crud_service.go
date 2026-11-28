@@ -3,6 +3,7 @@ package crud
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -11,6 +12,7 @@ import (
 	"github.com/metap-org/metap/pkg/audit"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
+	"github.com/metap-org/metap/pkg/tenancy"
 )
 
 // CrudService is the only thing a transport layer calls for record operations. Orchestrates:
@@ -45,8 +47,7 @@ type CrudService struct {
 }
 
 type contextInvalidationConfig struct {
-	// entityName is the entity AUTH_CONTEXT_ENTITY resolves to — only an Update on *this* entity
-	// triggers invalidation.
+	// entityName is the entity AUTH_CONTEXT_ENTITY names; only writes to it invalidate.
 	entityName string
 	cache      ContextInvalidator
 }
@@ -76,16 +77,15 @@ func (s *CrudService) Trusted() *CrudService {
 	return &c
 }
 
-// WithContextInvalidation is the opt-in AUTH_CONTEXT_ENTITY cache invalidation — chainable onto
-// the result of NewCrudService or WithAudit. cache should be the *same* ContextAttributesCache
-// instance ResolveRequestContext reads from — a separate instance would invalidate a cache
-// nothing actually reads.
 // ContextInvalidator drops what is cached about a caller's context attributes (httpapi's
 // ContextAttributesCache is the one implementation).
 type ContextInvalidator interface {
 	Invalidate(tenantID, userID uuid.UUID)
 }
 
+// WithContextInvalidation is the AUTH_CONTEXT_ENTITY cache invalidation: a write to a record of
+// entityName drops the cached attributes of the users it describes. cache must be the instance
+// authentication reads from. app.Run chains it on when AUTH_CONTEXT_ENTITY is set.
 func (s *CrudService) WithContextInvalidation(entityName string, cache ContextInvalidator) *CrudService {
 	s.contextInvalidation = &contextInvalidationConfig{entityName: entityName, cache: cache}
 	return s
@@ -149,28 +149,39 @@ func parentIDOf(data JsonObject, field string) (uuid.UUID, bool) {
 	return id, err == nil
 }
 
-// invalidateContextCacheIfConfigured no-ops unless contextInvalidation is configured *and*
-// entityName matches its entityName. data must be the full, unmasked write payload — the
-// AUTH_CONTEXT_ENTITY record's own userId field is business data, unrelated to which fields the
-// *actor performing this update* can read back. Only ever called from Update.
-func (s *CrudService) invalidateContextCacheIfConfigured(entityName string, tenantID uuid.UUID, data JsonObject) {
-	config := s.contextInvalidation
-	if config == nil || config.entityName != entityName {
+// contextMembers are the users whose context attributes a write to entityName may have changed: the
+// userId of each of the records given (before and after, so a record that moved to someone else
+// forgets both). None unless context invalidation is configured for entityName. The data must be
+// the record as stored, not what the actor may read back.
+func (s *CrudService) contextMembers(entityName string, records ...JsonObject) []uuid.UUID {
+	if s.contextInvalidation == nil || s.contextInvalidation.entityName != entityName {
+		return nil
+	}
+	var out []uuid.UUID
+	for _, data := range records {
+		var raw string
+		if v, ok := data["userId"]; !ok || json.Unmarshal(v, &raw) != nil {
+			continue
+		}
+		if id, err := uuid.Parse(raw); err == nil && !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// forgetContext drops the cached context attributes of members once the write in ctx is committed:
+// now, or when the unit of work around it commits.
+func (s *CrudService) forgetContext(ctx context.Context, tenantID uuid.UUID, members []uuid.UUID) {
+	if len(members) == 0 {
 		return
 	}
-	raw, ok := data["userId"]
-	if !ok {
-		return
-	}
-	var userIDStr string
-	if err := json.Unmarshal(raw, &userIDStr); err != nil {
-		return
-	}
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		return
-	}
-	config.cache.Invalidate(tenantID, userID)
+	cache := s.contextInvalidation.cache
+	tenancy.OnCommit(ctx, func() {
+		for _, member := range members {
+			cache.Invalidate(tenantID, member)
+		}
+	})
 }
 
 // enrichRecordForActions resolves cross-record permission conditions (a record-level policy's

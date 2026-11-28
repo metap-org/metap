@@ -13,7 +13,6 @@ import (
 	"github.com/metap-org/metap/pkg/kit/errcode"
 	"github.com/metap-org/metap/pkg/metadata"
 	"github.com/metap-org/metap/pkg/permission"
-	"github.com/metap-org/metap/pkg/tenancy"
 	"github.com/metap-org/metap/pkg/workflow"
 )
 
@@ -163,8 +162,8 @@ type write struct {
 	before func(ctx context.Context, tx pgx.Tx) error
 	// emit enqueues the outbox events in the same transaction.
 	emit func(ctx context.Context, tx pgx.Tx, record RecordDto) error
-	// after runs once the transaction has committed, ahead of the audit entry.
-	after func()
+	// previous is the record as it was, for a write that changes one (update, transition, delete).
+	previous JsonObject
 
 	auditAction      audit.AuditAction
 	transitionAction *string
@@ -228,11 +227,6 @@ func (s *CrudService) persist(ctx context.Context, c call, snapshot *permission.
 	if err := tx.Commit(ctx); err != nil {
 		return RecordDto{}, err
 	}
-	// What follows the commit (the context-cache invalidation) must not happen for a write whose
-	// enclosing unit of work later rolls back, so it waits for that unit when there is one and runs
-	// now when there is not.
-	if w.after != nil {
-		tenancy.OnCommit(ctx, w.after)
-	}
+	s.forgetContext(ctx, c.tenantID, s.contextMembers(c.entity.Name, w.previous, record.Data))
 	return maskRecordForRead(c.entity, c.rc, snapshot, record), nil
 }
